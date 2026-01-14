@@ -22,8 +22,11 @@ jobs:
           node-version: 22
           registry-url: https://npm.pkg.github.com
 
+      - name: Enable Corepack (Yarn)
+        run: corepack enable
+
       - name: Install
-        run: yarn install --frozen-lockfile
+        run: yarn install
 
       - name: Build
         run: yarn build
