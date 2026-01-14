@@ -1,0 +1,7 @@
+# Local-only vendor clones (for type inspection)
+/.vendor/
+
+# Typical
+/node_modules/
+/dist/
+/coverage/

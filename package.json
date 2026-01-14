@@ -1,0 +1,71 @@
+{
+    "name": "@immense/vue-testid-injector",
+    "version": "1.0.0",
+    "description": "Injects data-testid attributes for all interactive elements and generates page object models for every page.",
+    "type": "module",
+    "repository": {
+      "type": "git",
+      "url": "git+https://github.com/immense/vue-testid-injector.git"
+    },
+    "bugs": {
+      "url": "https://github.com/immense/vue-testid-injector/issues"
+    },
+    "homepage": "https://github.com/immense/vue-testid-injector#readme",
+    "publishConfig": {
+      "access": "restricted",
+      "registry": "https://npm.pkg.github.com"
+    },
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.mjs",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.mjs",
+        "require": "./dist/index.cjs"
+      }
+    },
+    "files": [
+      "dist",
+      "class-generation",
+      "*.md"
+    ],
+    "sideEffects": false,
+    "scripts": {
+      "clean": "rm -rf dist",
+      "build": "vite build && node -e \"process.argv = ['node','tsc',...process.argv.slice(1)]; require('typescript/bin/tsc')\" -- -p tsconfig.json --emitDeclarationOnly --declaration --declarationMap --outDir dist",
+      "lint": "eslint .",
+      "test": "vitest run",
+      "test:coverage": "vitest run --coverage",
+      "typecheck": "node -e \"process.argv = ['node','tsc',...process.argv.slice(1)]; require('typescript/bin/tsc')\" -- -p tsconfig.json --noEmit",
+      "prepublishOnly": "yarn build"
+    },
+    "peerDependencies": {
+      "@vitejs/plugin-vue": ">=5",
+      "vite": ">=7",
+      "vitest": "^4",
+      "vue": ">=3"
+    },
+    "dependencies": {
+      "@babel/parser": "^7.28.5",
+      "@babel/types": "^7.28.5",
+      "@vue/compiler-core": "3.5.22",
+      "@vue/compiler-dom": "3.5.22",
+      "@vue/compiler-sfc": "3.5.22",
+      "vite-plugin-virtual": "^0.4.0"
+    },
+    "devDependencies": {
+      "@antfu/eslint-config": "5.3.0",
+      "@eslint/js": "9.36.0",
+      "@types/jsdom": "^27.0.0",
+      "@types/node": "^24.1.0",
+      "@vitest/coverage-v8": "^4.0.16",
+      "eslint": "^9.27.0",
+      "globals": "16.0.0",
+      "jiti": "^2.6.1",
+      "jsdom": "^27.3.0",
+      "typescript": "^5.9.2",
+      "typescript-eslint": "^8.43.0"
+    },
+    "license": "MIT"
+  }
