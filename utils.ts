@@ -1304,13 +1304,33 @@ export function findDataTestIdAttribute(element: ElementNode): AttributeNode | D
 }
 
 /**
- * Adds a data-testid attribute to an element
+ * Upserts a test id attribute (static or bound) on an element.
+ * Removes existing matches before adding the new value.
  */
-export function addAttribute(
+export function upsertAttribute(
   element: ElementNode,
   attributeName: string,
   value: AttributeValue,
 ): void {
+  element.props = element.props.filter((prop) => {
+    // Remove static attribute: data-testid="..."
+    if (prop.type === NodeTypes.ATTRIBUTE && prop.name === attributeName) {
+      return false;
+    }
+
+    // Remove dynamic directive: :data-testid="..." or v-bind:data-testid="..."
+    if (
+      prop.type === NodeTypes.DIRECTIVE
+      && prop.name === "bind"
+      && prop.arg?.type === NodeTypes.SIMPLE_EXPRESSION
+      && prop.arg.content === attributeName
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+
   if (value.kind === "template") {
     // Dynamic binding: :data-testid="`ComponentName_tag_${key}`"
     element.props.push({
@@ -1341,30 +1361,6 @@ export function addAttribute(
       loc: element.loc,
     } as AttributeNode);
   }
-}
-
-/**
- * Removes test id attribute or directive from an element.
- */
-export function removeDataTestIdAttribute(element: ElementNode, attributeName: string = "data-testid"): void {
-  element.props = element.props.filter((prop) => {
-    // Remove static attribute: data-testid="..."
-    if (prop.type === NodeTypes.ATTRIBUTE && prop.name === attributeName) {
-      return "";
-    // First, try to find emitted event names anywhere in the handler AST.
-    // This covers:
-    // - @click="emit('clicked')"
-    // - @click="a(); emit('clicked')" (Program)
-    // - @click="if (x) emit('clicked')" (statement-shaped)
-    const emitted = extractEmittedEventNameFromAst(ast);
-    if (emitted)
-      return emitted;
-    // Vue's expression AST sometimes wraps as ExpressionStatement.
-    if (isExpressionStatement(ast)) {
-      return getStableClickHandlerNameFromExpression(ast.expression);
-    }
-    // Most often it's already an Expression.
-    return getStableClickHandlerNameFromExpression(ast);
 }
 
 export interface ExistingElementDataTestIdInfo {
@@ -1698,11 +1694,7 @@ export function applyResolvedDataTestId(args: {
 
   // 3) Apply attribute (only when we generated it) and register for POM generation.
   if (addHtmlAttribute && !fromExisting) {
-    const existingTestIdAttr = findTestIdAttribute(args.element, testIdAttribute);
-    if (existingTestIdAttr) {
-      removeDataTestIdAttribute(args.element, testIdAttribute);
-    }
-    addAttribute(args.element, testIdAttribute, dataTestId);
+    upsertAttribute(args.element, testIdAttribute, dataTestId);
   }
 
   const childComponentName = args.element.tag;

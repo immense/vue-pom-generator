@@ -74,6 +74,9 @@ export interface GenerateFilesOptions {
          */
         attachTo?: "views" | "components" | "both";
     }>;
+
+    /** Attribute name to treat as the test id. Defaults to `data-testid`. */
+    testIdAttribute?: string;
 }
 
 interface GenerateContentOptions {
@@ -99,12 +102,6 @@ interface GenerateContentOptions {
     customPomImportAliases?: Record<string, string>;
 
     /** Attribute name to treat as the test id. Defaults to `data-testid`. */
-    testIdAttribute?: string;
-
-    /**
-     * Attribute name to treat as the test id in generated selectors.
-     * Defaults to `data-testid`.
-     */
     testIdAttribute?: string;
 }
 
@@ -171,13 +168,17 @@ function generateViewObjectModel(
     componentHierarchyMap: Map<string, IComponentDependencies>,
     vueFilesPathMap: Map<string, string>,
     basePageClassPath: string,
-    options: { customPomAttachments?: GenerateFilesOptions["customPomAttachments"] } = {},
+    options: {
+        customPomAttachments?: GenerateFilesOptions["customPomAttachments"];
+        testIdAttribute?: GenerateFilesOptions["testIdAttribute"];
+    } = {},
 ) {
     const filePath = changeExtension(dependencies.filePath, ".vue", ".g.ts");
     const content = generateViewObjectModelContent(componentName, dependencies, componentHierarchyMap, vueFilesPathMap, basePageClassPath, {
         outputDir: path.dirname(filePath),
 
         customPomAttachments: options.customPomAttachments ?? [],
+        testIdAttribute: options.testIdAttribute,
     });
     return { filePath, content };
 }
@@ -498,6 +499,7 @@ function generateAggregatedFiles(
         projectRoot?: GenerateFilesOptions["projectRoot"];
         customPomDir?: GenerateFilesOptions["customPomDir"];
         customPomImportAliases?: GenerateFilesOptions["customPomImportAliases"];
+        testIdAttribute?: GenerateFilesOptions["testIdAttribute"];
     } = {},
 ) {
     const projectRoot = options.projectRoot ?? process.cwd();
@@ -805,6 +807,7 @@ function generateAggregatedFiles(
                 aggregated: true,
 
                 customPomAttachments: options.customPomAttachments ?? [],
+                testIdAttribute: options.testIdAttribute,
             }),
         );
 

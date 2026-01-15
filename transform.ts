@@ -10,7 +10,7 @@ import process from "node:process";
 import { generateViewObjectModelMethodContent } from "./class-generation";
 import { TESTID_CLICK_EVENT_NAME, TESTID_CLICK_EVENT_STRICT_FLAG } from "./click-instrumentation";
 import {
-  addAttribute,
+  upsertAttribute,
   findTestIdAttribute,
   formatTagName,
   getComposedClickHandlerContent,
@@ -175,7 +175,7 @@ function tryWrapClickDirectiveForTestEvents(element: ElementNode, testIdAttribut
   // (Avoids env-var gating and avoids waiting on clicks that aren't instrumented.)
   const hasInstrumentedAttr = element.props.some(p => p.type === NodeTypes.ATTRIBUTE && p.name === "data-click-instrumented");
   if (!hasInstrumentedAttr) {
-    addAttribute(element, "data-click-instrumented", staticAttributeValue("1"));
+    upsertAttribute(element, "data-click-instrumented", staticAttributeValue("1"));
   }
 
   const exp = clickDirective.exp;
@@ -510,7 +510,7 @@ export function createTestIdTransform(
       // Some wrappers (e.g. option-driven selects) require the option prefix even when we have a
       // native wrapper data-testid. Apply the prefix before we return.
       if (optionDataTestIdPrefixValue) {
-        addAttribute(element, "option-data-testid-prefix", optionDataTestIdPrefixValue);
+        upsertAttribute(element, "option-data-testid-prefix", optionDataTestIdPrefixValue);
       }
 
       const nativeRole = nativeWrappers[element.tag]?.role ?? element.tag;
