@@ -39,7 +39,10 @@ export function createMetadataCollectorTransform(
   metadataMap: Map<string, Map<string, ElementMetadata>>,
   semanticNameMap: Map<string, string>,
   debug = false,
+  testIdAttribute: string = "data-testid",
 ): NodeTransform {
+  const normalizedTestIdAttribute = (testIdAttribute ?? "data-testid").trim() || "data-testid";
+
   return (node, _context) => {
     // No entry logic - we only care about the exit phase
     // Return an exit function that will run AFTER transformElement
@@ -52,7 +55,7 @@ export function createMetadataCollectorTransform(
 
       // Access codegenNode - should now exist after transformElement ran
       if (debug) {
-        const debugTestId = getTestIdFromProp(findDataTestIdProp(element));
+        const debugTestId = getTestIdFromProp(findDataTestIdProp(element, normalizedTestIdAttribute));
         console.log(`  [metadata] Checking <${element.tag}> (tagType=${element.tagType}) testId="${debugTestId ?? ""}"`);
         console.log(`    codegenNode exists: ${Boolean(element.codegenNode)}`);
         if (element.codegenNode) {
@@ -67,6 +70,7 @@ export function createMetadataCollectorTransform(
         debug,
         debugPrefix: "[metadata]",
         preferJsonParseFailureAsContentArray: false,
+        testIdAttribute: normalizedTestIdAttribute,
       });
 
       if (!metadata) {

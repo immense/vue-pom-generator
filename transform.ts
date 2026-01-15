@@ -11,7 +11,7 @@ import { generateViewObjectModelMethodContent } from "./class-generation";
 import { TESTID_CLICK_EVENT_NAME, TESTID_CLICK_EVENT_STRICT_FLAG } from "./click-instrumentation";
 import {
   addAttribute,
-  findDataTestIdAttribute,
+  findTestIdAttribute,
   formatTagName,
   getComposedClickHandlerContent,
   getIdOrName,
@@ -125,7 +125,7 @@ function tryInferNativeWrapperRoleFromSfc(tag: string): { role: "input" | "selec
   return null;
 }
 
-function tryWrapClickDirectiveForTestEvents(element: ElementNode): void {
+function tryWrapClickDirectiveForTestEvents(element: ElementNode, testIdAttribute: string): void {
   const jsStringLiteral = (value: string) => {
     // Use JSON.stringify to safely escape quotes/newlines.
     return JSON.stringify(value);
@@ -135,7 +135,7 @@ function tryWrapClickDirectiveForTestEvents(element: ElementNode): void {
   // like <AppButton data-testid="..."> still emit the expected id even though the
   // underlying DOM <button> doesn't have the attribute.
   const getTestIdExpressionForNode = (): string => {
-    const existing = findDataTestIdAttribute(element);
+    const existing = findTestIdAttribute(element, testIdAttribute);
     if (!existing) {
       return "undefined";
     }
@@ -148,7 +148,7 @@ function tryWrapClickDirectiveForTestEvents(element: ElementNode): void {
       return jsStringLiteral(v);
     }
 
-    // :data-testid="..." / v-bind:data-testid="..."
+    // :<attr>="..." / v-bind:<attr>="..."
     const directive = existing as DirectiveNode;
     const exp = directive.exp;
     if (!exp || exp.type !== NodeTypes.SIMPLE_EXPRESSION) {
@@ -222,7 +222,7 @@ function tryWrapClickDirectiveForTestEvents(element: ElementNode): void {
   const __win = ($event && $event.view) ? $event.view : undefined;
   const __target = ($event && $event.currentTarget) ? $event.currentTarget : undefined;
   const __testIdFromNode = ${testIdExpression};
-  const __testIdFromTarget = (__target && typeof __target.getAttribute === 'function') ? __target.getAttribute('data-testid') : (__target && __target.dataset ? __target.dataset.testid : undefined);
+  const __testIdFromTarget = (__target && typeof __target.getAttribute === 'function') ? __target.getAttribute(${jsStringLiteral(testIdAttribute)}) : undefined;
   const __testId = (__testIdFromNode ?? __testIdFromTarget);
   const __emit = (phase, err) => {
     try {
@@ -274,7 +274,7 @@ function tryWrapClickDirectiveForTestEvents(element: ElementNode): void {
   const __win = ($event && $event.view) ? $event.view : undefined;
   const __target = ($event && $event.currentTarget) ? $event.currentTarget : undefined;
   const __testIdFromNode = ${testIdExpression};
-  const __testIdFromTarget = (__target && typeof __target.getAttribute === 'function') ? __target.getAttribute('data-testid') : (__target && __target.dataset ? __target.dataset.testid : undefined);
+  const __testIdFromTarget = (__target && typeof __target.getAttribute === 'function') ? __target.getAttribute(${jsStringLiteral(testIdAttribute)}) : undefined;
   const __testId = (__testIdFromNode ?? __testIdFromTarget);
   const __emit = (phase, err) => {
     try {
@@ -342,9 +342,10 @@ export function createTestIdTransform(
   nativeWrappers: NativeWrappersMap = {},
   excludedComponents: string[] = [],
   viewsDir: string = "/src/views/",
-  options: { strictNaming?: boolean } = {},
+  options: { strictNaming?: boolean; testIdAttribute?: string } = {},
 ): NodeTransform {
   const strictNaming = options.strictNaming === true;
+  const testIdAttribute = (options.testIdAttribute || "data-testid").trim() || "data-testid";
   const normalizedViewsDir = viewsDir.startsWith("/") ? viewsDir : `/${viewsDir}`;
   const viewsNeedle = normalizedViewsDir.endsWith("/") ? normalizedViewsDir : `${normalizedViewsDir}/`;
 
@@ -496,6 +497,7 @@ export function createTestIdTransform(
         bestKeyPlaceholder,
         entryOverrides: args.entryOverrides,
         addHtmlAttribute: args.addHtmlAttribute,
+        testIdAttribute,
         generateMethodContent: generateViewObjectModelMethodContent,
       });
     };
@@ -528,7 +530,7 @@ export function createTestIdTransform(
       // If the author already provided a data-testid, the generator may choose not to
       // auto-generate one for :to. In that case, still register the element so we
       // generate the fluent goTo* method using the existing id.
-      const existing = tryGetExistingElementDataTestId(element);
+      const existing = tryGetExistingElementDataTestId(element, testIdAttribute);
 
       const preferredGeneratedValue = dataTestId
         ?? (existing ? staticAttributeValue(existing.value) : null);
@@ -576,12 +578,12 @@ export function createTestIdTransform(
       // Instrument @click handlers so Playwright can wait on deterministic UI-side events
       // without relying on network inspection.
       if (ENABLE_CLICK_INSTRUMENTATION) {
-        tryWrapClickDirectiveForTestEvents(element);
+        tryWrapClickDirectiveForTestEvents(element, testIdAttribute);
       }
       return;
     }
 
-    const existingSubmitDataTestId = tryGetExistingElementDataTestId(element);
+    const existingSubmitDataTestId = tryGetExistingElementDataTestId(element, testIdAttribute);
     if (existingSubmitDataTestId?.value) {
       applyResolvedDataTestIdForElement({
         preferredGeneratedValue: staticAttributeValue(existingSubmitDataTestId.value),

@@ -24,6 +24,7 @@ function extractMetadataFromAST(
   metadataMap: Map<string, Map<string, ElementMetadata>>,
   semanticNameMap: Map<string, string>,
   debug: boolean,
+  testIdAttribute: string,
 ): void {
   const componentMetadata = new Map<string, ElementMetadata>();
 
@@ -31,7 +32,7 @@ function extractMetadataFromAST(
     if (node.type === NodeTypes.ELEMENT) {
       const element = node as ElementNode;
 
-      const testIdAttr = findDataTestIdProp(element);
+      const testIdAttr = findDataTestIdProp(element, testIdAttribute);
       if (testIdAttr) {
         const metadata = tryCreateElementMetadata({
           element,
@@ -39,6 +40,7 @@ function extractMetadataFromAST(
           debug,
           debugPrefix: "[compiler-wrapper]",
           preferJsonParseFailureAsContentArray: true,
+          testIdAttribute,
         });
 
         if (metadata) {
@@ -113,7 +115,9 @@ export function compileWithMetadataExtractionManual(
   metadataMap: Map<string, Map<string, ElementMetadata>>,
   semanticNameMap: Map<string, string>,
   debug: boolean,
+  testIdAttribute: string = "data-testid",
 ): ReturnType<typeof compile> {
+  const normalizedTestIdAttribute = (testIdAttribute ?? "data-testid").trim() || "data-testid";
   // IMPORTANT:
   // Use `@vue/compiler-dom`'s `compile()` (not `baseCompile`) so DOM-specific
   // transforms (especially directive transforms like `v-show`) are preserved.
@@ -131,7 +135,7 @@ export function compileWithMetadataExtractionManual(
             return;
 
           return () => {
-            extractMetadataFromAST(node as RootNode, componentName, metadataMap, semanticNameMap, debug);
+            extractMetadataFromAST(node as RootNode, componentName, metadataMap, semanticNameMap, debug, normalizedTestIdAttribute);
           };
         },
       ],

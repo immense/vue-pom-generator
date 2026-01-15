@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { performance } from "node:perf_hooks";
+import { fileURLToPath } from "node:url";
 import type { Options as VuePluginOptions } from "@vitejs/plugin-vue";
 import vue from "@vitejs/plugin-vue";
 import type { PluginOption, ViteDevServer } from "vite";
@@ -45,22 +46,52 @@ export interface CreateVueTestIdPluginsOptions {
   excludedComponents?: string[];
 
   /**
-   * Optional handwritten POM helpers (inlined into aggregated output) that should only be
-   * attached to generated view classes when those views use certain components.
+   * HTML attribute name to inject and treat as the "test id".
    *
-  * Example: attach a `grid: Grid` helper only to views that use `DxDataGrid`.
+   * Defaults to `data-testid`.
+   *
+   * Common alternatives: `data-qa`, `data-cy`.
    */
-  customPomAttachments?: Array<{
-    className: string;
-    propertyName: string;
-    attachWhenUsesComponents: string[];
+  testIdAttribute?: string;
+
+  /**
+   * Custom Page Object Model (POM) configuration.
+   *
+   * This groups the knobs related to handwritten helpers and conditional attachments.
+   */
+  customPom?: {
+    /**
+     * Directory containing handwritten POM helpers (e.g. Grid.ts) to import into aggregated output.
+     * Defaults to <projectRoot>/pom/custom
+     */
+    dir?: string;
 
     /**
-     * Controls whether this attachment is applied to views, components, or both.
-     * Defaults to "views" for backwards compatibility.
+     * Optional import aliases for handwritten POM helpers (basename -> alias).
+     *
+     * Useful when a helper file/export name doesn't match the identifier you want to expose in
+     * generated output, or when migrating legacy helper names.
      */
-    attachTo?: "views" | "components" | "both";
-  }>;
+    importAliases?: Record<string, string>;
+
+    /**
+     * Optional handwritten POM helpers that should only be attached to generated view/component
+     * classes when those views/components use certain components.
+     *
+     * Example: attach a `grid: Grid` helper only to views/components that use `DxDataGrid`.
+     */
+    attachments?: Array<{
+      className: string;
+      propertyName: string;
+      attachWhenUsesComponents: string[];
+
+      /**
+       * Controls whether this attachment is applied to views, components, or both.
+       * Defaults to "views" for backwards compatibility.
+       */
+      attachTo?: "views" | "components" | "both";
+    }>;
+  };
 
   /**
    * When false, disables vue-router introspection and skips resolving `:to` directives
@@ -84,15 +115,24 @@ export interface CreateVueTestIdPluginsOptions {
 
   /**
    * Absolute path to the BasePage template module to import from in generated output.
-   * Defaults to <projectRoot>/vite-plugins/vue-testid-injector/class-generation/BasePage.ts
+    * Defaults to the copy shipped with this package: ./class-generation/BasePage.ts.
    */
   basePageClassPath?: string;
 
   /**
-   * Directory containing handwritten POM helpers (e.g. Grid.ts) to import into aggregated output.
-   * Defaults to <projectRoot>/pom/custom
+   * @deprecated Prefer `customPom.attachments`.
+   */
+  customPomAttachments?: NonNullable<CreateVueTestIdPluginsOptions["customPom"]>["attachments"];
+
+  /**
+   * @deprecated Prefer `customPom.dir`.
    */
   customPomDir?: string;
+
+  /**
+   * @deprecated Prefer `customPom.importAliases`.
+   */
+  customPomImportAliases?: Record<string, string>;
 }
 
 export function createVueTestIdPlugins(options: CreateVueTestIdPluginsOptions = {}): PluginOption[] {
@@ -103,13 +143,20 @@ export function createVueTestIdPlugins(options: CreateVueTestIdPluginsOptions = 
     viewsDir = "/src/views/",
     nativeWrappers = {},
     excludedComponents = [],
+    testIdAttribute = "data-testid",
     vueRouterFluentChaining = true,
     strictNaming = false,
-    customPomAttachments = [],
     projectRoot = process.cwd(),
     basePageClassPath: basePageClassPathOverride,
+    customPom,
+    customPomAttachments,
     customPomDir,
+    customPomImportAliases,
   } = options;
+
+  const resolvedCustomPomAttachments = customPom?.attachments ?? customPomAttachments ?? [];
+  const resolvedCustomPomDir = customPom?.dir ?? customPomDir;
+  const resolvedCustomPomImportAliases = customPom?.importAliases ?? customPomImportAliases;
 
   const componentTestIds = new Map<string, Set<string>>();
   const elementMetadata = new Map<string, Map<string, ElementMetadata>>();
@@ -129,6 +176,7 @@ export function createVueTestIdPlugins(options: CreateVueTestIdPluginsOptions = 
     excludedComponents,
     viewsDir,
     strictNaming,
+    testIdAttribute,
   });
 
   const supportPlugins = createSupportPlugins({
@@ -143,11 +191,12 @@ export function createVueTestIdPlugins(options: CreateVueTestIdPluginsOptions = 
     singleFile,
 		vueRouterFluentChaining,
 
-		customPomAttachments,
-
     projectRoot,
     basePageClassPath: basePageClassPathOverride,
-    customPomDir,
+    customPomAttachments: resolvedCustomPomAttachments,
+    customPomDir: resolvedCustomPomDir,
+    customPomImportAliases: resolvedCustomPomImportAliases,
+    testIdAttribute,
   });
 
   return [vuePlugin, ...supportPlugins];
@@ -167,6 +216,7 @@ interface InternalFactoryOptions {
   excludedComponents: string[];
   viewsDir: string;
   strictNaming: boolean;
+  testIdAttribute: string;
 }
 
 function createVuePluginWithTestIds(options: InternalFactoryOptions): PluginOption {
@@ -182,6 +232,7 @@ function createVuePluginWithTestIds(options: InternalFactoryOptions): PluginOpti
     excludedComponents,
     viewsDir,
     strictNaming,
+    testIdAttribute,
   } = options;
 
   const userTemplate = vueOptions?.template ?? {};
@@ -222,7 +273,7 @@ function createVuePluginWithTestIds(options: InternalFactoryOptions): PluginOpti
                 nativeWrappers,
                 excludedComponents,
                 viewsDir,
-                { strictNaming },
+                { strictNaming, testIdAttribute },
               ),
             );
           }
@@ -238,7 +289,7 @@ function createVuePluginWithTestIds(options: InternalFactoryOptions): PluginOpti
               nativeWrappers,
               excludedComponents,
               viewsDir,
-              { strictNaming },
+              { strictNaming, testIdAttribute },
             );
             perFileTransform.set(componentName, transform);
           }
@@ -266,6 +317,7 @@ function createVuePluginWithTestIds(options: InternalFactoryOptions): PluginOpti
           elementMetadata,
           semanticNameMap,
           debugTestIds,
+          testIdAttribute,
         );
       },
     },
@@ -293,6 +345,8 @@ interface SupportFactoryOptions {
   projectRoot: string;
   basePageClassPath?: string;
   customPomDir?: string;
+  customPomImportAliases?: Record<string, string>;
+  testIdAttribute: string;
 }
 
 function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
@@ -311,6 +365,8 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
     projectRoot,
     basePageClassPath: basePageClassPathOverride,
     customPomDir,
+    customPomImportAliases,
+    testIdAttribute,
   } = options;
 
   // Bridge between configureServer (where we have timers/logger) and handleHotUpdate.
@@ -324,17 +380,21 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
   let lastGeneratedEntryCount = 0;
   const maybeModule = virtualImport as { default?: typeof virtualImport };
   const virtual = maybeModule.default ?? virtualImport;
-  // NOTE:
-  // This plugin is consumed from the app's frontend workspace where `process.cwd()` is the
-  // `frontend/` directory. Resolve BasePage.ts relative to that workspace root.
-  //
-  // We intentionally avoid `import.meta.url` here because the CJS build may be evaluated in an
-  // environment where a DOM shim defines `document`, which can cause CJS `import.meta.url`
-  // transforms to resolve against `document.baseURI` and break path resolution.
-  const basePageClassPath = basePageClassPathOverride ?? path.resolve(
-    projectRoot,
-    "vite-plugins/vue-testid-injector/class-generation/BasePage.ts",
-  );
+
+  const getDefaultBasePageClassPath = () => {
+    // Prefer resolving relative to this package so consumers don't need a repo-specific layout.
+    // Works in ESM output.
+    try {
+      return fileURLToPath(new URL("./class-generation/BasePage.ts", import.meta.url));
+    }
+    catch {
+      // Fallback for CJS output.
+      // eslint-disable-next-line no-undef
+      return path.resolve(__dirname, "class-generation", "BasePage.ts");
+    }
+  };
+
+  const basePageClassPath = basePageClassPathOverride ?? getDefaultBasePageClassPath();
 
   const tsProcessor: PluginOption = {
     name: "vue-testid-ts-processor",
@@ -396,6 +456,8 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
 		customPomAttachments,
 		projectRoot,
 		customPomDir,
+		customPomImportAliases,
+    testIdAttribute,
       });
       lastGeneratedEntryCount = entryCount;
     },
@@ -575,7 +637,7 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
                 nativeWrappers,
                 excludedComponents,
                 viewsDir,
-                { strictNaming },
+                { strictNaming, testIdAttribute },
               ),
             ],
           });
@@ -623,6 +685,8 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
           customPomAttachments,
           projectRoot,
           customPomDir,
+		  customPomImportAliases,
+		  testIdAttribute,
         });
         const t1 = performance.now();
         log(`generate(${reason}): components=${snapshotHierarchy.size} in ${formatMs(t1 - t0)}`);
@@ -768,6 +832,8 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
             customPomAttachments,
             projectRoot,
             customPomDir,
+			customPomImportAliases,
+			testIdAttribute,
           });
           lastGeneratedEntryCount = Math.max(lastGeneratedEntryCount, componentHierarchyMap.size);
         }, 75);

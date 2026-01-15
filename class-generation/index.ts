@@ -49,6 +49,16 @@ export interface GenerateFilesOptions {
     customPomDir?: string;
 
     /**
+     * Optional import aliases for handwritten POM helpers.
+     *
+     * Keyed by the helper file/export name (basename of the .ts file).
+     * Value is the identifier to import it as.
+     *
+     * Example: { Toggle: "ToggleWidget" }
+     */
+    customPomImportAliases?: Record<string, string>;
+
+    /**
      * Handwritten POM helper attachments. These helpers are assumed to be present in the
      * aggregated output (e.g. via `pom/custom/*.ts` inlining), but we only attach them to
      * view classes that actually use certain components.
@@ -86,6 +96,16 @@ interface GenerateContentOptions {
 
     projectRoot?: string;
     customPomDir?: string;
+    customPomImportAliases?: Record<string, string>;
+
+    /** Attribute name to treat as the test id. Defaults to `data-testid`. */
+    testIdAttribute?: string;
+
+    /**
+     * Attribute name to treat as the test id in generated selectors.
+     * Defaults to `data-testid`.
+     */
+    testIdAttribute?: string;
 }
 
 export async function generateFiles(
@@ -100,12 +120,14 @@ export async function generateFiles(
         customPomAttachments = [],
         projectRoot,
         customPomDir,
+        customPomImportAliases,
+        testIdAttribute,
     } = options;
 
     // Default legacy behavior: write per-component next to the .vue file.
     if (!outDir) {
         for (const [componentName, dependencies] of componentHierarchyMap.entries()) {
-            const { filePath, content } = generateViewObjectModel(componentName, dependencies, componentHierarchyMap, vueFilesPathMap, basePageClassPath, { customPomAttachments });
+            const { filePath, content } = generateViewObjectModel(componentName, dependencies, componentHierarchyMap, vueFilesPathMap, basePageClassPath, { customPomAttachments, testIdAttribute });
             createFile(filePath, content);
         }
         return;
@@ -116,6 +138,8 @@ export async function generateFiles(
             customPomAttachments,
             projectRoot,
             customPomDir,
+            customPomImportAliases,
+            testIdAttribute,
         });
         for (const file of files) {
             createFile(file.filePath, file.content);
@@ -134,6 +158,8 @@ export async function generateFiles(
 
             projectRoot,
             customPomDir,
+            customPomImportAliases,
+            testIdAttribute,
         });
         createFile(newFilePath, content);
     }
@@ -259,6 +285,7 @@ function generateViewObjectModelContent(
         outputDir = path.dirname(filePath),
         aggregated = false,
         customPomAttachments = [],
+        testIdAttribute,
     } = options;
 
     const hasChildComponent = (needle: string) => {
@@ -339,14 +366,14 @@ function generateViewObjectModelContent(
 
     // Only views get child component instance fields by default.
     // Components will only get a constructor/fields when they have explicit custom attachments
-    // (e.g. wrapper components around ImmyDxDataGrid should get a `grid: Grid`).
+    // (e.g. wrapper components around a third-party data grid should get a `grid: Grid`).
     if (isView && (componentRefsForInstances.size > 0 || attachmentsForThisClass.length > 0 || widgetInstances.length > 0)) {
         content += getComponentInstances(componentRefsForInstances, componentHierarchyMap, attachmentsForThisClass, widgetInstances);
-        content += getConstructor(componentRefsForInstances, componentHierarchyMap, attachmentsForThisClass, widgetInstances);
+        content += getConstructor(componentRefsForInstances, componentHierarchyMap, attachmentsForThisClass, widgetInstances, { testIdAttribute });
     }
     if (!isView && attachmentsForThisClass.length > 0) {
         content += getComponentInstances(new Set(), componentHierarchyMap, attachmentsForThisClass);
-        content += getConstructor(new Set(), componentHierarchyMap, attachmentsForThisClass);
+        content += getConstructor(new Set(), componentHierarchyMap, attachmentsForThisClass, [], { testIdAttribute });
     }
 
     // Ergonomics: when a view is primarily composed of a single component POM (e.g. a form),
@@ -470,6 +497,7 @@ function generateAggregatedFiles(
         customPomAttachments?: GenerateFilesOptions["customPomAttachments"];
         projectRoot?: GenerateFilesOptions["projectRoot"];
         customPomDir?: GenerateFilesOptions["customPomDir"];
+        customPomImportAliases?: GenerateFilesOptions["customPomImportAliases"];
     } = {},
 ) {
     const projectRoot = options.projectRoot ?? process.cwd();
@@ -561,7 +589,8 @@ function generateAggregatedFiles(
             // merged-declaration conflicts in the aggregated output.
             const importAliases: Record<string, string> = {
                 Toggle: "ToggleWidget",
-                ImmyCheckBox: "ImmyCheckBoxWidget",
+                Checkbox: "CheckboxWidget",
+                ...(options.customPomImportAliases ?? {}),
             };
 
             const customDir = options.customPomDir ?? path.join(projectRoot, "pom/custom");
@@ -868,7 +897,7 @@ function toPascalCaseLocal(str: string): string {
 }
 
 interface WidgetInstance {
-    className: "ToggleWidget" | "ImmyCheckBoxWidget";
+    className: "ToggleWidget" | "CheckboxWidget";
     propertyName: string;
     testId: string;
 }
@@ -906,7 +935,7 @@ function getWidgetInstancesForView(componentName: string, dataTestIdSet: Set<IDa
             className = "ToggleWidget";
             stem = raw.slice(0, -toggleSuffix.length);
         } else if (raw.endsWith(checkboxSuffix)) {
-            className = "ImmyCheckBoxWidget";
+            className = "CheckboxWidget";
             stem = raw.slice(0, -checkboxSuffix.length);
         } else {
             continue;
@@ -937,13 +966,12 @@ function getWidgetInstancesForView(componentName: string, dataTestIdSet: Set<IDa
             continue;
         }
 
-        // ImmyCheckBox
+        // Checkbox
         const base = descriptorPascal
-            .replace(/ImmyCheckBox$/i, "")
             .replace(/CheckBox$/i, "")
             .replace(/Checkbox$/i, "");
         const propBase = lowerFirst(base);
-        const propName = ensureUnique(propBase ? `${propBase}ImmyCheckBox` : "immyCheckBox");
+        const propName = ensureUnique(propBase ? `${propBase}Checkbox` : "checkbox");
         out.push({ className, propertyName: propName, testId: raw });
     }
 
@@ -980,9 +1008,11 @@ function getConstructor(
     componentHierarchyMap: Map<string, IComponentDependencies>,
     attachmentsForThisView: Array<{ className: string; propertyName: string }> = [],
     widgetInstances: WidgetInstance[] = [],
+    options?: { testIdAttribute?: string },
 ) {
     let content = '    constructor(page: PwPage) {\n'
-    content += '        super(page);\n'
+    const attr = (options?.testIdAttribute ?? "data-testid").trim() || "data-testid";
+    content += `        super(page, { testIdAttribute: ${JSON.stringify(attr)} });\n`
 
     for (const a of attachmentsForThisView) {
         content += `        this.${a.propertyName} = new ${a.className}(page, this);\n`;
@@ -1031,10 +1061,15 @@ function generateRadioMethod(methodName: string, formattedDataTestId: string) {
 
 function generateSelectMethod(methodName: string, formattedDataTestId: string) {
     const name = `select${methodName}`;
-    const content: string = `  async ${name}(value: string, annotationText: string = "") {
-        await this.animateCursorToElement("[data-testid='${formattedDataTestId}']", false, 500, annotationText);
-        await this.page.selectOption("[data-testid='${formattedDataTestId}']", value);
-    }\n\n`;
+    const needsKey = formattedDataTestId.includes("${key}");
+    const selectorExpr = needsKey
+        ? `this.selectorForTestId(\`${formattedDataTestId}\`)`
+        : `this.selectorForTestId("${formattedDataTestId}")`;
+    const content: string = `  async ${name}(value: string, annotationText: string = "") {\n` +
+        `        const selector = ${selectorExpr};\n` +
+        `        await this.animateCursorToElement(selector, false, 500, annotationText);\n` +
+        `        await this.page.selectOption(selector, value);\n` +
+        `    }\n\n`;
     return content;
 }
 
@@ -1069,12 +1104,12 @@ function generateGetElementByDataTestId(methodName: string, nativeRole: string, 
 
     if (needsKey) {
         return `      ${name}(key: string) {\n` +
-            `        return this.page.getByTestId(\`${formattedDataTestId}\`);\n` +
+            `        return this.locatorByTestId(\`${formattedDataTestId}\`);\n` +
             `    }\n`;
     }
 
     return `      ${name}() {\n` +
-        `        return this.page.getByTestId("${formattedDataTestId}");\n` +
+        `        return this.locatorByTestId("${formattedDataTestId}");\n` +
         `    }\n\n`;
 }
 

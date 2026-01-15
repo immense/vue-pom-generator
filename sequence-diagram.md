@@ -14,7 +14,7 @@ sequenceDiagram
     Note over Vite,Compiler: Template Compilation Phase
     Vite->>Compiler: Compile Vue template
     Compiler->>Transform: Call NodeTransform for each node
-    
+
     Transform->>Element: Check node.type === ELEMENT?
     alt Not an element node
         Transform-->>Compiler: Skip (return)
@@ -29,17 +29,17 @@ sequenceDiagram
     end
 
     Transform->>Validator: nodeShouldBeIgnored(element, tag, fileName, context)
-    
+
     Note over Validator: Check Multiple Conditions
     Validator->>Validator: nodeHasClickDirective(node)?
     Validator->>Validator: nodeHasToDirective(node)?
     Validator->>Validator: nodeHasSubmitTypeOrHandlerAttribute(node)?
     Validator->>Validator: nodeHasForDirective(node)?
-    Validator->>Validator: getImmyInputValue(node, tag, fileName)?
-    Validator->>Validator: getImmyRadioGroupDataTestId(node, tag, fileName, parent)?
+    Validator->>Validator: getInputValue(node, tag, fileName)?
+    Validator->>Validator: getRadioGroupDataTestId(node, tag, fileName, parent)?
     Validator->>Validator: nodeHandlerAttributeValue(node)?
-    Validator->>Validator: getImmyTabItemDataTestId(node, tag, fileName)?
-    
+    Validator->>Validator: getTabItemDataTestId(node, tag, fileName)?
+
     alt None of the conditions match
         Validator-->>Transform: return null (skip element)
         Transform-->>Compiler: return (no test ID needed)
@@ -48,9 +48,9 @@ sequenceDiagram
     end
 
     Note over Transform,Generators: Test ID Generation Phase
-    
-    alt immyTabItemDataTestId exists
-        Transform->>Transform: desiredTestId = immyTabItemDataTestId
+
+    alt tabItemDataTestId exists
+        Transform->>Transform: desiredTestId = tabItemDataTestId
     else element.tag === "option"
         Transform->>Generators: isOptionTagWithvalue(node, componentName)
         Generators-->>Transform: return testId or empty
@@ -66,14 +66,14 @@ sequenceDiagram
             Transform->>Transform: desiredTestId = handlerAttributeValue
         end
     else vModelModelValue exists
-        Transform->>Generators: generateImmyInputTestId(componentName, vModelModelValue, tag)
+        Transform->>Generators: generateInputTestId(componentName, vModelModelValue, tag)
         Generators-->>Transform: return testId
         alt vModelModelValue.type === "checkbox"
             Transform->>Transform: Add to idSet and componentTestIds
             Transform-->>Compiler: return (handled by component)
         end
-    else immyRadioGroupDataTestId exists
-        Transform->>Transform: desiredTestId = immyRadioGroupDataTestId
+    else radioGroupDataTestId exists
+        Transform->>Transform: desiredTestId = radioGroupDataTestId
     else toDirective exists && no object name value
         Transform->>Transform: desiredTestId = fileName + placeholder + formatTagName
     else Default case (click/submit/for directives)
@@ -87,12 +87,12 @@ sequenceDiagram
                 Generators-->>Transform: return key value or null
             end
         end
-        
+
         alt No key found
             Transform->>Generators: getKeyDirectiveValue(node)
             Generators-->>Transform: return key placeholder or null
         end
-        
+
         alt keyAttributeValue contains placeholder
             Transform->>Transform: Generate simple testId with placeholder
         else Generate complex testId
@@ -125,17 +125,17 @@ sequenceDiagram
     Transform->>Transform: desiredTestId is now set
     Transform->>Transform: addComponentTestIds(componentName, componentTestIds, desiredTestId)
     Transform->>Element: addDataTestIdAttribute(element, desiredTestId, isDynamic)
-    
+
     Note over Element: Attribute Added
     alt isDynamic
         Element->>Element: Add :data-testid="`${testId}`" directive
     else Static
         Element->>Element: Add data-testid="testId" attribute
     end
-    
+
     Transform-->>Compiler: return (transformation complete)
     Compiler-->>Vite: Continue compilation
-    
+
     Note over Vite: Final Output
     Vite->>Vite: Generate compiled template with data-testid attributes
 ```
@@ -159,9 +159,9 @@ Validates whether an element needs a test ID by checking:
 ### 3. **Test ID Generators**
 Multiple specialized generators handle different element types:
 - `generateTestId()` - Main generator for click/submit elements
-- `generateImmyInputTestId()` - For input/textarea/checkbox
-- `getImmyRadioGroupDataTestId()` - For radio groups and selects
-- `getImmyTabItemDataTestId()` - For tab items
+- `generateInputTestId()` - For input/textarea/checkbox
+- `getRadioGroupDataTestId()` - For radio groups and selects
+- `getTabItemDataTestId()` - For tab items
 - `isOptionTagWithvalue()` - For option elements
 
 ### 4. **Helper Functions**

@@ -11,13 +11,13 @@ import type { ElementMetadata } from "./metadata-collector";
 
 export type DataTestIdProp = AttributeNode | DirectiveNode | undefined;
 
-export function findDataTestIdProp(element: ElementNode): DataTestIdProp {
+export function findDataTestIdProp(element: ElementNode, attributeName: string = "data-testid"): DataTestIdProp {
   return element.props.find(prop =>
-    (prop.type === NodeTypes.ATTRIBUTE && prop.name === "data-testid")
+    (prop.type === NodeTypes.ATTRIBUTE && prop.name === attributeName)
     || (prop.type === NodeTypes.DIRECTIVE
       && prop.name === "bind"
       && prop.arg?.type === NodeTypes.SIMPLE_EXPRESSION
-      && prop.arg.content === "data-testid"),
+      && prop.arg.content === attributeName),
   ) as AttributeNode | DirectiveNode | undefined;
 }
 
@@ -74,10 +74,12 @@ export function tryCreateElementMetadata(args: {
   debug: boolean;
   debugPrefix: string;
   preferJsonParseFailureAsContentArray: boolean;
+  testIdAttribute?: string;
 }): ElementMetadata | null {
   const { element, semanticNameMap, debug, debugPrefix, preferJsonParseFailureAsContentArray } = args;
+  const testIdAttribute = (args.testIdAttribute ?? "data-testid").trim() || "data-testid";
 
-  const testIdProp = findDataTestIdProp(element);
+  const testIdProp = findDataTestIdProp(element, testIdAttribute);
   if (!testIdProp) {
     return null;
   }

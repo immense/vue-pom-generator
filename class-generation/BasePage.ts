@@ -114,6 +114,8 @@ class BrowserCursorCoordinates {
  * for all component-specific Page Object Models
  */
 export class BasePage {
+  protected readonly testIdAttribute: string;
+
   // Cache whether we've attempted to initialize the in-page cursor for this
   // page instance. The initializer is idempotent and will recreate the cursor
   // if it was removed by navigation/reload.
@@ -122,7 +124,9 @@ export class BasePage {
   /**
    * @param {Page} page - Playwright page object
    */
-  constructor(protected page: PwPage) {
+  constructor(protected page: PwPage, options?: { testIdAttribute?: string }) {
+    this.testIdAttribute = (options?.testIdAttribute || "data-testid").trim() || "data-testid";
+
     // Navigation/reload can wipe the cursor DOM node. Reset our cache so the
     // next action re-initializes the cursor and resets cached coordinates.
     this.page.on("framenavigated", (frame) => {
@@ -135,6 +139,14 @@ export class BasePage {
         // Ignore; page may already be closing.
       }
     });
+  }
+
+  protected selectorForTestId(testId: string): string {
+    return `[${this.testIdAttribute}="${testId}"]`;
+  }
+
+  protected locatorByTestId(testId: string): PwLocator {
+    return this.page.locator(this.selectorForTestId(testId));
   }
 
   private async waitForTestIdClickEventAfter(testId: string, options?: { timeoutMs?: number }): Promise<void> {
@@ -473,6 +485,7 @@ export class BasePage {
           startY,
           durationMs,
           pulseOnArrival,
+          testIdAttribute,
         } = args;
 
         // Scroll the element into view before measuring.
@@ -573,7 +586,7 @@ export class BasePage {
           }
         }
 
-        const testId = (el as HTMLElement | null)?.getAttribute?.("data-testid") ?? null;
+        const testId = (el as HTMLElement | null)?.getAttribute?.(testIdAttribute) ?? null;
         const instrumented = ((el as HTMLElement | null)?.getAttribute?.("data-click-instrumented") ?? "") === "1";
 
         return { endX, endY, distance, testId, instrumented };
@@ -586,6 +599,7 @@ export class BasePage {
         startY,
         durationMs: delay,
         pulseOnArrival: executeClick,
+        testIdAttribute: this.testIdAttribute,
       },
     );
 
@@ -682,7 +696,7 @@ export class BasePage {
    * @param testId The data-testid of the element to click
    */
   protected async clickByTestId(testId: string, annotationText: string = "", wait: boolean = true): Promise<void> {
-    await this.animateCursorToElement(`[data-testid="${testId}"]`, true, 200, annotationText, wait);
+    await this.animateCursorToElement(this.selectorForTestId(testId), true, 200, annotationText, wait);
   }
 
   public async clickLocator(locator: PwLocator, annotationText: string = "", wait: boolean = true): Promise<void> {
@@ -701,7 +715,7 @@ export class BasePage {
   }
 
   protected async fillInputByTestId(testId: string, text: string, annotationText: string = ""): Promise<void> {
-    await this.animateCursorToElementAndClickAndFill(`[data-testid="${testId}"]`, text, true, 200, annotationText);
+    await this.animateCursorToElementAndClickAndFill(this.selectorForTestId(testId), text, true, 200, annotationText);
   }
 
   /**
@@ -717,7 +731,7 @@ export class BasePage {
    * This is emitted frequently by the generator; keeping it here reduces per-page duplicated code.
    */
   protected async selectVSelectByTestId(testId: string, value: string, timeOut: number = 500, annotationText: string = ""): Promise<void> {
-    const root = this.page.locator(`[data-testid="${testId}"]`);
+    const root = this.locatorByTestId(testId);
     const input = root.locator("input");
 
     await this.moveCursorTo(input, 200, annotationText);
@@ -754,7 +768,7 @@ export class BasePage {
    * @returns True if the element is visible, false otherwise
    */
   protected async isVisibleByTestId(testId: string): Promise<boolean> {
-    return await this.page.isVisible(`[data-testid="${testId}"]`);
+    return await this.page.isVisible(this.selectorForTestId(testId));
   }
 
   /**
@@ -763,7 +777,7 @@ export class BasePage {
    * @returns The text content of the element
    */
   protected async getTextByTestId(testId: string): Promise<string | null> {
-    return await this.page.textContent(`[data-testid="${testId}"]`);
+    return await this.page.textContent(this.selectorForTestId(testId));
   }
 
   /**
@@ -774,7 +788,7 @@ export class BasePage {
    * @returns A promise that resolves when the element is visible
    */
   protected async waitForTestId(testId: string, options?: { timeout?: number }): Promise<void> {
-    await this.page.waitForSelector(`[data-testid="${testId}"]`, options);
+    await this.page.waitForSelector(this.selectorForTestId(testId), options);
   }
 
   /**
@@ -782,7 +796,7 @@ export class BasePage {
    * @param testId The data-testid of the element to hover over
    */
   protected async hoverByTestId(testId: string): Promise<void> {
-    const selector = `[data-testid="${testId}"]`;
+    const selector = this.selectorForTestId(testId);
     await this.moveCursorTo(selector);
     await this.page.hover(selector);
   }
@@ -793,7 +807,7 @@ export class BasePage {
    * @param value The value to select
    */
   protected async selectByTestId(testId: string, value: string): Promise<void> {
-    await this.page.selectOption(`[data-testid="${testId}"]`, value);
+    await this.page.selectOption(this.selectorForTestId(testId), value);
   }
 }
 

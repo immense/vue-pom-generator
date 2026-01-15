@@ -1003,7 +1003,7 @@ export function getComposedClickHandlerContent(
       elementSource ? `Element: ${elementSource}` : "",
       clickDirectiveSource ? `Click: ${clickDirectiveSource}` : "",
       clickExpressionSource ? `Click expression: ${clickExpressionSource}` : "",
-      `Fix: add an explicit data-testid, or use a named click handler (e.g. @click=\"save\"), or provide literal button text.`,
+      `Fix: add an explicit test id attribute, or use a named click handler (e.g. @click="save"), or provide literal button text.`,
     ].filter(Boolean);
 
     throw new Error(lines.join("\n"));
@@ -1284,14 +1284,23 @@ export function getInnerText(node: ElementNode): string {
 
 
 /**
- * Finds an existing data-testid attribute
+ * Finds an existing test id attribute (static or bound).
  */
-export function findDataTestIdAttribute(element: ElementNode): AttributeNode | DirectiveNode | null {
-  const staticAttr = findAttributeByKey(element, "data-testid");
+export function findTestIdAttribute(element: ElementNode, attributeName: string): AttributeNode | DirectiveNode | null {
+  const staticAttr = findAttributeByKey(element, attributeName);
   if (staticAttr)
     return staticAttr;
 
-  return findDirectiveByName(element, "bind", "data-testid") ?? null;
+  return findDirectiveByName(element, "bind", attributeName) ?? null;
+}
+
+/**
+ * Finds an existing data-testid attribute.
+ *
+ * @deprecated Prefer `findTestIdAttribute(element, attributeName)`.
+ */
+export function findDataTestIdAttribute(element: ElementNode): AttributeNode | DirectiveNode | null {
+  return findTestIdAttribute(element, "data-testid");
 }
 
 /**
@@ -1335,27 +1344,27 @@ export function addAttribute(
 }
 
 /**
- * Removes data-testid attribute or directive from an element
+ * Removes test id attribute or directive from an element.
  */
-export function removeDataTestIdAttribute(element: ElementNode): void {
+export function removeDataTestIdAttribute(element: ElementNode, attributeName: string = "data-testid"): void {
   element.props = element.props.filter((prop) => {
     // Remove static attribute: data-testid="..."
-    if (prop.type === NodeTypes.ATTRIBUTE && prop.name === "data-testid") {
-      return false;
+    if (prop.type === NodeTypes.ATTRIBUTE && prop.name === attributeName) {
+      return "";
+    // First, try to find emitted event names anywhere in the handler AST.
+    // This covers:
+    // - @click="emit('clicked')"
+    // - @click="a(); emit('clicked')" (Program)
+    // - @click="if (x) emit('clicked')" (statement-shaped)
+    const emitted = extractEmittedEventNameFromAst(ast);
+    if (emitted)
+      return emitted;
+    // Vue's expression AST sometimes wraps as ExpressionStatement.
+    if (isExpressionStatement(ast)) {
+      return getStableClickHandlerNameFromExpression(ast.expression);
     }
-
-    // Remove dynamic directive: :data-testid="..." or v-bind:data-testid="..."
-    if (
-      prop.type === NodeTypes.DIRECTIVE &&
-      prop.name === "bind" &&
-      prop.arg?.type === NodeTypes.SIMPLE_EXPRESSION &&
-      prop.arg.content === "data-testid"
-    ) {
-      return false;
-    }
-
-    return true;
-  });
+    // Most often it's already an Expression.
+    return getStableClickHandlerNameFromExpression(ast);
 }
 
 export interface ExistingElementDataTestIdInfo {
@@ -1376,8 +1385,8 @@ export interface ExistingElementDataTestIdInfo {
  *
  * Unknown expressions are treated as dynamic/unknown.
  */
-export function tryGetExistingElementDataTestId(node: ElementNode): ExistingElementDataTestIdInfo | null {
-  const existing = findDataTestIdAttribute(node);
+export function tryGetExistingElementDataTestId(node: ElementNode, attributeName: string = "data-testid"): ExistingElementDataTestIdInfo | null {
+  const existing = findTestIdAttribute(node, attributeName);
   if (!existing) {
     return null;
   }
@@ -1641,6 +1650,8 @@ export function applyResolvedDataTestId(args: {
   bestKeyPlaceholder: string | null;
   entryOverrides?: Partial<IDataTestId>;
   addHtmlAttribute?: boolean;
+  /** Attribute name to use for injection and parsing. Defaults to data-testid. */
+  testIdAttribute?: string;
   generateMethodContent: (
     targetPageObjectModelClass: string | undefined,
     methodName: string,
@@ -1651,24 +1662,26 @@ export function applyResolvedDataTestId(args: {
 }): void {
   const addHtmlAttribute = args.addHtmlAttribute ?? true;
   const entryOverrides = args.entryOverrides ?? {};
+  const testIdAttribute = args.testIdAttribute ?? "data-testid";
 
   // 1) Resolve effective data-testid (respecting any existing attribute).
   let dataTestId = args.preferredGeneratedValue;
   let fromExisting = false;
 
-  const existing = tryGetExistingElementDataTestId(args.element);
+  const existing = tryGetExistingElementDataTestId(args.element, testIdAttribute);
   if (existing) {
     if (args.bestKeyPlaceholder && existing.isStaticLiteral) {
       const loc = args.element.loc?.start;
       const locationHint = loc ? `${loc.line}:${loc.column}` : "unknown";
       const file = args.contextFilename ?? "unknown";
+      const attrLabel = testIdAttribute || "data-testid";
       throw new Error(
-        `[vue-testid-injector] Existing data-testid appears to be missing the key placeholder needed to keep it unique.\n`
+        `[vue-testid-injector] Existing ${attrLabel} appears to be missing the key placeholder needed to keep it unique.\n`
         + `Component: ${args.componentName}\n`
         + `File: ${file}:${locationHint}\n`
-        + `Existing data-testid: ${JSON.stringify(existing.value)}\n`
+        + `Existing ${attrLabel}: ${JSON.stringify(existing.value)}\n`
         + `Required placeholder: ${JSON.stringify(args.bestKeyPlaceholder)}\n\n`
-        + `Fix: either (1) include ${args.bestKeyPlaceholder} in your :data-testid template literal, or (2) remove the explicit data-testid so it can be auto-generated.`,
+        + `Fix: either (1) include ${args.bestKeyPlaceholder} in your :${attrLabel} template literal, or (2) remove the explicit ${attrLabel} so it can be auto-generated.`,
       );
     }
 
@@ -1685,11 +1698,11 @@ export function applyResolvedDataTestId(args: {
 
   // 3) Apply attribute (only when we generated it) and register for POM generation.
   if (addHtmlAttribute && !fromExisting) {
-    const existingTestIdAttr = findDataTestIdAttribute(args.element);
+    const existingTestIdAttr = findTestIdAttribute(args.element, testIdAttribute);
     if (existingTestIdAttr) {
-      removeDataTestIdAttribute(args.element);
+      removeDataTestIdAttribute(args.element, testIdAttribute);
     }
-    addAttribute(args.element, "data-testid", dataTestId);
+    addAttribute(args.element, testIdAttribute, dataTestId);
   }
 
   const childComponentName = args.element.tag;
