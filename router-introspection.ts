@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 import { toPascalCase } from "./utils";
 import type { Router, RouteRecordNormalized } from "vue-router";
 import { JSDOM } from "jsdom";
@@ -12,7 +13,8 @@ function debugLog(message: string) {
   }
 }
 
-function createRouterIntrospectionVueStubPlugin(): VitePlugin {
+function createRouterIntrospectionVueStubPlugin(options: { routerEntryAbs: string }): VitePlugin {
+  const routerEntryAbs = path.resolve(options.routerEntryAbs);
   return {
     name: "vue-testid-router-introspection-vue-stub",
     enforce: "pre",
@@ -48,6 +50,11 @@ function createRouterIntrospectionVueStubPlugin(): VitePlugin {
       // Handle Vite /@fs/ prefix (absolute filesystem path outside root).
       const fsPath = cleanId.startsWith("/@fs/") ? cleanId.slice("/@fs/".length) : cleanId;
 
+      // Always allow the router entry itself to be loaded by Vite/Node.
+      // Note: Vite may normalize paths with posix separators. We always compare resolved absolute paths.
+      if (path.isAbsolute(fsPath) && path.resolve(fsPath) === routerEntryAbs)
+        return null;
+
       // If this still isn't a filesystem absolute path, it's not something we should stub.
       // Returning null means "not handled".
       if (!path.isAbsolute(fsPath))
@@ -59,11 +66,6 @@ function createRouterIntrospectionVueStubPlugin(): VitePlugin {
         throw new Error(`[vue-testid-injector][router-introspection] Unsupported node_modules import during router introspection: ${cleanId}`);
 
       const parsed = path.parse(fsPath);
-
-      // Always allow the router entry itself to be loaded by Vite/Node.
-      // Use path operations instead of suffix matching.
-      if (parsed.base === "router.ts" && path.basename(parsed.dir) === "src")
-        return null;
 
       // Only `.ts/.tsx` (router code) and `.vue` (stubs) are permitted.
       if (parsed.ext !== ".vue") {
@@ -251,8 +253,11 @@ async function ensureDomShim() {
  * This replaces the previous regex-based parsing so we can support nested route shapes,
  * redirects, and any non-trivial route record composition without maintaining a parser.
  */
-export async function parseRouterFileFromCwd(cwd: string): Promise<RouterIntrospectionResult> {
-  const routerEntry = path.resolve(cwd, "src/router.ts");
+export async function parseRouterFileFromCwd(
+  cwd: string,
+  options: { routerEntry?: string } = {},
+): Promise<RouterIntrospectionResult> {
+  const routerEntry = path.resolve(cwd, options.routerEntry ?? "src/router.ts");
   if (!fs.existsSync(routerEntry)) {
     throw new Error(`[vue-testid-injector] Router entry not found at ${routerEntry}.`);
   }
@@ -297,16 +302,20 @@ export async function parseRouterFileFromCwd(cwd: string): Promise<RouterIntrosp
     // Important: Do NOT include @vitejs/plugin-vue here.
     // We stub all `.vue` imports ourselves, and including the Vue plugin would attempt to parse
     // those stubbed modules as real SFCs (and fail).
-    plugins: [createRouterIntrospectionVueStubPlugin()],
+    plugins: [createRouterIntrospectionVueStubPlugin({ routerEntryAbs: routerEntry })],
   });
 
   try {
-    debugLog("ssrLoadModule(/src/router.ts) start");
-    const mod = await server.ssrLoadModule("/src/router.ts") as { default?: () => Router };
-    debugLog(`ssrLoadModule(/src/router.ts) done; hasDefault=${typeof mod?.default === "function"}`);
+    // Use a file URL so we don't depend on platform-specific path separators.
+    // Vite can SSR-load file URLs and will treat this as an absolute module id.
+    const moduleId = pathToFileURL(routerEntry).href;
+
+    debugLog(`ssrLoadModule(${moduleId}) start`);
+    const mod = await server.ssrLoadModule(moduleId) as { default?: () => Router };
+    debugLog(`ssrLoadModule(${moduleId}) done; hasDefault=${typeof mod?.default === "function"}`);
     const makeRouter = mod?.default;
     if (typeof makeRouter !== "function") {
-      throw new TypeError("[vue-testid-injector] src/router.ts must export a default router factory function (export default makeRouter).");
+      throw new TypeError(`[vue-testid-injector] ${routerEntry} must export a default router factory function (export default makeRouter).`);
     }
 
     let router: Router;

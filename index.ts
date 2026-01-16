@@ -35,6 +35,18 @@ export interface CreateVueTestIdPluginsOptions {
    * - outDir as object: writes TWO files (one under pages, one under components)
    */
   singleFile?: boolean;
+
+  /**
+   * Generate Playwright fixture helpers alongside generated POMs.
+   *
+   * Conventional Vite/Rollup config style:
+   * - `true`: enable with defaults
+   * - `{ outDir }`: enable and override where fixture files are written
+   */
+  generatePlaywrightFixtures?: boolean | {
+    /** Directory to write fixture files to (resolved relative to projectRoot). */
+    outDir?: string;
+  };
   /**
    * Folder convention used to identify "pages" (Nuxt/Vue) or "views" (this repo).
    * Defaults to `/src/views/`.
@@ -100,6 +112,14 @@ export interface CreateVueTestIdPluginsOptions {
   vueRouterFluentChaining?: boolean;
 
   /**
+   * Location of the router entry (the module that exports the default router factory).
+   *
+   * This is resolved relative to `projectRoot` unless you provide an absolute path.
+   * Defaults to `src/router.ts`.
+   */
+  routerEntry?: string;
+
+  /**
    * When enabled, the transform will throw if it cannot derive a stable name for a clickable element
    * (e.g. @click with no resolvable handler name and no literal inner text).
    *
@@ -145,6 +165,8 @@ export function createVueTestIdPlugins(options: CreateVueTestIdPluginsOptions = 
     excludedComponents = [],
     testIdAttribute = "data-testid",
     vueRouterFluentChaining = true,
+    routerEntry,
+    generatePlaywrightFixtures,
     strictNaming = false,
     projectRoot = process.cwd(),
     basePageClassPath: basePageClassPathOverride,
@@ -190,6 +212,8 @@ export function createVueTestIdPlugins(options: CreateVueTestIdPluginsOptions = 
     outDir,
     singleFile,
 		vueRouterFluentChaining,
+    routerEntry,
+    generatePlaywrightFixtures,
 
     projectRoot,
     basePageClassPath: basePageClassPathOverride,
@@ -341,6 +365,8 @@ interface SupportFactoryOptions {
   outDir?: string | { pages: string; components: string };
   singleFile: boolean;
 	vueRouterFluentChaining: boolean;
+  routerEntry?: string;
+  generatePlaywrightFixtures?: CreateVueTestIdPluginsOptions["generatePlaywrightFixtures"];
 	customPomAttachments?: Array<{ className: string; propertyName: string; attachWhenUsesComponents: string[] }>;
   projectRoot: string;
   basePageClassPath?: string;
@@ -361,6 +387,8 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
     outDir,
     singleFile,
     vueRouterFluentChaining,
+    routerEntry,
+    generatePlaywrightFixtures,
     customPomAttachments,
     projectRoot,
     basePageClassPath: basePageClassPathOverride,
@@ -389,7 +417,7 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
     }
     catch {
       // Fallback for CJS output.
-      // eslint-disable-next-line no-undef
+
       return path.resolve(__dirname, "class-generation", "BasePage.ts");
     }
   };
@@ -410,7 +438,7 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
 			return;
 		}
 
-    const { routeNameMap, routePathMap } = await parseRouterFileFromCwd(projectRoot);
+    const { routeNameMap, routePathMap } = await parseRouterFileFromCwd(projectRoot, { routerEntry });
 		setRouteNameToComponentNameMap(routeNameMap);
 
       // Provide a resolve()-like helper:
@@ -438,7 +466,7 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
     },
     buildEnd() {
       // Vite normalizes resolved ids to posix-style paths for plugin hooks.
-      const normalizedBasePagePath = path.posix.normalize(basePageClassPath.replace(/\\/g, "/"));
+      const normalizedBasePagePath = path.posix.normalize(basePageClassPath);
       const entryCount = componentHierarchyMap.size;
       if (entryCount <= 0) {
         // Skip generation rather than overwriting an existing aggregated file with an empty one.
@@ -453,11 +481,12 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
       generateFiles(componentHierarchyMap, vueFilesPathMap, normalizedBasePagePath, {
         outDir,
         singleFile,
+		generatePlaywrightFixtures,
 		customPomAttachments,
 		projectRoot,
 		customPomDir,
 		customPomImportAliases,
-    testIdAttribute,
+		testIdAttribute,
       });
       lastGeneratedEntryCount = entryCount;
     },
@@ -509,7 +538,7 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
           return;
         }
 
-        const { routeNameMap, routePathMap } = await parseRouterFileFromCwd(projectRoot);
+  			const { routeNameMap, routePathMap } = await parseRouterFileFromCwd(projectRoot, { routerEntry });
         setRouteNameToComponentNameMap(routeNameMap);
         setResolveToComponentNameFn((to) => {
           if (typeof to === "string") {
@@ -682,6 +711,7 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
         generateFiles(snapshotHierarchy, snapshotVuePathMap, normalizedBasePagePath, {
           outDir,
           singleFile,
+          generatePlaywrightFixtures,
           customPomAttachments,
           projectRoot,
           customPomDir,
@@ -829,6 +859,7 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
           generateFiles(componentHierarchyMap, vueFilesPathMap, normalizedBasePagePath, {
             outDir,
             singleFile,
+            generatePlaywrightFixtures,
             customPomAttachments,
             projectRoot,
             customPomDir,
