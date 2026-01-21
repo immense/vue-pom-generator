@@ -38,7 +38,7 @@ const CLICK_EVENT_NAME = TESTID_CLICK_EVENT_NAME;
 const ENABLE_CLICK_INSTRUMENTATION = true;
 
 // Cache inferred wrapper configs across transforms/build passes.
-// Keyed by component tag name (e.g. "ImmyInput").
+// Keyed by component tag name (e.g. "CustomInput").
 const inferredNativeWrapperConfigByTag = new Map<string, { role: string }>();
 
 function tryInferNativeWrapperRoleFromSfc(tag: string): { role: "input" | "select" } | null {
@@ -95,13 +95,13 @@ function tryInferNativeWrapperRoleFromSfc(tag: string): { role: "input" | "selec
 
     // Find first Element-like node in root children (skip text/comments).
     // We intentionally only look at the first meaningful root tag; this is a conservative heuristic.
-    const children = (ast as unknown as { children?: Array<{ type: number; tag?: string }> }).children ?? [];
+    const children = ast.children ?? [];
     for (const child of children) {
       if (!child || typeof child !== "object")
         continue;
       // NodeTypes.ELEMENT === 1
-      if ((child as { type: number }).type === 1 && typeof (child as { tag?: string }).tag === "string") {
-        rootTag = ((child as { tag: string }).tag || "").toLowerCase();
+      if (child.type === NodeTypes.ELEMENT && typeof child.tag === "string") {
+        rootTag = (child.tag || "").toLowerCase();
         break;
       }
     }
@@ -374,7 +374,7 @@ export function createTestIdTransform(
     const parentIsRoot = context?.parent?.type === NodeTypes.ROOT;
     hierarchyMap.set(element, parentIsRoot ? null : context?.parent as ElementNode | null);
 
-    const toPosixPath = (filePath: string) => filePath.replace(/\\/g, "/");
+    const toPosixPath = (filePath: string) => path.posix.normalize(path.resolve(filePath));
 
     const getParentComponentName = () => {
       // Vite often provides posix-style paths, but on Windows we can still see backslashes.
@@ -431,7 +431,7 @@ export function createTestIdTransform(
     }
 
     // Opportunistically infer wrapper semantics for simple "single native input" components
-    // (e.g. ImmyInput/ImmyTextArea) so they behave like real inputs without requiring
+    // (e.g. CustomInput/CustomTextArea) so they behave like real inputs without requiring
     // explicit configuration in vite.config.ts.
     if (!nativeWrappers[element.tag]) {
       const inferred = tryInferNativeWrapperRoleFromSfc(element.tag);
