@@ -106,18 +106,14 @@ export interface CreateVueTestIdPluginsOptions {
   };
 
   /**
-   * When false, disables vue-router introspection and skips resolving `:to` directives
-   * to a target component name.
-   */
-  vueRouterFluentChaining?: boolean;
-
-  /**
-   * Location of the router entry (the module that exports the default router factory).
+   * Router introspection configuration used for resolving `:to` directives and generating
+   * navigation helpers.
    *
-   * This is resolved relative to `projectRoot` unless you provide an absolute path.
-   * Defaults to `src/router.ts`.
+   * - false: disable vue-router introspection
+   * - string: router entry path (resolved relative to projectRoot)
+   * - { entry }: router entry path (resolved relative to projectRoot)
    */
-  routerEntry?: string;
+  router?: false | string | { entry?: string };
 
   /**
    * When enabled, the transform will throw if it cannot derive a stable name for a clickable element
@@ -138,21 +134,6 @@ export interface CreateVueTestIdPluginsOptions {
     * Defaults to the copy shipped with this package: ./class-generation/BasePage.ts.
    */
   basePageClassPath?: string;
-
-  /**
-   * @deprecated Prefer `customPom.attachments`.
-   */
-  customPomAttachments?: NonNullable<CreateVueTestIdPluginsOptions["customPom"]>["attachments"];
-
-  /**
-   * @deprecated Prefer `customPom.dir`.
-   */
-  customPomDir?: string;
-
-  /**
-   * @deprecated Prefer `customPom.importAliases`.
-   */
-  customPomImportAliases?: Record<string, string>;
 }
 
 export function createVueTestIdPlugins(options: CreateVueTestIdPluginsOptions = {}): PluginOption[] {
@@ -164,21 +145,17 @@ export function createVueTestIdPlugins(options: CreateVueTestIdPluginsOptions = 
     nativeWrappers = {},
     excludedComponents = [],
     testIdAttribute = "data-testid",
-    vueRouterFluentChaining = true,
-    routerEntry,
+    router,
     generatePlaywrightFixtures,
     strictNaming = false,
     projectRoot = process.cwd(),
     basePageClassPath: basePageClassPathOverride,
     customPom,
-    customPomAttachments,
-    customPomDir,
-    customPomImportAliases,
   } = options;
 
-  const resolvedCustomPomAttachments = customPom?.attachments ?? customPomAttachments ?? [];
-  const resolvedCustomPomDir = customPom?.dir ?? customPomDir;
-  const resolvedCustomPomImportAliases = customPom?.importAliases ?? customPomImportAliases;
+  const resolvedCustomPomAttachments = customPom?.attachments ?? [];
+  const resolvedCustomPomDir = customPom?.dir;
+  const resolvedCustomPomImportAliases = customPom?.importAliases;
 
   const componentTestIds = new Map<string, Set<string>>();
   const elementMetadata = new Map<string, Map<string, ElementMetadata>>();
@@ -201,6 +178,11 @@ export function createVueTestIdPlugins(options: CreateVueTestIdPluginsOptions = 
     testIdAttribute,
   });
 
+  const resolvedRouterEnabled = router !== false;
+  const resolvedRouterEntry = typeof router === "string"
+    ? router
+    : (typeof router === "object" && router ? router.entry : undefined);
+
   const supportPlugins = createSupportPlugins({
     componentTestIds,
     componentHierarchyMap,
@@ -211,10 +193,9 @@ export function createVueTestIdPlugins(options: CreateVueTestIdPluginsOptions = 
     strictNaming,
     outDir,
     singleFile,
-		vueRouterFluentChaining,
-    routerEntry,
+    vueRouterFluentChaining: resolvedRouterEnabled,
+    routerEntry: resolvedRouterEntry,
     generatePlaywrightFixtures,
-
     projectRoot,
     basePageClassPath: basePageClassPathOverride,
     customPomAttachments: resolvedCustomPomAttachments,
@@ -397,6 +378,16 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
     testIdAttribute,
   } = options;
 
+  const resolveRouterEntry = () => {
+    if (!vueRouterFluentChaining)
+      return undefined;
+    if (!routerEntry)
+      throw new Error("[vue-testid-injector] router.entry is required when router introspection is enabled.");
+    return path.isAbsolute(routerEntry) ? routerEntry : path.resolve(projectRoot, routerEntry);
+  };
+
+  const resolvedRouterEntry = resolveRouterEntry();
+
   // Bridge between configureServer (where we have timers/logger) and handleHotUpdate.
   let scheduleVueFileRegen: ((filePath: string, source: "hmr" | "fs") => void) | null = null;
   // Vite (v6/v7) may run multiple build environments/passes (e.g. SSR + client) in a single invocation.
@@ -438,7 +429,9 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
 			return;
 		}
 
-    const { routeNameMap, routePathMap } = await parseRouterFileFromCwd(projectRoot, { routerEntry });
+    if (!resolvedRouterEntry)
+      throw new Error("[vue-testid-injector] router.entry is required when router introspection is enabled.");
+    const { routeNameMap, routePathMap } = await parseRouterFileFromCwd(resolvedRouterEntry);
 		setRouteNameToComponentNameMap(routeNameMap);
 
       // Provide a resolve()-like helper:
@@ -487,6 +480,8 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
 		customPomDir,
 		customPomImportAliases,
 		testIdAttribute,
+        vueRouterFluentChaining,
+        routerEntry: resolvedRouterEntry,
       });
       lastGeneratedEntryCount = entryCount;
     },
@@ -538,7 +533,9 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
           return;
         }
 
-  			const { routeNameMap, routePathMap } = await parseRouterFileFromCwd(projectRoot, { routerEntry });
+        if (!resolvedRouterEntry)
+          throw new Error("[vue-testid-injector] router.entry is required when router introspection is enabled.");
+        const { routeNameMap, routePathMap } = await parseRouterFileFromCwd(resolvedRouterEntry);
         setRouteNameToComponentNameMap(routeNameMap);
         setResolveToComponentNameFn((to) => {
           if (typeof to === "string") {
@@ -717,6 +714,8 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
           customPomDir,
 		  customPomImportAliases,
 		  testIdAttribute,
+          vueRouterFluentChaining,
+          routerEntry: resolvedRouterEntry,
         });
         const t1 = performance.now();
         log(`generate(${reason}): components=${snapshotHierarchy.size} in ${formatMs(t1 - t0)}`);
@@ -865,6 +864,8 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
             customPomDir,
 			customPomImportAliases,
 			testIdAttribute,
+            vueRouterFluentChaining,
+            routerEntry: resolvedRouterEntry,
           });
           lastGeneratedEntryCount = Math.max(lastGeneratedEntryCount, componentHierarchyMap.size);
         }, 75);

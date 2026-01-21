@@ -3,7 +3,7 @@ import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { toPascalCase } from "./utils";
-import type { Router, RouteRecordNormalized } from "vue-router";
+import type { Router, RouteLocationNormalizedLoaded, RouteRecordNormalized } from "vue-router";
 import { JSDOM } from "jsdom";
 import type { Plugin as VitePlugin } from "vite";
 
@@ -84,6 +84,12 @@ function createRouterIntrospectionVueStubPlugin(options: { routerEntryAbs: strin
 export interface RouterIntrospectionResult {
   routeNameMap: Map<string, string>;
   routePathMap: Map<string, string>;
+  routeMetaEntries: Array<{
+    componentName: string;
+    pathTemplate: string;
+    params: Array<{ name: string; optional: boolean }>;
+    query: string[];
+  }>;
 }
 
 interface HistoryLike {
@@ -124,6 +130,117 @@ interface VueComponentLike {
   __file?: string;
   __name?: string;
   name?: string;
+}
+
+type RoutePropPrimitive = string | number | boolean | null | undefined;
+type RoutePropsFunction = (route: RouteLocationNormalizedLoaded) => Record<string, RoutePropPrimitive> | void;
+type RoutePropsValue = boolean | Record<string, RoutePropPrimitive> | RoutePropsFunction;
+type RoutePropsContainer = RoutePropsValue | { default?: RoutePropsValue };
+
+const PARAM_TOKEN_PREFIX = "__VUE_TESTID_PARAM__";
+
+function getParamToken(name: string) {
+  return `${PARAM_TOKEN_PREFIX}${name}__`;
+}
+
+function collectRoutePropKeysFromFunction(propsFn: RoutePropsFunction) {
+  const paramKeys = new Set<string>();
+  const queryKeys = new Set<string>();
+
+  const paramsProxy = new Proxy({}, {
+    get(_target, prop) {
+      if (typeof prop === "string")
+        paramKeys.add(prop);
+      return undefined;
+    },
+  });
+
+  const queryProxy = new Proxy({}, {
+    get(_target, prop) {
+      if (typeof prop === "string")
+        queryKeys.add(prop);
+      return undefined;
+    },
+  });
+
+  const routeProxy = new Proxy({ params: paramsProxy, query: queryProxy }, {
+    get(target, prop) {
+      if (prop in target)
+        return target[prop as keyof typeof target];
+      return undefined;
+    },
+  });
+
+  try {
+    propsFn(routeProxy as RouteLocationNormalizedLoaded);
+  }
+  catch {
+    // Ignore errors; we only care about which props are accessed.
+  }
+
+  return {
+    paramKeys: Array.from(paramKeys).sort((a, b) => a.localeCompare(b)),
+    queryKeys: Array.from(queryKeys).sort((a, b) => a.localeCompare(b)),
+  };
+}
+
+function getRoutePropsKeys(record: RouteRecordNormalized) {
+  const props = record.props as RoutePropsContainer | undefined;
+  if (!props) {
+    return { paramKeys: [], queryKeys: [] };
+  }
+
+  const normalized = (typeof props === "object" && "default" in props)
+    ? (props as { default?: RoutePropsValue }).default
+    : props;
+
+  if (typeof normalized === "function")
+    return collectRoutePropKeysFromFunction(normalized as RoutePropsFunction);
+
+  if (normalized === true) {
+    // props: true -> all route.params, but we don't know keys without parsing the path.
+    return { paramKeys: [], queryKeys: [] };
+  }
+
+  if (typeof normalized === "object") {
+    // Static props object; no route params/query used.
+    return { paramKeys: [], queryKeys: [] };
+  }
+
+  return { paramKeys: [], queryKeys: [] };
+}
+
+function buildRouteTemplate(router: Router, record: RouteRecordNormalized, paramNames: string[]) {
+  if (typeof record.name !== "string" || !record.name.length) {
+    return record.path;
+  }
+
+  const params = Object.fromEntries(paramNames.map((name) => [name, getParamToken(name)]));
+  try {
+    return router.resolve({ name: record.name, params }).path;
+  }
+  catch {
+    return record.path;
+  }
+}
+
+function getRouteParamMeta(router: Router, record: RouteRecordNormalized, paramNames: string[]) {
+  if (typeof record.name !== "string" || !record.name.length) {
+    return paramNames.map((name) => ({ name, optional: false }));
+  }
+
+  const paramsWithAll = Object.fromEntries(paramNames.map((name) => [name, getParamToken(name)]));
+  return paramNames.map((name) => {
+    const params = { ...paramsWithAll } as Record<string, string>;
+    delete params[name];
+    try {
+      router.resolve({ name: record.name as string, params });
+      return { name, optional: true };
+    }
+    catch {
+      return { name, optional: false };
+    }
+  });
 }
 
 function getComponentNameFromRouteRecord(record: RouteRecordNormalized): string | null {
@@ -253,14 +370,13 @@ async function ensureDomShim() {
  * This replaces the previous regex-based parsing so we can support nested route shapes,
  * redirects, and any non-trivial route record composition without maintaining a parser.
  */
-export async function parseRouterFileFromCwd(
-  cwd: string,
-  options: { routerEntry?: string } = {},
-): Promise<RouterIntrospectionResult> {
-  const routerEntry = path.resolve(cwd, options.routerEntry ?? "src/router.ts");
+export async function parseRouterFileFromCwd(routerEntryPath: string): Promise<RouterIntrospectionResult> {
+  const routerEntry = path.resolve(routerEntryPath);
   if (!fs.existsSync(routerEntry)) {
     throw new Error(`[vue-testid-injector] Router entry not found at ${routerEntry}.`);
   }
+
+  const cwd = path.dirname(routerEntry);
 
   await ensureDomShim();
 
@@ -296,7 +412,7 @@ export async function parseRouterFileFromCwd(
     },
     resolve: {
       alias: {
-        "@": path.resolve(cwd, "src"),
+        "@": cwd,
       },
     },
     // Important: Do NOT include @vitejs/plugin-vue here.
@@ -327,6 +443,7 @@ export async function parseRouterFileFromCwd(
     }
     const routeNameMap = new Map<string, string>();
     const routePathMap = new Map<string, string>();
+    const routeMetaEntries: RouterIntrospectionResult["routeMetaEntries"] = [];
 
     for (const r of router.getRoutes()) {
       const componentName = getComponentNameFromRouteRecord(r);
@@ -341,9 +458,21 @@ export async function parseRouterFileFromCwd(
         const key = toPascalCase(r.name);
         routeNameMap.set(key, componentName);
       }
+
+      const { paramKeys, queryKeys } = getRoutePropsKeys(r);
+      const paramsMeta = getRouteParamMeta(router, r, paramKeys);
+      const pathTemplate = buildRouteTemplate(router, r, paramsMeta.map((p) => p.name));
+      if (typeof pathTemplate === "string" && pathTemplate.length) {
+        routeMetaEntries.push({
+          componentName,
+          pathTemplate,
+          params: paramsMeta,
+          query: queryKeys,
+        });
+      }
     }
 
-    return { routeNameMap, routePathMap };
+    return { routeNameMap, routePathMap, routeMetaEntries };
   }
   finally {
     debugLog("closing internal vite server");

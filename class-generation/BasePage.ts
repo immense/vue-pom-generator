@@ -1,9 +1,6 @@
 import type { Locator as PwLocator, Page as PwPage } from "@playwright/test";
-import {
-  TESTID_CLICK_EVENT_NAME,
-  TESTID_CLICK_EVENT_STRICT_FLAG,
-  type TestIdClickEventDetail,
-} from "../click-instrumentation";
+import { TESTID_CLICK_EVENT_NAME, TESTID_CLICK_EVENT_STRICT_FLAG } from "../click-instrumentation";
+import type { TestIdClickEventDetail } from "../click-instrumentation";
 
 // Click instrumentation is a core contract for generated POMs.
 const REQUIRE_CLICK_EVENT = true;
@@ -81,6 +78,61 @@ export class ObjectId {
 
 const cursorImageId = "mouse_follower";
 const cursorAnnotationId = "cursor-annotation";
+
+type PlaywrightAnimationOptions = false | {
+  pointer?: {
+    durationMilliseconds?: number;
+    transitionStyle?: "linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out";
+    clickDelayMilliseconds?: number;
+  };
+  keyboard?: {
+    typeDelayMilliseconds?: number;
+  };
+};
+
+const animationGlobalKey = "__VUE_TESTID_PLAYWRIGHT_ANIMATION__";
+
+function getAnimationOptions(): PlaywrightAnimationOptions {
+  const fromFixture = Reflect.get(globalThis, animationGlobalKey);
+  if (fromFixture === false || typeof fromFixture === "object")
+    return fromFixture as PlaywrightAnimationOptions;
+
+  // If this code is used outside our standard fixtures, fall back to defaults.
+  return {
+    pointer: {
+      durationMilliseconds: 250,
+      transitionStyle: "ease-in-out",
+      clickDelayMilliseconds: 0,
+    },
+    keyboard: {
+      typeDelayMilliseconds: 100,
+    },
+  };
+}
+
+function getPointerMoveDurationMs(animation: PlaywrightAnimationOptions): number {
+  if (animation === false) return 0;
+  const ms = animation.pointer?.durationMilliseconds;
+  return typeof ms === "number" && Number.isFinite(ms) && ms >= 0 ? ms : 250;
+}
+
+function getPointerTransitionStyle(animation: PlaywrightAnimationOptions): string {
+  if (animation === false) return "linear";
+  const style = animation.pointer?.transitionStyle;
+  return typeof style === "string" && style.trim() ? style.trim() : "ease-in-out";
+}
+
+function getPointerClickDelayMs(animation: PlaywrightAnimationOptions): number {
+  if (animation === false) return 0;
+  const ms = animation.pointer?.clickDelayMilliseconds;
+  return typeof ms === "number" && Number.isFinite(ms) && ms >= 0 ? ms : 0;
+}
+
+function getKeyboardTypeDelayMs(animation: PlaywrightAnimationOptions): number {
+  if (animation === false) return 0;
+  const ms = animation.keyboard?.typeDelayMilliseconds;
+  return typeof ms === "number" && Number.isFinite(ms) && ms >= 0 ? ms : 100;
+}
 
 class BrowserCursorCoordinates {
   private static _X: number = 0;
@@ -258,6 +310,10 @@ export class BasePage {
       }
       throw e;
     }
+  }
+
+  private getPointerMoveDurationMs(): number {
+    return getPointerMoveDurationMs(getAnimationOptions());
   }
 
   public async getObjectId(options?: { timeoutMs?: number }): Promise<ObjectId> {
@@ -465,6 +521,14 @@ export class BasePage {
     waitForInstrumentationEvent: boolean = true,
   ): Promise<PwLocator> {
     await this.enableCursor();
+
+    // Interpret the public "delay" argument as a multiplier of our configured move duration.
+    // Keeping a "delay" parameter in the API lets existing generated methods control pacing
+    // (200 vs 100) while the config controls the base speed.
+    const baseDurationMs = this.getPointerMoveDurationMs();
+    const delayMultiplier = delay <= 0 ? 0 : delay / 100;
+    const configuredDurationMs = Math.round(baseDurationMs * delayMultiplier);
+    const transitionStyle = getPointerTransitionStyle(getAnimationOptions());
     const element = typeof selector === "string" ? this.page.locator(selector) : selector;
     if (!element) {
       throw new Error(`Element with selector "${selector}" not found`);
@@ -475,7 +539,7 @@ export class BasePage {
     // Do scroll + geometry + annotation + cursor animation (and optional click
     // pulse) in a single browser-context evaluation. Movement completion is
     // detected via transitionend inside the page.
-    const { endX, endY, distance, testId, instrumented } = await element.evaluate(
+    const { endX, endY, distance, durationMs, testId, instrumented } = await element.evaluate(
       async (el, args) => {
         const {
           cursorImageId,
@@ -484,6 +548,7 @@ export class BasePage {
           startX,
           startY,
           durationMs,
+          transitionStyle,
           pulseOnArrival,
           testIdAttribute,
         } = args;
@@ -507,6 +572,8 @@ export class BasePage {
         const dy = endY - startY;
         const distance = Math.sqrt(dx * dx + dy * dy);
 
+        const moveDurationMs = durationMs > 0 && distance > 0 ? durationMs : 0;
+
         if (annotationText) {
           const prev = document.getElementById(annotationId);
           if (prev) prev.remove();
@@ -529,7 +596,7 @@ export class BasePage {
           document.body.appendChild(annotation);
 
           // Auto-remove to avoid extra round-trips and to remain navigation-safe.
-          const cleanupAfterMs = Math.max(500, durationMs + 750);
+          const cleanupAfterMs = Math.max(500, (moveDurationMs * 2) + 750);
           setTimeout(() => {
             try { annotation.remove(); } catch { /* noop */ }
           }, cleanupAfterMs);
@@ -544,14 +611,14 @@ export class BasePage {
           cursorImage.style.top = `${startY}px`;
           void cursorImage.offsetWidth;
 
-          if (durationMs > 0 && distance > 0) {
-            cursorImage.style.transition = `left ${durationMs}ms linear, top ${durationMs}ms linear`;
+          if (moveDurationMs > 0 && distance > 0) {
+            cursorImage.style.transition = `left ${moveDurationMs}ms ${transitionStyle}, top ${moveDurationMs}ms ${transitionStyle}`;
           }
           cursorImage.style.left = `${endX}px`;
           cursorImage.style.top = `${endY}px`;
 
           // Wait for movement completion without a Playwright-side timeout.
-          if (durationMs > 0 && distance > 0) {
+          if (moveDurationMs > 0 && distance > 0) {
             await new Promise<void>((resolve) => {
               let done = false;
               let onEnd: ((evt: TransitionEvent) => void) | null = null;
@@ -572,7 +639,7 @@ export class BasePage {
 
               cursorImage.addEventListener("transitionend", onEnd);
               // Fallback in case transitionend doesn't fire.
-              setTimeout(finish, durationMs + 100);
+              setTimeout(finish, moveDurationMs + 100);
             });
           }
 
@@ -589,7 +656,7 @@ export class BasePage {
         const testId = (el as HTMLElement | null)?.getAttribute?.(testIdAttribute) ?? null;
         const instrumented = ((el as HTMLElement | null)?.getAttribute?.("data-click-instrumented") ?? "") === "1";
 
-        return { endX, endY, distance, testId, instrumented };
+        return { endX, endY, distance, durationMs: moveDurationMs, testId, instrumented };
       },
       {
         cursorImageId,
@@ -597,34 +664,35 @@ export class BasePage {
         annotationText: annotationText ?? "",
         startX,
         startY,
-        durationMs: delay,
+        durationMs: configuredDurationMs,
+        transitionStyle,
         pulseOnArrival: executeClick,
         testIdAttribute: this.testIdAttribute,
       },
     );
 
     console.warn(`Target coordinates: (${endX}, ${endY})`);
-    if (delay === 0) {
+    if (durationMs === 0) {
       console.warn("Skipping animation (delay=0)");
     }
     else if (distance === 0) {
       console.warn("Cursor already at target (distance=0); skipping animation");
     }
     else {
-      console.warn(`Animating cursor with CSS transition (duration=${delay}ms, distance=${distance}px)`);
+      console.warn(`Animating cursor with CSS transition (duration=${durationMs}ms, distance=${distance}px)`);
     }
 
     BrowserCursorCoordinates.X = endX;
     BrowserCursorCoordinates.Y = endY;
 
     if (executeClick) {
+      const clickDelayMs = getPointerClickDelayMs(getAnimationOptions());
       const waitAfter = (waitForInstrumentationEvent && testId && instrumented)
         ? this.waitForTestIdClickEventAfter(testId)
         : null;
 
       console.warn(`Clicking ${typeof selector === "object" && "role" in selector ? `getByRole('${selector.role}', { name: ${typeof selector === "string" ? `'${selector}'` : selector} })` : selector}`);
-      // Avoid adding an additional click delay; cursor animation already provides pacing.
-      await element.click({ timeout: 1000, force: true });
+      await element.click({ timeout: 1000, force: true, delay: clickDelayMs });
 
       if (waitAfter) {
         await waitAfter;
@@ -639,9 +707,10 @@ export class BasePage {
   }
 
   protected async animateCursorToElementAndClickAndFill(selector: string | PwLocator, textContent: string, executeClick = true, delay: number = 100, annotationText?: string) {
+    const animation = getAnimationOptions();
     const element = await this.animateCursorToElement(selector, executeClick, delay, annotationText);
     await element.clear();
-    await this.page.keyboard.type(textContent, { delay: 100 });
+    await this.page.keyboard.type(textContent, { delay: getKeyboardTypeDelayMs(animation) });
     // // Use fill() to ensure frameworks receive the right input events.
     // await element.fill(textContent);
   }

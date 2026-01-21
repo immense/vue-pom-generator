@@ -1,6 +1,7 @@
 import path from "node:path";
 import process from "node:process";
 import { IComponentDependencies, IDataTestId, upperFirst } from "../utils";
+import { parseRouterFileFromCwd } from "../router-introspection";
 import fs from "node:fs";
 // NOTE: This module intentionally does not depend on Babel parsing.
 
@@ -30,6 +31,74 @@ function changeExtension(filePath: string, expectedExt: string, nextExtWithDot: 
 function stripExtension(filePath: string): string {
     const parsed = path.parse(filePath);
     return path.format({ ...parsed, base: parsed.name, ext: "" });
+}
+
+function resolveRouterEntry(projectRoot?: string, routerEntry?: string) {
+    if (!routerEntry) {
+        throw new Error("[vue-testid-injector] Router entry path is required when vueRouterFluentChaining is enabled.");
+    }
+    const root = projectRoot ?? process.cwd();
+    return path.isAbsolute(routerEntry) ? routerEntry : path.resolve(root, routerEntry);
+}
+
+interface RouteMeta {
+    template: string;
+}
+
+async function getRouteMetaByComponent(projectRoot?: string, routerEntry?: string): Promise<Record<string, RouteMeta>> {
+    const resolvedRouterEntry = resolveRouterEntry(projectRoot, routerEntry);
+    const { routeMetaEntries } = await parseRouterFileFromCwd(resolvedRouterEntry);
+
+    const map = new Map<string, RouteMeta[]>();
+    for (const entry of routeMetaEntries) {
+        const list = map.get(entry.componentName) ?? [];
+        list.push({ template: entry.pathTemplate });
+        map.set(entry.componentName, list);
+    }
+
+    const chooseRouteMeta = (entries: RouteMeta[]): RouteMeta | null => {
+        if (!entries.length) return null;
+        return entries
+            .slice()
+            .sort((a, b) => a.template.length - b.template.length || a.template.localeCompare(b.template))[0];
+    };
+
+    const sorted = Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    return Object.fromEntries(
+        sorted
+            .map(([componentName, entries]) => {
+                const chosen = chooseRouteMeta(entries);
+                return chosen ? [componentName, chosen] : null;
+            })
+            .filter((entry): entry is [string, RouteMeta] => !!entry),
+    );
+}
+
+function generateRouteProperty(routeMeta: RouteMeta | null): string {
+    if (!routeMeta) {
+        return "    static readonly route: { template: string } | null = null;\n";
+    }
+
+    return [
+        "    static readonly route: { template: string } | null = {",
+        `        template: ${JSON.stringify(routeMeta.template)},`,
+        "    } as const;",
+        "",
+    ].join("\n");
+}
+
+function generateGoToSelfMethod(componentName: string): string {
+    return [
+        "",
+        "    async goToSelf() {",
+        `        const route = ${componentName}.route;`,
+        "        if (!route) {",
+        `            throw new Error("[pom] No router path found for component/page-object '${componentName}'.");`,
+        "        }",
+        "        await this.page.goto(route.template);",
+        "    }",
+        "",
+    ].join("\n");
 }
 
 export interface GenerateFilesOptions {
@@ -85,6 +154,14 @@ export interface GenerateFilesOptions {
 
     /** Attribute name to treat as the test id. Defaults to `data-testid`. */
     testIdAttribute?: string;
+
+    /** When true, generate router-aware helpers like goToSelf() on view POMs. */
+    vueRouterFluentChaining?: boolean;
+
+    /** Router entry path used for vue-router introspection when fluent chaining is enabled. */
+    routerEntry?: string;
+
+    routeMetaByComponent?: Record<string, RouteMeta>;
 }
 
 interface GenerateContentOptions {
@@ -111,6 +188,11 @@ interface GenerateContentOptions {
 
     /** Attribute name to treat as the test id. Defaults to `data-testid`. */
     testIdAttribute?: string;
+
+    /** When true, generate router-aware helpers like goToSelf() on view POMs. */
+    vueRouterFluentChaining?: boolean;
+
+    routeMetaByComponent?: Record<string, RouteMeta>;
 }
 
 export async function generateFiles(
@@ -128,24 +210,38 @@ export async function generateFiles(
         customPomDir,
         customPomImportAliases,
         testIdAttribute,
+        vueRouterFluentChaining,
+        routerEntry,
     } = options;
+
+    const routeMetaByComponent = vueRouterFluentChaining
+        ? await getRouteMetaByComponent(projectRoot, routerEntry)
+        : undefined;
 
     // Default legacy behavior: write per-component next to the .vue file.
     if (!outDir) {
         for (const [componentName, dependencies] of componentHierarchyMap.entries()) {
-            const { filePath, content } = generateViewObjectModel(componentName, dependencies, componentHierarchyMap, vueFilesPathMap, basePageClassPath, { customPomAttachments, testIdAttribute });
+            const { filePath, content } = generateViewObjectModel(componentName, dependencies, componentHierarchyMap, vueFilesPathMap, basePageClassPath, {
+                customPomAttachments,
+                testIdAttribute,
+                vueRouterFluentChaining,
+                routeMetaByComponent,
+            });
             createFile(filePath, content);
         }
         return;
     }
 
     if (singleFile) {
-        const files = generateAggregatedFiles(componentHierarchyMap, vueFilesPathMap, basePageClassPath, outDir, {
+        const files = await generateAggregatedFiles(componentHierarchyMap, vueFilesPathMap, basePageClassPath, outDir, {
             customPomAttachments,
             projectRoot,
             customPomDir,
             customPomImportAliases,
             testIdAttribute,
+            generatePlaywrightFixtures,
+            routeMetaByComponent,
+            vueRouterFluentChaining,
         });
         for (const file of files) {
             createFile(file.filePath, file.content);
@@ -172,6 +268,8 @@ export async function generateFiles(
             customPomDir,
             customPomImportAliases,
             testIdAttribute,
+            vueRouterFluentChaining,
+            routeMetaByComponent,
         });
         createFile(newFilePath, content);
     }
@@ -233,47 +331,69 @@ function maybeGeneratePlaywrightFixtureRegistry(
 
     // Concrete, strongly-typed fixtures for Playwright tests.
     //   test("...", async ({ preferencesPage }) => { ... })
-    const fixturesTypeEntries = viewClassNames
-        .map((name) => `  ${lowerFirst(name)}: ${name};`)
+    //
+    // Each injected page fixture also gets a `.goTo()` helper that re-navigates to
+    // the page via pom.goto(PageCtor, options). This keeps tests ergonomic without
+    // needing a global beforeEach(page.goto(...)).
+        const fixturesTypeEntries = viewClassNames
+        .map((name) => `  ${lowerFirst(name)}: ${name} & { goTo: () => Promise<void> };`)
         .join("\n");
     const openersTypeEntries = viewClassNames
         .map((name) => {
             const openerName = `open${name}`;
-            return `  ${openerName}: (options?: OpenOptions) => Promise<${name}>;`;
+            return `  ${openerName}: () => Promise<${name}>;`;
         })
         .join("\n");
 
-    const fixturesObjectEntries = viewClassNames
+        const fixturesObjectEntries = viewClassNames
         .map((name) => {
             const fixtureName = lowerFirst(name);
-            return `  ${fixtureName}: async ({ pom }, use) => {\n`
-                + `    const pageObject = await pom.openFor(${name});\n`
-                + `    await use(pageObject);\n`
-                + `  },`;
+                return `  ${fixtureName}: async ({ page, animation }, use) => {\n`
+                    + `    Reflect.set(globalThis, animationGlobalKey, animation);\n`
+                    + `    const pageObject = new ${name}(page) as ${name} & { goTo: () => Promise<void> };\n`
+                    + `    await pageObject.goToSelf();\n`
+                    + `    pageObject.goTo = async () => {\n`
+                    + `      await pageObject.goToSelf();\n`
+                    + `    };\n`
+                    + `    await use(pageObject);\n`
+                    + `  },`;
         })
         .join("\n");
 
-    const openersObjectEntries = viewClassNames
+        const openersObjectEntries = viewClassNames
         .map((name) => {
             const openerName = `open${name}`;
-            return `  ${openerName}: async ({ pom }, use) => {\n`
-                + `    const openFn = (options?: OpenOptions) => pom.openFor(${name}, options);\n`
-                + `    await use(openFn);\n`
-                + `  },`;
+                return `  ${openerName}: async ({ page, animation }, use) => {\n`
+                    + `    const openFn = async () => {\n`
+                    + `      Reflect.set(globalThis, animationGlobalKey, animation);\n`
+                    + `      const pageObject = new ${name}(page);\n`
+                    + `      await pageObject.goToSelf();\n`
+                    + `      return pageObject;\n`
+                    + `    };\n`
+                    + `    await use(openFn);\n`
+                    + `  },`;
         })
         .join("\n");
 
-    const fixturesContent = `${header
-         }/** Generated Playwright fixtures (typed page objects + openers). */\n\n`
-        + `import { expect, test as base } from "./pomFixture";\n`
-        + `import { ${viewClassNames.join(", ")} } from "${pomImport}";\n\n`
-        + `type RouteParamValue = string | number;\n`
-        + `type OpenOptions = { params?: Record<string, RouteParamValue> };\n\n`
-        + `export type GeneratedPageFixtures = {\n${fixturesTypeEntries}\n\n${openersTypeEntries}\n};\n\n`
-        + `const test = base.extend<GeneratedPageFixtures>({\n${fixturesObjectEntries}\n\n${openersObjectEntries}\n});\n\n`
-        + `export { test, expect };\n`;
+       const fixturesContent = `${header
+           }/** Generated Playwright fixtures (typed page objects + openers). */\n\n`
+          + `import { expect, test as base } from "@playwright/test";\n`
+          + `import type { PlaywrightOptions } from "./fixtureOptions";\n`
+          + `import { ${viewClassNames.join(", ")} } from "${pomImport}";\n\n`
+          + `const animationGlobalKey = "__VUE_TESTID_PLAYWRIGHT_ANIMATION__";\n`
+          + `type OpenOptions = undefined;\n\n`
+          + `export type GeneratedPageFixtures = {\n${fixturesTypeEntries}\n\n${openersTypeEntries}\n};\n\n`
+          + `const test = base.extend<PlaywrightOptions & GeneratedPageFixtures>({\n`
+          + `  animation: [{\n`
+          + `    pointer: { durationMilliseconds: 250, transitionStyle: "ease-in-out", clickDelayMilliseconds: 0 },\n`
+          + `    keyboard: { typeDelayMilliseconds: 100 },\n`
+          + `  }, { option: true }],\n`
+          + `${fixturesObjectEntries}\n\n${openersObjectEntries}\n});\n\n`
+          + `export { test, expect };\n`;
 
     createFile(path.resolve(fixtureOutDirAbs, "testWithGeneratedPageObjects.g.ts"), fixturesContent);
+
+    // No pomFixture is generated; goToSelf is emitted directly on each view POM.
 }
 
 function generateViewObjectModel(
@@ -285,6 +405,8 @@ function generateViewObjectModel(
     options: {
         customPomAttachments?: GenerateFilesOptions["customPomAttachments"];
         testIdAttribute?: GenerateFilesOptions["testIdAttribute"];
+        vueRouterFluentChaining?: GenerateFilesOptions["vueRouterFluentChaining"];
+        routeMetaByComponent?: Record<string, RouteMeta>;
     } = {},
 ) {
     const filePath = changeExtension(dependencies.filePath, ".vue", ".g.ts");
@@ -293,6 +415,8 @@ function generateViewObjectModel(
 
         customPomAttachments: options.customPomAttachments ?? [],
         testIdAttribute: options.testIdAttribute,
+        vueRouterFluentChaining: options.vueRouterFluentChaining,
+        routeMetaByComponent: options.routeMetaByComponent,
     });
     return { filePath, content };
 }
@@ -460,6 +584,7 @@ function generateViewObjectModelContent(
                 }
             });
         }
+
     } else {
         // Keep per-class doc comment, but avoid repeating eslint suppression / imports.
         content = doc;
@@ -503,6 +628,12 @@ function generateViewObjectModelContent(
     // - Never generate a pass-through that would collide with an existing method on the view.
     if (isView && componentRefsForInstances.size > 0) {
         content += getViewPassthroughMethods(componentName, dependencies, componentRefsForInstances, componentHierarchyMap);
+    }
+
+    if (isView && options.vueRouterFluentChaining) {
+        const routeMeta = options.routeMetaByComponent?.[componentName] ?? null;
+        content += generateRouteProperty(routeMeta);
+        content += generateGoToSelfMethod(componentName);
     }
 
     if (dependencies.methodsContent === undefined) {
@@ -603,7 +734,7 @@ function getGeneratedFilePathForComponent(dependencies: IComponentDependencies, 
     return path.join(targetBase, name);
 }
 
-function generateAggregatedFiles(
+async function generateAggregatedFiles(
     componentHierarchyMap: Map<string, IComponentDependencies>,
     vueFilesPathMap: Map<string, string>,
     basePageClassPath: string,
@@ -614,6 +745,9 @@ function generateAggregatedFiles(
         customPomDir?: GenerateFilesOptions["customPomDir"];
         customPomImportAliases?: GenerateFilesOptions["customPomImportAliases"];
         testIdAttribute?: GenerateFilesOptions["testIdAttribute"];
+        generatePlaywrightFixtures?: GenerateFilesOptions["generatePlaywrightFixtures"];
+        routeMetaByComponent?: Record<string, RouteMeta>;
+        vueRouterFluentChaining?: boolean;
     } = {},
 ) {
     const projectRoot = options.projectRoot ?? process.cwd();
@@ -667,6 +801,13 @@ function generateAggregatedFiles(
             basePageSource = basePageSource.replace(
                 /import\s*\{[\s\S]*?\}\s*from\s*["']\.\.\/click-instrumentation["'];?\s*/,
                 `${clickInstrumentationInline}\n\n`,
+            );
+
+            // If BasePage uses a split value import + type-only import, remove the type-only import too.
+            // The inline block already declares TestIdClickEventDetail.
+            basePageSource = basePageSource.replace(
+                /import\s+type\s*\{\s*TestIdClickEventDetail\s*\}\s*from\s*["']\.\.\/click-instrumentation["'];?\s*/g,
+                "",
             );
 
             // The aggregated file already imports these Playwright types once at the top.
@@ -907,10 +1048,12 @@ function generateAggregatedFiles(
 
                 customPomAttachments: options.customPomAttachments ?? [],
                 testIdAttribute: options.testIdAttribute,
+                vueRouterFluentChaining: options.vueRouterFluentChaining,
+                routeMetaByComponent: options.routeMetaByComponent,
             }),
         );
 
-        return [
+        const baseContent = [
             header,
             ...imports,
             "",
@@ -918,7 +1061,9 @@ function generateAggregatedFiles(
             "",
             ...classes,
             ...(stubs.length ? ["", ...stubs] : []),
-        ].join("\n\n");
+        ].filter(Boolean).join("\n\n");
+
+        return baseContent;
     };
 
     if (typeof outDir === "string") {
