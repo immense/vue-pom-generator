@@ -1,4 +1,4 @@
-# @immense/vue-testid-injector
+# @immense/vue-pom-generator
 
 Vite plugin for Vue 3 apps that:
 
@@ -15,7 +15,7 @@ Why you might want it:
 
 This package is published to GitHub Packages.
 
-- Package: `@immense/vue-testid-injector`
+- Package: `@immense/vue-pom-generator`
 - Registry: `https://npm.pkg.github.com`
 
 ## Usage

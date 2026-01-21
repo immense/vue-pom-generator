@@ -382,7 +382,7 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
     if (!vueRouterFluentChaining)
       return undefined;
     if (!routerEntry)
-      throw new Error("[vue-testid-injector] router.entry is required when router introspection is enabled.");
+      throw new Error("[vue-pom-generator] router.entry is required when router introspection is enabled.");
     return path.isAbsolute(routerEntry) ? routerEntry : path.resolve(projectRoot, routerEntry);
   };
 
@@ -430,7 +430,7 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
 		}
 
     if (!resolvedRouterEntry)
-      throw new Error("[vue-testid-injector] router.entry is required when router introspection is enabled.");
+      throw new Error("[vue-pom-generator] router.entry is required when router introspection is enabled.");
     const { routeNameMap, routePathMap } = await parseRouterFileFromCwd(resolvedRouterEntry);
 		setRouteNameToComponentNameMap(routeNameMap);
 
@@ -534,7 +534,7 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
         }
 
         if (!resolvedRouterEntry)
-          throw new Error("[vue-testid-injector] router.entry is required when router introspection is enabled.");
+          throw new Error("[vue-pom-generator] router.entry is required when router introspection is enabled.");
         const { routeNameMap, routePathMap } = await parseRouterFileFromCwd(resolvedRouterEntry);
         setRouteNameToComponentNameMap(routeNameMap);
         setResolveToComponentNameFn((to) => {
@@ -734,7 +734,7 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
       // Watch relevant inputs.
       // Use platform-native absolute paths/globs for chokidar reliability (especially on macOS).
       const watchedVueGlob = path.resolve(projectRoot, "src", "**", "*.vue");
-      const watchedPluginGlob = path.resolve(projectRoot, "vite-plugins", "vue-testid-injector", "**", "*.ts");
+      const watchedPluginGlob = path.resolve(projectRoot, "vite-plugins", "vue-pom-generator", "**", "*.ts");
       server.watcher.add([watchedVueGlob, watchedPluginGlob, basePageClassPath]);
 
       let timer: NodeJS.Timeout | null = null;
@@ -879,7 +879,7 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
 
         // If plugin source changes, Vite won't hot-reload plugin code. Restart the server so the new
         // generator/template code is loaded, then regenerate.
-        if (changed.includes("/vite-plugins/vue-testid-injector/")) {
+        if (changed.includes("/vite-plugins/vue-pom-generator/")) {
           void server.restart();
         }
 

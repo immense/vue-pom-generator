@@ -598,7 +598,7 @@ export function createTestIdTransform(
         const loc = element.loc?.start;
         const locationHint = loc ? `${loc.line}:${loc.column}` : "unknown";
         throw new Error(
-          `[vue-testid-injector] submit button appears identifiable but no usable identity could be derived in ${componentName} (${context.filename ?? "unknown"}:${locationHint}) — `
+          `[vue-pom-generator] submit button appears identifiable but no usable identity could be derived in ${componentName} (${context.filename ?? "unknown"}:${locationHint}) — `
           + `id/name were missing/empty and innerText was also missing/invalid`,
         );
       }

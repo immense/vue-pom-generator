@@ -1,16 +1,16 @@
 {
-  "name": "@immense/vue-testid-injector",
+  "name": "@immense/vue-pom-generator",
   "version": "1.0.0",
   "description": "Injects data-testid attributes for all interactive elements and generates page object models for every page.",
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/immense/vue-testid-injector.git"
+    "url": "git+https://github.com/immense/vue-pom-generator.git"
   },
   "bugs": {
-    "url": "https://github.com/immense/vue-testid-injector/issues"
+    "url": "https://github.com/immense/vue-pom-generator/issues"
   },
-  "homepage": "https://github.com/immense/vue-testid-injector#readme",
+  "homepage": "https://github.com/immense/vue-pom-generator#readme",
   "publishConfig": {
     "access": "restricted",
     "registry": "https://npm.pkg.github.com"

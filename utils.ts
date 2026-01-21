@@ -282,7 +282,7 @@ function nodeHasForDirective(node: ElementNode): boolean {
 /**
  * Router-backed route name -> component name map.
  *
- * Populated once per Vite build by the plugin runtime (see `vite-plugins/vue-testid-injector/index.ts`).
+ * Populated once per Vite build by the plugin runtime (see `vite-plugins/vue-pom-generator/index.ts`).
  * The transform phase uses this to turn `:to` directives into POM return types.
  */
 let routeNameToComponentName: Map<string, string> | null = null;
@@ -999,7 +999,7 @@ export function getComposedClickHandlerContent(
     const clickExpressionSource = clip(click.exp?.loc?.source);
 
     const lines = [
-      `[vue-testid-injector] Unable to derive a stable name for clickable element in ${componentName} (${filename}:${locationHint}).`,
+      `[vue-pom-generator] Unable to derive a stable name for clickable element in ${componentName} (${filename}:${locationHint}).`,
       elementSource ? `Element: ${elementSource}` : "",
       clickDirectiveSource ? `Click: ${clickDirectiveSource}` : "",
       clickExpressionSource ? `Click expression: ${clickExpressionSource}` : "",
@@ -1672,7 +1672,7 @@ export function applyResolvedDataTestId(args: {
       const file = args.contextFilename ?? "unknown";
       const attrLabel = testIdAttribute || "data-testid";
       throw new Error(
-        `[vue-testid-injector] Existing ${attrLabel} appears to be missing the key placeholder needed to keep it unique.\n`
+        `[vue-pom-generator] Existing ${attrLabel} appears to be missing the key placeholder needed to keep it unique.\n`
         + `Component: ${args.componentName}\n`
         + `File: ${file}:${locationHint}\n`
         + `Existing ${attrLabel}: ${JSON.stringify(existing.value)}\n`

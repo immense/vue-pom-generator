@@ -9,7 +9,7 @@ import type { Plugin as VitePlugin } from "vite";
 
 function debugLog(message: string) {
   if (process.env.VUE_TESTID_DEBUG === "1") {
-    console.log(`[vue-testid-injector][router-introspection] ${message}`);
+    console.log(`[vue-pom-generator][router-introspection] ${message}`);
   }
 }
 
@@ -63,7 +63,7 @@ function createRouterIntrospectionVueStubPlugin(options: { routerEntryAbs: strin
       // Disallow anything from node_modules during router introspection.
       // This keeps SSR evaluation from pulling in problematic CJS/Esm interop (e.g. devextreme).
       if (fsPath.includes(`${path.sep}node_modules${path.sep}`) || fsPath.includes("/node_modules/"))
-        throw new Error(`[vue-testid-injector][router-introspection] Unsupported node_modules import during router introspection: ${cleanId}`);
+        throw new Error(`[vue-pom-generator][router-introspection] Unsupported node_modules import during router introspection: ${cleanId}`);
 
       const parsed = path.parse(fsPath);
 
@@ -71,7 +71,7 @@ function createRouterIntrospectionVueStubPlugin(options: { routerEntryAbs: strin
       if (parsed.ext !== ".vue") {
         if (parsed.ext === ".ts" || parsed.ext === ".tsx")
           return null;
-        throw new Error(`[vue-testid-injector][router-introspection] Unsupported module during router introspection: ${cleanId}`);
+        throw new Error(`[vue-pom-generator][router-introspection] Unsupported module during router introspection: ${cleanId}`);
       }
 
       // Minimal Vue component stub. Preserve __file so downstream can infer a component name.
@@ -373,7 +373,7 @@ async function ensureDomShim() {
 export async function parseRouterFileFromCwd(routerEntryPath: string): Promise<RouterIntrospectionResult> {
   const routerEntry = path.resolve(routerEntryPath);
   if (!fs.existsSync(routerEntry)) {
-    throw new Error(`[vue-testid-injector] Router entry not found at ${routerEntry}.`);
+    throw new Error(`[vue-pom-generator] Router entry not found at ${routerEntry}.`);
   }
 
   const cwd = path.dirname(routerEntry);
@@ -386,7 +386,7 @@ export async function parseRouterFileFromCwd(routerEntryPath: string): Promise<R
   const vite = await import("vite") as { createServer: typeof import("vite")["createServer"] };
 
   // IMPORTANT:
-  // When vue-testid-injector is included as a plugin inside the frontend Vite config, calling
+  // When vue-pom-generator is included as a plugin inside the frontend Vite config, calling
   // Vite's `createServer()` with the default behavior will read `vite.config.ts` again.
   // Since `vite.config.ts` imports this plugin, that can create a recursive config-load loop.
   //
@@ -431,7 +431,7 @@ export async function parseRouterFileFromCwd(routerEntryPath: string): Promise<R
     debugLog(`ssrLoadModule(${moduleId}) done; hasDefault=${typeof mod?.default === "function"}`);
     const makeRouter = mod?.default;
     if (typeof makeRouter !== "function") {
-      throw new TypeError(`[vue-testid-injector] ${routerEntry} must export a default router factory function (export default makeRouter).`);
+      throw new TypeError(`[vue-pom-generator] ${routerEntry} must export a default router factory function (export default makeRouter).`);
     }
 
     let router: Router;
@@ -439,7 +439,7 @@ export async function parseRouterFileFromCwd(routerEntryPath: string): Promise<R
       router = makeRouter();
     }
     catch (err) {
-      throw new Error(`[vue-testid-injector] makeRouter() invocation failed: ${String(err)}`);
+      throw new Error(`[vue-pom-generator] makeRouter() invocation failed: ${String(err)}`);
     }
     const routeNameMap = new Map<string, string>();
     const routePathMap = new Map<string, string>();
