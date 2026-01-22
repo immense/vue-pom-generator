@@ -340,12 +340,8 @@ function maybeGeneratePlaywrightFixtureRegistry(
         const fixturesTypeEntries = viewClassNames
         .map((name) => `  ${lowerFirst(name)}: ${name} & { goTo: () => Promise<void> };`)
         .join("\n");
-    const openersTypeEntries = viewClassNames
-        .map((name) => {
-            const openerName = `open${name}`;
-            return `  ${openerName}: () => Promise<${name}>;`;
-        })
-        .join("\n");
+    // NOTE: We intentionally do not generate "openXPage" helpers.
+    // Each view POM has a goToSelf() method, and the fixture attaches a goTo() wrapper.
 
         const fixturesObjectEntries = viewClassNames
         .map((name) => {
@@ -362,35 +358,21 @@ function maybeGeneratePlaywrightFixtureRegistry(
         })
         .join("\n");
 
-        const openersObjectEntries = viewClassNames
-        .map((name) => {
-            const openerName = `open${name}`;
-                return `  ${openerName}: async ({ page, animation }, use) => {\n`
-                    + `    const openFn = async () => {\n`
-                    + `      Reflect.set(globalThis, animationGlobalKey, animation);\n`
-                    + `      const pageObject = new ${name}(page);\n`
-                    + `      await pageObject.goToSelf();\n`
-                    + `      return pageObject;\n`
-                    + `    };\n`
-                    + `    await use(openFn);\n`
-                    + `  },`;
-        })
-        .join("\n");
+        // Openers removed.
 
        const fixturesContent = `${header
-           }/** Generated Playwright fixtures (typed page objects + openers). */\n\n`
+           }/** Generated Playwright fixtures (typed page objects). */\n\n`
           + `import { expect, test as base } from "@playwright/test";\n`
           + `import type { PlaywrightOptions } from "./fixtureOptions";\n`
           + `import { ${viewClassNames.join(", ")} } from "${pomImport}";\n\n`
           + `const animationGlobalKey = "__VUE_TESTID_PLAYWRIGHT_ANIMATION__";\n`
-          + `type OpenOptions = undefined;\n\n`
-          + `export type GeneratedPageFixtures = {\n${fixturesTypeEntries}\n\n${openersTypeEntries}\n};\n\n`
+          + `export type GeneratedPageFixtures = {\n${fixturesTypeEntries}\n};\n\n`
           + `const test = base.extend<PlaywrightOptions & GeneratedPageFixtures>({\n`
           + `  animation: [{\n`
           + `    pointer: { durationMilliseconds: 250, transitionStyle: "ease-in-out", clickDelayMilliseconds: 0 },\n`
           + `    keyboard: { typeDelayMilliseconds: 100 },\n`
           + `  }, { option: true }],\n`
-          + `${fixturesObjectEntries}\n\n${openersObjectEntries}\n});\n\n`
+          + `${fixturesObjectEntries}\n});\n\n`
           + `export { test, expect };\n`;
 
     createFile(path.resolve(fixtureOutDirAbs, "testWithGeneratedPageObjects.g.ts"), fixturesContent);
