@@ -27,6 +27,14 @@ function formatParams(params: Record<string, string>) {
   return entries.map(([n, t]) => `${n}: ${t}`).join(", ");
 }
 
+function removeByKeySegment(value: string): string {
+  const idx = value.lastIndexOf("ByKey");
+  if (idx < 0) {
+    return value;
+  }
+  return value.slice(0, idx) + value.slice(idx + "ByKey".length);
+}
+
 function generateClickMethod(methodName: string, formattedDataTestId: string, params: Record<string, string>) {
   let content: string;
   const name = `click${methodName}`;
@@ -102,15 +110,30 @@ function generateGetElementByDataTestId(methodName: string, nativeRole: string, 
     : `get${baseName}${roleSuffix}`;
   const needsKey = hasParam(params, "key") || formattedDataTestId.includes("${key}");
 
+  const propertyName = name.startsWith("get")
+    ? name.slice(3)
+    : name;
+
   if (needsKey) {
     const keyType = params.key || "string";
+    // For keyed getters, expose an indexable property (Proxy) so callers can do:
+    //   expect(pom.SaveButton[myKey]).toBeVisible();
+    // When method names include the "ByKey" segment, we remove it in the exposed property
+    // name so `FooByKeyButton` becomes `FooButton[key]`.
+    const keyedPropertyName = removeByKeySegment(propertyName);
     return `${INDENT}${name}(key: ${keyType}) {\n`
       + `${INDENT2}return this.locatorByTestId(\`${formattedDataTestId}\`);\n`
+      + `${INDENT}}\n\n`
+      + `${INDENT}get ${keyedPropertyName}() {\n`
+      + `${INDENT2}return this.keyedLocators((key: ${keyType}) => this.${name}(key));\n`
       + `${INDENT}}\n\n`;
   }
 
   return `${INDENT}${name}() {\n`
     + `${INDENT2}return this.locatorByTestId("${formattedDataTestId}");\n`
+    + `${INDENT}}\n\n`
+    + `${INDENT}get ${propertyName}() {\n`
+    + `${INDENT2}return this.${name}();\n`
     + `${INDENT}}\n\n`;
 }
 

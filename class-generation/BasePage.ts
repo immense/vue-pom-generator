@@ -201,6 +201,25 @@ export class BasePage {
     return this.page.locator(this.selectorForTestId(testId));
   }
 
+  /**
+   * Creates an indexable proxy for keyed elements so generated POMs can expose
+   * ergonomic accessors like:
+   *   expect(page.SaveButton["MyKey"]).toBeVisible();
+   */
+  protected keyedLocators<TKey extends string>(getLocator: (key: TKey) => PwLocator): Record<TKey, PwLocator> {
+    const handler: ProxyHandler<object> = {
+      get: (_t, prop) => {
+        // Avoid confusing Promise-like detection and ignore symbols.
+        if (prop === "then" || typeof prop === "symbol") {
+          return undefined;
+        }
+        return getLocator(String(prop) as TKey);
+      },
+    };
+
+    return new Proxy({}, handler) as Record<TKey, PwLocator>;
+  }
+
   private async waitForTestIdClickEventAfter(testId: string, options?: { timeoutMs?: number }): Promise<void> {
     const timeoutMs = options?.timeoutMs ?? 2_000;
     const requireEvent = REQUIRE_CLICK_EVENT;

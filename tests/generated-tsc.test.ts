@@ -62,6 +62,9 @@ describe("generated output", () => {
         "  protected locatorByTestId(_testId: string): any {",
         "    return null as any;",
         "  }",
+        "  protected keyedLocators<TKey extends string>(_getLocator: (key: TKey) => any): Record<TKey, any> {",
+        "    return {} as any;",
+        "  }",
         "  protected selectorForTestId(testId: string): string {",
         "    return `[data-testid=\"${testId}\"]`;",
         "  }",
@@ -109,6 +112,10 @@ describe("generated output", () => {
     const generatedFilePath = path.join(outDir, "Components", `${componentName}.g.ts`);
     expect(fs.existsSync(generatedFilePath)).toBe(true);
 
+    const generatedContent = fs.readFileSync(generatedFilePath, "utf8");
+    // Keyed locator getters should also expose an indexable property proxy.
+    expect(generatedContent).toContain("get SaveButton()");
+
     const result = runTscNoEmit([generatedFilePath, basePagePath], { cwd: tempRoot });
 
     if (result.status !== 0) {
@@ -136,6 +143,9 @@ describe("generated output", () => {
         "  }",
         "  protected locatorByTestId(_testId: string): any {",
         "    return null as any;",
+        "  }",
+        "  protected keyedLocators<TKey extends string>(_getLocator: (key: TKey) => any): Record<TKey, any> {",
+        "    return {} as any;",
         "  }",
         "  protected selectorForTestId(testId: string): string {",
         "    return `[data-testid=\"${testId}\"]`;",
