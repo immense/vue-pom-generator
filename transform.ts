@@ -7,7 +7,6 @@ import { parseExpression } from "@babel/parser";
 import path from "node:path";
 import fs from "node:fs";
 import process from "node:process";
-import { generateViewObjectModelMethodContent } from "./class-generation";
 import { TESTID_CLICK_EVENT_NAME, TESTID_CLICK_EVENT_STRICT_FLAG } from "./click-instrumentation";
 import {
   upsertAttribute,
@@ -17,6 +16,7 @@ import {
   getIdOrName,
   getInnerText,
   getContainedInVForDirectiveKeyValue,
+  tryGetContainedInStaticVForSourceLiteralValues,
   getKeyDirectiveValue,
   getNativeWrapperTransformInfo,
   getSelfClosingForDirectiveKeyAttrValue,
@@ -449,6 +449,12 @@ export function createTestIdTransform(
 
     const bestKeyPlaceholder = getBestAvailableKeyValue();
 
+    // If we can prove the v-for iterable is a static literal list, capture the concrete
+    // values (e.g. ['One', 'Two']). Downstream codegen can use this to:
+    // - emit per-key methods (clickOneButton/clickTwoButton)
+    // - narrow `key: string` parameters to a literal union where we still emit keyed methods
+    const keyValuesOverride = tryGetContainedInStaticVForSourceLiteralValues(context, element, hierarchyMap);
+
     // Some branches need a formatted tag suffix / native role. Compute lazily and cache.
     let cachedTagSuffix: string | null = null;
     const getTagSuffix = () => {
@@ -495,10 +501,10 @@ export function createTestIdTransform(
         nativeRole,
         preferredGeneratedValue: args.preferredGeneratedValue,
         bestKeyPlaceholder,
+        keyValuesOverride,
         entryOverrides: args.entryOverrides,
         addHtmlAttribute: args.addHtmlAttribute,
         testIdAttribute,
-        generateMethodContent: generateViewObjectModelMethodContent,
       });
     };
 

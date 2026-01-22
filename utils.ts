@@ -9,6 +9,7 @@ import type {
 } from "@vue/compiler-core";
 import {
   createSimpleExpression,
+  ConstantTypes,
   NodeTypes,
   stringifyExpression,
 } from "@vue/compiler-core";
@@ -47,6 +48,7 @@ import {
   isTemplateLiteral,
 } from "@babel/types";
 import { parseExpression } from "@babel/parser";
+import { generateViewObjectModelMethodContent } from "./method-generation";
 
 function getDataTestIdFromGroupOption(text: string) {
   // eslint-disable-next-line no-restricted-syntax
@@ -613,6 +615,112 @@ export function getContainedInVForDirectiveKeyValue(context: TransformContext, n
     parent = getParent(hierarchyMap, parent);
   }
   return null;
+}
+
+/**
+ * If the current node is inside a v-for whose iterable is a static array literal,
+ * returns the iterable's *string literal values*.
+ *
+ * Example:
+ * - v-for="item in ['One', 'Two']" => ['One', 'Two']
+ */
+export function tryGetContainedInStaticVForSourceLiteralValues(
+  context: TransformContext,
+  _node: ElementNode,
+  _hierarchyMap: HierarchyMap,
+): string[] | null {
+  // If we're not in v-for scope, don't waste time walking parents.
+  if (!context.scopes.vFor || context.scopes.vFor === 0) {
+    return null;
+  }
+
+  // In the Vue compiler AST, v-for is represented as a ForNode (NodeTypes.FOR)
+  // whose `source` is the iterable expression.
+  // When visiting the repeated element, its immediate parent is usually that ForNode.
+  const parentObj = (context.parent && typeof context.parent === "object") ? context.parent as object : null;
+  if (!parentObj || !("type" in parentObj) || (parentObj as { type: number }).type !== NodeTypes.FOR) {
+    // No direct ForNode parent; we don't currently attempt to walk further up.
+    return null;
+  }
+
+  const sourceExp = (parentObj as { source?: object | null }).source;
+  if (!sourceExp || typeof sourceExp !== "object") {
+    return null;
+  }
+
+  // Mirror Vue compiler-core's own stability check (see `transformFor` in `vFor.ts`):
+  // only a SIMPLE_EXPRESSION source participates in constType-based stability.
+  if ((sourceExp as { type?: number }).type !== NodeTypes.SIMPLE_EXPRESSION) {
+    return null;
+  }
+
+  const simpleSourceExp = sourceExp as SimpleExpressionNode;
+
+  // Trust the Vue compiler's own const analysis first. If the source isn't
+  // considered constant by Vue, we should not attempt to infer an enumerable
+  // set of keys.
+  if (simpleSourceExp.constType === ConstantTypes.NOT_CONSTANT) {
+    return null;
+  }
+
+  const iterableRaw = (() => {
+    try {
+      return stringifyExpression(simpleSourceExp).trim();
+    }
+    catch {
+      return (simpleSourceExp.loc?.source ?? "").trim();
+    }
+  })();
+
+  if (!iterableRaw) {
+    return null;
+  }
+
+  let iterableAst: BabelNode | null = null;
+  try {
+    iterableAst = parseExpression(iterableRaw, { plugins: ["typescript"] }) as BabelNode;
+  }
+  catch {
+    iterableAst = null;
+  }
+
+  if (!iterableAst || !isArrayExpression(iterableAst)) {
+    return null;
+  }
+
+  const values: string[] = [];
+  for (const el of (iterableAst as ArrayExpression).elements ?? []) {
+    if (!el) {
+      return null;
+    }
+    if (isStringLiteral(el)) {
+      if (!el.value.trim()) {
+        continue;
+      }
+      values.push(el.value);
+      continue;
+    }
+    if (isTemplateLiteral(el)) {
+      if ((el.expressions ?? []).length > 0) {
+        return null;
+      }
+      const v = (el.quasis ?? []).map(q => q.value?.cooked ?? "").join("");
+      if (!v.trim()) {
+        continue;
+      }
+      values.push(v);
+      continue;
+    }
+    // Non-literal values make the set non-enumerable.
+    return null;
+  }
+
+  const distinct = Array.from(new Set(values));
+  if (!distinct.length) {
+    return null;
+  }
+
+  return distinct;
 }
 
 function getParent(hierarchyMap: HierarchyMap, node: ElementNode): ElementNode | null {
@@ -1644,17 +1752,12 @@ export function applyResolvedDataTestId(args: {
   nativeRole: string;
   preferredGeneratedValue: AttributeValue;
   bestKeyPlaceholder: string | null;
+  /** Optional enumerable key values (e.g. derived from v-for="item in ['One','Two']"). */
+  keyValuesOverride?: string[] | null;
   entryOverrides?: Partial<IDataTestId>;
   addHtmlAttribute?: boolean;
   /** Attribute name to use for injection and parsing. Defaults to data-testid. */
   testIdAttribute?: string;
-  generateMethodContent: (
-    targetPageObjectModelClass: string | undefined,
-    methodName: string,
-    nativeRole: string,
-    elementDataTestId: string,
-    elementParams: Record<string, string>,
-  ) => string;
 }): void {
   const addHtmlAttribute = args.addHtmlAttribute ?? true;
   const entryOverrides = args.entryOverrides ?? {};
@@ -1691,6 +1794,21 @@ export function applyResolvedDataTestId(args: {
     dataTestId,
     args.nativeRole,
   );
+
+  const getKeyTypeFromValues = (values: string[] | null | undefined) => {
+    if (!values || values.length === 0) {
+      return "string";
+    }
+    return values.map(v => JSON.stringify(v)).join(" | ");
+  };
+
+  const keyTypeFromValues = getKeyTypeFromValues(args.keyValuesOverride ?? null);
+
+  // If the caller provided enumerable key values (e.g. derived from a static v-for list),
+  // propagate a literal-union type into the underlying keyed locator method signature.
+  if (keyTypeFromValues !== "string" && Object.prototype.hasOwnProperty.call(params, "key")) {
+    params.key = keyTypeFromValues;
+  }
 
   // 3) Apply attribute (only when we generated it) and register for POM generation.
   if (addHtmlAttribute && !fromExisting) {
@@ -1752,10 +1870,11 @@ export function applyResolvedDataTestId(args: {
     const role = normalizeNativeRole(args.nativeRole);
     const isNavigation = !!dataTestIdEntry.targetPageObjectModelClass;
     const needsKey = Object.prototype.hasOwnProperty.call(params, "key");
+    const keyType = keyTypeFromValues;
 
     if (isNavigation) {
       if (needsKey) {
-        return { params: "key: string", argNames: ["key"] };
+        return { params: `key: ${keyType}`, argNames: ["key"] };
       }
       return { params: "", argNames: [] };
     }
@@ -1769,40 +1888,39 @@ export function applyResolvedDataTestId(args: {
         return { params: "value: string, timeOut = 500", argNames: ["value", "timeOut"] };
       case "radio":
         return needsKey
-          ? { params: "key: string, annotationText: string = \"\"", argNames: ["key", "annotationText"] }
+          ? { params: `key: ${keyType}, annotationText: string = ""`, argNames: ["key", "annotationText"] }
           : { params: "annotationText: string = \"\"", argNames: ["annotationText"] };
       default:
         if (needsKey) {
-          return { params: "key: string", argNames: ["key"] };
+          return { params: `key: ${keyType}`, argNames: ["key"] };
         }
         return { params: "", argNames: [] };
     }
   };
 
-  const methodContent = args.generateMethodContent(
+  const methodContent = generateViewObjectModelMethodContent(
     dataTestIdEntry.targetPageObjectModelClass,
     methodName,
     args.nativeRole,
     elementDataTestIdForMethod,
     params,
-  ).trim();
+  );
 
   const appendMethodOnce = (content: string) => {
-    const trimmed = content.trim();
-    if (!trimmed) {
+    const normalizedKey = content.trim();
+    if (!normalizedKey) {
       return;
     }
     const seen = args.generatedMethodContentByComponent.get(args.parentComponentName) ?? new Set<string>();
     if (!args.generatedMethodContentByComponent.has(args.parentComponentName)) {
       args.generatedMethodContentByComponent.set(args.parentComponentName, seen);
     }
-    if ((args.dependencies.methodsContent ?? "").includes(trimmed)) {
-      return;
-    }
-    if (!seen.has(trimmed)) {
-      seen.add(trimmed);
+    if (!seen.has(normalizedKey)) {
+      seen.add(normalizedKey);
       args.dependencies.methodsContent ??= "";
-      args.dependencies.methodsContent += `\n${trimmed}\n`;
+      // Preserve indentation (important for readability in generated output).
+      // De-duping is done via a normalized key instead of mutating the content.
+      args.dependencies.methodsContent += `\n${content.trimEnd()}\n`;
     }
   };
 
@@ -2003,6 +2121,52 @@ export function applyResolvedDataTestId(args: {
       + `  }\n`,
     );
     registerGeneratedMethodSignature(generatedName, { params: `value: string, annotationText: string = ""`, argNames: ["value", "annotationText"] });
+    return;
+  }
+
+  // Special handling for v-for driven by a static literal list.
+  // When we can enumerate the keys (e.g. ['One','Two']), prefer emitting separate
+  // methods like `clickOneButton()` / `clickTwoButton()` instead of a single
+  // `click*ByKey(key: ...)`.
+  //
+  // This keeps the POM ergonomic and avoids pushing key plumbing into tests.
+  const staticKeyValues = (args.keyValuesOverride ?? null);
+  const needsKey = Object.prototype.hasOwnProperty.call(params, "key")
+    && typeof elementDataTestIdForMethod === "string"
+    && elementDataTestIdForMethod.includes("${key}");
+  const isNavigation = !!dataTestIdEntry.targetPageObjectModelClass;
+
+  if (
+    staticKeyValues
+    && staticKeyValues.length > 0
+    && needsKey
+    && !isNavigation
+    && normalizedRole !== "input"
+    && normalizedRole !== "select"
+    && normalizedRole !== "vselect"
+    && normalizedRole !== "radio"
+  ) {
+    const roleSuffix = upperFirst(toPascalCase(args.nativeRole || "Element"));
+
+    for (const rawValue of staticKeyValues) {
+      const valueName = toPascalCase(rawValue);
+      if (!valueName) {
+        continue;
+      }
+
+      const generatedName = ensureUniqueGeneratedName(`click${valueName}${roleSuffix}`);
+
+      appendMethodOnce(
+        `  async ${generatedName}(wait: boolean = true) {\n`
+        + `    const key = ${JSON.stringify(rawValue)};\n`
+        + `    await this.clickByTestId(\`${elementDataTestIdForMethod}\`, "", wait);\n`
+        + `  }\n`,
+      );
+
+      registerGeneratedMethodSignature(generatedName, { params: `wait: boolean = true`, argNames: ["wait"] });
+    }
+
+    // For statically-known keys, we intentionally do NOT emit the generic keyed method.
     return;
   }
 

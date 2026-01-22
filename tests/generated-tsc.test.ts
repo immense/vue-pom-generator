@@ -117,4 +117,131 @@ describe("generated output", () => {
       throw new Error(`tsc failed (exit ${result.status})\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`);
     }
   });
+
+  it("only emits view passthrough methods when the view has a single child component POM", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-"));
+
+    const basePagePath = path.join(tempRoot, "BasePage.ts");
+    writeFile(
+      basePagePath,
+      [
+        "export type Fluent<T extends object> = T & PromiseLike<T>;",
+        "export class BasePage {",
+        "  public page: any;",
+        "  public constructor(page?: any, _options?: { testIdAttribute?: string }) {",
+        "    this.page = page;",
+        "  }",
+        "  protected fluent<T extends object>(_factory: () => Promise<T>): Fluent<T> {",
+        "    throw new Error('not implemented');",
+        "  }",
+        "  protected locatorByTestId(_testId: string): any {",
+        "    return null as any;",
+        "  }",
+        "  protected selectorForTestId(testId: string): string {",
+        "    return `[data-testid=\"${testId}\"]`;",
+        "  }",
+        "  protected async clickByTestId(_testId: string, _annotationText: string = '', _wait: boolean = true): Promise<void> {}",
+        "  protected async fillInputByTestId(_testId: string, _text: string, _annotationText: string = ''): Promise<void> {}",
+        "  protected async selectVSelectByTestId(_testId: string, _value: string, _timeOut = 500, _annotationText: string = ''): Promise<void> {}",
+        "  protected async animateCursorToElement(_selector: string, _executeClick = true, _delay = 100, _annotationText: string = '', _waitForInstrumentationEvent = true): Promise<void> {}",
+        "}",
+        "",
+      ].join("\n"),
+    );
+
+    const viewName = "TestViewPage";
+    const childA = "ChildA";
+    const childB = "ChildB";
+
+    const childAMethods = generateViewObjectModelMethodContent(
+      undefined,
+      "OnlyInA",
+      "button",
+      "ChildA-OnlyInA-button",
+      {},
+    );
+
+    const childBMethods = generateViewObjectModelMethodContent(
+      undefined,
+      "SomethingElse",
+      "button",
+      "ChildB-SomethingElse-button",
+      {},
+    );
+
+    const depsViewWithTwoChildren: IComponentDependencies = {
+      filePath: path.join(tempRoot, `${viewName}.vue`),
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set([childA, childB]),
+      dataTestIdSet: new Set(),
+      methodsContent: "\n",
+      generatedMethods: new Map(),
+      isView: true,
+    };
+
+    const depsChildA: IComponentDependencies = {
+      filePath: path.join(tempRoot, `${childA}.vue`),
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set([{ value: "ChildA-OnlyInA-button" }]),
+      methodsContent: childAMethods,
+      generatedMethods: new Map([["clickOnlyInAButton", { params: "wait: boolean = true", argNames: ["wait"] }]]),
+      isView: false,
+    };
+
+    const depsChildB: IComponentDependencies = {
+      filePath: path.join(tempRoot, `${childB}.vue`),
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set([{ value: "ChildB-SomethingElse-button" }]),
+      methodsContent: childBMethods,
+      generatedMethods: new Map([["clickSomethingElseButton", { params: "wait: boolean = true", argNames: ["wait"] }]]),
+      isView: false,
+    };
+
+    const componentHierarchyMapTwo = new Map<string, IComponentDependencies>([
+      [viewName, depsViewWithTwoChildren],
+      [childA, depsChildA],
+      [childB, depsChildB],
+    ]);
+
+    const outDirTwo = path.join(tempRoot, "out-two");
+    await generateFiles(componentHierarchyMapTwo, new Map(), basePagePath, {
+      outDir: outDirTwo,
+      projectRoot: tempRoot,
+      singleFile: false,
+    });
+
+    const viewFileTwo = path.join(outDirTwo, "Pages", `${viewName}.g.ts`);
+    expect(fs.existsSync(viewFileTwo)).toBe(true);
+    const viewContentTwo = fs.readFileSync(viewFileTwo, "utf8");
+
+    // With multiple child component POMs, we intentionally do not generate any passthrough methods.
+    expect(viewContentTwo).not.toContain("Passthrough methods composed");
+    expect(viewContentTwo).not.toContain("async clickOnlyInAButton");
+
+    // Single child component case: passthrough should be emitted.
+    const depsViewSingleChild: IComponentDependencies = {
+      ...depsViewWithTwoChildren,
+      filePath: path.join(tempRoot, `${viewName}Single.vue`),
+      usedComponentSet: new Set([childA]),
+    };
+    const componentHierarchyMapOne = new Map<string, IComponentDependencies>([
+      ["TestViewPageSingle", depsViewSingleChild],
+      [childA, depsChildA],
+    ]);
+
+    const outDirOne = path.join(tempRoot, "out-one");
+    await generateFiles(componentHierarchyMapOne, new Map(), basePagePath, {
+      outDir: outDirOne,
+      projectRoot: tempRoot,
+      singleFile: false,
+    });
+
+    const viewFileOne = path.join(outDirOne, "Pages", "TestViewPageSingle.g.ts");
+    expect(fs.existsSync(viewFileOne)).toBe(true);
+    const viewContentOne = fs.readFileSync(viewFileOne, "utf8");
+    expect(viewContentOne).toContain("Passthrough methods composed");
+    expect(viewContentOne).toContain("async clickOnlyInAButton");
+  });
 });

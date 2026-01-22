@@ -5,6 +5,8 @@ import { parseRouterFileFromCwd } from "../router-introspection";
 import fs from "node:fs";
 // NOTE: This module intentionally does not depend on Babel parsing.
 
+export { generateViewObjectModelMethodContent } from "../method-generation";
+
 const AUTO_GENERATED_COMMENT =
     ' * DO NOT MODIFY BY HAND\n'
     + ' *\n'
@@ -421,95 +423,6 @@ function generateViewObjectModel(
     return { filePath, content };
 }
 
-
-export function generateViewObjectModelMethodContent(
-    targetPageObjectModelClass: string | undefined,
-    methodName: string,
-    nativeRole: string,
-    formattedDataTestId: string,
-    params: Record<string, string>,
-) {
-
-    const baseMethodName = (nativeRole === "radio")
-        ? (methodName || "Radio")
-        : methodName;
-
-    const getElementMethod = generateGetElementByDataTestId(baseMethodName, nativeRole, formattedDataTestId, params);
-
-    if (targetPageObjectModelClass) {
-        return getElementMethod + generateNavigationMethod({
-            targetPageObjectModelClass,
-            baseMethodName,
-            formattedDataTestId,
-            params,
-        });
-    }
-
-    if (nativeRole === 'select') {
-        return getElementMethod + generateSelectMethod(baseMethodName, formattedDataTestId);
-    }
-    if (nativeRole === "vselect") {
-        return getElementMethod + generateVSelectMethod(baseMethodName, formattedDataTestId);
-    }
-    if (nativeRole === 'input') {
-        return getElementMethod + generateTypeMethod(baseMethodName, formattedDataTestId);
-    }
-    if (nativeRole === "radio") {
-        return getElementMethod + generateRadioMethod(baseMethodName || 'Radio', formattedDataTestId);
-    }
-
-    return getElementMethod + generateClickMethod(baseMethodName, formattedDataTestId, params);
-}
-
-function generateNavigationMethod(args: {
-    targetPageObjectModelClass: string;
-    /** Method name derived from data-testid parts (already PascalCase). */
-    baseMethodName: string;
-    /** data-testid string (may include `${key}` placeholder). */
-    formattedDataTestId: string;
-    /** Method param name->type dictionary (e.g. { key: "string" }). */
-    params: Record<string, string>;
-}) {
-    const { targetPageObjectModelClass: target, baseMethodName, formattedDataTestId, params } = args;
-
-    // IMPORTANT:
-    // Navigation method names must be derived from the element's semantic name (data-testid parts)
-    // rather than only from the target page class. Multiple elements often navigate to the same
-    // target (e.g. NewBranding + EditBranding -> BrandingDetailsPage). If we name methods by
-    // target only, we emit duplicate implementations and vue-tsc fails.
-    const methodName = baseMethodName
-        ? `goTo${upperFirst(baseMethodName)}`
-        : `goTo${target.endsWith("Page") ? target.slice(0, -"Page".length) : target}`;
-
-    const signature = `public ${methodName}(${formatParams(params)}): Fluent<${target}>`;
-    const clickExpr = hasParam(params, "key")
-        ? `\`${formattedDataTestId}\``
-        : `\`${formattedDataTestId}\``;
-
-    const body = `
-        ${signature} {
-        return this.fluent(async () => {
-        await this.clickByTestId(${clickExpr});
-        return new ${target}(this.page);
-    });
-    }
-`;
-
-    return body;
-}
-
-function hasParam(params: Record<string, string>, name: string) {
-    return Object.prototype.hasOwnProperty.call(params, name);
-}
-
-function formatParams(params: Record<string, string>) {
-    const entries = Object.entries(params);
-    if (!entries.length) {
-        return "";
-    }
-    return entries.map(([n, t]) => `${n}: ${t}`).join(", ");
-}
-
 function generateViewObjectModelContent(
     componentName: string,
     dependencies: IComponentDependencies,
@@ -628,7 +541,10 @@ function generateViewObjectModelContent(
     // - Only for views (not components) to avoid polluting component surfaces.
     // - Only generate pass-throughs when the method is unambiguous across child components.
     // - Never generate a pass-through that would collide with an existing method on the view.
-    if (isView && componentRefsForInstances.size > 0) {
+    // Only generate view passthrough methods when the view is essentially a thin wrapper
+    // around a single child component POM. This prevents "layout" components (Page, PageHeader,
+    // etc.) from injecting lots of noisy passthrough APIs into every view.
+    if (isView && componentRefsForInstances.size === 1) {
         content += getViewPassthroughMethods(componentName, dependencies, componentRefsForInstances, componentHierarchyMap);
     }
 
@@ -1274,91 +1190,10 @@ function getConstructor(
     childrenComponent.forEach((child) => {
         if (componentHierarchyMap.has(child) && componentHierarchyMap.get(child)?.dataTestIdSet.size) {
             const childName = child.split('.vue')[0]
-            content += `    this.${childName} = new ${childName}(page);\n`
+            content += `        this.${childName} = new ${childName}(page);\n`
         }
     })
     content += '    }'
     return `${content}\n`
-}
-
-function generateClickMethod(methodName: string, formattedDataTestId: string, params: Record<string, string>) {
-    let content: string;
-    const name = `click${methodName}`;
-    const paramBlock = formatParams(params);
-    const paramBlockWithWait = paramBlock ? `${paramBlock}, wait: boolean = true` : `wait: boolean = true`;
-    if (hasParam(params, "key")) {
-        content = `  async ${name}(${paramBlockWithWait}) {\n    await this.clickByTestId(\`${formattedDataTestId}\`, "", wait);\n  }\n`;
-    }
-    else {
-        content = `  async ${name}(wait: boolean = true) {\n    await this.clickByTestId("${formattedDataTestId}", "", wait);\n  }\n`;
-    }
-    return content;
-}
-
-function generateRadioMethod(methodName: string, formattedDataTestId: string) {
-    const name = `select${methodName}`;
-    const hasKey = formattedDataTestId.includes("${key}");
-    if (hasKey) {
-        return `  async ${name}(key: string, annotationText: string = "") {\n` +
-            `    await this.clickByTestId(\`${formattedDataTestId}\`, annotationText);\n` +
-            `  }\n`;
-    }
-    return `  async ${name}(annotationText: string = "") {\n` +
-        `    await this.clickByTestId("${formattedDataTestId}", annotationText);\n` +
-        `  }\n`;
-}
-
-function generateSelectMethod(methodName: string, formattedDataTestId: string) {
-    const name = `select${methodName}`;
-    const needsKey = formattedDataTestId.includes("${key}");
-    const selectorExpr = needsKey
-        ? `this.selectorForTestId(\`${formattedDataTestId}\`)`
-        : `this.selectorForTestId("${formattedDataTestId}")`;
-    const content: string = `  async ${name}(value: string, annotationText: string = "") {\n` +
-        `        const selector = ${selectorExpr};\n` +
-        `        await this.animateCursorToElement(selector, false, 500, annotationText);\n` +
-        `        await this.page.selectOption(selector, value);\n` +
-        `    }\n\n`;
-    return content;
-}
-
-function generateVSelectMethod(methodName: string, formattedDataTestId: string) {
-    const name = `select${methodName}`;
-    const content = [
-        `  async ${name}(value: string, timeOut = 500, annotationText: string = "") {\n`,
-        `    await this.selectVSelectByTestId("${formattedDataTestId}", value, timeOut, annotationText);\n`,
-        "  }\n",
-    ].join('');
-    return content;
-}
-
-function generateTypeMethod(methodName: string, formattedDataTestId: string) {
-    const name = `type${methodName}`;
-    const content: string = `  async ${name}(text: string, annotationText: string = "") {
-    await this.fillInputByTestId("${formattedDataTestId}", text, annotationText);
-  }\n`;
-    return content;
-}
-
-
-function generateGetElementByDataTestId(methodName: string, nativeRole: string, formattedDataTestId: string, params: Record<string, string>) {
-    // Avoid duplicate getters when the same base name exists for different roles.
-    // Example: "PackageHash" can exist as both "-input" and "-button".
-    const roleSuffix = upperFirst(nativeRole || "Element");
-    const baseName = upperFirst(methodName);
-    const name = baseName.endsWith(roleSuffix)
-        ? `get${baseName}`
-        : `get${baseName}${roleSuffix}`;
-    const needsKey = hasParam(params, "key") || formattedDataTestId.includes("${key}");
-
-    if (needsKey) {
-        return `      ${name}(key: string) {\n` +
-            `        return this.locatorByTestId(\`${formattedDataTestId}\`);\n` +
-            `    }\n`;
-    }
-
-    return `      ${name}() {\n` +
-        `        return this.locatorByTestId("${formattedDataTestId}");\n` +
-        `    }\n\n`;
 }
 
