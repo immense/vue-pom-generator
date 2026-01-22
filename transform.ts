@@ -374,18 +374,28 @@ export function createTestIdTransform(
     const parentIsRoot = context?.parent?.type === NodeTypes.ROOT;
     hierarchyMap.set(element, parentIsRoot ? null : context?.parent as ElementNode | null);
 
-    const toPosixPath = (filePath: string) => path.posix.normalize(path.resolve(filePath));
+    // Convert any path (including Windows "C:\\..." and Vite /@fs/ paths) into a
+    // normalized POSIX-ish form so `path.posix.*` helpers behave predictably.
+    //
+    // NOTE: `path.resolve()` on Windows returns backslashes, and `path.posix.basename()`
+    // only treats '/' as a separator. If we don't normalize separators first, we can end
+    // up treating the entire absolute path as the "basename" and generating invalid
+    // identifiers like `export class C:\\Users\\...`.
+    const toPosixPath = (filePath: string) => {
+      const resolved = path.resolve(filePath);
+      return path.posix.normalize(resolved.replace(/\\/g, "/"));
+    };
 
     const getParentComponentName = () => {
       // Vite often provides posix-style paths, but on Windows we can still see backslashes.
       // Normalize to posix separators before using path.posix helpers.
-      const normalizedFilePath = path.posix.normalize(toPosixPath(context.filename));
+      const normalizedFilePath = toPosixPath(context.filename);
       return path.posix.basename(normalizedFilePath, ".vue");
     };
 
     const parentComponentName = getParentComponentName();
 
-    const normalizedFilePath = path.posix.normalize(toPosixPath(context.filename));
+    const normalizedFilePath = toPosixPath(context.filename);
     // Keep the existing semantics (substring match) but operate on a normalized path.
     const isView = normalizedFilePath.includes(viewsNeedle);
 
