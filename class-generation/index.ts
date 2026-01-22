@@ -570,7 +570,9 @@ function generateViewObjectModelContent(
             ? (path.isAbsolute(basePageClassPath) ? basePageClassPath : path.resolve(projectRoot, basePageClassPath))
             : "";
         const basePageImport = path.relative(fromAbs, toAbs).replace(/\\/g, "/");
-        const basePageImportNoExt = stripExtension(basePageImport);
+        // stripExtension uses node:path formatting (platform-specific). Re-normalize to POSIX
+        // so the import specifier is valid on Windows.
+        const basePageImportNoExt = stripExtension(basePageImport).replace(/\\/g, "/");
         const basePageImportSpecifier = basePageImportNoExt.startsWith(".") ? basePageImportNoExt : `./${basePageImportNoExt}`;
         content += `import { BasePage, Fluent } from '${basePageImportSpecifier}';\n\n`;
 
@@ -579,7 +581,7 @@ function generateViewObjectModelContent(
                 if (componentHierarchyMap.has(child) && componentHierarchyMap.get(child)?.dataTestIdSet.size) {
                     const childPath = vueFilesPathMap.get(child);
                     let relativePath = path.relative(outputDir, childPath || '');
-                    relativePath = changeExtension(relativePath, ".vue", ".g");
+                    relativePath = changeExtension(relativePath, ".vue", ".g").replace(/\\/g, "/");
                     content += `import { ${child} } from '${relativePath}';\n`;
                 }
             });
