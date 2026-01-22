@@ -40,10 +40,15 @@ export interface CreateVueTestIdPluginsOptions {
    * Generate Playwright fixture helpers alongside generated POMs.
    *
    * Conventional Vite/Rollup config style:
+   * Default output (when `true`):
+   * - `<projectRoot>/tests/playwright/fixture/Fixtures.g.ts`
+   *
    * - `true`: enable with defaults
+   * - `"path"`: enable and write the fixture file under this directory (resolved relative to projectRoot),
+   *   or to this file path if it ends with `.ts`/`.tsx`/`.mts`/`.cts`
    * - `{ outDir }`: enable and override where fixture files are written
    */
-  generatePlaywrightFixtures?: boolean | {
+  generatePlaywrightFixtures?: boolean | string | {
     /** Directory to write fixture files to (resolved relative to projectRoot). */
     outDir?: string;
   };

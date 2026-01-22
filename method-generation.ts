@@ -101,18 +101,14 @@ function generateTypeMethod(methodName: string, formattedDataTestId: string) {
 }
 
 function generateGetElementByDataTestId(methodName: string, nativeRole: string, formattedDataTestId: string, params: Record<string, string>) {
-  // Avoid duplicate getters when the same base name exists for different roles.
+  // Avoid duplicate accessors when the same base name exists for different roles.
   // Example: "PackageHash" can exist as both "-input" and "-button".
   const roleSuffix = upperFirst(nativeRole || "Element");
   const baseName = upperFirst(methodName);
-  const name = baseName.endsWith(roleSuffix)
-    ? `get${baseName}`
-    : `get${baseName}${roleSuffix}`;
+  const propertyName = baseName.endsWith(roleSuffix)
+    ? `${baseName}`
+    : `${baseName}${roleSuffix}`;
   const needsKey = hasParam(params, "key") || formattedDataTestId.includes("${key}");
-
-  const propertyName = name.startsWith("get")
-    ? name.slice(3)
-    : name;
 
   if (needsKey) {
     const keyType = params.key || "string";
@@ -121,19 +117,13 @@ function generateGetElementByDataTestId(methodName: string, nativeRole: string, 
     // When method names include the "ByKey" segment, we remove it in the exposed property
     // name so `FooByKeyButton` becomes `FooButton[key]`.
     const keyedPropertyName = removeByKeySegment(propertyName);
-    return `${INDENT}${name}(key: ${keyType}) {\n`
-      + `${INDENT2}return this.locatorByTestId(\`${formattedDataTestId}\`);\n`
-      + `${INDENT}}\n\n`
-      + `${INDENT}get ${keyedPropertyName}() {\n`
-      + `${INDENT2}return this.keyedLocators((key: ${keyType}) => this.${name}(key));\n`
+    return `${INDENT}get ${keyedPropertyName}() {\n`
+      + `${INDENT2}return this.keyedLocators((key: ${keyType}) => this.locatorByTestId(\`${formattedDataTestId}\`));\n`
       + `${INDENT}}\n\n`;
   }
 
-  return `${INDENT}${name}() {\n`
+  return `${INDENT}get ${propertyName}() {\n`
     + `${INDENT2}return this.locatorByTestId("${formattedDataTestId}");\n`
-    + `${INDENT}}\n\n`
-    + `${INDENT}get ${propertyName}() {\n`
-    + `${INDENT2}return this.${name}();\n`
     + `${INDENT}}\n\n`;
 }
 

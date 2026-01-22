@@ -92,6 +92,10 @@ function generateRouteProperty(routeMeta: RouteMeta | null): string {
 function generateGoToSelfMethod(componentName: string): string {
     return [
         "",
+        "    async goTo() {",
+        "        await this.goToSelf();",
+        "    }",
+        "",
         "    async goToSelf() {",
         `        const route = ${componentName}.route;`,
         "        if (!route) {",
@@ -110,10 +114,16 @@ export interface GenerateFilesOptions {
     /**
      * Generate Playwright fixture helpers alongside generated POMs.
      *
-     * - true: enable with defaults
+      * Default output (when `true`):
+      * - `<projectRoot>/tests/playwright/fixture/Fixtures.g.ts`
+      *
+      * Accepted values:
+      * - `true`: enable with defaults
+      * - `"path"`: enable and write the fixture file under this directory (resolved relative to projectRoot),
+      *   or to this file path if it ends with `.ts`/`.tsx`/`.mts`/`.cts`
      * - { outDir }: enable and override where fixture files are written (resolved relative to projectRoot)
      */
-    generatePlaywrightFixtures?: boolean | { outDir?: string };
+        generatePlaywrightFixtures?: boolean | string | { outDir?: string };
 
     /**
      * Project root used for resolving conventional paths (e.g. src/views, pom/custom).
@@ -295,9 +305,20 @@ function maybeGeneratePlaywrightFixtureRegistry(
     if (!generatePlaywrightFixtures)
         return;
 
-    const fixtureOutDirRel = typeof generatePlaywrightFixtures === "object" && generatePlaywrightFixtures?.outDir
-        ? generatePlaywrightFixtures.outDir
-        : "tests/playwright/fixture";
+    // generatePlaywrightFixtures accepts:
+    // - true: enable fixtures with defaults
+    // - "path": enable fixtures and write them under this directory OR to this file if it ends with .ts
+    // - { outDir }: enable fixtures and override output directory
+    const defaultFixtureOutDirRel = "tests/playwright/fixture";
+    const fixtureOutRel = typeof generatePlaywrightFixtures === "string"
+        ? generatePlaywrightFixtures
+        : (typeof generatePlaywrightFixtures === "object" && generatePlaywrightFixtures?.outDir
+            ? generatePlaywrightFixtures.outDir
+            : defaultFixtureOutDirRel);
+
+    const looksLikeFilePath = fixtureOutRel.endsWith(".ts") || fixtureOutRel.endsWith(".tsx") || fixtureOutRel.endsWith(".mts") || fixtureOutRel.endsWith(".cts");
+    const fixtureOutDirRel = looksLikeFilePath ? path.dirname(fixtureOutRel) : fixtureOutRel;
+    const fixtureFileName = looksLikeFilePath ? path.basename(fixtureOutRel) : "Fixtures.g.ts";
 
     const root = projectRoot ?? process.cwd();
     const fixtureOutDirAbs = path.isAbsolute(fixtureOutDirRel)
@@ -324,6 +345,30 @@ function maybeGeneratePlaywrightFixtureRegistry(
         .map(([name]) => name)
         .sort((a, b) => a.localeCompare(b));
 
+    const reservedPlaywrightFixtureNames = new Set([
+        // Built-in Playwright fixtures
+        "page",
+        "context",
+        "browser",
+        "browserName",
+        "request",
+        // Our own fixtureOptions
+        "animation",
+    ]);
+
+    const viewFixtureNames = new Set(viewClassNames.map((name) => lowerFirst(name)));
+
+    const componentClassNames = Array.from(componentHierarchyMap.entries())
+        .filter(([, deps]) => !deps.isView)
+        .map(([name]) => name)
+        .filter((name) => {
+            const fixtureName = lowerFirst(name);
+            if (reservedPlaywrightFixtureNames.has(fixtureName)) return false;
+            if (viewFixtureNames.has(fixtureName)) return false;
+            return true;
+        })
+        .sort((a, b) => a.localeCompare(b));
+
     const header = `${eslintSuppressionHeader}/**\n`
         + ` * DO NOT MODIFY BY HAND\n`
         + ` *\n`
@@ -334,48 +379,71 @@ function maybeGeneratePlaywrightFixtureRegistry(
     // Concrete, strongly-typed fixtures for Playwright tests.
     //   test("...", async ({ preferencesPage }) => { ... })
     //
-    // Each injected page fixture also gets a `.goTo()` helper that re-navigates to
-    // the page via pom.goto(PageCtor, options). This keeps tests ergonomic without
-    // needing a global beforeEach(page.goto(...)).
-        const fixturesTypeEntries = viewClassNames
-        .map((name) => `  ${lowerFirst(name)}: ${name} & { goTo: () => Promise<void> };`)
+    // View POMs implement goTo() directly, so fixtures can be strongly typed without
+    // casting/augmenting at runtime.
+    const fixturesTypeEntries = viewClassNames
+        .map((name) => `  ${lowerFirst(name)}: Pom.${name},`)
         .join("\n");
-    // NOTE: We intentionally do not generate "openXPage" helpers.
-    // Each view POM has a goToSelf() method, and the fixture attaches a goTo() wrapper.
 
-        const fixturesObjectEntries = viewClassNames
-        .map((name) => {
-            const fixtureName = lowerFirst(name);
-                return `  ${fixtureName}: async ({ page, animation }, use) => {\n`
-                    + `    Reflect.set(globalThis, animationGlobalKey, animation);\n`
-                    + `    const pageObject = new ${name}(page) as ${name} & { goTo: () => Promise<void> };\n`
-                    + `    await pageObject.goToSelf();\n`
-                    + `    pageObject.goTo = async () => {\n`
-                    + `      await pageObject.goToSelf();\n`
-                    + `    };\n`
-                    + `    await use(pageObject);\n`
-                    + `  },`;
-        })
+    const componentFixturesTypeEntries = componentClassNames
+        .map((name) => `  ${lowerFirst(name)}: Pom.${name},`)
         .join("\n");
+
+    const pomFactoryType = `export type PomConstructor<T> = new (page: PwPage) => T;\n\n`
+        + `export interface PomFactory {\n`
+        + `  create<T>(ctor: PomConstructor<T>): T;\n`
+        + `}\n\n`;
+
+    // NOTE: We intentionally do not generate "openXPage" helpers.
+    // Each view POM provides goTo(), and tests call it explicitly.
 
         // Openers removed.
 
-       const fixturesContent = `${header
-           }/** Generated Playwright fixtures (typed page objects). */\n\n`
-          + `import { expect, test as base } from "@playwright/test";\n`
-          + `import type { PlaywrightOptions } from "./fixtureOptions";\n`
-          + `import { ${viewClassNames.join(", ")} } from "${pomImport}";\n\n`
-          + `const animationGlobalKey = "__VUE_TESTID_PLAYWRIGHT_ANIMATION__";\n`
-          + `export type GeneratedPageFixtures = {\n${fixturesTypeEntries}\n};\n\n`
-          + `const test = base.extend<PlaywrightOptions & GeneratedPageFixtures>({\n`
-          + `  animation: [{\n`
-          + `    pointer: { durationMilliseconds: 250, transitionStyle: "ease-in-out", clickDelayMilliseconds: 0 },\n`
-          + `    keyboard: { typeDelayMilliseconds: 100 },\n`
-          + `  }, { option: true }],\n`
-          + `${fixturesObjectEntries}\n});\n\n`
-          + `export { test, expect };\n`;
+        const fixturesContent = `${header
+            }/** Generated Playwright fixtures (typed page objects). */\n\n`
+                + `import { expect, test as base } from "@playwright/test";\n`
+                + `import type { Page as PwPage } from "@playwright/test";\n`
+                + `import * as Pom from "${pomImport}";\n\n`
+                + `export interface PlaywrightOptions {\n`
+                + `  animation: Pom.PlaywrightAnimationOptions;\n`
+                + `}\n\n`
+                + `${pomFactoryType}`
+                + `type PomSetupFixture = { pomSetup: void };\n`
+                + `type PomFactoryFixture = { pomFactory: PomFactory };\n\n`
+                + `const pageCtors = {\n${fixturesTypeEntries}\n} as const;\n`
+                + `const componentCtors = {\n${componentFixturesTypeEntries}\n} as const;\n\n`
+                + `export type GeneratedPageFixtures = { [K in keyof typeof pageCtors]: InstanceType<(typeof pageCtors)[K]> };\n`
+                + `export type GeneratedComponentFixtures = { [K in keyof typeof componentCtors]: InstanceType<(typeof componentCtors)[K]> };\n\n`
+                + `const makePomFixture = <T>(Ctor: PomConstructor<T>) => async ({ page }: { page: PwPage }, use: (t: T) => Promise<void>) => {\n`
+                + `  await use(new Ctor(page));\n`
+                + `};\n\n`
+                + `const createPomFixtures = <TMap extends Record<string, PomConstructor<any>>>(ctors: TMap) => {\n`
+                + `  const out: Record<string, any> = {};\n`
+                + `  for (const [key, Ctor] of Object.entries(ctors)) {\n`
+                + `    out[key] = makePomFixture(Ctor as PomConstructor<any>);\n`
+                + `  }\n`
+                + `  return out as any;\n`
+                + `};\n\n`
+                + `const test = base.extend<PlaywrightOptions & PomSetupFixture & PomFactoryFixture & GeneratedPageFixtures & GeneratedComponentFixtures>({\n`
+                + `  animation: [{\n`
+                + `    pointer: { durationMilliseconds: 250, transitionStyle: "ease-in-out", clickDelayMilliseconds: 0 },\n`
+                + `    keyboard: { typeDelayMilliseconds: 100 },\n`
+                + `  }, { option: true }],\n`
+                + `  pomSetup: [async ({ animation }, use) => {\n`
+                + `    Pom.setPlaywrightAnimationOptions(animation);\n`
+                + `    await use();\n`
+                + `  }, { auto: true }],\n`
+                + `  pomFactory: async ({ page }, use) => {\n`
+                + `    await use({\n`
+                + `      create: <T>(ctor: PomConstructor<T>) => new ctor(page),\n`
+                + `    });\n`
+                + `  },\n`
+                + `  ...createPomFixtures(pageCtors),\n`
+                + `  ...createPomFixtures(componentCtors),\n`
+                + `});\n\n`
+                + `export { test, expect };\n`;
 
-    createFile(path.resolve(fixtureOutDirAbs, "testWithGeneratedPageObjects.g.ts"), fixturesContent);
+        createFile(path.resolve(fixtureOutDirAbs, fixtureFileName), fixturesContent);
 
     // No pomFixture is generated; goToSelf is emitted directly on each view POM.
 }

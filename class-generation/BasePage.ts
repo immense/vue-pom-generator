@@ -79,7 +79,7 @@ export class ObjectId {
 const cursorImageId = "mouse_follower";
 const cursorAnnotationId = "cursor-annotation";
 
-type PlaywrightAnimationOptions = false | {
+export type PlaywrightAnimationOptions = false | {
   pointer?: {
     durationMilliseconds?: number;
     transitionStyle?: "linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out";
@@ -91,6 +91,16 @@ type PlaywrightAnimationOptions = false | {
 };
 
 const animationGlobalKey = "__VUE_TESTID_PLAYWRIGHT_ANIMATION__";
+
+/**
+ * Centralized hook for Playwright fixtures to configure animation options.
+ *
+ * Generated POMs read these options via globalThis as a lightweight cross-cutting
+ * configuration mechanism.
+ */
+export function setPlaywrightAnimationOptions(animation: PlaywrightAnimationOptions): void {
+  Reflect.set(globalThis, animationGlobalKey, animation);
+}
 
 function getAnimationOptions(): PlaywrightAnimationOptions {
   const fromFixture = Reflect.get(globalThis, animationGlobalKey);
