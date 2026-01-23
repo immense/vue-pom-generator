@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from "vitest";
 
 import type {
@@ -96,6 +97,8 @@ function firstElement(root: RootNode): ElementNode {
       expect(isSimpleExpressionNode(null)).toBe(false);
       expect(isSimpleExpressionNode({})).toBe(false);
       expect(isSimpleExpressionNode({ type: NodeTypes.SIMPLE_EXPRESSION } as any)).toBe(true);
+
+    return null;
   };
 
   const found = visit(root);
@@ -585,14 +588,14 @@ describe("utils.ts coverage", () => {
       addHtmlAttribute: false,
     });
 
-    const methodNames = Array.from(deps.generatedMethods.keys());
+    const methodNames = Array.from(deps.generatedMethods!.keys());
     expect(methodNames.length).toBeGreaterThan(0);
     const some = methodNames[0]!;
-    const prev = deps.generatedMethods.get(some);
+    const prev = deps.generatedMethods!.get(some);
     expect(prev).not.toBeUndefined();
 
     // Force a mismatch on the next registration pass.
-    deps.generatedMethods.set(some, { params: "x: number", argNames: ["x"] });
+    deps.generatedMethods!.set(some, { params: "x: number", argNames: ["x"] });
 
     applyResolvedDataTestId({
       element: el,
@@ -608,7 +611,7 @@ describe("utils.ts coverage", () => {
       addHtmlAttribute: false,
     });
 
-    expect(deps.generatedMethods.get(some)).toBeNull();
+    expect(deps.generatedMethods!.get(some)).toBeNull();
     expect(deps.methodsContent).toContain("const testId");
   });
 
@@ -642,7 +645,7 @@ describe("utils.ts coverage", () => {
     });
 
     // Duplicate label should force a unique suffix via ensureUniqueGeneratedName.
-    const keys = Array.from(deps.generatedMethods.keys());
+    const keys = Array.from(deps.generatedMethods!.keys());
     expect(keys.some(k => k.endsWith("2"))).toBe(true);
   });
 

@@ -1,3 +1,4 @@
+// @vitest-environment node
 import type { AttributeNode, DirectiveNode, ElementNode, ForNode, RootNode, TemplateChildNode } from '@vue/compiler-core'
 import type { Node as BabelNode } from '@babel/types'
 
