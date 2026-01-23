@@ -244,19 +244,19 @@ function findFirstDataTestId(root: RootNode): string | null {
 }
 
 describe('createTestIdTransform', () => {
-  it('does not inject html attributes when injectTestIds is false (but still collects ids)', () => {
+  it('injects html attributes and collects ids', () => {
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
 
     const ast = compileAndCaptureAst(
       readFixtureTemplate('MyComp_SaveButton.vue'),
       {
         filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], 'src/views', { injectTestIds: false })],
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
       },
     )
 
     const testId = findFirstDataTestId(ast)
-    expect(testId).toBeNull()
+    expect(testId).toBe('MyComp-Save-button')
 
     const deps = componentHierarchyMap.get('MyComp')
     expect(deps).toBeTruthy()
@@ -270,7 +270,7 @@ describe('createTestIdTransform', () => {
       readFixtureTemplate('MyComp_SaveButton_ExistingTestId.vue'),
       {
         filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], 'src/views', { existingIdBehavior: 'preserve' })],
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views', { existingIdBehavior: 'preserve' })],
       },
     )
 
@@ -285,7 +285,7 @@ describe('createTestIdTransform', () => {
       readFixtureTemplate('MyComp_SaveButton_ExistingTestId.vue'),
       {
         filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], 'src/views', { existingIdBehavior: 'overwrite' })],
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views', { existingIdBehavior: 'overwrite' })],
       },
     )
 
@@ -301,7 +301,7 @@ describe('createTestIdTransform', () => {
         readFixtureTemplate('MyComp_SaveButton_ExistingTestId.vue'),
         {
           filename: '/src/components/MyComp.vue',
-          nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], 'src/views', { existingIdBehavior: 'error' })],
+          nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views', { existingIdBehavior: 'error' })],
         },
       )
     }).toThrow()
@@ -314,7 +314,7 @@ describe('createTestIdTransform', () => {
       readFixtureTemplate('MyComp_RouterLinkUsers.vue'),
       {
         filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap)],
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
       },
     )
 
@@ -329,7 +329,7 @@ describe('createTestIdTransform', () => {
       readFixtureTemplate('MyComp_SelectButton_DynamicKey.vue'),
       {
         filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap)],
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
       },
     )
 
@@ -345,7 +345,7 @@ describe('createTestIdTransform', () => {
       readFixtureTemplate('MyComp_SelectButton_StaticList.vue'),
       {
         filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap)],
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
       },
     )
 
@@ -376,7 +376,7 @@ describe('createTestIdTransform', () => {
       readFixtureTemplate('MyComp_GoButton_RandomList.vue'),
       {
         filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap)],
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
       },
     )
 
@@ -433,7 +433,7 @@ describe('createTestIdTransform', () => {
       readFixtureTemplate('MyComp_SelectButton_DynamicKey.vue'),
       {
         filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap)],
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
       },
     )
 
@@ -456,7 +456,7 @@ describe('createTestIdTransform', () => {
       readFixtureTemplate('MyComp_VSelect.vue'),
       {
         filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', new Map(), nativeWrappers)],
+        nodeTransforms: [createTestIdTransform('MyComp', new Map(), nativeWrappers, [], '/src/views')],
       },
     )
 

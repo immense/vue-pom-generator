@@ -341,20 +341,24 @@ export function createTestIdTransform(
   componentHierarchyMap: Map<string, IComponentDependencies>,
   nativeWrappers: NativeWrappersMap = {},
   excludedComponents: string[] = [],
-  viewsDir: string = "src/views",
-  options: { injectTestIds?: boolean; existingIdBehavior?: "preserve" | "overwrite" | "error"; testIdAttribute?: string } = {},
+  viewsDirAbs: string,
+  options: { existingIdBehavior?: "preserve" | "overwrite" | "error"; testIdAttribute?: string } = {},
 ): NodeTransform {
-  const injectTestIds = options.injectTestIds !== false;
   const existingIdBehavior = options.existingIdBehavior ?? "preserve";
   const testIdAttribute = (options.testIdAttribute || "data-testid").trim() || "data-testid";
-  const normalizedViewsDir = path.normalize(viewsDir);
-  const viewsNeedle = (() => {
-    const base = path.isAbsolute(normalizedViewsDir)
-      ? normalizedViewsDir
-      : path.join(path.sep, normalizedViewsDir);
-    // Ensure trailing separator for substring match.
-    return path.join(base, path.sep);
-  })();
+
+  // Some projects (and dev environments) use symlinks. We want viewsDir containment checks
+  // to behave like the filesystem does (real paths), but we must not crash for virtual
+  // Vite filenames (e.g. /@fs/...) or any non-existent paths.
+  const safeRealpath = (p: string) => {
+    try {
+      return fs.existsSync(p) ? fs.realpathSync(p) : p;
+    } catch {
+      return p;
+    }
+  };
+
+  const normalizedViewsDirAbs = path.normalize(safeRealpath(path.resolve(viewsDirAbs)));
 
   // When generating methods incrementally, it’s possible for the same logical test id to be
   // encountered multiple times (e.g. due to wrapper behaviors, template shape, or repeated nodes).
@@ -388,7 +392,7 @@ export function createTestIdTransform(
     // only treats '/' as a separator. If we don't normalize separators first, we can end
     // up treating the entire absolute path as the "basename" and generating invalid
     // identifiers like `export class C:\\Users\\...`.
-    const normalizeFilePath = (filePath: string) => path.normalize(path.resolve(filePath));
+    const normalizeFilePath = (filePath: string) => path.normalize(safeRealpath(path.resolve(filePath)));
 
     const getParentComponentName = () => {
       const normalizedFilePath = normalizeFilePath(context.filename);
@@ -398,8 +402,11 @@ export function createTestIdTransform(
     const parentComponentName = getParentComponentName();
 
     const normalizedFilePath = normalizeFilePath(context.filename);
-    // Keep the existing semantics (substring match) but operate on a normalized path.
-    const isView = normalizedFilePath.includes(viewsNeedle);
+
+    // Treat a component as a "view" when its .vue file is contained under viewsDir.
+    // This uses a real path containment check instead of substring matching.
+    const relToViewsDir = path.relative(normalizedViewsDirAbs, normalizedFilePath);
+    const isView = !relToViewsDir.startsWith("..") && !path.isAbsolute(relToViewsDir);
 
     const ensureDependencies = (parentComponentName: string) => {
       let dependencies = componentHierarchyMap.get(parentComponentName);
@@ -515,7 +522,7 @@ export function createTestIdTransform(
         bestKeyPlaceholder,
         keyValuesOverride,
         entryOverrides: args.entryOverrides,
-        addHtmlAttribute: args.addHtmlAttribute ?? injectTestIds,
+        addHtmlAttribute: args.addHtmlAttribute ?? true,
         testIdAttribute,
         existingIdBehavior,
       });

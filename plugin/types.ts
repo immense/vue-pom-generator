@@ -8,19 +8,26 @@ export interface VuePomGeneratorPluginOptions {
   vueOptions?: VuePluginOptions;
 
   /**
-   * Configuration for injecting/deriving test ids from Vue templates.
+   * Logging configuration for the generator plugins.
    *
-   * This plugin can still *collect* metadata for code generation even when injection is disabled.
+   * All logs emitted by this package should share the same prefix:
+   * `[vue-pom-generator]`.
+   */
+  logging?: {
+    /**
+     * Controls log volume.
+     *
+     * - `"silent"`: no logs
+     * - `"info"` (default): high-level lifecycle logs
+     * - `"debug"`: verbose diagnostics
+     */
+    verbosity?: "silent" | "info" | "debug";
+  };
+
+  /**
+   * Configuration for injecting/deriving test ids from Vue templates.
    */
   injection?: {
-    /**
-     * Whether to inject the attribute into the compiled template output.
-     *
-     * - `true` (default): inject/overwrite (depending on existingIdBehavior)
-     * - `false`: collect-only (useful if your app already renders stable ids, but you still want POM generation)
-     */
-    enabled?: boolean;
-
     /**
      * HTML attribute name to inject/treat as the "test id".
      *
@@ -31,13 +38,14 @@ export interface VuePomGeneratorPluginOptions {
     attribute?: string;
 
     /**
-     * Folder convention used to identify "pages" (Nuxt/Vue) or "views" (this repo).
-     *
-     * Behavior:
-     * - This is a simple *substring* match against the normalized absolute Vue file path.
-     * - If the file path contains `/<viewsDir>/` the component is treated as a "view".
-     *
-     * Default: `"src/views"` (no leading slash).
+      * Directory used to identify "views" (pages) vs normal components.
+      *
+      * Behavior:
+      * - Resolved relative to the Vite project root (resolved `config.root`) when not absolute.
+      * - A Vue file is treated as a "view" when it is contained within this directory
+      *   (using `path.relative` containment checks).
+      *
+      * Default: `"src/views"`.
      */
     viewsDir?: string;
 
@@ -68,7 +76,11 @@ export interface VuePomGeneratorPluginOptions {
     /**
      * Output directory for generated files.
      *
-     * Defaults to `./pom` (relative to `process.cwd()` when not absolute).
+      * Defaults to `tests/playwright/generated` (relative to the Vite project root).
+      *
+      * Generated outputs (by default):
+      * - `<outDir>/page-object-models.g.ts`
+      * - `<outDir>/index.ts` (stable barrel that re-exports from `page-object-models.g`)
      */
     outDir?: string;
 
@@ -91,13 +103,17 @@ export interface VuePomGeneratorPluginOptions {
        * Generate Playwright fixture helpers alongside generated POMs.
        *
        * Default output (when `true`):
-       * - `<projectRoot>/tests/playwright/fixture/Fixtures.g.ts`
+        * - `<projectRoot>/tests/playwright/generated/fixtures.g.ts`
        */
       fixtures?: boolean | string | { outDir?: string };
 
       /** Handwritten Page Object Model helpers and attachments. */
       customPoms?: {
-        /** Directory containing handwritten helpers to inline/import. Defaults to `<outDir>/custom`. */
+        /**
+         * Directory containing handwritten helpers to import into generated output.
+         *
+         * Defaults to `tests/playwright/pom/custom` (relative to the Vite project root).
+         */
         dir?: string;
 
         /** Optional import aliases for handwritten helpers (basename -> alias). */

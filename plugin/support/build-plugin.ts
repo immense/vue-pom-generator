@@ -6,6 +6,7 @@ import { generateFiles } from "../../class-generation";
 import { parseRouterFileFromCwd } from "../../router-introspection";
 import { setResolveToComponentNameFn, setRouteNameToComponentNameMap, toPascalCase } from "../../utils";
 import type { IComponentDependencies } from "../../utils";
+import type { VuePomGeneratorLogger } from "../logger";
 
 interface BuildProcessorOptions {
   componentHierarchyMap: Map<string, IComponentDependencies>;
@@ -17,13 +18,15 @@ interface BuildProcessorOptions {
   outDir?: string;
   generateFixtures?: boolean | string | { outDir?: string };
   customPomAttachments?: Array<{ className: string; propertyName: string; attachWhenUsesComponents: string[]; attachTo?: "views" | "components" | "both" }>;
-  projectRoot: string;
+  projectRootRef: { current: string };
   customPomDir?: string;
   customPomImportAliases?: Record<string, string>;
   testIdAttribute: string;
 
-  vueRouterFluentChaining: boolean;
+  routerAwarePoms: boolean;
   resolvedRouterEntry?: string;
+
+  loggerRef: { current: VuePomGeneratorLogger };
 }
 
 export function createBuildProcessorPlugin(options: BuildProcessorOptions): PluginOption {
@@ -35,31 +38,32 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     outDir,
     generateFixtures,
     customPomAttachments,
-    projectRoot,
+    projectRootRef,
     customPomDir,
     customPomImportAliases,
     testIdAttribute,
-    vueRouterFluentChaining,
+    routerAwarePoms,
     resolvedRouterEntry,
+    loggerRef,
   } = options;
 
   // Vite (v6/v7) may run multiple build environments/passes (e.g. SSR + client) in a single invocation.
   // Some passes can execute without compiling any Vue SFC templates that reach our transform, leaving
   // `componentHierarchyMap` empty. If we blindly generate on that pass, we can overwrite a previously
-  // correct `pom/index.g.ts` with an incomplete file.
+  // correct aggregated output (e.g. `tests/playwright/generated/page-object-models.g.ts`) with an incomplete file.
   //
   // Guard generation so we only write when we have meaningful data, and prefer the "largest" pass.
   let lastGeneratedEntryCount = 0;
 
   return {
-    name: "vue-testid-ts-processor",
+    name: "vue-pom-generator-build",
     // This plugin exists to generate code on build output; it is not needed during dev-server HMR.
     apply: "build",
     enforce: "pre",
     async buildStart() {
       // Router introspection: build a route-name -> component-name map once per build.
       // This enables `:to`-based methods to return `new <TargetPage>(page)`.
-      if (!vueRouterFluentChaining) {
+      if (!routerAwarePoms) {
         setRouteNameToComponentNameMap(new Map());
         setResolveToComponentNameFn(() => null);
         return;
@@ -110,17 +114,18 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
         outDir,
         generateFixtures,
         customPomAttachments,
-        projectRoot,
+        projectRoot: projectRootRef.current,
         customPomDir,
         customPomImportAliases,
         testIdAttribute,
-        vueRouterFluentChaining,
+        vueRouterFluentChaining: routerAwarePoms,
         routerEntry: resolvedRouterEntry,
       });
       lastGeneratedEntryCount = entryCount;
+      loggerRef.current.info(`generated POMs (${entryCount} entries)`);
     },
     closeBundle() {
-      console.log("\n=== Build Complete ===");
+      loggerRef.current.info("build complete");
     },
   } satisfies PluginOption;
 }

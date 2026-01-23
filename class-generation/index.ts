@@ -37,7 +37,7 @@ function stripExtension(filePath: string): string {
 
 function resolveRouterEntry(projectRoot?: string, routerEntry?: string) {
     if (!routerEntry) {
-        throw new Error("[vue-pom-generator] Router entry path is required when vueRouterFluentChaining is enabled.");
+        throw new Error("[vue-pom-generator] Router entry path is required when routerAwarePoms is enabled.");
     }
     const root = projectRoot ?? process.cwd();
     return path.isAbsolute(routerEntry) ? routerEntry : path.resolve(root, routerEntry);
@@ -111,7 +111,7 @@ export interface GenerateFilesOptions {
     /**
      * Output directory for generated files.
      *
-     * Defaults to `./pom` when omitted.
+    * Defaults to `./pom` when omitted (backwards compatible default for internal usage).
      */
     outDir?: string;
 
@@ -119,7 +119,7 @@ export interface GenerateFilesOptions {
      * Generate Playwright fixture helpers alongside generated POMs.
      *
      * Default output (when `true`):
-     * - `<projectRoot>/tests/playwright/fixture/Fixtures.g.ts`
+        * - `<projectRoot>/<outDir>/fixtures.g.ts`
      *
      * Accepted values:
      * - `true`: enable with defaults
@@ -130,14 +130,14 @@ export interface GenerateFilesOptions {
     generateFixtures?: boolean | string | { outDir?: string };
 
     /**
-     * Project root used for resolving conventional paths (e.g. src/views, pom/custom).
+        * Project root used for resolving conventional paths (e.g. src/views, tests/playwright/pom/custom).
      * Defaults to process.cwd() for backwards compatibility.
      */
     projectRoot?: string;
 
     /**
      * Directory containing handwritten POM helpers to import into aggregated output.
-     * Defaults to <projectRoot>/pom/custom.
+        * Defaults to <projectRoot>/tests/playwright/pom/custom.
      */
     customPomDir?: string;
 
@@ -153,7 +153,7 @@ export interface GenerateFilesOptions {
 
     /**
      * Handwritten POM helper attachments. These helpers are assumed to be present in the
-     * aggregated output (e.g. via `pom/custom/*.ts` inlining), but we only attach them to
+     * aggregated output (e.g. via `tests/playwright/pom/custom/*.ts` inlining), but we only attach them to
      * view classes that actually use certain components.
      */
     customPomAttachments?: Array<{
@@ -272,7 +272,7 @@ function maybeGenerateFixtureRegistry(
     // - true: enable fixtures with defaults
     // - "path": enable fixtures and write them under this directory OR to this file if it ends with .ts
     // - { outDir }: enable fixtures and override output directory
-    const defaultFixtureOutDirRel = "tests/playwright/fixture";
+    const defaultFixtureOutDirRel = pomOutDir;
     const fixtureOutRel = typeof generateFixtures === "string"
         ? generateFixtures
         : (typeof generateFixtures === "object" && generateFixtures?.outDir
@@ -281,7 +281,7 @@ function maybeGenerateFixtureRegistry(
 
     const looksLikeFilePath = fixtureOutRel.endsWith(".ts") || fixtureOutRel.endsWith(".tsx") || fixtureOutRel.endsWith(".mts") || fixtureOutRel.endsWith(".cts");
     const fixtureOutDirRel = looksLikeFilePath ? path.dirname(fixtureOutRel) : fixtureOutRel;
-    const fixtureFileName = looksLikeFilePath ? path.basename(fixtureOutRel) : "Fixtures.g.ts";
+    const fixtureFileName = looksLikeFilePath ? path.basename(fixtureOutRel) : "fixtures.g.ts";
 
     const root = projectRoot ?? process.cwd();
     const fixtureOutDirAbs = path.isAbsolute(fixtureOutDirRel)
@@ -705,7 +705,7 @@ async function generateAggregatedFiles(
         const basePageInline = inlineBasePageModule();
 
         // Handwritten POM helpers for complicated/third-party widgets.
-        // Convention: place them in `frontend/pom/custom/*.ts`.
+        // Convention: place them in `tests/playwright/pom/custom/*.ts`.
         // Import them rather than inlining so TypeScript can typecheck them.
         const addCustomPomImports = () => {
             // Some custom POM helpers intentionally share names with generated component POMs
@@ -717,12 +717,16 @@ async function generateAggregatedFiles(
                 ...(options.customPomImportAliases ?? {}),
             };
 
-            const customDir = options.customPomDir ?? path.join(projectRoot, "pom/custom");
-            if (!fs.existsSync(customDir)) {
+            const customDirRelOrAbs = options.customPomDir ?? "tests/playwright/pom/custom";
+            const customDirAbs = path.isAbsolute(customDirRelOrAbs)
+                ? customDirRelOrAbs
+                : path.resolve(projectRoot, customDirRelOrAbs);
+
+            if (!fs.existsSync(customDirAbs)) {
                 return;
             }
 
-            const files = fs.readdirSync(customDir)
+            const files = fs.readdirSync(customDirAbs)
                 .filter((f) => f.endsWith(".ts"))
                 .sort((a, b) => a.localeCompare(b));
 
@@ -731,11 +735,14 @@ async function generateAggregatedFiles(
                 // In this repo, custom POMs are authored as `export class <Name> { ... }`.
                 // Import by the basename, which matches the class name convention.
                 const alias = importAliases[exportName];
+                const customFileAbs = path.join(customDirAbs, file);
+                const fromOutputDir = outputDir;
+                const importPath = stripExtension(toPosixRelativePath(fromOutputDir, customFileAbs));
                 if (alias) {
-                    imports.push(`import { ${exportName} as ${alias} } from "./custom/${exportName}";`);
+                    imports.push(`import { ${exportName} as ${alias} } from "${importPath}";`);
                 }
                 else {
-                    imports.push(`import { ${exportName} } from "./custom/${exportName}";`);
+                    imports.push(`import { ${exportName} } from "${importPath}";`);
                 }
             }
         };
@@ -949,12 +956,12 @@ async function generateAggregatedFiles(
     };
 
     const base = ensureDir(outDir);
-    const outputFile = path.join(base, "index.g.ts");
+    const outputFile = path.join(base, "page-object-models.g.ts");
     const header = `${eslintSuppressionHeader}/**\n * Aggregated generated POMs\n${AUTO_GENERATED_COMMENT}`;
     const content = makeAggregatedContent(header, path.dirname(outputFile), [...views, ...components]);
 
     const indexFile = path.join(base, "index.ts");
-    const indexContent = `${eslintSuppressionHeader}/**\n * POM exports\n${AUTO_GENERATED_COMMENT}\n\nexport * from "./index.g";\n`;
+    const indexContent = `${eslintSuppressionHeader}/**\n * POM exports\n${AUTO_GENERATED_COMMENT}\n\nexport * from "./page-object-models.g";\n`;
 
     return [
         { filePath: outputFile, content },

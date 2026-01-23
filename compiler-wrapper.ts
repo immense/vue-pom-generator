@@ -23,7 +23,6 @@ function extractMetadataFromAST(
   componentName: string,
   metadataMap: Map<string, Map<string, ElementMetadata>>,
   semanticNameMap: Map<string, string>,
-  debug: boolean,
   testIdAttribute: string,
 ): void {
   const componentMetadata = new Map<string, ElementMetadata>();
@@ -37,7 +36,7 @@ function extractMetadataFromAST(
         const metadata = tryCreateElementMetadata({
           element,
           semanticNameMap,
-          debug,
+          debug: false,
           debugPrefix: "[compiler-wrapper]",
           preferJsonParseFailureAsContentArray: true,
           testIdAttribute,
@@ -114,7 +113,6 @@ export function compileWithMetadataExtractionManual(
   componentName: string,
   metadataMap: Map<string, Map<string, ElementMetadata>>,
   semanticNameMap: Map<string, string>,
-  debug: boolean,
   testIdAttribute: string = "data-testid",
 ): ReturnType<typeof compile> {
   const normalizedTestIdAttribute = (testIdAttribute ?? "data-testid").trim() || "data-testid";
@@ -135,7 +133,7 @@ export function compileWithMetadataExtractionManual(
             return;
 
           return () => {
-            extractMetadataFromAST(node as RootNode, componentName, metadataMap, semanticNameMap, debug, normalizedTestIdAttribute);
+            extractMetadataFromAST(node as RootNode, componentName, metadataMap, semanticNameMap, normalizedTestIdAttribute);
           };
         },
       ],

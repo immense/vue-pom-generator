@@ -86,14 +86,14 @@ describe("class-generation coverage", () => {
 
       const outDir = path.join(tempRoot, "pom");
 
-      // 1) default location: <projectRoot>/tests/playwright/fixture/Fixtures.g.ts
+      // 1) default location: <outDir>/fixtures.g.ts
       await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
         outDir,
         projectRoot: tempRoot,
         generateFixtures: true,
       });
 
-      const defaultFixturePath = path.join(tempRoot, "tests", "playwright", "fixture", "Fixtures.g.ts");
+      const defaultFixturePath = path.join(outDir, "fixtures.g.ts");
       expect(fs.existsSync(defaultFixturePath)).toBe(true);
 
       const defaultFixtureContent = readFile(defaultFixturePath);
@@ -120,7 +120,7 @@ describe("class-generation coverage", () => {
         generateFixtures: { outDir: "tests/playwright/fixture-alt" },
       });
 
-      const altFixturePath = path.join(tempRoot, "tests", "playwright", "fixture-alt", "Fixtures.g.ts");
+      const altFixturePath = path.join(tempRoot, "tests", "playwright", "fixture-alt", "fixtures.g.ts");
       expect(fs.existsSync(altFixturePath)).toBe(true);
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -177,7 +177,7 @@ describe("class-generation coverage", () => {
         projectRoot: tempRoot,
       });
 
-      const aggregatedFile = path.join(outDir, "index.g.ts");
+      const aggregatedFile = path.join(outDir, "page-object-models.g.ts");
       expect(fs.existsSync(aggregatedFile)).toBe(true);
 
       const content = readFile(aggregatedFile);
@@ -245,7 +245,7 @@ describe("class-generation coverage", () => {
 
       // Provide custom widget helpers so the generated file has imports for ToggleWidget.
       writeFile(
-        path.join(tempRoot, "pom", "custom", "Toggle.ts"),
+        path.join(tempRoot, "tests", "playwright", "pom", "custom", "Toggle.ts"),
         "export class Toggle { constructor(_page: any, _testId: string) {} }\n",
       );
 
@@ -260,7 +260,7 @@ describe("class-generation coverage", () => {
         testIdAttribute: " data-qa ",
       });
 
-      const aggregatedFile = path.join(outDir, "index.g.ts");
+      const aggregatedFile = path.join(outDir, "page-object-models.g.ts");
       const content = readFile(aggregatedFile);
 
       // Route metadata + goToSelf helpers

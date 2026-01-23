@@ -11,13 +11,14 @@ import { parseRouterFileFromCwd } from "../../router-introspection";
 import { createTestIdTransform } from "../../transform";
 import { setResolveToComponentNameFn, setRouteNameToComponentNameMap, toPascalCase } from "../../utils";
 import type { IComponentDependencies, NativeWrappersMap } from "../../utils";
+import type { VuePomGeneratorLogger } from "../logger";
 
 interface DevProcessorOptions {
   nativeWrappers: NativeWrappersMap;
   excludedComponents: string[];
   viewsDir: string;
 
-  projectRoot: string;
+  projectRootRef: { current: string };
   normalizedBasePagePath: string;
   basePageClassPath: string;
 
@@ -28,8 +29,10 @@ interface DevProcessorOptions {
   customPomImportAliases?: Record<string, string>;
   testIdAttribute: string;
 
-  vueRouterFluentChaining: boolean;
+  routerAwarePoms: boolean;
   resolvedRouterEntry?: string;
+
+  loggerRef: { current: VuePomGeneratorLogger };
 }
 
 export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOption {
@@ -37,7 +40,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     nativeWrappers,
     excludedComponents,
     viewsDir,
-    projectRoot,
+    projectRootRef,
     normalizedBasePagePath,
     basePageClassPath,
     outDir,
@@ -46,15 +49,16 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     customPomDir,
     customPomImportAliases,
     testIdAttribute,
-    vueRouterFluentChaining,
+    routerAwarePoms,
     resolvedRouterEntry,
+    loggerRef,
   } = options;
 
   // Bridge between configureServer (where we have timers/logger) and handleHotUpdate.
   let scheduleVueFileRegen: ((filePath: string, source: "hmr" | "fs") => void) | null = null;
 
   return {
-    name: "vue-testid-dev-processor",
+    name: "vue-pom-generator-dev",
     apply: "serve",
 
     // Prefer hot-update events over filesystem change events for speed and reliability.
@@ -73,7 +77,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     configureServer(server: ViteDevServer) {
       // Router introspection (dev-server): mirror the buildStart behavior.
       const routerInitPromise = (async () => {
-        if (!vueRouterFluentChaining) {
+        if (!routerAwarePoms) {
           setRouteNameToComponentNameMap(new Map());
           setResolveToComponentNameFn(() => null);
           return;
@@ -100,14 +104,16 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         });
       })();
 
-      const logger = server.config.logger;
-      const log = (message: string) => {
-        logger.info(`[vue-testid] ${message}`);
-      };
+      const logInfo = (message: string) => loggerRef.current.info(message);
+      const logDebug = (message: string) => loggerRef.current.debug(message);
 
       let scheduleVueFileRegenLocal: ((filePath: string, source: "hmr" | "fs") => void) | null = null;
 
       const formatMs = (ms: number) => `${ms.toFixed(1)}ms`;
+
+      const getViewsDirAbs = () => (path.isAbsolute(viewsDir)
+        ? viewsDir
+        : path.resolve(projectRootRef.current, viewsDir));
 
       const extractTemplateFromSfc = (source: string, filename?: string): string => {
         const { descriptor } = parseSfc(source, {
@@ -191,8 +197,8 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
                 snapshotHierarchy,
                 nativeWrappers,
                 excludedComponents,
-                viewsDir,
-                { injectTestIds: false, existingIdBehavior: "preserve", testIdAttribute },
+                getViewsDirAbs(),
+                { existingIdBehavior: "preserve", testIdAttribute },
               ),
             ],
           });
@@ -206,7 +212,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
       };
 
       const fullRebuildSnapshotFromFilesystem = () => {
-        const srcDir = path.resolve(projectRoot, "src");
+        const srcDir = path.resolve(projectRootRef.current, "src");
         if (!fs.existsSync(srcDir))
           return;
 
@@ -216,7 +222,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         filePathToComponentName.clear();
 
         const vueFiles = walkFilesRecursive(srcDir);
-        log(`initial scan: found ${vueFiles.length} .vue files under src/`);
+        logInfo(`initial scan: found ${vueFiles.length} .vue files under src/`);
 
         let compiledCount = 0;
         for (const file of vueFiles) {
@@ -226,7 +232,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         }
 
         const t1 = performance.now();
-        log(`initial compile: ${compiledCount}/${vueFiles.length} files in ${formatMs(t1 - t0)} (components=${snapshotHierarchy.size})`);
+        logInfo(`initial compile: ${compiledCount}/${vueFiles.length} files in ${formatMs(t1 - t0)} (components=${snapshotHierarchy.size})`);
       };
 
       const generateAggregatedFromSnapshot = (reason: string) => {
@@ -235,15 +241,15 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
           outDir,
           generateFixtures,
           customPomAttachments,
-          projectRoot,
+          projectRoot: projectRootRef.current,
           customPomDir,
           customPomImportAliases,
           testIdAttribute,
-          vueRouterFluentChaining,
+          vueRouterFluentChaining: routerAwarePoms,
           routerEntry: resolvedRouterEntry,
         });
         const t1 = performance.now();
-        log(`generate(${reason}): components=${snapshotHierarchy.size} in ${formatMs(t1 - t0)}`);
+        logInfo(`generate(${reason}): components=${snapshotHierarchy.size} in ${formatMs(t1 - t0)}`);
       };
 
       const initialBuildPromise = (async () => {
@@ -252,11 +258,11 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         fullRebuildSnapshotFromFilesystem();
         generateAggregatedFromSnapshot("startup");
         const t1 = performance.now();
-        log(`startup total: ${formatMs(t1 - t0)}`);
+        logInfo(`startup total: ${formatMs(t1 - t0)}`);
       })();
 
-      const watchedVueGlob = path.resolve(projectRoot, "src", "**", "*.vue");
-      const watchedPluginGlob = path.resolve(projectRoot, "vite-plugins", "vue-pom-generator", "**", "*.ts");
+      const watchedVueGlob = path.resolve(projectRootRef.current, "src", "**", "*.vue");
+      const watchedPluginGlob = path.resolve(projectRootRef.current, "vite-plugins", "vue-pom-generator", "**", "*.ts");
       server.watcher.add([watchedVueGlob, watchedPluginGlob, basePageClassPath]);
 
       let timer: NodeJS.Timeout | null = null;
@@ -266,7 +272,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
 
       scheduleVueFileRegenLocal = (filePath: string, source: "hmr" | "fs") => {
         pendingChangedVueFiles.add(filePath);
-        log(`queued(${source}): files=${pendingChangedVueFiles.size} deleted=${pendingDeletedComponents.size}`);
+        logDebug(`queued(${source}): files=${pendingChangedVueFiles.size} deleted=${pendingDeletedComponents.size}`);
         scheduleAggregatedRegen();
       };
 
@@ -307,7 +313,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
               generateAggregatedFromSnapshot("max-wait");
               const t2 = performance.now();
 
-              log(
+              logInfo(
                 `max-wait: files=${files.length} deleted=${deletedCount} `
                 + `compile=${formatMs(compileMs)} wall=${formatMs(t1 - t0)} gen=${formatMs(t2 - t1)} total=${formatMs(t2 - t0)}`,
               );
@@ -318,7 +324,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         if (wasEmpty) {
           const queuedFiles = pendingChangedVueFiles.size;
           const queuedDeletes = pendingDeletedComponents.size;
-          log(`queued: files=${queuedFiles} deleted=${queuedDeletes}`);
+          logDebug(`queued: files=${queuedFiles} deleted=${queuedDeletes}`);
         }
 
         if (timer)
@@ -355,7 +361,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
             const t2 = performance.now();
 
             if (files.length || deletedCount) {
-              log(
+              logInfo(
                 `batched: files=${files.length} deleted=${deletedCount} `
                 + `compile=${formatMs(compileMs)} wall=${formatMs(t1 - t0)} gen=${formatMs(t2 - t1)} total=${formatMs(t2 - t0)}`,
               );
@@ -365,11 +371,18 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
       }
 
       server.watcher.on("change", async (changedPath) => {
-        const changed = path.posix.normalize(changedPath);
-        if (changed.includes("/pom/") && (changed.endsWith("index.g.ts") || changed.endsWith("index.g.ts.map")))
-          return;
+        const changedAbsPosix = path.posix.normalize(path.resolve(changedPath));
 
-        if (changed.includes("/vite-plugins/vue-pom-generator/")) {
+        // Ignore generated outputs to prevent infinite rebuild loops.
+        const outDirAbsPosix = path.posix.normalize(path.resolve(projectRootRef.current, outDir ?? "./pom"));
+        if (
+          changedAbsPosix.startsWith(`${outDirAbsPosix}/`)
+          && (changedAbsPosix.endsWith(".g.ts") || changedAbsPosix.endsWith(".g.ts.map"))
+        ) {
+          return;
+        }
+
+        if (changedAbsPosix.includes("/vite-plugins/vue-pom-generator/")) {
           void server.restart();
         }
       });

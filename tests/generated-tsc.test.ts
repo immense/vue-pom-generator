@@ -138,7 +138,7 @@ describe("generated output", () => {
       projectRoot: tempRoot,
     });
 
-    const generatedFilePath = path.join(outDir, "index.g.ts");
+    const generatedFilePath = path.join(outDir, "page-object-models.g.ts");
     expect(fs.existsSync(generatedFilePath)).toBe(true);
 
     const generatedContent = fs.readFileSync(generatedFilePath, "utf8");
@@ -252,7 +252,7 @@ describe("generated output", () => {
       projectRoot: tempRoot,
     });
 
-    const aggregatedFileTwo = path.join(outDirTwo, "index.g.ts");
+    const aggregatedFileTwo = path.join(outDirTwo, "page-object-models.g.ts");
     expect(fs.existsSync(aggregatedFileTwo)).toBe(true);
     const aggregatedContentTwo = fs.readFileSync(aggregatedFileTwo, "utf8");
     const viewContentTwo = extractClassBlock(aggregatedContentTwo, viewName);
@@ -278,7 +278,7 @@ describe("generated output", () => {
       projectRoot: tempRoot,
     });
 
-    const aggregatedFileOne = path.join(outDirOne, "index.g.ts");
+    const aggregatedFileOne = path.join(outDirOne, "page-object-models.g.ts");
     expect(fs.existsSync(aggregatedFileOne)).toBe(true);
     const aggregatedContentOne = fs.readFileSync(aggregatedFileOne, "utf8");
     const viewContentOne = extractClassBlock(aggregatedContentOne, "TestViewPageSingle");

@@ -20,19 +20,97 @@ This package is published to GitHub Packages.
 
 ## Usage
 
-Exported entrypoint: `createVueTestIdPlugins()`.
+Exported entrypoint: `createVuePomGeneratorPlugins()`.
 
 ## Configuration
 
-`createVueTestIdPlugins(options)` accepts a `VuePomGeneratorPluginOptions` object, grouped into:
+`createVuePomGeneratorPlugins(options)` accepts a `VuePomGeneratorPluginOptions` object, grouped into:
 
 - `injection`: how `data-testid` (or your chosen attribute) is derived/injected
 - `generation`: how Page Object Models (POMs) and Playwright helpers are generated
 
-The generator emits an aggregated output under `outDir` (default `./pom`):
+The generator emits an aggregated output under `generation.outDir` (default `tests/playwright/generated`):
 
-- `pom/index.g.ts` (generated; do not edit)
-- `pom/index.ts` (stable barrel; safe to edit if you want additional exports)
+- `tests/playwright/generated/page-object-models.g.ts` (generated; do not edit)
+- `tests/playwright/generated/index.ts` (generated stable barrel)
+
+If `generation.playwright.fixtures` is enabled, it also emits:
+
+- `tests/playwright/generated/fixtures.g.ts` (generated; do not edit)
+
+### Vite config example
+
+```ts
+import { defineConfig } from "vite";
+import vue from "@vitejs/plugin-vue";
+import { createVuePomGeneratorPlugins } from "@immense/vue-pom-generator";
+
+export default defineConfig(() => {
+	const vueOptions = {
+		script: { defineModel: true, propsDestructure: true },
+	};
+
+	return {
+		plugins: [
+			...createVuePomGeneratorPlugins({
+				vueOptions,
+				logging: { verbosity: "info" },
+
+				injection: {
+					// Attribute to inject/read as the test id (default: data-testid)
+					attribute: "data-testid",
+
+					// Used to classify Vue files as "views" vs components (default: src/views)
+					viewsDir: "src/views",
+
+					// Optional: wrapper semantics for design-system components
+					nativeWrappers: {
+						ImmyButton: { role: "button" },
+						ImmyInput: { role: "input" },
+					},
+
+					// Optional: opt specific components out of injection
+					excludeComponents: ["ImmyButton"],
+
+					// Optional: preserve/overwrite/error when an author already set the attribute
+					existingIdBehavior: "preserve",
+				},
+
+				generation: {
+					// Default: tests/playwright/generated
+					outDir: "tests/playwright/generated",
+
+					// Enable router introspection. When provided, router-aware POM helpers are generated.
+					router: { entry: "src/router.ts" },
+
+					playwright: {
+						fixtures: true,
+						customPoms: {
+							// Default: tests/playwright/pom/custom
+							dir: "tests/playwright/pom/custom",
+							importAliases: { ImmyCheckBox: "CheckboxWidget" },
+							attachments: [
+								{
+									className: "ConfirmationModal",
+									propertyName: "confirmationModal",
+									attachWhenUsesComponents: ["Page"],
+								},
+							],
+						},
+					},
+				},
+			}),
+			vue(vueOptions),
+		],
+	};
+});
+```
+
+Notes:
+
+- **Injection is enabled by plugin inclusion** (there is no longer an `injection.enabled` flag).
+- **Generation is enabled by default** and can be disabled via `generation: false`.
+- **Router-aware POM helpers are enabled** when `generation.router.entry` is provided (the generator will introspect your router).
 
 ### `generation.router.entry: string`
 
@@ -40,7 +118,7 @@ Controls where router introspection loads your Vue Router definition from (used 
 
 Resolution:
 
-- relative paths are resolved relative to `process.cwd()`
+- relative paths are resolved relative to Vite's resolved `config.root`
 - absolute paths are used as-is
 
 This file must export a **default router factory function** (e.g. `export default makeRouter`).
@@ -59,11 +137,7 @@ Forms:
 
 Defaults:
 
-- `outDir`: `"tests/playwright/fixture"` (resolved relative to `process.cwd()`)
-
-Generated output:
-
-- `testWithGeneratedPageObjects.g.ts` (intended to be re-exported by a stable non-generated wrapper like `testWithGeneratedPageObjects.ts`)
+- when `true`: writes `fixtures.g.ts` alongside generated POMs (under `generation.outDir`)
 
 ### Vite config example
 

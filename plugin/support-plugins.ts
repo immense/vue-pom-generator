@@ -5,6 +5,7 @@ import type { PluginOption } from "vite";
 import { createBuildProcessorPlugin } from "./support/build-plugin";
 import { createDevProcessorPlugin } from "./support/dev-plugin";
 import { createTestIdsVirtualModulesPlugin } from "./support/virtual-modules";
+import type { VuePomGeneratorLogger } from "./logger";
 import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 
 interface SupportFactoryOptions {
@@ -17,17 +18,19 @@ interface SupportFactoryOptions {
 
   /** Output directory for generated files (POMs + optional fixtures). */
   outDir?: string;
-  vueRouterFluentChaining: boolean;
+  routerAwarePoms: boolean;
   routerEntry?: string;
 
   /** Generate Playwright fixtures alongside generated POMs. */
   generateFixtures?: boolean | string | { outDir?: string };
   customPomAttachments?: Array<{ className: string; propertyName: string; attachWhenUsesComponents: string[]; attachTo?: "views" | "components" | "both" }>;
-  projectRoot: string;
+  projectRootRef: { current: string };
   basePageClassPath?: string;
   customPomDir?: string;
   customPomImportAliases?: Record<string, string>;
   testIdAttribute: string;
+
+  loggerRef: { current: VuePomGeneratorLogger };
 }
 
 export function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
@@ -39,23 +42,24 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     excludedComponents,
     viewsDir,
     outDir,
-    vueRouterFluentChaining,
+    routerAwarePoms,
     routerEntry,
     generateFixtures,
     customPomAttachments,
-    projectRoot,
+    projectRootRef,
     basePageClassPath: basePageClassPathOverride,
     customPomDir,
     customPomImportAliases,
     testIdAttribute,
+    loggerRef,
   } = options;
 
   const resolveRouterEntry = () => {
-    if (!vueRouterFluentChaining)
+    if (!routerAwarePoms)
       return undefined;
     if (!routerEntry)
       throw new Error("[vue-pom-generator] router.entry is required when router introspection is enabled.");
-    return path.isAbsolute(routerEntry) ? routerEntry : path.resolve(projectRoot, routerEntry);
+    return path.isAbsolute(routerEntry) ? routerEntry : path.resolve(projectRootRef.current, routerEntry);
   };
 
   const resolvedRouterEntry = resolveRouterEntry();
@@ -85,19 +89,20 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     outDir,
     generateFixtures,
     customPomAttachments,
-    projectRoot,
+    projectRootRef,
     customPomDir,
     customPomImportAliases,
     testIdAttribute,
-    vueRouterFluentChaining,
+    routerAwarePoms,
     resolvedRouterEntry,
+    loggerRef,
   });
 
   const devProcessor = createDevProcessorPlugin({
     nativeWrappers,
     excludedComponents,
     viewsDir,
-    projectRoot,
+    projectRootRef,
     normalizedBasePagePath,
     basePageClassPath,
     outDir,
@@ -106,8 +111,9 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     customPomDir,
     customPomImportAliases,
     testIdAttribute,
-    vueRouterFluentChaining,
+    routerAwarePoms,
     resolvedRouterEntry,
+    loggerRef,
   });
 
   const virtualModules = createTestIdsVirtualModulesPlugin(componentTestIds);
