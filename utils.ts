@@ -50,6 +50,14 @@ import {
 import { parseExpression } from "@babel/parser";
 import { generateViewObjectModelMethodContent } from "./method-generation";
 
+export { isSimpleExpressionNode } from "./compiler/ast-guards";
+export {
+  getRouteNameKeyFromToDirective,
+  setResolveToComponentNameFn,
+  setRouteNameToComponentNameMap,
+  tryResolveToDirectiveTargetComponentName,
+} from "./routing/to-directive";
+
 function getDataTestIdFromGroupOption(text: string) {
   // eslint-disable-next-line no-restricted-syntax
   return text.replace(/[-_]/g, " ").split(" ").filter(a => a).map((str: string) => {
@@ -67,17 +75,6 @@ export function upperFirst(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-/**
- * Type guard for Vue compiler-core SimpleExpressionNode.
- *
- * We accept `object | null` (instead of `unknown`) to satisfy the repo lint rule
- * against `: unknown` annotations while still being safe at runtime.
- */
-export function isSimpleExpressionNode(value: object | null): value is SimpleExpressionNode {
-  return value !== null
-    && "type" in value
-    && (value as { type: number }).type === NodeTypes.SIMPLE_EXPRESSION;
-}
 export type NativeRole = 'button' | 'input' | 'select' | 'vselect' | 'checkbox' | 'toggle' | 'radio'
 // In this plugin, the hierarchy map stores: key = child element, value = parent element (or null for root).
 export type Child = ElementNode;
@@ -281,174 +278,7 @@ function nodeHasForDirective(node: ElementNode): boolean {
   );
 }
 
-/**
- * Router-backed route name -> component name map.
- *
- * Populated once per Vite build by the plugin runtime (see `vite-plugins/vue-pom-generator/index.ts`).
- * The transform phase uses this to turn `:to` directives into POM return types.
- */
-let routeNameToComponentName: Map<string, string> | null = null;
 
-interface RouteLocationLike {
-  name?: string;
-  path?: string;
-  params?: Record<string, string | number>;
-}
-
-type ResolveToComponentNameFn = (to: RouteLocationLike | string) => string | null;
-
-let resolveToComponentName: ResolveToComponentNameFn | null = null;
-
-export function setRouteNameToComponentNameMap(map: Map<string, string> | null) {
-  routeNameToComponentName = map;
-}
-
-export function setResolveToComponentNameFn(fn: ResolveToComponentNameFn | null) {
-  resolveToComponentName = fn;
-}
-
-function buildPlaceholderParams(keys: string[]): Record<string, string> {
-  const params: Record<string, string> = {};
-  for (const k of keys)
-    params[k] = "__placeholder__";
-  return params;
-}
-
-function getRouteLocationLikeFromToDirective(toDirective: DirectiveNode): RouteLocationLike | string | null {
-  if (!toDirective.exp)
-    return null;
-
-  // Parse the JS expression with Babel and extract supported shapes.
-  const exp = toDirective.exp;
-  const rawSource = stringifyExpression(exp).trim();
-
-  let expr: object;
-  try {
-    expr = parseExpression(rawSource, { plugins: ["typescript"] });
-  }
-  catch {
-    return null;
-  }
-
-  const isNodeType = (node: object | null, type: string): node is { type: string } => {
-    return node !== null && (node as { type?: string }).type === type;
-  };
-  const isStringLiteralNode = (node: object | null): node is { type: "StringLiteral"; value: string } => {
-    return isNodeType(node, "StringLiteral") && typeof (node as { value?: string }).value === "string";
-  };
-  const isIdentifierNode = (node: object | null): node is { type: "Identifier"; name: string } => {
-    return isNodeType(node, "Identifier") && typeof (node as { name?: string }).name === "string";
-  };
-  const isObjectPropertyNode = (node: object | null): node is { type: "ObjectProperty"; key: object; value: object } => {
-    if (!isNodeType(node, "ObjectProperty"))
-      return false;
-    const n = node as { key?: object; value?: object };
-    return typeof n.key === "object" && n.key !== null && typeof n.value === "object" && n.value !== null;
-  };
-  const isObjectExpressionNode = (node: object | null): node is { type: "ObjectExpression"; properties: object[] } => {
-    if (!isNodeType(node, "ObjectExpression"))
-      return false;
-    const n = node as { properties?: object[] };
-    return Array.isArray(n.properties);
-  };
-
-  if (isStringLiteralNode(expr)) {
-    // :to="'/some/path'"
-    return expr.value;
-  }
-
-  if (!isObjectExpressionNode(expr)) {
-    return null;
-  }
-
-  const getStringField = (fieldName: "name" | "path") => {
-    const prop = expr.properties.find((p) => {
-      if (!isObjectPropertyNode(p))
-        return false;
-      const key = p.key as object;
-      return (isIdentifierNode(key) && key.name === fieldName) || (isStringLiteralNode(key) && key.value === fieldName);
-    });
-    if (!prop || !isObjectPropertyNode(prop) || !isStringLiteralNode(prop.value as object))
-      return null;
-    return (prop.value as { value: string }).value;
-  };
-
-  const name = getStringField("name");
-  const path = getStringField("path");
-
-  const paramsProp = expr.properties.find((p) => {
-    if (!isObjectPropertyNode(p))
-      return false;
-    const key = p.key as object;
-    return (isIdentifierNode(key) && key.name === "params") || (isStringLiteralNode(key) && key.value === "params");
-  });
-
-  let params: Record<string, string> | undefined;
-  if (paramsProp && isObjectPropertyNode(paramsProp) && isObjectExpressionNode(paramsProp.value as object)) {
-    const keys: string[] = [];
-    for (const prop of (paramsProp.value as { properties: object[] }).properties) {
-      if (!isObjectPropertyNode(prop))
-        continue;
-      const key = prop.key as object;
-      if (isIdentifierNode(key))
-        keys.push(key.name);
-      else if (isStringLiteralNode(key))
-        keys.push(key.value);
-    }
-    if (keys.length) {
-      params = buildPlaceholderParams(Array.from(new Set(keys)));
-    }
-  }
-
-  if (name) {
-    // Keep the router-facing name as-is (spaces etc). Normalization is only for codegen naming.
-    return { name, params };
-  }
-  if (path) {
-    return { path, params };
-  }
-  return null;
-}
-
-/**
- * Attempts to extract a *stable* route name key from a `:to` directive.
- *
- * Supported (best-effort):
- * - :to="{ name: 'Tenant Details', params: { ... } }"
- * - :to="someVar" (cannot be resolved statically; returns null)
- */
-export function getRouteNameKeyFromToDirective(toDirective: DirectiveNode): string | null {
-  // Prefer object-literal `name: '...'` parsing.
-  const objectName = toDirectiveObjectFieldNameValue(toDirective);
-  if (objectName)
-    return objectName;
-
-  // If Vue provided an AST, we can sometimes detect { name: '...' } without regex.
-  // Currently we keep this conservative: if it isn't a literal object with name, return null.
-  return null;
-}
-
-/**
- * Given a `:to` directive, try to resolve the target view/page component name.
- *
- * Returns the Vue component identifier (e.g. `TenantDetailsPage`) when available.
- */
-export function tryResolveToDirectiveTargetComponentName(toDirective: DirectiveNode): string | null {
-  // Prefer router.resolve (more accurate; can handle path or name + placeholder params).
-  const to = getRouteLocationLikeFromToDirective(toDirective);
-  if (to && resolveToComponentName) {
-    const resolved = resolveToComponentName(to);
-    if (resolved)
-      return resolved;
-  }
-
-  // Fallback: route name -> component map (best-effort)
-  const key = getRouteNameKeyFromToDirective(toDirective);
-  if (!key || !routeNameToComponentName)
-    return null;
-
-  return routeNameToComponentName.get(key) ?? null;
-}
 /**
  * Gets the :key directive from a node
  *
@@ -788,12 +618,21 @@ export function nodeHandlerAttributeValue(node: ElementNode): string | null {
       return null;
     if (isIdentifierNode(node))
       return node.name;
-    if (isMemberExpressionNode(node) && node.computed === false) {
+    if (isMemberExpressionNode(node)) {
       const prop = node.property;
-      if (isIdentifierNode(prop))
-        return prop.name;
-      if (isStringLiteralNode(prop))
-        return prop.value;
+
+      // obj.myHandler
+      if (node.computed === false) {
+        if (isIdentifierNode(prop))
+          return prop.name;
+      }
+
+      // obj['myHandler']
+      // This is a stable, explicit name; allow it.
+      if (node.computed === true) {
+        if (isStringLiteralNode(prop))
+          return prop.value;
+      }
     }
     return null;
   };
@@ -1029,7 +868,7 @@ export function getComposedClickHandlerContent(
   context: TransformContext,
   innerText: string | null,
   clickDirective?: DirectiveNode,
-  options: { strictNaming?: boolean; componentName?: string; contextFilename?: string } = {}
+  _options: { componentName?: string; contextFilename?: string } = {}
 ): string {
   // Prefer caller-provided directive (so we don't re-scan props multiple times).
   const click = clickDirective ?? tryGetClickDirective(node);
@@ -1084,38 +923,6 @@ export function getComposedClickHandlerContent(
   // - handler names are typically camelCase; convert to PascalCase for readability/stability
   const normalizedHandlerSegment = handlerName ? `-${toPascalCase(handlerName)}` : "";
   const result = normalizedHandlerSegment || (innerText ? `-${innerText}` : "");
-
-  // In strict mode, require a stable name signal for clickable elements.
-  // Without either a resolvable handler name or literal inner text, the generated data-testid
-  // will be too generic and likely collide.
-  if (options.strictNaming === true && !result) {
-    const componentName = options.componentName ?? "unknown";
-    const filename = options.contextFilename ?? context?.filename ?? "unknown";
-
-    const loc = node.loc?.start;
-    const locationHint = loc ? `${loc.line}:${loc.column}` : "unknown";
-
-    const clip = (value: string | undefined, max = 220) => {
-      const v = (value ?? "").trim();
-      if (!v)
-        return "";
-      return v.length > max ? `${v.slice(0, max)}…` : v;
-    };
-
-    const elementSource = clip(node.loc?.source);
-    const clickDirectiveSource = clip(click.loc?.source);
-    const clickExpressionSource = clip(click.exp?.loc?.source);
-
-    const lines = [
-      `[vue-pom-generator] Unable to derive a stable name for clickable element in ${componentName} (${filename}:${locationHint}).`,
-      elementSource ? `Element: ${elementSource}` : "",
-      clickDirectiveSource ? `Click: ${clickDirectiveSource}` : "",
-      clickExpressionSource ? `Click expression: ${clickExpressionSource}` : "",
-      `Fix: add an explicit test id attribute, or use a named click handler (e.g. @click="save"), or provide literal button text.`,
-    ].filter(Boolean);
-
-    throw new Error(lines.join("\n"));
-  }
 
   // eslint-disable-next-line no-restricted-syntax
   return result.replace(/[^a-z-]/gi, "");
@@ -1758,10 +1565,19 @@ export function applyResolvedDataTestId(args: {
   addHtmlAttribute?: boolean;
   /** Attribute name to use for injection and parsing. Defaults to data-testid. */
   testIdAttribute?: string;
+  /**
+   * How to handle an author-provided existing test id attribute when we encounter one.
+   *
+   * - "preserve": keep the existing value (default)
+   * - "overwrite": replace it with the generated value
+   * - "error": throw to force cleanup/migration
+   */
+  existingIdBehavior?: "preserve" | "overwrite" | "error";
 }): void {
   const addHtmlAttribute = args.addHtmlAttribute ?? true;
   const entryOverrides = args.entryOverrides ?? {};
   const testIdAttribute = args.testIdAttribute ?? "data-testid";
+  const existingIdBehavior = args.existingIdBehavior ?? "preserve";
 
   // 1) Resolve effective data-testid (respecting any existing attribute).
   let dataTestId = args.preferredGeneratedValue;
@@ -1769,23 +1585,37 @@ export function applyResolvedDataTestId(args: {
 
   const existing = tryGetExistingElementDataTestId(args.element, testIdAttribute);
   if (existing) {
-    if (args.bestKeyPlaceholder && existing.isStaticLiteral) {
-      const loc = args.element.loc?.start;
-      const locationHint = loc ? `${loc.line}:${loc.column}` : "unknown";
-      const file = args.contextFilename ?? "unknown";
-      const attrLabel = testIdAttribute || "data-testid";
+    const loc = args.element.loc?.start;
+    const locationHint = loc ? `${loc.line}:${loc.column}` : "unknown";
+    const file = args.contextFilename ?? "unknown";
+    const attrLabel = testIdAttribute || "data-testid";
+
+    if (existingIdBehavior === "error") {
       throw new Error(
-        `[vue-pom-generator] Existing ${attrLabel} appears to be missing the key placeholder needed to keep it unique.\n`
+        `[vue-pom-generator] Found existing ${attrLabel} while existingIdBehavior="error".\n`
         + `Component: ${args.componentName}\n`
         + `File: ${file}:${locationHint}\n`
-        + `Existing ${attrLabel}: ${JSON.stringify(existing.value)}\n`
-        + `Required placeholder: ${JSON.stringify(args.bestKeyPlaceholder)}\n\n`
-        + `Fix: either (1) include ${args.bestKeyPlaceholder} in your :${attrLabel} template literal, or (2) remove the explicit ${attrLabel} so it can be auto-generated.`,
+        + `Existing ${attrLabel}: ${JSON.stringify(existing.value)}\n\n`
+        + `Fix: remove the explicit ${attrLabel}, or change existingIdBehavior to "preserve" or "overwrite".`,
       );
     }
 
-    dataTestId = staticAttributeValue(existing.value);
-    fromExisting = true;
+    if (existingIdBehavior === "preserve") {
+      if (args.bestKeyPlaceholder && existing.isStaticLiteral) {
+        throw new Error(
+          `[vue-pom-generator] Existing ${attrLabel} appears to be missing the key placeholder needed to keep it unique.\n`
+          + `Component: ${args.componentName}\n`
+          + `File: ${file}:${locationHint}\n`
+          + `Existing ${attrLabel}: ${JSON.stringify(existing.value)}\n`
+          + `Required placeholder: ${JSON.stringify(args.bestKeyPlaceholder)}\n\n`
+          + `Fix: either (1) include ${args.bestKeyPlaceholder} in your :${attrLabel} template literal, or (2) remove the explicit ${attrLabel} so it can be auto-generated.`,
+        );
+      }
+
+      dataTestId = staticAttributeValue(existing.value);
+      fromExisting = true;
+    }
+    // existingIdBehavior === "overwrite": ignore existing and proceed with generated id.
   }
 
   // 2) Derive method naming/params based on the effective data-testid.

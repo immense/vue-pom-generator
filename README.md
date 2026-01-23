@@ -24,18 +24,28 @@ Exported entrypoint: `createVueTestIdPlugins()`.
 
 ## Configuration
 
-`createVueTestIdPlugins(options)` supports the following relevant options (partial list):
+`createVueTestIdPlugins(options)` accepts a `VuePomGeneratorPluginOptions` object, grouped into:
 
-### `routerEntry?: string`
+- `injection`: how `data-testid` (or your chosen attribute) is derived/injected
+- `generation`: how Page Object Models (POMs) and Playwright helpers are generated
 
-Controls where router introspection loads your Vue Router definition from.
+The generator emits an aggregated output under `outDir` (default `./pom`):
 
-- Default: `"src/router.ts"`
-- Resolution: resolved relative to `projectRoot` unless you pass an absolute path
+- `pom/index.g.ts` (generated; do not edit)
+- `pom/index.ts` (stable barrel; safe to edit if you want additional exports)
+
+### `generation.router.entry: string`
+
+Controls where router introspection loads your Vue Router definition from (used for `:to` analysis and navigation helper generation).
+
+Resolution:
+
+- relative paths are resolved relative to `process.cwd()`
+- absolute paths are used as-is
 
 This file must export a **default router factory function** (e.g. `export default makeRouter`).
 
-### `generatePlaywrightFixtures?: boolean | { outDir?: string }`
+### `generation.playwright.fixtures: boolean | string | { outDir?: string }`
 
 When enabled, the generator emits a concrete, strongly typed Playwright fixture module so tests can do:
 
@@ -44,11 +54,12 @@ When enabled, the generator emits a concrete, strongly typed Playwright fixture 
 Forms:
 
 - `true`: enable with defaults
+- `"path"`: enable and write under this directory (or file, if it ends in `.ts`/`.tsx`/`.mts`/`.cts`)
 - `{ outDir }`: enable and write fixture outputs under a custom directory
 
 Defaults:
 
-- `outDir`: `"tests/playwright/fixture"` (resolved relative to `projectRoot`)
+- `outDir`: `"tests/playwright/fixture"` (resolved relative to `process.cwd()`)
 
 Generated output:
 
@@ -65,6 +76,14 @@ Generated output:
 This package emits Playwright-oriented helpers (e.g. `page.getByTestId(...)`).
 
 If you change Playwright's `testIdAttribute`, make sure the app actually renders the same attribute.
+
+### Migration helper: `injection.existingIdBehavior`
+
+When cleaning up a codebase that already has a mix of manually-authored test ids and generated ones:
+
+- `"preserve"` (default): leave author-provided ids untouched
+- `"overwrite"`: replace existing ids with generated ids
+- `"error"`: throw when an existing id is detected (useful for incremental cleanup)
 
 ## Sequence diagram
 
