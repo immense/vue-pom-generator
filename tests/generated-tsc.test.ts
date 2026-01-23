@@ -9,9 +9,36 @@ import { describe, expect, it } from "vitest";
 import type { IComponentDependencies } from "../utils";
 import { generateViewObjectModelMethodContent, generateFiles } from "../class-generation";
 
+function extractClassBlock(content: string, className: string): string {
+  const start = content.indexOf(`export class ${className}`);
+  if (start < 0) {
+    throw new Error(`Class ${className} not found in generated output.`);
+  }
+
+  const next = content.indexOf("export class ", start + 1);
+  const end = next >= 0 ? next : content.length;
+  return content.slice(start, end);
+}
+
 function writeFile(filePath: string, content: string) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content, "utf8");
+}
+
+function writePlaywrightTypeStub(rootDir: string) {
+  // This test typechecks generated output in an isolated temp directory.
+  // The generator emits Playwright types (Page/Locator), so provide a minimal
+  // module stub for `@playwright/test` to keep the test self-contained.
+  writeFile(
+    path.join(rootDir, "node_modules", "@playwright", "test", "index.d.ts"),
+    [
+      "export type Page = any;",
+      "export type Locator = any;",
+      "export const test: any;",
+      "export const expect: any;",
+      "",
+    ].join("\n"),
+  );
 }
 
 function runTscNoEmit(files: string[], options?: { cwd?: string }) {
@@ -45,6 +72,8 @@ function runTscNoEmit(files: string[], options?: { cwd?: string }) {
 describe("generated output", () => {
   it("typechecks generated methods (tsc --noEmit)", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-"));
+
+    writePlaywrightTypeStub(tempRoot);
 
     const basePagePath = path.join(tempRoot, "BasePage.ts");
     writeFile(
@@ -106,10 +135,9 @@ describe("generated output", () => {
     await generateFiles(componentHierarchyMap, vueFilesPathMap, basePagePath, {
       outDir,
       projectRoot: tempRoot,
-      singleFile: false,
     });
 
-    const generatedFilePath = path.join(outDir, "Components", `${componentName}.g.ts`);
+    const generatedFilePath = path.join(outDir, "index.g.ts");
     expect(fs.existsSync(generatedFilePath)).toBe(true);
 
     const generatedContent = fs.readFileSync(generatedFilePath, "utf8");
@@ -127,6 +155,8 @@ describe("generated output", () => {
 
   it("only emits view passthrough methods when the view has a single child component POM", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-"));
+
+    writePlaywrightTypeStub(tempRoot);
 
     const basePagePath = path.join(tempRoot, "BasePage.ts");
     writeFile(
@@ -219,12 +249,12 @@ describe("generated output", () => {
     await generateFiles(componentHierarchyMapTwo, new Map(), basePagePath, {
       outDir: outDirTwo,
       projectRoot: tempRoot,
-      singleFile: false,
     });
 
-    const viewFileTwo = path.join(outDirTwo, "Pages", `${viewName}.g.ts`);
-    expect(fs.existsSync(viewFileTwo)).toBe(true);
-    const viewContentTwo = fs.readFileSync(viewFileTwo, "utf8");
+    const aggregatedFileTwo = path.join(outDirTwo, "index.g.ts");
+    expect(fs.existsSync(aggregatedFileTwo)).toBe(true);
+    const aggregatedContentTwo = fs.readFileSync(aggregatedFileTwo, "utf8");
+    const viewContentTwo = extractClassBlock(aggregatedContentTwo, viewName);
 
     // With multiple child component POMs, we intentionally do not generate any passthrough methods.
     expect(viewContentTwo).not.toContain("Passthrough methods composed");
@@ -245,12 +275,12 @@ describe("generated output", () => {
     await generateFiles(componentHierarchyMapOne, new Map(), basePagePath, {
       outDir: outDirOne,
       projectRoot: tempRoot,
-      singleFile: false,
     });
 
-    const viewFileOne = path.join(outDirOne, "Pages", "TestViewPageSingle.g.ts");
-    expect(fs.existsSync(viewFileOne)).toBe(true);
-    const viewContentOne = fs.readFileSync(viewFileOne, "utf8");
+    const aggregatedFileOne = path.join(outDirOne, "index.g.ts");
+    expect(fs.existsSync(aggregatedFileOne)).toBe(true);
+    const aggregatedContentOne = fs.readFileSync(aggregatedFileOne, "utf8");
+    const viewContentOne = extractClassBlock(aggregatedContentOne, "TestViewPageSingle");
     expect(viewContentOne).toContain("Passthrough methods composed");
     expect(viewContentOne).toContain("async clickOnlyInAButton");
   });

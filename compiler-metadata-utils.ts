@@ -6,7 +6,7 @@ import type {
   VNodeCall,
 } from "@vue/compiler-core";
 import { NodeTypes } from "@vue/compiler-core";
-import { isSimpleExpressionNode } from "./utils";
+import { isSimpleExpressionNode } from "./compiler/ast-guards";
 import type { ElementMetadata } from "./metadata-collector";
 
 export type DataTestIdProp = AttributeNode | DirectiveNode | undefined;
@@ -43,7 +43,25 @@ export function parseDynamicProps(dynamicProps: string | SimpleExpressionNode | 
   }
 
   if (typeof dynamicProps === "string") {
-    return dynamicProps.split(",").map(s => s.trim());
+    // Avoid string.split(); this package enforces AST/structured parsing.
+    // Vue sometimes encodes dynamic props as a comma-delimited string.
+    const parts: string[] = [];
+    let current = "";
+    for (let i = 0; i < dynamicProps.length; i++) {
+      const ch = dynamicProps[i];
+      if (ch === ",") {
+        const token = current.trim();
+        if (token.length)
+          parts.push(token);
+        current = "";
+        continue;
+      }
+      current += ch;
+    }
+    const last = current.trim();
+    if (last.length)
+      parts.push(last);
+    return parts;
   }
 
   if (isSimpleExpressionNode(dynamicProps)) {

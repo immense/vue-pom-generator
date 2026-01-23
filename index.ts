@@ -19,148 +19,178 @@ import type { IComponentDependencies, NativeWrappersMap } from "./utils";
 import { CompilerOptions, NodeTypes, RootNode, TemplateChildNode, TransformContext } from "@vue/compiler-core";
 import { parseRouterFileFromCwd } from "./router-introspection";
 
-export interface CreateVueTestIdPluginsOptions {
+export type ExistingIdBehavior = "preserve" | "overwrite" | "error";
+
+export interface VuePomGeneratorPluginOptions {
   /** Options forwarded to @vitejs/plugin-vue */
   vueOptions?: VuePluginOptions;
-  /**
-   * Output directory for generated files.
-   *
-   * - string: a single base directory (components and views will be generated under it)
-   * - object: separate directories for pages/views and components
-   */
-  outDir?: string | { pages: string; components: string };
-  /**
-   * When used with `outDir`, writes a single aggregated file.
-   * - outDir as string: writes ONE file (combined views + components)
-   * - outDir as object: writes TWO files (one under pages, one under components)
-   */
-  singleFile?: boolean;
 
   /**
-   * Generate Playwright fixture helpers alongside generated POMs.
+   * Configuration for injecting/deriving test ids from Vue templates.
    *
-   * Conventional Vite/Rollup config style:
-   * Default output (when `true`):
-   * - `<projectRoot>/tests/playwright/fixture/Fixtures.g.ts`
-   *
-   * - `true`: enable with defaults
-   * - `"path"`: enable and write the fixture file under this directory (resolved relative to projectRoot),
-   *   or to this file path if it ends with `.ts`/`.tsx`/`.mts`/`.cts`
-   * - `{ outDir }`: enable and override where fixture files are written
+   * This plugin can still *collect* metadata for code generation even when injection is disabled.
    */
-  generatePlaywrightFixtures?: boolean | string | {
-    /** Directory to write fixture files to (resolved relative to projectRoot). */
-    outDir?: string;
+  injection?: {
+    /**
+     * Whether to inject the attribute into the compiled template output.
+     *
+     * - `true` (default): inject/overwrite (depending on existingIdBehavior)
+     * - `false`: collect-only (useful if your app already renders stable ids, but you still want POM generation)
+     */
+    enabled?: boolean;
+
+    /**
+     * HTML attribute name to inject/treat as the "test id".
+     *
+     * Defaults to `data-testid`.
+     *
+     * Common alternatives: `data-qa`, `data-cy`.
+     */
+    attribute?: string;
+
+    /**
+     * Folder convention used to identify "pages" (Nuxt/Vue) or "views" (this repo).
+     *
+     * Behavior:
+     * - This is a simple *substring* match against the normalized absolute Vue file path.
+     * - If the file path contains `/<viewsDir>/` the component is treated as a "view".
+     *
+     * Default: `"src/views"` (no leading slash).
+     */
+    viewsDir?: string;
+
+    /**
+     * Wrapper component configuration.
+     *
+     * Why this exists:
+     * Many design-system components wrap native inputs/buttons and do NOT forward attributes
+     * like `data-testid` down to the actual DOM element that Playwright clicks/reads.
+     *
+     * If you don't configure wrappers, you can end up with:
+     * - selectors that point at the wrapper component instead of the clickable element
+     * - generated ids that collide (all wrappers look like "button" without stable identity)
+     * - inability to generate correct POM methods for selects/radios because the "native role" is hidden
+     *
+     * Example:
+     * - `ImmyButton` wraps a `<button>`
+     * - `ImmyTextInput` wraps an `<input>`
+     * - `VSelect` renders a custom dropdown structure that behaves like a select
+     */
+    nativeWrappers?: NativeWrappersMap;
+
+    /**
+     * Components to exclude from test id injection/collection.
+     *
+     * Useful for components that manage their own ids or for very generic layout components
+     * that would otherwise produce noisy test ids.
+     */
+    excludeComponents?: string[];
+
+    /**
+     * What to do when the author already provided a test id attribute.
+     *
+     * - `"preserve"` (default): keep the existing value
+     * - `"overwrite"`: replace it with the generated value
+     * - `"error"`: throw to force cleanup/migration
+     */
+    existingIdBehavior?: ExistingIdBehavior;
   };
-  /**
-   * Folder convention used to identify "pages" (Nuxt/Vue) or "views" (this repo).
-   * Defaults to `/src/views/`.
-   */
-  viewsDir?: string;
-  /** Custom native wrapper behaviors */
-  nativeWrappers?: NativeWrappersMap;
-  /** Components to exclude from test ID injection */
-  excludedComponents?: string[];
 
   /**
-   * HTML attribute name to inject and treat as the "test id".
+   * Code generation configuration.
    *
-   * Defaults to `data-testid`.
-   *
-   * Common alternatives: `data-qa`, `data-cy`.
+   * Set to `false` to disable code generation entirely while still injecting/collecting test ids.
    */
-  testIdAttribute?: string;
-
-  /**
-   * Custom Page Object Model (POM) configuration.
-   *
-   * This groups the knobs related to handwritten helpers and conditional attachments.
-   */
-  customPom?: {
+  generation?: false | {
     /**
-     * Directory containing handwritten POM helpers (e.g. Grid.ts) to import into aggregated output.
-     * Defaults to <projectRoot>/pom/custom
-     */
-    dir?: string;
-
-    /**
-     * Optional import aliases for handwritten POM helpers (basename -> alias).
+     * Output directory for generated files.
      *
-     * Useful when a helper file/export name doesn't match the identifier you want to expose in
-     * generated output, or when migrating legacy helper names.
+     * Defaults to `./pom` (relative to `process.cwd()` when not absolute).
      */
-    importAliases?: Record<string, string>;
+    outDir?: string;
 
     /**
-     * Optional handwritten POM helpers that should only be attached to generated view/component
-     * classes when those views/components use certain components.
-     *
-     * Example: attach a `grid: Grid` helper only to views/components that use `DxDataGrid`.
+     * Absolute path to the BasePage template module to inline into generated output.
+     * Defaults to the copy shipped with this package: ./class-generation/BasePage.ts.
      */
-    attachments?: Array<{
-      className: string;
-      propertyName: string;
-      attachWhenUsesComponents: string[];
+    basePageClassPath?: string;
+
+    /**
+     * Router integration used for resolving `:to` directives and emitting navigation helpers.
+     *
+     * If omitted, router introspection is disabled.
+     */
+    router?: { entry: string };
+
+    /** Playwright-specific generation features (fixtures + custom POM helpers). */
+    playwright?: {
+      /**
+       * Generate Playwright fixture helpers alongside generated POMs.
+       *
+       * Default output (when `true`):
+       * - `<projectRoot>/tests/playwright/fixture/Fixtures.g.ts`
+       */
+      fixtures?: boolean | string | { outDir?: string };
 
       /**
-       * Controls whether this attachment is applied to views, components, or both.
-       * Defaults to "views" for backwards compatibility.
+       * Handwritten Page Object Model helpers and attachments.
+       *
+       * Typical use cases:
+       * - You have a complex UI widget (grid/modal/date picker) and want a reusable wrapper class.
+       * - You want certain helpers attached only when a view uses a given component.
+       *
+       * Without custom POM helpers, tests can still work, but they often devolve into:
+       * - repeated locator boilerplate
+       * - inconsistent conventions across test files
+       * - brittle selectors for complex widgets
        */
-      attachTo?: "views" | "components" | "both";
-    }>;
+      customPoms?: {
+        /** Directory containing handwritten helpers to inline/import. Defaults to `<outDir>/custom`. */
+        dir?: string;
+
+        /** Optional import aliases for handwritten helpers (basename -> alias). */
+        importAliases?: Record<string, string>;
+
+        /**
+         * Conditional helper attachments.
+         *
+         * Example: attach a `grid: Grid` helper only to views/components that use `DxDataGrid`.
+         */
+        attachments?: Array<{
+          className: string;
+          propertyName: string;
+          attachWhenUsesComponents: string[];
+          attachTo?: "views" | "components" | "both";
+        }>;
+      };
+    };
   };
-
-  /**
-   * Router introspection configuration used for resolving `:to` directives and generating
-   * navigation helpers.
-   *
-   * - false: disable vue-router introspection
-   * - string: router entry path (resolved relative to projectRoot)
-   * - { entry }: router entry path (resolved relative to projectRoot)
-   */
-  router?: false | string | { entry?: string };
-
-  /**
-   * When enabled, the transform will throw if it cannot derive a stable name for a clickable element
-   * (e.g. @click with no resolvable handler name and no literal inner text).
-   *
-   * This is useful to force authors to add explicit `data-testid` in ambiguous cases.
-   */
-  strictNaming?: boolean;
-
-  /**
-   * Project root used for resolving conventional paths (router file, pom output, etc.).
-   * Defaults to process.cwd().
-   */
-  projectRoot?: string;
-
-  /**
-   * Absolute path to the BasePage template module to import from in generated output.
-    * Defaults to the copy shipped with this package: ./class-generation/BasePage.ts.
-   */
-  basePageClassPath?: string;
 }
 
-export function createVueTestIdPlugins(options: CreateVueTestIdPluginsOptions = {}): PluginOption[] {
-  const {
-    vueOptions,
-    outDir = "./pom",
-    singleFile = false,
-    viewsDir = "/src/views/",
-    nativeWrappers = {},
-    excludedComponents = [],
-    testIdAttribute = "data-testid",
-    router,
-    generatePlaywrightFixtures,
-    strictNaming = false,
-    projectRoot = process.cwd(),
-    basePageClassPath: basePageClassPathOverride,
-    customPom,
-  } = options;
+export function createVueTestIdPlugins(options: VuePomGeneratorPluginOptions = {}): PluginOption[] {
+  const injection = options.injection ?? {};
+  const generation = options.generation === false ? null : (options.generation ?? {});
 
-  const resolvedCustomPomAttachments = customPom?.attachments ?? [];
-  const resolvedCustomPomDir = customPom?.dir;
-  const resolvedCustomPomImportAliases = customPom?.importAliases;
+  const vueOptions = options.vueOptions;
+
+  const injectTestIds = injection.enabled !== false;
+  const viewsDir = injection.viewsDir ?? "src/views";
+  const nativeWrappers = injection.nativeWrappers ?? {};
+  const excludedComponents = injection.excludeComponents ?? [];
+  const testIdAttribute = (injection.attribute ?? "data-testid").trim() || "data-testid";
+  const existingIdBehavior: ExistingIdBehavior = injection.existingIdBehavior ?? "preserve";
+
+  const outDir = generation?.outDir ?? "./pom";
+  const routerEntry = generation?.router?.entry;
+  const generateFixtures = generation?.playwright?.fixtures;
+  const customPoms = generation?.playwright?.customPoms;
+
+  const resolvedCustomPomAttachments = customPoms?.attachments ?? [];
+  const resolvedCustomPomDir = customPoms?.dir;
+  const resolvedCustomPomImportAliases = customPoms?.importAliases;
+
+  const projectRoot = process.cwd();
+  const basePageClassPathOverride = generation?.basePageClassPath;
 
   const componentTestIds = new Map<string, Set<string>>();
   const elementMetadata = new Map<string, Map<string, ElementMetadata>>();
@@ -172,6 +202,8 @@ export function createVueTestIdPlugins(options: CreateVueTestIdPluginsOptions = 
     vueOptions,
     enableTestIds: true,
     debugTestIds: false,
+    injectTestIds,
+    existingIdBehavior,
     nativeWrappers,
     elementMetadata,
     semanticNameMap,
@@ -179,14 +211,19 @@ export function createVueTestIdPlugins(options: CreateVueTestIdPluginsOptions = 
     vueFilesPathMap,
     excludedComponents,
     viewsDir,
-    strictNaming,
     testIdAttribute,
   });
 
-  const resolvedRouterEnabled = router !== false;
-  const resolvedRouterEntry = typeof router === "string"
-    ? router
-    : (typeof router === "object" && router ? router.entry : undefined);
+  if (generation === null) {
+    const maybeModule = virtualImport as { default?: typeof virtualImport };
+    const virtual = maybeModule.default ?? virtualImport;
+    const virtualModules = virtual({
+      "virtual:testids": () => generateTestIdsModule(componentTestIds),
+    });
+    return [vuePlugin, virtualModules];
+  }
+
+  const vueRouterFluentChaining = typeof routerEntry === "string" && routerEntry.length > 0;
 
   const supportPlugins = createSupportPlugins({
     componentTestIds,
@@ -195,12 +232,10 @@ export function createVueTestIdPlugins(options: CreateVueTestIdPluginsOptions = 
     nativeWrappers,
     excludedComponents,
     viewsDir,
-    strictNaming,
     outDir,
-    singleFile,
-    vueRouterFluentChaining: resolvedRouterEnabled,
-    routerEntry: resolvedRouterEntry,
-    generatePlaywrightFixtures,
+    vueRouterFluentChaining,
+    routerEntry,
+    generateFixtures,
     projectRoot,
     basePageClassPath: basePageClassPathOverride,
     customPomAttachments: resolvedCustomPomAttachments,
@@ -218,6 +253,8 @@ interface InternalFactoryOptions {
   vueOptions?: VuePluginOptions;
   enableTestIds: boolean;
   debugTestIds: boolean;
+  injectTestIds: boolean;
+  existingIdBehavior: ExistingIdBehavior;
   nativeWrappers: NativeWrappersMap;
   elementMetadata: Map<string, Map<string, ElementMetadata>>;
   semanticNameMap: Map<string, string>;
@@ -225,7 +262,6 @@ interface InternalFactoryOptions {
   vueFilesPathMap: Map<string, string>;
   excludedComponents: string[];
   viewsDir: string;
-  strictNaming: boolean;
   testIdAttribute: string;
 }
 
@@ -234,6 +270,8 @@ function createVuePluginWithTestIds(options: InternalFactoryOptions): PluginOpti
     vueOptions,
     enableTestIds,
     debugTestIds,
+    injectTestIds,
+    existingIdBehavior,
     nativeWrappers,
     elementMetadata,
     semanticNameMap,
@@ -241,7 +279,6 @@ function createVuePluginWithTestIds(options: InternalFactoryOptions): PluginOpti
     vueFilesPathMap,
     excludedComponents,
     viewsDir,
-    strictNaming,
     testIdAttribute,
   } = options;
 
@@ -283,7 +320,7 @@ function createVuePluginWithTestIds(options: InternalFactoryOptions): PluginOpti
                 nativeWrappers,
                 excludedComponents,
                 viewsDir,
-                { strictNaming, testIdAttribute },
+                { injectTestIds, existingIdBehavior, testIdAttribute },
               ),
             );
           }
@@ -299,7 +336,7 @@ function createVuePluginWithTestIds(options: InternalFactoryOptions): PluginOpti
               nativeWrappers,
               excludedComponents,
               viewsDir,
-              { strictNaming, testIdAttribute },
+              { injectTestIds, existingIdBehavior, testIdAttribute },
             );
             perFileTransform.set(componentName, transform);
           }
@@ -347,13 +384,15 @@ interface SupportFactoryOptions {
   nativeWrappers: NativeWrappersMap;
   excludedComponents: string[];
   viewsDir: string;
-  strictNaming: boolean;
-  outDir?: string | { pages: string; components: string };
-  singleFile: boolean;
+
+  /** Output directory for generated files (POMs + optional fixtures). */
+  outDir?: string;
 	vueRouterFluentChaining: boolean;
   routerEntry?: string;
-  generatePlaywrightFixtures?: CreateVueTestIdPluginsOptions["generatePlaywrightFixtures"];
-	customPomAttachments?: Array<{ className: string; propertyName: string; attachWhenUsesComponents: string[] }>;
+
+  /** Generate Playwright fixtures alongside generated POMs. */
+  generateFixtures?: boolean | string | { outDir?: string };
+	customPomAttachments?: Array<{ className: string; propertyName: string; attachWhenUsesComponents: string[]; attachTo?: "views" | "components" | "both" }>;
   projectRoot: string;
   basePageClassPath?: string;
   customPomDir?: string;
@@ -369,12 +408,10 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
     nativeWrappers,
     excludedComponents,
     viewsDir,
-    strictNaming,
     outDir,
-    singleFile,
     vueRouterFluentChaining,
     routerEntry,
-    generatePlaywrightFixtures,
+    generateFixtures,
     customPomAttachments,
     projectRoot,
     basePageClassPath: basePageClassPathOverride,
@@ -478,13 +515,12 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
 
       generateFiles(componentHierarchyMap, vueFilesPathMap, normalizedBasePagePath, {
         outDir,
-        singleFile,
-		generatePlaywrightFixtures,
-		customPomAttachments,
-		projectRoot,
-		customPomDir,
-		customPomImportAliases,
-		testIdAttribute,
+        generateFixtures,
+    customPomAttachments,
+    projectRoot,
+    customPomDir,
+    customPomImportAliases,
+    testIdAttribute,
         vueRouterFluentChaining,
         routerEntry: resolvedRouterEntry,
       });
@@ -511,8 +547,6 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
     // Prefer hot-update events over filesystem change events for speed and reliability.
     // This fires when Vite has actually processed the module update.
     handleHotUpdate(ctx) {
-      if (!singleFile)
-        return;
       if (!scheduleVueFileRegen)
         return;
       if (!ctx.file.endsWith(".vue"))
@@ -563,7 +597,7 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
       // Generating aggregated output from Vite's incremental module graph is inherently racy:
       // only a subset of SFCs may have been transformed at any point in time.
       //
-      // Instead, when singleFile is enabled, deterministically rebuild the hierarchy by scanning
+      // Deterministically rebuild the hierarchy by scanning
       // `src/**/*.vue` from disk and running the Vue template compiler with our transform.
       // This guarantees index.g.ts is complete and reflects current source-of-truth.
 
@@ -668,7 +702,7 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
                 nativeWrappers,
                 excludedComponents,
                 viewsDir,
-                { strictNaming, testIdAttribute },
+                { injectTestIds: false, existingIdBehavior: "preserve", testIdAttribute },
               ),
             ],
           });
@@ -682,9 +716,6 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
       };
 
       const fullRebuildSnapshotFromFilesystem = () => {
-        if (!singleFile)
-          return;
-
         const srcDir = path.resolve(projectRoot, "src");
         if (!fs.existsSync(srcDir))
           return;
@@ -712,8 +743,7 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
         const t0 = performance.now();
         generateFiles(snapshotHierarchy, snapshotVuePathMap, normalizedBasePagePath, {
           outDir,
-          singleFile,
-          generatePlaywrightFixtures,
+          generateFixtures,
           customPomAttachments,
           projectRoot,
           customPomDir,
@@ -770,8 +800,6 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
             }
             maxWaitTimer = null;
             // Execute immediately.
-            if (!singleFile)
-              return;
             void (async () => {
               const t0 = performance.now();
               await initialBuildPromise;
@@ -820,59 +848,38 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
             maxWaitTimer = null;
           }
 
-          // For aggregated output, rebuild deterministically from disk.
-          if (singleFile) {
-            void (async () => {
-              const t0 = performance.now();
-              await initialBuildPromise;
+          void (async () => {
+            const t0 = performance.now();
+            await initialBuildPromise;
 
-              // Apply deletions first.
-              for (const componentName of pendingDeletedComponents) {
-                snapshotHierarchy.delete(componentName);
-                snapshotVuePathMap.delete(componentName);
-              }
+            // Apply deletions first.
+            for (const componentName of pendingDeletedComponents) {
+              snapshotHierarchy.delete(componentName);
+              snapshotVuePathMap.delete(componentName);
+            }
 
-              const files = Array.from(pendingChangedVueFiles);
-              pendingChangedVueFiles.clear();
-              pendingDeletedComponents.clear();
+            const files = Array.from(pendingChangedVueFiles);
+            const deletedCount = pendingDeletedComponents.size;
+            pendingChangedVueFiles.clear();
+            pendingDeletedComponents.clear();
 
-              let compileMs = 0;
-              for (const f of files) {
-                const res = compileVueFileIntoSnapshot(f);
-                compileMs += res.ms;
-              }
+            let compileMs = 0;
+            for (const f of files) {
+              const res = compileVueFileIntoSnapshot(f);
+              compileMs += res.ms;
+            }
 
-              const t1 = performance.now();
-              generateAggregatedFromSnapshot(files.length || pendingDeletedComponents.size ? "batched" : "noop");
-              const t2 = performance.now();
+            const t1 = performance.now();
+            generateAggregatedFromSnapshot(files.length || deletedCount ? "batched" : "noop");
+            const t2 = performance.now();
 
-              if (files.length || pendingDeletedComponents.size) {
-                log(
-                  `batched: files=${files.length} deleted=${pendingDeletedComponents.size} `
-                  + `compile=${formatMs(compileMs)} wall=${formatMs(t1 - t0)} gen=${formatMs(t2 - t1)} total=${formatMs(t2 - t0)}`,
-                );
-              }
-            })();
-            return;
-          }
-
-          // For non-aggregated output modes, continue using the in-memory maps.
-          const entryCount = componentHierarchyMap.size;
-          if (entryCount <= 0)
-            return;
-          generateFiles(componentHierarchyMap, vueFilesPathMap, normalizedBasePagePath, {
-            outDir,
-            singleFile,
-            generatePlaywrightFixtures,
-            customPomAttachments,
-            projectRoot,
-            customPomDir,
-			customPomImportAliases,
-			testIdAttribute,
-            vueRouterFluentChaining,
-            routerEntry: resolvedRouterEntry,
-          });
-          lastGeneratedEntryCount = Math.max(lastGeneratedEntryCount, componentHierarchyMap.size);
+            if (files.length || deletedCount) {
+              log(
+                `batched: files=${files.length} deleted=${deletedCount} `
+                + `compile=${formatMs(compileMs)} wall=${formatMs(t1 - t0)} gen=${formatMs(t2 - t1)} total=${formatMs(t2 - t0)}`,
+              );
+            }
+          })();
         }, 75);
       }
 
@@ -896,8 +903,6 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
           return;
         if (!p.endsWith(".vue") || !p.includes(`${path.sep}src${path.sep}`))
           return;
-        if (!singleFile)
-          return;
         void (async () => {
           await initialBuildPromise;
           pendingChangedVueFiles.add(p);
@@ -909,8 +914,6 @@ function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
         if (typeof p !== "string")
           return;
         if (!p.endsWith(".vue") || !p.includes(`${path.sep}src${path.sep}`))
-          return;
-        if (!singleFile)
           return;
         void (async () => {
           await initialBuildPromise;

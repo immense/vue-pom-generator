@@ -108,22 +108,26 @@ function generateGoToSelfMethod(componentName: string): string {
 }
 
 export interface GenerateFilesOptions {
-    outDir?: string | { pages: string; components: string };
-    singleFile?: boolean;
+    /**
+     * Output directory for generated files.
+     *
+     * Defaults to `./pom` when omitted.
+     */
+    outDir?: string;
 
     /**
      * Generate Playwright fixture helpers alongside generated POMs.
      *
-      * Default output (when `true`):
-      * - `<projectRoot>/tests/playwright/fixture/Fixtures.g.ts`
-      *
-      * Accepted values:
-      * - `true`: enable with defaults
-      * - `"path"`: enable and write the fixture file under this directory (resolved relative to projectRoot),
-      *   or to this file path if it ends with `.ts`/`.tsx`/`.mts`/`.cts`
-     * - { outDir }: enable and override where fixture files are written (resolved relative to projectRoot)
+     * Default output (when `true`):
+     * - `<projectRoot>/tests/playwright/fixture/Fixtures.g.ts`
+     *
+     * Accepted values:
+     * - `true`: enable with defaults
+     * - `"path"`: enable and write the fixture file under this directory (resolved relative to projectRoot),
+     *   or to this file path if it ends with `.ts`/`.tsx`/`.mts`/`.cts`
+     * - `{ outDir }`: enable and override where fixture files are written (resolved relative to projectRoot)
      */
-        generatePlaywrightFixtures?: boolean | string | { outDir?: string };
+    generateFixtures?: boolean | string | { outDir?: string };
 
     /**
      * Project root used for resolving conventional paths (e.g. src/views, pom/custom).
@@ -214,9 +218,8 @@ export async function generateFiles(
     options: GenerateFilesOptions = {},
 ) {
     const {
-        outDir,
-        singleFile = false,
-        generatePlaywrightFixtures,
+        outDir: outDirOverride,
+        generateFixtures,
         customPomAttachments = [],
         projectRoot,
         customPomDir,
@@ -226,94 +229,54 @@ export async function generateFiles(
         routerEntry,
     } = options;
 
+    const outDir = outDirOverride ?? "./pom";
+
     const routeMetaByComponent = vueRouterFluentChaining
         ? await getRouteMetaByComponent(projectRoot, routerEntry)
         : undefined;
 
-    // Default legacy behavior: write per-component next to the .vue file.
-    if (!outDir) {
-        for (const [componentName, dependencies] of componentHierarchyMap.entries()) {
-            const { filePath, content } = generateViewObjectModel(componentName, dependencies, componentHierarchyMap, vueFilesPathMap, basePageClassPath, {
-                customPomAttachments,
-                testIdAttribute,
-                vueRouterFluentChaining,
-                routeMetaByComponent,
-            });
-            createFile(filePath, content);
-        }
-        return;
+    const files = await generateAggregatedFiles(componentHierarchyMap, vueFilesPathMap, basePageClassPath, outDir, {
+        customPomAttachments,
+        projectRoot,
+        customPomDir,
+        customPomImportAliases,
+        testIdAttribute,
+        generateFixtures,
+        routeMetaByComponent,
+        vueRouterFluentChaining,
+    });
+    for (const file of files) {
+        createFile(file.filePath, file.content);
     }
 
-    if (singleFile) {
-        const files = await generateAggregatedFiles(componentHierarchyMap, vueFilesPathMap, basePageClassPath, outDir, {
-            customPomAttachments,
-            projectRoot,
-            customPomDir,
-            customPomImportAliases,
-            testIdAttribute,
-            generatePlaywrightFixtures,
-            routeMetaByComponent,
-            vueRouterFluentChaining,
-        });
-        for (const file of files) {
-            createFile(file.filePath, file.content);
-        }
-
-        maybeGeneratePlaywrightFixtureRegistry(componentHierarchyMap, {
-            generatePlaywrightFixtures,
-            pomOutDir: outDir,
-            projectRoot,
-        });
-        return;
-    }
-
-    // outDir provided, per-component output
-    for (const [componentName, dependencies] of componentHierarchyMap.entries()) {
-        const newFilePath = getGeneratedFilePathForComponent(dependencies, outDir);
-        if (!newFilePath) continue;
-        const content = generateViewObjectModelContent(componentName, dependencies, componentHierarchyMap, vueFilesPathMap, basePageClassPath, {
-            outputDir: path.dirname(newFilePath),
-
-            customPomAttachments,
-
-            projectRoot,
-            customPomDir,
-            customPomImportAliases,
-            testIdAttribute,
-            vueRouterFluentChaining,
-            routeMetaByComponent,
-        });
-        createFile(newFilePath, content);
-    }
-
-    maybeGeneratePlaywrightFixtureRegistry(componentHierarchyMap, {
-        generatePlaywrightFixtures,
+    maybeGenerateFixtureRegistry(componentHierarchyMap, {
+        generateFixtures,
         pomOutDir: outDir,
         projectRoot,
     });
 }
 
-function maybeGeneratePlaywrightFixtureRegistry(
+function maybeGenerateFixtureRegistry(
     componentHierarchyMap: Map<string, IComponentDependencies>,
     options: {
-        generatePlaywrightFixtures: GenerateFilesOptions["generatePlaywrightFixtures"];
-        pomOutDir: NonNullable<GenerateFilesOptions["outDir"]>;
+        generateFixtures: GenerateFilesOptions["generateFixtures"];
+        pomOutDir: string;
         projectRoot?: string;
     },
 ) {
-    const { generatePlaywrightFixtures, pomOutDir, projectRoot } = options;
-    if (!generatePlaywrightFixtures)
+    const { generateFixtures, pomOutDir, projectRoot } = options;
+    if (!generateFixtures)
         return;
 
-    // generatePlaywrightFixtures accepts:
+    // generateFixtures accepts:
     // - true: enable fixtures with defaults
     // - "path": enable fixtures and write them under this directory OR to this file if it ends with .ts
     // - { outDir }: enable fixtures and override output directory
     const defaultFixtureOutDirRel = "tests/playwright/fixture";
-    const fixtureOutRel = typeof generatePlaywrightFixtures === "string"
-        ? generatePlaywrightFixtures
-        : (typeof generatePlaywrightFixtures === "object" && generatePlaywrightFixtures?.outDir
-            ? generatePlaywrightFixtures.outDir
+    const fixtureOutRel = typeof generateFixtures === "string"
+        ? generateFixtures
+        : (typeof generateFixtures === "object" && generateFixtures?.outDir
+            ? generateFixtures.outDir
             : defaultFixtureOutDirRel);
 
     const looksLikeFilePath = fixtureOutRel.endsWith(".ts") || fixtureOutRel.endsWith(".tsx") || fixtureOutRel.endsWith(".mts") || fixtureOutRel.endsWith(".cts");
@@ -326,17 +289,7 @@ function maybeGeneratePlaywrightFixtureRegistry(
         : path.resolve(root, fixtureOutDirRel);
 
     // Resolve the directory that contains the POM barrel export (e.g. <root>/pom).
-    // When outDir is { pages, components }, default to the common parent.
-    const pomDirAbs = (() => {
-        if (typeof pomOutDir === "string")
-            return path.isAbsolute(pomOutDir) ? pomOutDir : path.resolve(root, pomOutDir);
-
-        const pagesAbs = path.isAbsolute(pomOutDir.pages) ? pomOutDir.pages : path.resolve(root, pomOutDir.pages);
-        const componentsAbs = path.isAbsolute(pomOutDir.components) ? pomOutDir.components : path.resolve(root, pomOutDir.components);
-        return path.dirname(pagesAbs) === path.dirname(componentsAbs)
-            ? path.dirname(pagesAbs)
-            : root;
-    })();
+    const pomDirAbs = path.isAbsolute(pomOutDir) ? pomOutDir : path.resolve(root, pomOutDir);
 
     const pomImport = toPosixRelativePath(fixtureOutDirAbs, pomDirAbs);
 
@@ -446,31 +399,6 @@ function maybeGeneratePlaywrightFixtureRegistry(
         createFile(path.resolve(fixtureOutDirAbs, fixtureFileName), fixturesContent);
 
     // No pomFixture is generated; goToSelf is emitted directly on each view POM.
-}
-
-function generateViewObjectModel(
-    componentName: string,
-    dependencies: IComponentDependencies,
-    componentHierarchyMap: Map<string, IComponentDependencies>,
-    vueFilesPathMap: Map<string, string>,
-    basePageClassPath: string,
-    options: {
-        customPomAttachments?: GenerateFilesOptions["customPomAttachments"];
-        testIdAttribute?: GenerateFilesOptions["testIdAttribute"];
-        vueRouterFluentChaining?: GenerateFilesOptions["vueRouterFluentChaining"];
-        routeMetaByComponent?: Record<string, RouteMeta>;
-    } = {},
-) {
-    const filePath = changeExtension(dependencies.filePath, ".vue", ".g.ts");
-    const content = generateViewObjectModelContent(componentName, dependencies, componentHierarchyMap, vueFilesPathMap, basePageClassPath, {
-        outputDir: path.dirname(filePath),
-
-        customPomAttachments: options.customPomAttachments ?? [],
-        testIdAttribute: options.testIdAttribute,
-        vueRouterFluentChaining: options.vueRouterFluentChaining,
-        routeMetaByComponent: options.routeMetaByComponent,
-    });
-    return { filePath, content };
 }
 
 function generateViewObjectModelContent(
@@ -688,32 +616,18 @@ function ensureDir(dir: string) {
     return normalized;
 }
 
-function getGeneratedFilePathForComponent(dependencies: IComponentDependencies, outDir: string | { pages: string; components: string }) {
-    const { isView } = dependencies;
-    if (typeof outDir === "string") {
-        const base = ensureDir(outDir);
-        const sub = ensureDir(path.join(base, isView ? "Pages" : "Components"));
-        const name = path.basename(dependencies.filePath).replace('.vue', '.g.ts');
-        return path.join(sub, name);
-    }
-
-    const targetBase = ensureDir(isView ? outDir.pages : outDir.components);
-    const name = path.basename(dependencies.filePath).replace('.vue', '.g.ts');
-    return path.join(targetBase, name);
-}
-
 async function generateAggregatedFiles(
     componentHierarchyMap: Map<string, IComponentDependencies>,
     vueFilesPathMap: Map<string, string>,
     basePageClassPath: string,
-    outDir: string | { pages: string; components: string },
+    outDir: string,
     options: {
         customPomAttachments?: GenerateFilesOptions["customPomAttachments"];
         projectRoot?: GenerateFilesOptions["projectRoot"];
         customPomDir?: GenerateFilesOptions["customPomDir"];
         customPomImportAliases?: GenerateFilesOptions["customPomImportAliases"];
         testIdAttribute?: GenerateFilesOptions["testIdAttribute"];
-        generatePlaywrightFixtures?: GenerateFilesOptions["generatePlaywrightFixtures"];
+        generateFixtures?: GenerateFilesOptions["generateFixtures"];
         routeMetaByComponent?: Record<string, RouteMeta>;
         vueRouterFluentChaining?: boolean;
     } = {},
@@ -734,7 +648,7 @@ async function generateAggregatedFiles(
         const imports: string[] = ['import type { Locator as PwLocator, Page as PwPage } from "@playwright/test";'];
 
         if (!basePageClassPath) {
-            throw new Error("basePageClassPath is required for singleFile generation");
+            throw new Error("basePageClassPath is required for aggregated generation");
         }
 
         // Inline BasePage into the aggregated output.
@@ -1034,44 +948,17 @@ async function generateAggregatedFiles(
         return baseContent;
     };
 
-    if (typeof outDir === "string") {
-        const base = ensureDir(outDir);
-        const outputFile = path.join(base, "index.g.ts");
-        const header = `${eslintSuppressionHeader}/**\n * Aggregated generated POMs\n${AUTO_GENERATED_COMMENT}`;
-        const content = makeAggregatedContent(header, path.dirname(outputFile), [...views, ...components]);
+    const base = ensureDir(outDir);
+    const outputFile = path.join(base, "index.g.ts");
+    const header = `${eslintSuppressionHeader}/**\n * Aggregated generated POMs\n${AUTO_GENERATED_COMMENT}`;
+    const content = makeAggregatedContent(header, path.dirname(outputFile), [...views, ...components]);
 
-        const indexFile = path.join(base, "index.ts");
-        const indexContent = `${eslintSuppressionHeader}/**\n * POM exports\n${AUTO_GENERATED_COMMENT}\n\nexport * from \"./index.g\";\n`;
-
-        return [
-            { filePath: outputFile, content },
-            { filePath: indexFile, content: indexContent },
-        ];
-    }
-
-    const pagesDir = ensureDir(outDir.pages);
-    const componentsDir = ensureDir(outDir.components);
-
-    const pagesFile = path.join(pagesDir, "index.g.ts");
-    const componentsFile = path.join(componentsDir, "index.g.ts");
-
-    const pagesIndexFile = path.join(pagesDir, "index.ts");
-    const componentsIndexFile = path.join(componentsDir, "index.ts");
-
-    const pagesHeader = `${eslintSuppressionHeader}/**\n * Aggregated generated POMs (Pages/Views)\n${AUTO_GENERATED_COMMENT}`;
-    const componentsHeader = `${eslintSuppressionHeader}/**\n * Aggregated generated POMs (Components)\n${AUTO_GENERATED_COMMENT}`;
-
-    const pagesContent = makeAggregatedContent(pagesHeader, path.dirname(pagesFile), views);
-    const componentsContent = makeAggregatedContent(componentsHeader, path.dirname(componentsFile), components);
-
-    const pagesIndexContent = `${eslintSuppressionHeader}/**\n * POM exports (Pages/Views)\n${AUTO_GENERATED_COMMENT}\n\nexport * from \"./index.g\";\n`;
-    const componentsIndexContent = `${eslintSuppressionHeader}/**\n * POM exports (Components)\n${AUTO_GENERATED_COMMENT}\n\nexport * from \"./index.g\";\n`;
+    const indexFile = path.join(base, "index.ts");
+    const indexContent = `${eslintSuppressionHeader}/**\n * POM exports\n${AUTO_GENERATED_COMMENT}\n\nexport * from "./index.g";\n`;
 
     return [
-        { filePath: pagesFile, content: pagesContent },
-        { filePath: componentsFile, content: componentsContent },
-        { filePath: pagesIndexFile, content: pagesIndexContent },
-        { filePath: componentsIndexFile, content: componentsIndexContent },
+        { filePath: outputFile, content },
+        { filePath: indexFile, content: indexContent },
     ];
 }
 

@@ -1,14 +1,33 @@
 import type { AttributeNode, DirectiveNode, ElementNode, ForNode, RootNode, TemplateChildNode } from '@vue/compiler-core'
 import type { Node as BabelNode } from '@babel/types'
 
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import type { CompilerOptions } from '@vue/compiler-dom'
-import type { NativeWrappersMap } from '../utils'
+import type { IComponentDependencies, NativeWrappersMap } from '../utils'
 import { ConstantTypes, NodeTypes } from '@vue/compiler-core'
 import { baseCompile, parserOptions } from '@vue/compiler-dom'
+import { parse as parseSfc } from '@vue/compiler-sfc'
 import { extend } from '@vue/shared'
 
 import { describe, expect, it } from 'vitest'
 import { createTestIdTransform } from '../transform'
+
+
+
+const fixturesDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'fixtures')
+
+function readFixtureTemplate(fixtureName: string): string {
+  const filePath = path.join(fixturesDir, fixtureName)
+  const content = fs.readFileSync(filePath, 'utf8')
+  const { descriptor } = parseSfc(content, { filename: filePath })
+  if (!descriptor.template) {
+    throw new Error(`Fixture ${fixtureName} is missing a <template> block`)
+  }
+  return descriptor.template.content.trim()
+}
 
 
 
@@ -224,11 +243,74 @@ function findFirstDataTestId(root: RootNode): string | null {
 }
 
 describe('createTestIdTransform', () => {
+  it('does not inject html attributes when injectTestIds is false (but still collects ids)', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+
+    const ast = compileAndCaptureAst(
+      readFixtureTemplate('MyComp_SaveButton.vue'),
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], 'src/views', { injectTestIds: false })],
+      },
+    )
+
+    const testId = findFirstDataTestId(ast)
+    expect(testId).toBeNull()
+
+    const deps = componentHierarchyMap.get('MyComp')
+    expect(deps).toBeTruthy()
+    expect(Array.from(deps!.dataTestIdSet).some(e => e.value === 'MyComp-Save-button')).toBe(true)
+  })
+
+  it('preserves existing data-testid when existingIdBehavior is preserve', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+
+    const ast = compileAndCaptureAst(
+      readFixtureTemplate('MyComp_SaveButton_ExistingTestId.vue'),
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], 'src/views', { existingIdBehavior: 'preserve' })],
+      },
+    )
+
+    const testId = findFirstDataTestId(ast)
+    expect(testId).toBe('already')
+  })
+
+  it('overwrites existing data-testid when existingIdBehavior is overwrite', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+
+    const ast = compileAndCaptureAst(
+      readFixtureTemplate('MyComp_SaveButton_ExistingTestId.vue'),
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], 'src/views', { existingIdBehavior: 'overwrite' })],
+      },
+    )
+
+    const testId = findFirstDataTestId(ast)
+    expect(testId).toBe('MyComp-Save-button')
+  })
+
+  it('throws when existingIdBehavior is error and data-testid already exists', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+
+    expect(() => {
+      compileAndCaptureAst(
+        readFixtureTemplate('MyComp_SaveButton_ExistingTestId.vue'),
+        {
+          filename: '/src/components/MyComp.vue',
+          nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], 'src/views', { existingIdBehavior: 'error' })],
+        },
+      )
+    }).toThrow()
+  })
+
   it('injects a RouterLink :to test id early', () => {
     const componentHierarchyMap = new Map()
 
     const ast = compileAndCaptureAst(
-      `<RouterLink :to="{ name: 'users' }">Users</RouterLink>`,
+      readFixtureTemplate('MyComp_RouterLinkUsers.vue'),
       {
         filename: '/src/components/MyComp.vue',
         nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap)],
@@ -243,7 +325,7 @@ describe('createTestIdTransform', () => {
     const componentHierarchyMap = new Map()
 
     const ast = compileAndCaptureAst(
-      `<button v-for="item in items" :key="item.id" @click="select(item)">Select</button>`,
+      readFixtureTemplate('MyComp_SelectButton_DynamicKey.vue'),
       {
         filename: '/src/components/MyComp.vue',
         nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap)],
@@ -259,7 +341,7 @@ describe('createTestIdTransform', () => {
     const componentHierarchyMap = new Map()
 
     compileAndCaptureAst(
-      `<button v-for="item in ['One','Two']" :key="item" @click="select(item)">Select</button>`,
+      readFixtureTemplate('MyComp_SelectButton_StaticList.vue'),
       {
         filename: '/src/components/MyComp.vue',
         nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap)],
@@ -290,7 +372,7 @@ describe('createTestIdTransform', () => {
     const componentHierarchyMap = new Map()
 
     const ast = compileAndCaptureAst(
-      `<button v-for="n in [Math.random(), Math.random(), Math.random()]" :key="n" @click="doThing(n)">Go</button>`,
+      readFixtureTemplate('MyComp_GoButton_RandomList.vue'),
       {
         filename: '/src/components/MyComp.vue',
         nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap)],
@@ -347,7 +429,7 @@ describe('createTestIdTransform', () => {
     const componentHierarchyMap = new Map()
 
     const ast = compileAndCaptureAst(
-      `<button v-for="item in items" :key="item.id" @click="select(item)">Select</button>`,
+      readFixtureTemplate('MyComp_SelectButton_DynamicKey.vue'),
       {
         filename: '/src/components/MyComp.vue',
         nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap)],
@@ -370,7 +452,7 @@ describe('createTestIdTransform', () => {
     }
 
     const ast = compileAndCaptureAst(
-      `<v-select v-model="selectedGroup" />`,
+      readFixtureTemplate('MyComp_VSelect.vue'),
       {
         filename: '/src/components/MyComp.vue',
         nodeTransforms: [createTestIdTransform('MyComp', new Map(), nativeWrappers)],

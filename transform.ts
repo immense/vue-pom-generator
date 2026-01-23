@@ -341,13 +341,20 @@ export function createTestIdTransform(
   componentHierarchyMap: Map<string, IComponentDependencies>,
   nativeWrappers: NativeWrappersMap = {},
   excludedComponents: string[] = [],
-  viewsDir: string = "/src/views/",
-  options: { strictNaming?: boolean; testIdAttribute?: string } = {},
+  viewsDir: string = "src/views",
+  options: { injectTestIds?: boolean; existingIdBehavior?: "preserve" | "overwrite" | "error"; testIdAttribute?: string } = {},
 ): NodeTransform {
-  const strictNaming = options.strictNaming === true;
+  const injectTestIds = options.injectTestIds !== false;
+  const existingIdBehavior = options.existingIdBehavior ?? "preserve";
   const testIdAttribute = (options.testIdAttribute || "data-testid").trim() || "data-testid";
-  const normalizedViewsDir = viewsDir.startsWith("/") ? viewsDir : `/${viewsDir}`;
-  const viewsNeedle = normalizedViewsDir.endsWith("/") ? normalizedViewsDir : `${normalizedViewsDir}/`;
+  const normalizedViewsDir = path.normalize(viewsDir);
+  const viewsNeedle = (() => {
+    const base = path.isAbsolute(normalizedViewsDir)
+      ? normalizedViewsDir
+      : path.join(path.sep, normalizedViewsDir);
+    // Ensure trailing separator for substring match.
+    return path.join(base, path.sep);
+  })();
 
   // When generating methods incrementally, it’s possible for the same logical test id to be
   // encountered multiple times (e.g. due to wrapper behaviors, template shape, or repeated nodes).
@@ -381,21 +388,16 @@ export function createTestIdTransform(
     // only treats '/' as a separator. If we don't normalize separators first, we can end
     // up treating the entire absolute path as the "basename" and generating invalid
     // identifiers like `export class C:\\Users\\...`.
-    const toPosixPath = (filePath: string) => {
-      const resolved = path.resolve(filePath);
-      return path.posix.normalize(resolved.replace(/\\/g, "/"));
-    };
+    const normalizeFilePath = (filePath: string) => path.normalize(path.resolve(filePath));
 
     const getParentComponentName = () => {
-      // Vite often provides posix-style paths, but on Windows we can still see backslashes.
-      // Normalize to posix separators before using path.posix helpers.
-      const normalizedFilePath = toPosixPath(context.filename);
-      return path.posix.basename(normalizedFilePath, ".vue");
+      const normalizedFilePath = normalizeFilePath(context.filename);
+      return path.basename(normalizedFilePath, ".vue");
     };
 
     const parentComponentName = getParentComponentName();
 
-    const normalizedFilePath = toPosixPath(context.filename);
+    const normalizedFilePath = normalizeFilePath(context.filename);
     // Keep the existing semantics (substring match) but operate on a normalized path.
     const isView = normalizedFilePath.includes(viewsNeedle);
 
@@ -513,8 +515,9 @@ export function createTestIdTransform(
         bestKeyPlaceholder,
         keyValuesOverride,
         entryOverrides: args.entryOverrides,
-        addHtmlAttribute: args.addHtmlAttribute,
+        addHtmlAttribute: args.addHtmlAttribute ?? injectTestIds,
         testIdAttribute,
+        existingIdBehavior,
       });
     };
 
@@ -580,7 +583,6 @@ export function createTestIdTransform(
     const clickDirective = tryGetClickDirective(element);
     if (clickDirective) {
       const clickSuffix = getComposedClickHandlerContent(element, context, innerText, clickDirective, {
-        strictNaming,
         componentName,
         contextFilename: context.filename,
       });

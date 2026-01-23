@@ -396,7 +396,9 @@ export async function parseRouterFileFromCwd(routerEntryPath: string): Promise<R
     root: cwd,
     configFile: false,
     logLevel: "error",
-    server: { middlewareMode: true },
+    // This server is created only to SSR-load the router module. Disable HMR/WebSocket
+    // to avoid port conflicts in dev/test environments.
+    server: { middlewareMode: true, hmr: false },
     appType: "custom",
     // IMPORTANT:
     // This internal, short-lived Vite server exists only to `ssrLoadModule()` the router entry.
