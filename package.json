@@ -34,9 +34,11 @@
   "scripts": {
     "clean": "rm -rf dist",
     "build": "vite build",
+    "knip": "knip",
     "lint": "eslint .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "smoke:pack": "node ./scripts/packed-smoke-check.mjs",
     "typecheck": "node -e \"process.argv = ['node','tsc',...process.argv.slice(1)]; require('typescript/bin/tsc')\" -- -p tsconfig.json --noEmit",
     "prepublishOnly": "yarn build"
   },
@@ -52,20 +54,20 @@
     "@vue/compiler-core": "3.5.22",
     "@vue/compiler-dom": "3.5.22",
     "@vue/compiler-sfc": "3.5.22",
+    "@vue/shared": "3.5.22",
+    "jsdom": "^27.4.0",
     "vite-plugin-virtual": "^0.4.0"
   },
   "devDependencies": {
     "@antfu/eslint-config": "5.3.0",
-    "@eslint/js": "9.36.0",
     "@types/jsdom": "^27.0.0",
     "@types/node": "^24.1.0",
     "@vitest/coverage-v8": "^4.0.16",
+    "@playwright/test": "^1.57.0",
     "eslint": "^9.27.0",
-    "globals": "16.0.0",
-    "jiti": "^2.6.1",
-    "jsdom": "^27.4.0",
+    "knip": "^5.82.1",
     "typescript": "^5.9.2",
-    "typescript-eslint": "^8.43.0",
+    "vue-router": "^4.2.5",
     "vitest": "^4.0.16",
     "vite": "^7.3.1"
   },

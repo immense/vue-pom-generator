@@ -7,8 +7,8 @@ import { createRequire } from "node:module";
 
 import { describe, expect, it } from "vitest";
 
-import type { IComponentDependencies } from "../utils";
-import { generateViewObjectModelMethodContent, generateFiles } from "../class-generation";
+import type { IComponentDependencies, IDataTestId } from "../utils";
+import { generateFiles } from "../class-generation";
 
 function extractClassBlock(content: string, className: string): string {
   const start = content.indexOf(`export class ${className}`);
@@ -110,20 +110,21 @@ describe("generated output", () => {
     const componentName = "TestComponent";
 
     const formattedDataTestId = "TestComponent-${key}-Save-button";
-    const methodsContent = generateViewObjectModelMethodContent(
-      undefined,
-      "Save",
-      "button",
-      formattedDataTestId,
-      { key: "string" },
-    );
+    const dataTestIdEntry: IDataTestId = {
+      value: formattedDataTestId,
+      pom: {
+        nativeRole: "button",
+        methodName: "SaveButton",
+        formattedDataTestId,
+        params: { key: "string" },
+      },
+    };
 
     const deps: IComponentDependencies = {
       filePath: path.join(tempRoot, `${componentName}.vue`),
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
-      dataTestIdSet: new Set(),
-      methodsContent,
+      dataTestIdSet: new Set([dataTestIdEntry]),
       generatedMethods: new Map(),
       isView: false,
     };
@@ -194,28 +195,31 @@ describe("generated output", () => {
     const childA = "ChildA";
     const childB = "ChildB";
 
-    const childAMethods = generateViewObjectModelMethodContent(
-      undefined,
-      "OnlyInA",
-      "button",
-      "ChildA-OnlyInA-button",
-      {},
-    );
+    const childAEntry: IDataTestId = {
+      value: "ChildA-OnlyInA-button",
+      pom: {
+        nativeRole: "button",
+        methodName: "OnlyInAButton",
+        formattedDataTestId: "ChildA-OnlyInA-button",
+        params: {},
+      },
+    };
 
-    const childBMethods = generateViewObjectModelMethodContent(
-      undefined,
-      "SomethingElse",
-      "button",
-      "ChildB-SomethingElse-button",
-      {},
-    );
+    const childBEntry: IDataTestId = {
+      value: "ChildB-SomethingElse-button",
+      pom: {
+        nativeRole: "button",
+        methodName: "SomethingElseButton",
+        formattedDataTestId: "ChildB-SomethingElse-button",
+        params: {},
+      },
+    };
 
     const depsViewWithTwoChildren: IComponentDependencies = {
       filePath: path.join(tempRoot, `${viewName}.vue`),
       childrenComponentSet: new Set(),
       usedComponentSet: new Set([childA, childB]),
       dataTestIdSet: new Set(),
-      methodsContent: "\n",
       generatedMethods: new Map(),
       isView: true,
     };
@@ -224,8 +228,7 @@ describe("generated output", () => {
       filePath: path.join(tempRoot, `${childA}.vue`),
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
-      dataTestIdSet: new Set([{ value: "ChildA-OnlyInA-button" }]),
-      methodsContent: childAMethods,
+      dataTestIdSet: new Set([childAEntry]),
       generatedMethods: new Map([["clickOnlyInAButton", { params: "wait: boolean = true", argNames: ["wait"] }]]),
       isView: false,
     };
@@ -234,8 +237,7 @@ describe("generated output", () => {
       filePath: path.join(tempRoot, `${childB}.vue`),
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
-      dataTestIdSet: new Set([{ value: "ChildB-SomethingElse-button" }]),
-      methodsContent: childBMethods,
+      dataTestIdSet: new Set([childBEntry]),
       generatedMethods: new Map([["clickSomethingElseButton", { params: "wait: boolean = true", argNames: ["wait"] }]]),
       isView: false,
     };

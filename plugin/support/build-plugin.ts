@@ -16,6 +16,7 @@ interface BuildProcessorOptions {
   normalizedBasePagePath: string;
 
   outDir?: string;
+  emitLanguages?: Array<"ts" | "csharp">;
   generateFixtures?: boolean | string | { outDir?: string };
   customPomAttachments?: Array<{ className: string; propertyName: string; attachWhenUsesComponents: string[]; attachTo?: "views" | "components" | "both" }>;
   projectRootRef: { current: string };
@@ -36,6 +37,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     basePageClassPath,
     normalizedBasePagePath,
     outDir,
+    emitLanguages,
     generateFixtures,
     customPomAttachments,
     projectRootRef,
@@ -112,6 +114,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
 
       generateFiles(componentHierarchyMap, vueFilesPathMap, normalizedBasePagePath, {
         outDir,
+        emitLanguages,
         generateFixtures,
         customPomAttachments,
         projectRoot: projectRootRef.current,

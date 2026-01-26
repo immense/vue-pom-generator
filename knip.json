@@ -1,0 +1,50 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "exclude": [
+    "files"
+  ],
+  "ignore": [
+    "**/node_modules/**",
+    "**/.cache/**",
+    "**/.tmp/**"
+  ],
+  "ignoreFiles": [
+    "**/node_modules/**",
+    "**/.cache/**",
+    "**/.tmp/**"
+  ],
+  "entry": [
+    "index.ts",
+    "types-generator.ts",
+    "plugin/**/*.ts",
+    "class-generation/**/*.ts",
+    "compiler-*.ts",
+    "playwright/**/*.ts",
+    "tests/**/*.test.ts"
+  ],
+  "project": [
+    "**/*.ts",
+    "!dist/**",
+    "!coverage/**",
+    "!tests/fixtures/**",
+    "!node_modules/**"
+  ],
+  "ignoreExportsUsedInFile": {
+    "interface": true,
+    "type": true
+  },
+  "ignoreBinaries": [
+    "eslint",
+    "knip",
+    "vite",
+    "vitest"
+  ],
+  "ignoreDependencies": [
+    "eslint"
+  ],
+  "ignoreIssues": {
+    "plugin/create-vue-pom-generator-plugins.ts": [
+      "duplicates"
+    ]
+  }
+}

@@ -32,6 +32,7 @@ import {
   getInnerText,
   isNodeContainedInTemplateWithData,
   isSimpleExpressionNode,
+  nodeHandlerAttributeInfo,
   nodeHandlerAttributeValue,
   nodeHasClickDirective,
   nodeHasToDirective,
@@ -276,6 +277,78 @@ describe("utils.ts coverage", () => {
     expect(tryResolveToDirectiveTargetComponentName(toDir2!)).toBe("UsersViaResolve");
   });
 
+  it("derives :handler semanticNameHint from literal call arguments", () => {
+    const root = parseTemplate(`
+      <LoadButton :handler="() => createTenants('selected')">Selected</LoadButton>
+    `);
+    const el = firstElement(root);
+
+    const info = nodeHandlerAttributeInfo(el);
+    expect(info).toBeTruthy();
+    expect(info?.semanticNameHint).toBe("CreateTenantsSelected");
+
+    const root2 = parseTemplate(`
+      <LoadButton :handler="() => createTenants('all')">All</LoadButton>
+    `);
+    const el2 = firstElement(root2);
+
+    const info2 = nodeHandlerAttributeInfo(el2);
+    expect(info2).toBeTruthy();
+    expect(info2?.semanticNameHint).toBe("CreateTenantsAll");
+  });
+
+  it("derives :handler semanticNameHint from member-expression arguments", () => {
+    const root = parseTemplate(`
+      <LoadButton :handler="() => resolveConflictWithDecision(AgentIdentificationManualResolutionDecision.OverwriteExisting)">
+        Overwrite
+      </LoadButton>
+    `);
+    const el = firstElement(root);
+
+    const info = nodeHandlerAttributeInfo(el);
+    expect(info).toBeTruthy();
+    expect(info?.semanticNameHint).toBe("ResolveConflictWithDecisionOverwriteExisting");
+
+    const root2 = parseTemplate(`
+      <LoadButton :handler="() => resolveConflictWithDecision(AgentIdentificationManualResolutionDecision.GenerateNewDeviceId)">
+        Generate
+      </LoadButton>
+    `);
+    const el2 = firstElement(root2);
+
+    const info2 = nodeHandlerAttributeInfo(el2);
+    expect(info2).toBeTruthy();
+    expect(info2?.semanticNameHint).toBe("ResolveConflictWithDecisionGenerateNewDeviceId");
+  });
+
+  it("derives :handler semanticNameHint from assignment-bodied arrow functions", () => {
+    const root = parseTemplate(`
+      <LoadButton :handler="() => showResetLocalDatabaseModal = true">Reset</LoadButton>
+    `);
+    const el = firstElement(root);
+    const info = nodeHandlerAttributeInfo(el);
+    expect(info).toBeTruthy();
+    expect(info?.semanticNameHint).toBe("SetShowResetLocalDatabaseModalTrue");
+
+    const root2 = parseTemplate(`
+      <LoadButton :handler="() => showPopulateScenarioModal = true">Populate</LoadButton>
+    `);
+    const el2 = firstElement(root2);
+    const info2 = nodeHandlerAttributeInfo(el2);
+    expect(info2).toBeTruthy();
+    expect(info2?.semanticNameHint).toBe("SetShowPopulateScenarioModalTrue");
+  });
+
+  it("derives assignment target name from ref.value", () => {
+    const root = parseTemplate(`
+      <LoadButton :handler="() => showModal.value = true">Show</LoadButton>
+    `);
+    const el = firstElement(root);
+    const info = nodeHandlerAttributeInfo(el);
+    expect(info).toBeTruthy();
+    expect(info?.semanticNameHint).toBe("SetShowModalTrue");
+  });
+
   it("handles :key extraction paths", () => {
     const ast = parseTemplate("<div :key=\"item.id\" />");
     const el = firstElement(ast);
@@ -299,6 +372,22 @@ describe("utils.ts coverage", () => {
     expect(getIdOrName(firstElement(parseTemplate("<div name=\"foo_bar\" />")))).toBe("FooBar");
     const dyn = firstElement(parseTemplate("<div :id=\"something\" />"));
     expect(getIdOrName(dyn)).toContain("someUniqueValueToDifferentiateInstanceFromOthersOnPageUsuallyAnId");
+  });
+
+  it("extracts :handler semantic hints from common patterns", () => {
+    const direct = firstElement(parseTemplate("<LoadButton :handler=\"approveChangeRequest\" />"));
+    expect(nodeHandlerAttributeValue(direct)).toBe("ApproveChangeRequest");
+    expect(nodeHandlerAttributeInfo(direct)?.mergeKey).toBe("handler:expr:approveChangeRequest");
+
+    const goBackFalse = firstElement(parseTemplate("<LoadButton :handler=\"() => onSubmit({goBack:false})\" />"));
+    const goBackTrue = firstElement(parseTemplate("<LoadButton :handler=\"() => onSubmit({goBack:true})\" />"));
+    expect(nodeHandlerAttributeValue(goBackFalse)).toBe("OnSubmitGoBackFalse");
+    expect(nodeHandlerAttributeValue(goBackTrue)).toBe("OnSubmitGoBackTrue");
+    expect(nodeHandlerAttributeInfo(goBackFalse)?.mergeKey).toBe("handler:expr:() => onSubmit({goBack:false})");
+    expect(nodeHandlerAttributeInfo(goBackTrue)?.mergeKey).toBe("handler:expr:() => onSubmit({goBack:true})");
+
+    const other = firstElement(parseTemplate("<LoadButton :handler=\"() => onDuplicateAssignment(assignmentId, props.databaseType)\" />"));
+    expect(nodeHandlerAttributeValue(other)).toBe("OnDuplicateAssignment");
   });
 
   it("detects containment within <template v-slot> scope", () => {
@@ -494,7 +583,7 @@ describe("utils.ts coverage", () => {
     const info = tryGetExistingElementDataTestId(node);
     expect(info?.isDynamic).toBe(true);
     expect(info?.isStaticLiteral).toBe(false);
-    expect(info?.value).toBe("abc-");
+    expect(info?.value).toBe("abc-${id}");
 
     const node2 = firstElement(parseTemplate("<div :data-testid=\"'foo'\" />"));
     setBindAst(node2, "data-testid", "'foo'");
@@ -502,6 +591,71 @@ describe("utils.ts coverage", () => {
     expect(info2?.isDynamic).toBe(false);
     expect(info2?.isStaticLiteral).toBe(true);
     expect(info2?.value).toBe("foo");
+  });
+
+  it("throws when preserving an existing dynamic data-testid expression (unusable selector)", () => {
+    const el = firstElement(parseTemplate("<button :data-testid=\"__props.name\" />"));
+
+    const deps: IComponentDependencies = {
+      filePath: "/src/components/MyComp.vue",
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set<IDataTestId>(),
+      generatedMethods: new Map(),
+      isView: false,
+    };
+
+    const generatedMethodContentByComponent = new Map<string, Set<string>>();
+
+    expect(() => {
+      applyResolvedDataTestId({
+        element: el,
+        componentName: "MyComp",
+        parentComponentName: "MyComp",
+        dependencies: deps,
+        generatedMethodContentByComponent,
+        nativeRole: "button",
+        preferredGeneratedValue: staticAttributeValue("MyComp-Foo-button"),
+        bestKeyPlaceholder: null,
+        testIdAttribute: "data-testid",
+        existingIdBehavior: "preserve",
+        addHtmlAttribute: false,
+      });
+    }).toThrow(/cannot be preserved|dynamic/i);
+  });
+
+  it("allows preserving an existing key-based template literal data-testid", () => {
+    const el = firstElement(parseTemplate("<button :data-testid=\"`abc-${item.id}`\" />"));
+    setBindAst(el, "data-testid", "`abc-${item.id}`");
+
+    const deps: IComponentDependencies = {
+      filePath: "/src/components/MyComp.vue",
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set<IDataTestId>(),
+      generatedMethods: new Map(),
+      isView: false,
+    };
+
+    const generatedMethodContentByComponent = new Map<string, Set<string>>();
+
+    applyResolvedDataTestId({
+      element: el,
+      componentName: "MyComp",
+      parentComponentName: "MyComp",
+      dependencies: deps,
+      generatedMethodContentByComponent,
+      nativeRole: "button",
+      preferredGeneratedValue: staticAttributeValue("ignored"),
+      bestKeyPlaceholder: "${item.id}",
+      testIdAttribute: "data-testid",
+      existingIdBehavior: "preserve",
+      addHtmlAttribute: false,
+    });
+
+    const entries = Array.from(deps.dataTestIdSet);
+    expect(entries.length).toBe(1);
+    expect(entries[0]?.pom?.formattedDataTestId).toBe("abc-${key}");
   });
 
   it("drives applyResolvedDataTestId through option-driven radio handling and de-duping", () => {
@@ -515,7 +669,6 @@ describe("utils.ts coverage", () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set<IDataTestId>(),
-      methodsContent: "\n",
       generatedMethods: new Map(),
       isView: false,
     };
@@ -537,10 +690,14 @@ describe("utils.ts coverage", () => {
       entryOverrides: { value: "MyComp-Foo-radio" },
     });
 
-    // Should have generated per-option methods and signatures.
-    const methods = deps.methodsContent ?? "";
-    expect(methods).toContain("select");
-    expect(methods).toContain("_radio");
+    // Should have generated per-option extra click methods (IR), not raw emitted method strings.
+    const extras = deps.pomExtraMethods ?? [];
+    expect(extras.length).toBeGreaterThan(0);
+    expect(extras.every(e => e.kind === "click")).toBe(true);
+    expect(extras.some(e => e.name.startsWith("select"))).toBe(true);
+    expect(extras.some(e => e.formattedDataTestId.includes("_radio"))).toBe(true);
+
+    const prevCount = extras.length;
 
     // Call again to hit the de-dupe path in appendMethodOnce.
     applyResolvedDataTestId({
@@ -557,9 +714,12 @@ describe("utils.ts coverage", () => {
       addHtmlAttribute: false,
       entryOverrides: { value: "MyComp-Foo-radio" },
     });
+
+    // De-dupe: calling again should not add more extra methods.
+    expect((deps.pomExtraMethods ?? []).length).toBe(prevCount);
   });
 
-  it("covers applyResolvedDataTestId dynamic options method + signature mismatch handling", () => {
+  it("covers applyResolvedDataTestId dynamic options method + signature collision handling", () => {
     const el = firstElement(parseTemplate("<dx-radio-group :options=\"options\" />"));
 
     const deps: IComponentDependencies = {
@@ -567,7 +727,6 @@ describe("utils.ts coverage", () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set<IDataTestId>(),
-      methodsContent: "\n",
       generatedMethods: new Map(),
       isView: false,
     };
@@ -588,13 +747,11 @@ describe("utils.ts coverage", () => {
       addHtmlAttribute: false,
     });
 
-    const methodNames = Array.from(deps.generatedMethods!.keys());
-    expect(methodNames.length).toBeGreaterThan(0);
-    const some = methodNames[0]!;
+    const some = "selectRadio";
     const prev = deps.generatedMethods!.get(some);
     expect(prev).not.toBeUndefined();
 
-    // Force a mismatch on the next registration pass.
+    // Force a collision on the next registration pass.
     deps.generatedMethods!.set(some, { params: "x: number", argNames: ["x"] });
 
     applyResolvedDataTestId({
@@ -604,15 +761,235 @@ describe("utils.ts coverage", () => {
       dependencies: deps,
       generatedMethodContentByComponent,
       nativeRole: "radio",
-      preferredGeneratedValue: staticAttributeValue("MyComp-radio"),
+      // Change the wrapper prefix so the extra method is not semantically de-duped,
+      // and the generator has to pick a unique name.
+      preferredGeneratedValue: staticAttributeValue("MyComp2-radio"),
       bestKeyPlaceholder: null,
       testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
       addHtmlAttribute: false,
     });
 
-    expect(deps.generatedMethods!.get(some)).toBeNull();
-    expect(deps.methodsContent).toContain("const testId");
+    // Because dynamic options use ensureUniqueGeneratedName, collisions produce a suffixed name
+    // rather than poisoning the original signature.
+    expect(deps.generatedMethods!.get(some)).toEqual({ params: "x: number", argNames: ["x"] });
+    expect(deps.generatedMethods!.get("selectRadio2")).toEqual({
+      params: "value: string, annotationText: string = \"\"",
+      argNames: ["value", "annotationText"],
+    });
+
+    // Dynamic options should be represented as a single extra method that interpolates `${value}`.
+    const extras = deps.pomExtraMethods ?? [];
+    const method1 = extras.find(e => e.kind === "click" && e.name === some);
+    expect(method1).toBeTruthy();
+    expect(method1?.formattedDataTestId).toContain("${value}");
+    expect(method1?.formattedDataTestId).toContain("_radio");
+
+    const method2 = extras.find(e => e.kind === "click" && e.name === "selectRadio2");
+    expect(method2).toBeTruthy();
+    expect(method2?.formattedDataTestId).toContain("${value}");
+    expect(method2?.formattedDataTestId).toContain("_radio");
+  });
+
+  it("supports configurable primary POM name collision behavior (error/warn/suffix)", () => {
+    const root = parseTemplate("<button /><button />");
+    const els = (root.children ?? []).filter((c: any) => c?.type === NodeTypes.ELEMENT) as ElementNode[];
+    expect(els.length).toBe(2);
+
+    const makeDeps = (): IComponentDependencies => ({
+      filePath: "/src/components/MyComp.vue",
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set<IDataTestId>(),
+      generatedMethods: new Map(),
+      isView: false,
+    });
+
+    // (1) error: throw on first collision
+    {
+      const deps = makeDeps();
+      const generatedMethodContentByComponent = new Map<string, Set<string>>();
+
+      applyResolvedDataTestId({
+        element: els[0]!,
+        componentName: "MyComp",
+        parentComponentName: "MyComp",
+        dependencies: deps,
+        generatedMethodContentByComponent,
+        nativeRole: "button",
+        preferredGeneratedValue: staticAttributeValue("MyComp-A-button"),
+        bestKeyPlaceholder: null,
+        testIdAttribute: "data-testid",
+        existingIdBehavior: "overwrite",
+        addHtmlAttribute: false,
+        nameCollisionBehavior: "error",
+      });
+
+      expect(() => {
+        applyResolvedDataTestId({
+          element: els[1]!,
+          componentName: "MyComp",
+          parentComponentName: "MyComp",
+          dependencies: deps,
+          generatedMethodContentByComponent,
+          nativeRole: "button",
+          preferredGeneratedValue: staticAttributeValue("MyComp-B-button"),
+          bestKeyPlaceholder: null,
+          testIdAttribute: "data-testid",
+          existingIdBehavior: "overwrite",
+          addHtmlAttribute: false,
+          nameCollisionBehavior: "error",
+        });
+      }).toThrow(/member-name collision/i);
+    }
+
+    // (2) warn: warn and suffix
+    {
+      const deps = makeDeps();
+      const generatedMethodContentByComponent = new Map<string, Set<string>>();
+      const warnings: string[] = [];
+
+      applyResolvedDataTestId({
+        element: els[0]!,
+        componentName: "MyComp",
+        parentComponentName: "MyComp",
+        dependencies: deps,
+        generatedMethodContentByComponent,
+        nativeRole: "button",
+        preferredGeneratedValue: staticAttributeValue("MyComp-A-button"),
+        bestKeyPlaceholder: null,
+        testIdAttribute: "data-testid",
+        existingIdBehavior: "overwrite",
+        addHtmlAttribute: false,
+        nameCollisionBehavior: "warn",
+        warn: (m) => warnings.push(m),
+      });
+
+      applyResolvedDataTestId({
+        element: els[1]!,
+        componentName: "MyComp",
+        parentComponentName: "MyComp",
+        dependencies: deps,
+        generatedMethodContentByComponent,
+        nativeRole: "button",
+        preferredGeneratedValue: staticAttributeValue("MyComp-B-button"),
+        bestKeyPlaceholder: null,
+        testIdAttribute: "data-testid",
+        existingIdBehavior: "overwrite",
+        addHtmlAttribute: false,
+        nameCollisionBehavior: "warn",
+        warn: (m) => warnings.push(m),
+      });
+
+      expect(warnings.length).toBeGreaterThan(0);
+      expect(warnings.some(w => /collision/i.test(w))).toBe(true);
+
+      const poms = Array.from(deps.dataTestIdSet).map(e => e.pom?.methodName).filter(Boolean);
+      expect(poms).toContain("Button");
+      expect(poms).toContain("Button2");
+    }
+
+    // (3) suffix: suffix silently
+    {
+      const deps = makeDeps();
+      const generatedMethodContentByComponent = new Map<string, Set<string>>();
+      let warned = false;
+
+      applyResolvedDataTestId({
+        element: els[0]!,
+        componentName: "MyComp",
+        parentComponentName: "MyComp",
+        dependencies: deps,
+        generatedMethodContentByComponent,
+        nativeRole: "button",
+        preferredGeneratedValue: staticAttributeValue("MyComp-A-button"),
+        bestKeyPlaceholder: null,
+        testIdAttribute: "data-testid",
+        existingIdBehavior: "overwrite",
+        addHtmlAttribute: false,
+        nameCollisionBehavior: "suffix",
+        warn: () => { warned = true; },
+      });
+
+      applyResolvedDataTestId({
+        element: els[1]!,
+        componentName: "MyComp",
+        parentComponentName: "MyComp",
+        dependencies: deps,
+        generatedMethodContentByComponent,
+        nativeRole: "button",
+        preferredGeneratedValue: staticAttributeValue("MyComp-B-button"),
+        bestKeyPlaceholder: null,
+        testIdAttribute: "data-testid",
+        existingIdBehavior: "overwrite",
+        addHtmlAttribute: false,
+        nameCollisionBehavior: "suffix",
+        warn: () => { warned = true; },
+      });
+
+      expect(warned).toBe(false);
+      const poms = Array.from(deps.dataTestIdSet).map(e => e.pom?.methodName).filter(Boolean);
+      expect(poms).toContain("Button");
+      expect(poms).toContain("Button2");
+    }
+  });
+
+  it("avoids select/radio action-name collisions by role-suffixing in strict mode", () => {
+    const root = parseTemplate("<ImmySelect /><ImmyRadioGroup />");
+    const els = (root.children ?? []).filter((c: any) => c?.type === NodeTypes.ELEMENT) as ElementNode[];
+    expect(els.length).toBe(2);
+
+    const deps: IComponentDependencies = {
+      filePath: "/src/components/MyComp.vue",
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set<IDataTestId>(),
+      generatedMethods: new Map(),
+      isView: false,
+    };
+
+    const generatedMethodContentByComponent = new Map<string, Set<string>>();
+
+    applyResolvedDataTestId({
+      element: els[0]!,
+      componentName: "MyComp",
+      parentComponentName: "MyComp",
+      dependencies: deps,
+      generatedMethodContentByComponent,
+      nativeRole: "select",
+      semanticNameHint: "ParameterDefaultValue",
+      preferredGeneratedValue: staticAttributeValue("MyComp-select"),
+      bestKeyPlaceholder: null,
+      testIdAttribute: "data-testid",
+      existingIdBehavior: "overwrite",
+      addHtmlAttribute: false,
+      nameCollisionBehavior: "error",
+    });
+
+    expect(() => {
+      applyResolvedDataTestId({
+        element: els[1]!,
+        componentName: "MyComp",
+        parentComponentName: "MyComp",
+        dependencies: deps,
+        generatedMethodContentByComponent,
+        nativeRole: "radio",
+        semanticNameHint: "ParameterDefaultValue",
+        preferredGeneratedValue: staticAttributeValue("MyComp-radio"),
+        bestKeyPlaceholder: null,
+        testIdAttribute: "data-testid",
+        existingIdBehavior: "overwrite",
+        addHtmlAttribute: false,
+        nameCollisionBehavior: "error",
+      });
+    }).not.toThrow();
+
+    const entries = Array.from(deps.dataTestIdSet);
+    const selectEntry = entries.find(e => e.value === "MyComp-select");
+    const radioEntry = entries.find(e => e.value === "MyComp-radio");
+
+    expect(selectEntry?.pom?.methodName).toBe("ParameterDefaultValue");
+    expect(radioEntry?.pom?.methodName).toBe("ParameterDefaultValueRadio");
   });
 
   it("covers applyResolvedDataTestId static option labels extracted from array-of-objects", () => {
@@ -623,7 +1000,6 @@ describe("utils.ts coverage", () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set<IDataTestId>(),
-      methodsContent: "\n",
       generatedMethods: new Map(),
       isView: false,
     };
@@ -644,14 +1020,22 @@ describe("utils.ts coverage", () => {
       addHtmlAttribute: false,
     });
 
-    // Duplicate label should force a unique suffix via ensureUniqueGeneratedName.
+    // Duplicate labels that resolve to the same semantic option are de-duped.
     const keys = Array.from(deps.generatedMethods!.keys());
-    expect(keys.some(k => k.endsWith("2"))).toBe(true);
+    expect(keys.length).toBe(1);
+    expect(keys.some(k => k.endsWith("2"))).toBe(false);
+    expect((deps.pomExtraMethods ?? []).length).toBe(1);
   });
 
   it("covers composed click handler content fallback", () => {
     const ast = parseTemplate("<button>Save</button>");
     const btn = firstElement(ast);
-    expect(getComposedClickHandlerContent(btn, { scopes: { vFor: 0 } } as any, "Save")).toBe("-Save");
+    expect(getComposedClickHandlerContent(btn, { scopes: { vFor: 0 } } as any, "Save")).toBe("");
+  });
+
+  it("extracts composed click handler content for @click.prevent call expressions", () => {
+    const ast = parseTemplate("<button @click.prevent=\"appPrefEmailBccRemoved(email)\">{{ email }}</button>");
+    const btn = firstElement(ast);
+    expect(getComposedClickHandlerContent(btn, { scopes: { vFor: 0 } } as any, null)).toBe("-AppPrefEmailBccRemoved");
   });
 });

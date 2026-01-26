@@ -14,7 +14,6 @@ import {
   stringifyExpression,
 } from "@vue/compiler-core";
 import type {
-  AssignmentExpression,
   ArrayExpression,
   File,
   MemberExpression,
@@ -47,8 +46,7 @@ import {
   isStringLiteral,
   isTemplateLiteral,
 } from "@babel/types";
-import { parseExpression } from "@babel/parser";
-import { generateViewObjectModelMethodContent } from "./method-generation";
+import { parse, parseExpression } from "@babel/parser";
 
 export { isSimpleExpressionNode } from "./compiler/ast-guards";
 export {
@@ -570,18 +568,45 @@ function getParent(hierarchyMap: HierarchyMap, node: ElementNode): ElementNode |
  * @internal
  */
 export function nodeHandlerAttributeValue(node: ElementNode): string | null {
+  return nodeHandlerAttributeInfo(node)?.semanticNameHint ?? null;
+}
+
+export interface HandlerAttributeInfo {
+  /** Stable semantic hint for method/property names (never derived by parsing data-testid). */
+  semanticNameHint: string;
+  /** Stable semantic merge key for converging identical handler actions. */
+  mergeKey: string;
+}
+
+/**
+ * Extracts semantic naming and merge identity from a :handler binding.
+ *
+ * IMPORTANT: This never parses/derives from the generated/author-provided data-testid.
+ */
+export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInfo | null {
   const handlerDirective = findDirectiveByName(node, "bind", "handler");
-  if (!handlerDirective?.exp || handlerDirective.exp.type !== NodeTypes.SIMPLE_EXPRESSION) {
+  if (!handlerDirective?.exp) {
     return null;
   }
 
-  const source = (handlerDirective.exp as SimpleExpressionNode).content.trim();
+  const exp = handlerDirective.exp as SimpleExpressionNode | CompoundExpressionNode;
+  const source = (exp.type === NodeTypes.SIMPLE_EXPRESSION
+    ? (exp as SimpleExpressionNode).content
+    : stringifyExpression(exp)).trim();
+  if (!source) {
+    return null;
+  }
+
+  // Use a source-based key so identical handler expressions can converge.
+  // NOTE: We intentionally do not normalize via regex/string parsing helpers in this package.
+  const mergeKey = `handler:expr:${source}`;
 
   let expr: object;
   try {
-    expr = parseExpression(source, { plugins: ["typescript"] });
+    expr = parseExpression(source, { plugins: ["typescript", "jsx"] });
   }
   catch {
+    // Even if parsing fails, still provide a merge identity.
     return null;
   }
 
@@ -594,23 +619,72 @@ export function nodeHandlerAttributeValue(node: ElementNode): string | null {
   const isStringLiteralNode = (node: object | null): node is { type: "StringLiteral"; value: string } => {
     return isNodeType(node, "StringLiteral") && typeof (node as { value?: string }).value === "string";
   };
-  const isMemberExpressionNode = (node: object | null): node is { type: "MemberExpression"; computed: boolean; property: object } => {
+  const isBooleanLiteralNode = (node: object | null): node is { type: "BooleanLiteral"; value: boolean } => {
+    return isNodeType(node, "BooleanLiteral") && typeof (node as { value?: boolean }).value === "boolean";
+  };
+  const isNumericLiteralNode = (node: object | null): node is { type: "NumericLiteral"; value: number } => {
+    return isNodeType(node, "NumericLiteral") && typeof (node as { value?: number }).value === "number";
+  };
+  const isNullLiteralNode = (node: object | null): node is { type: "NullLiteral" } => {
+    return isNodeType(node, "NullLiteral");
+  };
+  const isMemberExpressionNode = (node: object | null): node is { type: "MemberExpression"; computed: boolean; object: object; property: object } => {
     if (!isNodeType(node, "MemberExpression"))
       return false;
-    const n = node as { computed?: boolean; property?: object };
-    return typeof n.computed === "boolean" && typeof n.property === "object" && n.property !== null;
+    const n = node as { computed?: boolean; object?: object; property?: object };
+    return typeof n.computed === "boolean"
+      && typeof n.object === "object" && n.object !== null
+      && typeof n.property === "object" && n.property !== null;
   };
-  const isCallExpressionNode = (node: object | null): node is { type: "CallExpression"; callee: object } => {
+  const isCallExpressionNode = (node: object | null): node is { type: "CallExpression"; callee: object; arguments: object[] } => {
     if (!isNodeType(node, "CallExpression"))
       return false;
-    const n = node as { callee?: object };
-    return typeof n.callee === "object" && n.callee !== null;
+    const n = node as { callee?: object; arguments?: object[] };
+    return typeof n.callee === "object" && n.callee !== null && Array.isArray(n.arguments);
+  };
+  const isAssignmentExpressionNode = (node: object | null): node is { type: "AssignmentExpression"; left: object; right: object } => {
+    if (!isNodeType(node, "AssignmentExpression"))
+      return false;
+    const n = node as { left?: object; right?: object };
+    return typeof n.left === "object" && n.left !== null && typeof n.right === "object" && n.right !== null;
   };
   const isArrowFunctionExpressionNode = (node: object | null): node is { type: "ArrowFunctionExpression"; body: object } => {
     if (!isNodeType(node, "ArrowFunctionExpression"))
       return false;
     const n = node as { body?: object };
     return typeof n.body === "object" && n.body !== null;
+  };
+  const isBlockStatementNode = (node: object | null): node is { type: "BlockStatement"; body: object[] } => {
+    if (!isNodeType(node, "BlockStatement"))
+      return false;
+    const n = node as { body?: object[] };
+    return Array.isArray(n.body);
+  };
+  const isExpressionStatementNode = (node: object | null): node is { type: "ExpressionStatement"; expression: object } => {
+    if (!isNodeType(node, "ExpressionStatement"))
+      return false;
+    const n = node as { expression?: object };
+    return typeof n.expression === "object" && n.expression !== null;
+  };
+  const isReturnStatementNode = (node: object | null): node is { type: "ReturnStatement"; argument: object | null } => {
+    if (!isNodeType(node, "ReturnStatement"))
+      return false;
+    const n = node as { argument?: object | null };
+    return typeof n.argument === "object" || n.argument === null;
+  };
+  const isObjectExpressionNode = (node: object | null): node is { type: "ObjectExpression"; properties: object[] } => {
+    if (!isNodeType(node, "ObjectExpression"))
+      return false;
+    const n = node as { properties?: object[] };
+    return Array.isArray(n.properties);
+  };
+  const isObjectPropertyNode = (node: object | null): node is { type: "ObjectProperty"; computed: boolean; key: object; value: object } => {
+    if (!isNodeType(node, "ObjectProperty"))
+      return false;
+    const n = node as { computed?: boolean; key?: object; value?: object };
+    return typeof n.computed === "boolean"
+      && typeof n.key === "object" && n.key !== null
+      && typeof n.value === "object" && n.value !== null;
   };
 
   const getLastIdentifierFromMemberChain = (node: object | null): string | null => {
@@ -637,22 +711,234 @@ export function nodeHandlerAttributeValue(node: ElementNode): string | null {
     return null;
   };
 
+  const getAssignmentTargetName = (lhs: object | null): string | null => {
+    if (!lhs) {
+      return null;
+    }
+
+    if (isIdentifierNode(lhs)) {
+      return lhs.name;
+    }
+
+    if (isMemberExpressionNode(lhs)) {
+      // Special-case Vue refs: something.value = true/false should derive from `something`.
+      if (lhs.computed === false && isIdentifierNode(lhs.property) && lhs.property.name === "value") {
+        return getLastIdentifierFromMemberChain(lhs.object);
+      }
+
+      return getLastIdentifierFromMemberChain(lhs);
+    }
+
+    return null;
+  };
+
+  const isTemplateLiteralNode = (node: object | null): node is { type: "TemplateLiteral"; expressions: object[]; quasis: Array<{ value?: { cooked?: string } }> } => {
+    if (!isNodeType(node, "TemplateLiteral")) {
+      return false;
+    }
+    const n = node as { expressions?: object[]; quasis?: Array<{ value?: { cooked?: string } }> };
+    return Array.isArray(n.expressions) && Array.isArray(n.quasis);
+  };
+
+  const stableWordFromValue = (arg: object | null): string | null => {
+    if (!arg) {
+      return null;
+    }
+
+    if (isBooleanLiteralNode(arg)) {
+      return arg.value ? "True" : "False";
+    }
+
+    if (isNumericLiteralNode(arg)) {
+      return `Value${String(arg.value)}`;
+    }
+
+    if (isNullLiteralNode(arg)) {
+      return "Null";
+    }
+
+    if (isStringLiteralNode(arg)) {
+      const cleaned = (arg.value ?? "").trim();
+      if (!cleaned) {
+        return null;
+      }
+      return toPascalCase(cleaned.slice(0, 24));
+    }
+
+    // TemplateLiteral with no expressions is a stable, explicit string.
+    if (isTemplateLiteralNode(arg)) {
+      if ((arg.expressions ?? []).length > 0) {
+        return null;
+      }
+      const v = (arg.quasis ?? []).map(q => q.value?.cooked ?? "").join("").trim();
+      if (!v) {
+        return null;
+      }
+      return toPascalCase(v.slice(0, 24));
+    }
+
+    // Stable member-expression values are useful suffixes for enums/constants.
+    // Avoid suffixing from typical lower-camel variable identifiers (e.g. x, assignmentId), since
+    // that would explode API surface and reduce stability.
+    if (isMemberExpressionNode(arg)) {
+      const stableName = getLastIdentifierFromMemberChain(arg);
+      if (stableName) {
+        return toPascalCase(stableName.slice(0, 24));
+      }
+    }
+
+    // Allow Identifier suffixes only when they look like constants (PascalCase/UPPER_CASE).
+    if (isIdentifierNode(arg)) {
+      const firstChar = arg.name.charAt(0);
+      const isUpperAlpha = firstChar !== "" && firstChar === firstChar.toUpperCase() && firstChar !== firstChar.toLowerCase();
+      if (isUpperAlpha) {
+        return toPascalCase(arg.name.slice(0, 24));
+      }
+    }
+
+    return null;
+  };
+
+  const getStableSuffixFromCall = (call: { arguments: object[] }): string | null => {
+    const args = call.arguments ?? [];
+    const first = (args.length > 0 ? args[0] : null) as object | null;
+
+    // Preferred pattern: fn({ option: true/false, ... }) => OptionTrue...
+    if (!isObjectExpressionNode(first)) {
+      // Secondary pattern: fn('all') / fn(true) / fn(3) etc. Derive from first 1-2 literal args.
+      const parts: string[] = [];
+      for (const arg of args.slice(0, 2)) {
+        const w = stableWordFromValue(arg ?? null);
+        if (!w) {
+          return null;
+        }
+        parts.push(w);
+      }
+
+      if (parts.length === 0) {
+        return null;
+      }
+
+      return parts.join("");
+    }
+
+    interface Part { key: string; value: string }
+    const parts: Part[] = [];
+    for (const prop of first.properties ?? []) {
+      if (!isObjectPropertyNode(prop)) {
+        continue;
+      }
+      if (prop.computed) {
+        continue;
+      }
+
+      const keyName = isIdentifierNode(prop.key)
+        ? prop.key.name
+        : (isStringLiteralNode(prop.key) ? prop.key.value : null);
+      if (!keyName) {
+        continue;
+      }
+
+      let valueWord: string | null = null;
+      if (isBooleanLiteralNode(prop.value)) {
+        valueWord = prop.value.value ? "True" : "False";
+      } else if (isStringLiteralNode(prop.value)) {
+        const cleaned = (prop.value.value ?? "").trim();
+        if (cleaned) {
+          // Avoid generating unreasonably long names from large literals.
+          valueWord = toPascalCase(cleaned.slice(0, 24));
+        }
+      } else if (isNumericLiteralNode(prop.value)) {
+        valueWord = `Value${String(prop.value.value)}`;
+      } else if (isNullLiteralNode(prop.value)) {
+        valueWord = "Null";
+      }
+
+      if (!valueWord) {
+        continue;
+      }
+
+      parts.push({ key: keyName, value: valueWord });
+    }
+
+    if (parts.length === 0) {
+      return null;
+    }
+
+    // Sort for stability (property order differences should not rename the POM member).
+    parts.sort((a, b) => a.key.localeCompare(b.key));
+
+    // Limit suffix size.
+    const limited = parts.slice(0, 2);
+    return limited.map(p => `${toPascalCase(p.key)}${p.value}`).join("");
+  };
+
   // :handler="myHandler" or :handler="obj.myHandler"
   const direct = getLastIdentifierFromMemberChain(expr);
-  if (direct)
-    return toPascalCase(direct);
+  if (direct) {
+    return { semanticNameHint: toPascalCase(direct), mergeKey };
+  }
 
   // :handler="(x) => myHandler(x)" or :handler="() => obj.myHandler()"
   if (isArrowFunctionExpressionNode(expr)) {
     const body = expr.body;
-    if (isCallExpressionNode(body)) {
-      const name = getLastIdentifierFromMemberChain(body.callee);
-      if (name)
-        return toPascalCase(name);
+
+    const tryFromCallExpression = (call: object | null) => {
+      if (!isCallExpressionNode(call)) {
+        return null;
+      }
+      const name = getLastIdentifierFromMemberChain(call.callee);
+      if (!name) {
+        return null;
+      }
+      const suffix = getStableSuffixFromCall(call);
+      const semanticNameHint = suffix
+        ? `${toPascalCase(name)}${suffix}`
+        : toPascalCase(name);
+      return semanticNameHint;
+    };
+
+    // ArrowFunctionExpression with implicit return call: () => fn(...)
+    const directCall = tryFromCallExpression(body);
+    if (directCall) {
+      return { semanticNameHint: directCall, mergeKey };
     }
+
+    // ArrowFunctionExpression with assignment body: () => someFlag = true
+    if (isAssignmentExpressionNode(body)) {
+      const lhs = getAssignmentTargetName(body.left);
+      if (lhs) {
+        const rhs = stableWordFromValue(body.right);
+        const semanticNameHint = `Set${toPascalCase(lhs)}${rhs ?? ""}`;
+        return { semanticNameHint, mergeKey };
+      }
+    }
+
+    // ArrowFunctionExpression block: () => { return fn(...) } or () => { fn(...) }
+    if (isBlockStatementNode(body)) {
+      const stmts = body.body ?? [];
+      if (stmts.length > 0) {
+        const firstStmt = stmts[0] as object;
+        if (isReturnStatementNode(firstStmt)) {
+          const fromReturn = tryFromCallExpression(firstStmt.argument ?? null);
+          if (fromReturn) {
+            return { semanticNameHint: fromReturn, mergeKey };
+          }
+        }
+        if (isExpressionStatementNode(firstStmt)) {
+          const fromExpr = tryFromCallExpression(firstStmt.expression ?? null);
+          if (fromExpr) {
+            return { semanticNameHint: fromExpr, mergeKey };
+          }
+        }
+      }
+    }
+
+    // Fallback: () => myHandler
     const bodyName = getLastIdentifierFromMemberChain(body);
-    if (bodyName)
-      return toPascalCase(bodyName);
+    if (bodyName) {
+      return { semanticNameHint: toPascalCase(bodyName), mergeKey };
+    }
   }
 
   return null;
@@ -663,6 +949,9 @@ export interface NativeWrapperTransformInfo {
   nativeWrappersValue: AttributeValue | null;
   /** Value to assign to option-data-testid-prefix (when required by wrapper config) */
   optionDataTestIdPrefixValue: AttributeValue | null;
+
+  /** Semantic naming hint for POM method generation (never derived by parsing data-testid). */
+  semanticNameHint: string | null;
 }
 
 /**
@@ -682,7 +971,7 @@ export function getNativeWrapperTransformInfo(
   // If not a configured wrapper, nothing to do.
   const wrapperConfig = nativeWrappers[node.tag];
   if (!wrapperConfig) {
-    return { nativeWrappersValue: null, optionDataTestIdPrefixValue: null };
+    return { nativeWrappersValue: null, optionDataTestIdPrefixValue: null, semanticNameHint: null };
   }
 
   const { role, valueAttribute, requiresOptionDataTestIdPrefix } = wrapperConfig;
@@ -694,13 +983,32 @@ export function getNativeWrapperTransformInfo(
   // For button-like wrappers, an author-specified @click is meaningful and we prefer the
   // click-derived naming pipeline.
   if (nodeHasClickDirective(node) && role === "button") {
-    return { nativeWrappersValue: null, optionDataTestIdPrefixValue: null };
+    return { nativeWrappersValue: null, optionDataTestIdPrefixValue: null, semanticNameHint: null };
   }
 
   // 1) The traditional native wrapper path (valueAttribute or v-model)
   if (valueAttribute) {
     const value = getDataTestIdValueFromValueAttribute(node, componentName, valueAttribute, role);
-    return { nativeWrappersValue: value || null, optionDataTestIdPrefixValue: null };
+
+    // Derive a semantic name hint from the wrapper's value attribute.
+    // This is intentionally based on the source expression/value, NOT by parsing the generated test id.
+    const attrStatic = findAttributeByKey(node, valueAttribute);
+    if (attrStatic?.value?.content) {
+      return { nativeWrappersValue: value || null, optionDataTestIdPrefixValue: null, semanticNameHint: attrStatic.value.content };
+    }
+
+    const attrDynamic = findDirectiveByName(node, "bind", valueAttribute);
+    if (attrDynamic && "exp" in attrDynamic && attrDynamic.exp && "ast" in attrDynamic.exp && attrDynamic.exp.ast) {
+      const { name } = getClickHandlerNameFromAst(attrDynamic.exp.ast as BabelNode);
+      if (name) {
+        return { nativeWrappersValue: value || null, optionDataTestIdPrefixValue: null, semanticNameHint: name };
+      }
+      // Fall back to the raw expression source.
+      const raw = (attrDynamic.exp as SimpleExpressionNode).loc?.source ?? "";
+      return { nativeWrappersValue: value || null, optionDataTestIdPrefixValue: null, semanticNameHint: raw || null };
+    }
+
+    return { nativeWrappersValue: value || null, optionDataTestIdPrefixValue: null, semanticNameHint: null };
   }
 
   const { vModel, modelValue } = getModelBindingValues(node);
@@ -708,19 +1016,22 @@ export function getNativeWrapperTransformInfo(
     const vmodelvalue = getDataTestIdFromGroupOption(vModel);
     const nativeWrappersValue = staticAttributeValue(`${componentName}-${modelValue || vmodelvalue}-${role}`);
 
+    const semanticNameHint = modelValue || vModel || null;
+
     // 2) Some wrappers additionally require option-data-testid-prefix.
     if (requiresOptionDataTestIdPrefix) {
       const value = vmodelvalue || modelValue;
       return {
         nativeWrappersValue,
         optionDataTestIdPrefixValue: staticAttributeValue(`${componentName}-${value}`),
+        semanticNameHint,
       };
     }
 
-    return { nativeWrappersValue, optionDataTestIdPrefixValue: null };
+    return { nativeWrappersValue, optionDataTestIdPrefixValue: null, semanticNameHint };
   }
 
-  return { nativeWrappersValue: null, optionDataTestIdPrefixValue: null };
+  return { nativeWrappersValue: null, optionDataTestIdPrefixValue: null, semanticNameHint: null };
 }
 
 function getDataTestIdValueFromValueAttribute(
@@ -803,7 +1114,7 @@ export function formatTagName(node: ElementNode, nativeWrappers: NativeWrappersM
  *
  * @internal
  */
-function toDirectiveObjectFieldNameValue(node: DirectiveNode): string | null {
+export function toDirectiveObjectFieldNameValue(node: DirectiveNode): string | null {
   if (!node.exp || (node.exp.type !== NodeTypes.COMPOUND_EXPRESSION && node.exp.type !== NodeTypes.SIMPLE_EXPRESSION)) {
     return null;
   }
@@ -865,53 +1176,33 @@ export function addComponentTestIds(componentName: string, componentTestIds: Map
 
 export function getComposedClickHandlerContent(
   node: ElementNode,
-  context: TransformContext,
-  innerText: string | null,
+  _context: TransformContext,
+  _innerText: string | null,
   clickDirective?: DirectiveNode,
   _options: { componentName?: string; contextFilename?: string } = {}
 ): string {
   // Prefer caller-provided directive (so we don't re-scan props multiple times).
   const click = clickDirective ?? tryGetClickDirective(node);
   if (!click) {
-    return innerText ? `-${innerText}` : "";
+    return "";
   }
 
   // Extract handler name from directive expression
   let handlerName = "";
 
-  if (click.exp?.type === NodeTypes.SIMPLE_EXPRESSION) {
-    const astValue = click.exp.ast;
+  if (click.exp) {
+    const exp = click.exp as SimpleExpressionNode | CompoundExpressionNode;
+    const source = (exp.type === NodeTypes.SIMPLE_EXPRESSION
+      ? (exp as SimpleExpressionNode).content
+      : stringifyExpression(exp)).trim();
 
-    // Prefer AST-derived handler extraction. This is the most robust path (supports arrow wrappers,
-    // optional chaining, logical guards, Program/statement handlers, etc) and avoids string/regex parsing.
-    if (astValue && typeof astValue === "object") {
-      const astName = getStableClickHandlerNameFromAst(astValue as BabelNode);
-      if (astName) {
-        handlerName = astName;
-      }
-    }
-
-    // Vue parser fast-path: when the directive expression is a simple identifier,
-    // Vue sets exp.ast = null. In that case, exp.content is already the stable name.
-    if (!handlerName && astValue === null) {
-      handlerName = click.exp.content.trim();
-    }
-
-    // Special-case: v-model style toggle expansion like `setPrimaryUser = !setPrimaryUser`.
-    // This yields a stable semantic name (`setPrimaryUser`) even though it's an assignment.
-    if (!handlerName && astValue && typeof astValue === "object") {
-      // Special-case: v-model style toggle expansion like `setPrimaryUser = !setPrimaryUser`.
-      // This yields a stable semantic name (`setPrimaryUser`) even though it's an assignment.
-      const ast = astValue as AssignmentExpression;
-      if (
-        ast
-        && ast.left?.type === "Identifier"
-        && ast.right.type === "UnaryExpression"
-        && ast.right.operator === "!"
-        && ast.right.argument.type === "Identifier"
-        && ast.right.argument.name === ast.left.name
-      ) {
-        handlerName = ast.left.name;
+    if (source) {
+      const parsed = tryParseBabelAstFromHandlerSource(source);
+      if (parsed) {
+        const astName = getStableClickHandlerNameFromAst(parsed as BabelNode);
+        if (astName) {
+          handlerName = astName;
+        }
       }
     }
   }
@@ -922,13 +1213,35 @@ export function getComposedClickHandlerContent(
   // - innerText comes in kebab-ish already (via getInnerText)
   // - handler names are typically camelCase; convert to PascalCase for readability/stability
   const normalizedHandlerSegment = handlerName ? `-${toPascalCase(handlerName)}` : "";
-  const result = normalizedHandlerSegment || (innerText ? `-${innerText}` : "");
+  const result = normalizedHandlerSegment;
 
   // eslint-disable-next-line no-restricted-syntax
   return result.replace(/[^a-z-]/gi, "");
 }
 
+function tryParseBabelAstFromHandlerSource(source: string): object | null {
+  const trimmed = source.trim();
+  if (!trimmed)
+    return null;
+
+  // Most handlers are expression-shaped; parse that first.
+  try {
+    return parseExpression(trimmed, { plugins: ["typescript", "jsx"] }) as object;
+  }
+  catch {
+    // Handlers can also be statement-shaped (e.g. `a(); b()` or `if (...) ...`). Parse as a file.
+  }
+
+  try {
+    return parse(trimmed, { sourceType: "module", plugins: ["typescript", "jsx"] }) as object;
+  }
+  catch {
+    return null;
+  }
+}
+
 function extractEmittedEventNameFromAst(ast: BabelNode): string {
+
   // Vue may give us:
   // - Expression (most common)
   // - ExpressionStatement wrapper
@@ -1001,7 +1314,7 @@ function walkForEmittedEventName(node: object | null): string | null {
   return null;
 }
 
-function getStableClickHandlerNameFromAst(ast: BabelNode | undefined): string {
+function getStableClickHandlerNameFromAst(ast: BabelNode | null): string {
   if (!ast)
     return "";
 
@@ -1040,6 +1353,14 @@ function getStableClickHandlerNameFromExpression(exp: BabelNode | null | undefin
   // emit('event') / $emit('event') calls
   if (isCallExpression(exp) || isOptionalCallExpression(exp)) {
     const callee = exp.callee;
+
+    // Vue compiler may wrap handlers for modifiers: withModifiers(fn, ['prevent']).
+    // Prefer the underlying handler identity.
+    if (isIdentifier(callee) && (callee.name === "withModifiers" || callee.name === "_withModifiers")) {
+      const firstArg = exp.arguments[0];
+      return getStableClickHandlerNameFromExpression(firstArg as BabelNode);
+    }
+
     if (isIdentifier(callee) && callee.name === "emit") {
       const firstArg = exp.arguments[0];
       if (firstArg && isStringLiteral(firstArg)) {
@@ -1284,6 +1605,13 @@ export interface ExistingElementDataTestIdInfo {
   isDynamic: boolean;
   /** Whether the value is a statically-known literal (safe to join). */
   isStaticLiteral: boolean;
+
+  /** When the binding is a template literal, the unwrapped template text (without backticks). */
+  template?: string;
+  /** Number of interpolations in the template literal, if known. */
+  templateExpressionCount?: number;
+  /** For non-template dynamic bindings, the raw expression string (identifier/call/etc). */
+  rawExpression?: string;
 }
 
 /**
@@ -1330,8 +1658,27 @@ export function tryGetExistingElementDataTestId(node: ElementNode, attributeName
   if (ast && typeof ast === "object" && "type" in ast && (ast as { type: string }).type === "TemplateLiteral") {
     const tl = ast as { quasis: Array<{ value?: { cooked?: string } }>; expressions: unknown[] };
     const cooked = (tl.quasis ?? []).map(q => q.value?.cooked ?? "").join("");
-    const isStatic = (tl.expressions ?? []).length === 0;
-    return { value: cooked, isDynamic: !isStatic, isStaticLiteral: isStatic };
+    const expressionCount = (tl.expressions ?? []).length;
+    const isStatic = expressionCount === 0;
+
+    // Prefer the raw template (so callers can validate placeholders / preserve interpolation),
+    // but fall back to cooked content when we can't confidently unwrap.
+    const raw = (simpleExp.content ?? "").trim();
+    const unwrappedTemplate = (raw.startsWith("`") && raw.endsWith("`") && raw.length >= 2)
+      ? raw.slice(1, -1)
+      : cooked;
+
+    if (isStatic) {
+      return { value: unwrappedTemplate, isDynamic: false, isStaticLiteral: true };
+    }
+
+    return {
+      value: unwrappedTemplate,
+      isDynamic: true,
+      isStaticLiteral: false,
+      template: unwrappedTemplate,
+      templateExpressionCount: expressionCount,
+    };
   }
 
   // String literal: :data-testid="'foo'"
@@ -1351,34 +1698,12 @@ export function tryGetExistingElementDataTestId(node: ElementNode, attributeName
     return null;
   }
 
-  return { value: raw, isDynamic: true, isStaticLiteral: false };
-}
-
-function replaceAllTemplateExpressionsWithKey(literalAst: TemplateLiteral) {
-  const quasis = literalAst.quasis.map(q => q.value.raw ?? "");
-  let out = quasis[0] ?? "";
-  for (let i = 1; i < quasis.length; i++) {
-    out += `\${key}${quasis[i] ?? ""}`;
-  }
-  return out;
+  return { value: raw, isDynamic: true, isStaticLiteral: false, rawExpression: raw };
 }
 
 function isTemplatePlaceholder(part: string) {
   // Avoid regex literals here; this only needs to detect the simple `${...}` wrapper.
   return part.startsWith("${") && part.endsWith("}") && part.length >= 3;
-}
-
-function splitOnDash(value: string): string[] {
-  const parts: string[] = [];
-  let start = 0;
-  for (let i = 0; i < value.length; i++) {
-    if (value[i] === "-") {
-      parts.push(value.slice(start, i));
-      start = i + 1;
-    }
-  }
-  parts.push(value.slice(start));
-  return parts;
 }
 
 function isAllCapsOrDigits(value: string): boolean {
@@ -1448,99 +1773,49 @@ function safeMethodNameFromParts(parts: string[]) {
   return name;
 }
 
-function getMethodInfoForDataTestIdInternal(
-  componentName: string,
-  dataTestIdAttribute: AttributeValue,
-  nativeRole?: string,
-): {
-  methodName: string;
-  formattedDataTestId: string;
-  params: Record<string, string>;
-} {
-  const dataTestIdValue = getAttributeValueText(dataTestIdAttribute);
-  const parsed = parseExpression(`\`${dataTestIdValue}\``, { plugins: ["typescript"] }) as BabelNode;
-  if (!isTemplateLiteral(parsed)) {
-    throw new Error("Expected TemplateLiteral when parsing data-testid");
-  }
-  const literalAst = parsed as TemplateLiteral;
-
-  const isDynamic = (literalAst.expressions?.length ?? 0) > 0;
-  const formattedDataTestId = isDynamic
-    ? replaceAllTemplateExpressionsWithKey(literalAst)
-    : dataTestIdValue;
-  const parts = splitOnDash(formattedDataTestId);
-
-  const rolesToStripFromMethodName = new Set([
-    "button",
-    "input",
-    "select",
-    "checkbox",
-  ]);
-
-  if (nativeRole && rolesToStripFromMethodName.has(nativeRole.toLowerCase()) && parts.length > 1) {
-    const last = (parts[parts.length - 1] || "").toLowerCase();
-    if (last === nativeRole.toLowerCase()) {
-      parts.pop();
+/**
+ * Replaces any `${...}` interpolation in a template string with the stable placeholder `${key}`.
+ *
+ * IMPORTANT: This function does NOT attempt to parse the template expression(s). It is a
+ * best-effort scanner that preserves literal text and normalizes interpolation slots.
+ */
+function replaceAllTemplateExpressionsWithKey(template: string): string {
+  let out = "";
+  let i = 0;
+  while (i < template.length) {
+    const start = template.indexOf("${", i);
+    if (start < 0) {
+      out += template.slice(i);
+      break;
     }
-  }
-
-  // If the component prefix is present (ComponentName-...), drop it from the method name.
-  if (parts.length && parts[0] === componentName) {
-    parts.shift();
-  }
-
-  let methodName = safeMethodNameFromParts(parts);
-  if (isDynamic && !methodName.endsWith("ByKey")) {
-    methodName = `${methodName}ByKey`;
-  }
-
-  if (methodName === "Element" && nativeRole) {
-    const roleName = upperFirst(toPascalCase(nativeRole));
-    methodName = isDynamic ? `${roleName}ByKey` : roleName;
-  }
-
-  const params: Record<string, string> = {};
-  if (isDynamic) {
-    params.key = "string";
-  }
-
-  switch ((nativeRole ?? "").toLowerCase()) {
-    case "input":
-      params.text = "string";
-      params.annotationText = "string = \"\"";
-      delete params.key;
+    out += template.slice(i, start);
+    // Find the closing brace, accounting for nested braces within the interpolation.
+    let depth = 1;
+    let j = start + 2;
+    while (j < template.length && depth > 0) {
+      if (template[j] === "{") {
+        depth++;
+      } else if (template[j] === "}") {
+        depth--;
+      }
+      j++;
+    }
+    const end = depth === 0 ? j - 1 : -1;
+    if (end < 0) {
+      // Malformed; append rest and stop.
+      out += template.slice(start);
       break;
-    case "select":
-      params.value = "string";
-      params.annotationText = "string = \"\"";
-      delete params.key;
-      break;
-    case "vselect":
-      params.value = "string";
-      params.timeOut = "number = 500";
-      params.annotationText = "string = \"\"";
-      delete params.key;
-      break;
-    case "radio":
-      params.annotationText = "string = \"\"";
-      break;
-    default:
-      break;
+    }
+    out += "${key}";
+    i = end + 1;
   }
-
-  return { methodName, formattedDataTestId, params };
+  return out;
 }
 
 // Internal exports for unit testing (not part of the public plugin API).
 export const __internal = {
-  replaceAllTemplateExpressionsWithKey(literal: string) {
-    const parsed = parseExpression(`\`${literal}\``, { plugins: ["typescript"] }) as BabelNode;
-    if (!isTemplateLiteral(parsed)) {
-      throw new Error("Expected TemplateLiteral when parsing data-testid");
-    }
-    return replaceAllTemplateExpressionsWithKey(parsed as TemplateLiteral);
-  },
   safeMethodNameFromParts,
+  replaceAllTemplateExpressionsWithKey,
 };
 
 /**
@@ -1562,6 +1837,30 @@ export function applyResolvedDataTestId(args: {
   /** Optional enumerable key values (e.g. derived from v-for="item in ['One','Two']"). */
   keyValuesOverride?: string[] | null;
   entryOverrides?: Partial<IDataTestId>;
+  /**
+   * Semantic naming hint used for generating method/property names.
+   *
+   * IMPORTANT: This exists so we do NOT need to parse the `data-testid` value to
+   * derive POM API surface.
+   */
+  semanticNameHint?: string;
+
+  /**
+   * Optional fallback semantic hints to use when the primary hint would cause a member-name collision.
+   *
+   * These are still derived from the Vue template/AST (e.g. static inner text, id/name attributes),
+   * never by parsing the data-testid value.
+   */
+  semanticNameHintAlternates?: string[];
+
+  /**
+   * Optional semantic merge key for grouping multiple elements into a single POM action.
+   *
+   * Examples:
+   * - click handler identity (e.g. `click:cancel(item.key)`)
+   * - navigation target identity (e.g. `to:name:EditIntegrationType`)
+   */
+  pomMergeKey?: string;
   addHtmlAttribute?: boolean;
   /** Attribute name to use for injection and parsing. Defaults to data-testid. */
   testIdAttribute?: string;
@@ -1573,11 +1872,24 @@ export function applyResolvedDataTestId(args: {
    * - "error": throw to force cleanup/migration
    */
   existingIdBehavior?: "preserve" | "overwrite" | "error";
+
+  /**
+   * Controls what happens when the generator would emit duplicate POM member names within the same class.
+   * - "error": throw and fail compilation
+   * - "warn": warn and append a suffix
+   * - "suffix": append a suffix silently (default)
+   */
+  nameCollisionBehavior?: "error" | "warn" | "suffix";
+
+  /** Optional warning sink (typically the shared generator logger). */
+  warn?: (message: string) => void;
 }): void {
   const addHtmlAttribute = args.addHtmlAttribute ?? true;
   const entryOverrides = args.entryOverrides ?? {};
   const testIdAttribute = args.testIdAttribute ?? "data-testid";
   const existingIdBehavior = args.existingIdBehavior ?? "preserve";
+  const nameCollisionBehavior = args.nameCollisionBehavior ?? "suffix";
+  const warn = args.warn;
 
   // 1) Resolve effective data-testid (respecting any existing attribute).
   let dataTestId = args.preferredGeneratedValue;
@@ -1601,29 +1913,73 @@ export function applyResolvedDataTestId(args: {
     }
 
     if (existingIdBehavior === "preserve") {
-      if (args.bestKeyPlaceholder && existing.isStaticLiteral) {
-        throw new Error(
-          `[vue-pom-generator] Existing ${attrLabel} appears to be missing the key placeholder needed to keep it unique.\n`
-          + `Component: ${args.componentName}\n`
-          + `File: ${file}:${locationHint}\n`
-          + `Existing ${attrLabel}: ${JSON.stringify(existing.value)}\n`
-          + `Required placeholder: ${JSON.stringify(args.bestKeyPlaceholder)}\n\n`
-          + `Fix: either (1) include ${args.bestKeyPlaceholder} in your :${attrLabel} template literal, or (2) remove the explicit ${attrLabel} so it can be auto-generated.`,
-        );
-      }
+      // Preserve only when the existing id can be used as a stable selector at test runtime.
+      // - Static literals are always OK.
+      // - Template literals are ONLY allowed when they contain exactly one interpolation and
+      //   that interpolation is the v-for key placeholder we inferred (when present).
+      // - All other dynamic expressions are rejected (they would serialize to e.g. "__props.name").
 
-      dataTestId = staticAttributeValue(existing.value);
-      fromExisting = true;
+      if (existing.isDynamic) {
+        if (existing.template) {
+          if ((existing.templateExpressionCount ?? 0) !== 1) {
+            throw new Error(
+              `[vue-pom-generator] Existing ${attrLabel} is a template literal with multiple interpolations and cannot be preserved safely.\n`
+              + `Component: ${args.componentName}\n`
+              + `File: ${file}:${locationHint}\n`
+              + `Existing ${attrLabel}: ${JSON.stringify(existing.value)}\n\n`
+              + `Fix: reduce the template to a single key-based interpolation, or remove the explicit ${attrLabel} so it can be auto-generated.`,
+            );
+          }
+
+          if (args.bestKeyPlaceholder && !existing.template.includes(args.bestKeyPlaceholder)) {
+            throw new Error(
+              `[vue-pom-generator] Existing ${attrLabel} appears to be missing the key placeholder needed to keep it unique.\n`
+              + `Component: ${args.componentName}\n`
+              + `File: ${file}:${locationHint}\n`
+              + `Existing ${attrLabel}: ${JSON.stringify(existing.value)}\n`
+              + `Required placeholder: ${JSON.stringify(args.bestKeyPlaceholder)}\n\n`
+              + `Fix: either (1) include ${args.bestKeyPlaceholder} in your :${attrLabel} template literal, or (2) remove the explicit ${attrLabel} so it can be auto-generated.`,
+            );
+          }
+
+          dataTestId = templateAttributeValue(existing.template);
+          fromExisting = true;
+        }
+        else {
+          throw new Error(
+            `[vue-pom-generator] Existing ${attrLabel} is dynamic and cannot be preserved as a stable runtime selector.\n`
+            + `Component: ${args.componentName}\n`
+            + `File: ${file}:${locationHint}\n`
+            + `Existing ${attrLabel} expression: ${JSON.stringify(existing.rawExpression ?? existing.value)}\n\n`
+            + `Fix: change it to a string literal (e.g. ${attrLabel}="foo" or :${attrLabel}="'foo'") or remove the explicit ${attrLabel} so it can be auto-generated.\n`
+            + `If you really need a computed id, do not set existingIdBehavior="preserve".`,
+          );
+        }
+      }
+      else {
+        if (args.bestKeyPlaceholder && existing.isStaticLiteral) {
+          throw new Error(
+            `[vue-pom-generator] Existing ${attrLabel} appears to be missing the key placeholder needed to keep it unique.\n`
+            + `Component: ${args.componentName}\n`
+            + `File: ${file}:${locationHint}\n`
+            + `Existing ${attrLabel}: ${JSON.stringify(existing.value)}\n`
+            + `Required placeholder: ${JSON.stringify(args.bestKeyPlaceholder)}\n\n`
+            + `Fix: either (1) include ${args.bestKeyPlaceholder} in your :${attrLabel} template literal, or (2) remove the explicit ${attrLabel} so it can be auto-generated.`,
+          );
+        }
+
+        dataTestId = staticAttributeValue(existing.value);
+        fromExisting = true;
+      }
     }
     // existingIdBehavior === "overwrite": ignore existing and proceed with generated id.
   }
 
-  // 2) Derive method naming/params based on the effective data-testid.
-  const { methodName, formattedDataTestId: elementDataTestIdForMethod, params } = getMethodInfoForDataTestIdInternal(
-    args.parentComponentName,
-    dataTestId,
-    args.nativeRole,
-  );
+  // 2) Derive method naming/params WITHOUT parsing the data-testid string.
+  //
+  // We only ever use the data-testid value as *data* (the selector string).
+  // POM *shape* (method names, params) comes from semantic hints + Vue/Babel AST-derived
+  // signals collected during the transform phase.
 
   const getKeyTypeFromValues = (values: string[] | null | undefined) => {
     if (!values || values.length === 0) {
@@ -1633,6 +1989,397 @@ export function applyResolvedDataTestId(args: {
   };
 
   const keyTypeFromValues = getKeyTypeFromValues(args.keyValuesOverride ?? null);
+
+  const normalizeNativeRole = (value: string): NativeRole | undefined => {
+    const role = (value || "").toLowerCase();
+    switch (role) {
+      case "button":
+      case "input":
+      case "select":
+      case "vselect":
+      case "checkbox":
+      case "toggle":
+      case "radio":
+        return role;
+      default:
+        return undefined;
+    }
+  };
+
+  const normalizedRole: NativeRole = normalizeNativeRole(args.nativeRole) ?? "button";
+
+  // NOTE: `targetPageObjectModelClass` is used to decide whether we emit `goToX`.
+  // It can be provided via entryOverrides (e.g. router-link :to resolution).
+  const targetPageObjectModelClass = entryOverrides.targetPageObjectModelClass;
+
+  // Keyed-ness is represented in the selector pattern, not derived by parsing the test id.
+  const formattedDataTestIdForPom = dataTestId.kind === "template"
+    ? replaceAllTemplateExpressionsWithKey(dataTestId.template)
+    : dataTestId.value;
+
+  const isKeyed = formattedDataTestIdForPom.includes("${key}");
+
+  const deriveBaseMethodNameFromHint = (hint: string | undefined) => {
+    const hintRaw = (hint ?? "").trim();
+    const trimEdgeSeparators = (value: string): string => {
+      if (!value) {
+        return "";
+      }
+      let start = 0;
+      let end = value.length;
+      const isSep = (ch: string) => ch === "-" || ch === "_" || ch === " " || ch === "\t" || ch === "\n" || ch === "\r";
+      while (start < end && isSep(value[start])) {
+        start += 1;
+      }
+      while (end > start && isSep(value[end - 1])) {
+        end -= 1;
+      }
+      return value.slice(start, end);
+    };
+
+    const hintClean = trimEdgeSeparators(hintRaw);
+
+    // If we have no hint, fall back to a role-based name.
+    if (!hintClean) {
+      const roleName = upperFirst(toPascalCase(normalizedRole));
+      return roleName || "Element";
+    }
+
+    // Convert to a safe identifier-ish PascalCase.
+    // We intentionally do NOT split/interpret `data-testid` values here.
+    const name = toPascalCase(hintClean);
+    const safe = safeMethodNameFromParts([name]);
+    return safe || "Element";
+  };
+
+  const deriveBaseMethodName = () => {
+    return deriveBaseMethodNameFromHint(args.semanticNameHint);
+  };
+
+  // Ensure the primary method name is unique within the class.
+  // IMPORTANT: We do NOT parse data-testid values to generate names. When collisions occur
+  // (common for role-based fallbacks like "Button"), we append a numeric suffix.
+  const removeByKeySegment = (value: string): string => {
+    const idx = value.lastIndexOf("ByKey");
+    if (idx < 0) {
+      return value;
+    }
+    return value.slice(0, idx) + value.slice(idx + "ByKey".length);
+  };
+
+  const hasRoleSuffix = (baseName: string, roleSuffix: string) => {
+    if (baseName.endsWith(roleSuffix)) {
+      return true;
+    }
+    // Treat role + numeric suffix as already-suffixed to avoid awkward names like Button2Button.
+    // Example: baseName=Button2, roleSuffix=Button => property should be Button2.
+    // eslint-disable-next-line no-restricted-syntax
+    const re = new RegExp(`^${roleSuffix}\\d+$`);
+    return re.test(baseName);
+  };
+
+  const getPrimaryGetterName = (primaryMethodName: string): string => {
+    const roleSuffix = upperFirst(normalizedRole || "Element");
+    const baseName = upperFirst(primaryMethodName);
+    const propertyName = hasRoleSuffix(baseName, roleSuffix) ? baseName : `${baseName}${roleSuffix}`;
+    // Keep behavior aligned with TS emitter: keyed getters expose `Foo[key]` by removing `ByKey`.
+    return isKeyed ? removeByKeySegment(propertyName) : propertyName;
+  };
+
+  const getPrimaryGetterNameCandidates = (primaryMethodName: string): { primary: string; alternate?: string } => {
+    const roleSuffix = upperFirst(normalizedRole || "Element");
+    const baseName = upperFirst(primaryMethodName);
+    const propertyName = hasRoleSuffix(baseName, roleSuffix) ? baseName : `${baseName}${roleSuffix}`;
+
+    if (!isKeyed) {
+      return { primary: propertyName };
+    }
+
+    const stripped = removeByKeySegment(propertyName);
+    const kept = propertyName;
+    return stripped === kept ? { primary: stripped } : { primary: stripped, alternate: kept };
+  };
+
+  const getPrimaryActionMethodName = (primaryMethodName: string): string => {
+    const methodNameUpper = upperFirst(primaryMethodName);
+    const radioMethodNameUpper = upperFirst(primaryMethodName || "Radio");
+    const isNavigation = !!targetPageObjectModelClass;
+
+    if (isNavigation) {
+      return `goTo${methodNameUpper}`;
+    }
+
+    switch (normalizedRole) {
+      case "input":
+        return `type${methodNameUpper}`;
+      case "select":
+      case "vselect":
+        return `select${methodNameUpper}`;
+      case "radio":
+        return `select${radioMethodNameUpper}`;
+      default:
+        return `click${methodNameUpper}`;
+    }
+  };
+
+  args.dependencies.reservedPomMemberNames ??= new Set<string>();
+  const reservedMembers = args.dependencies.reservedPomMemberNames;
+
+  // Internal maps used for merge-by-handler/target.
+  args.dependencies.__pomPrimaryByActionName ??= new Map<string, IDataTestId>();
+  args.dependencies.__pomPrimaryByGetterName ??= new Map<string, IDataTestId>();
+  const primaryByActionName = args.dependencies.__pomPrimaryByActionName;
+
+  const hintCandidates = (() => {
+    // Keep the existing behavior stable: in warn/suffix modes we suffix based on the primary hint.
+    // In error mode, we try provided alternates (typically id/name/label text) before throwing.
+    const baseHints: Array<string | undefined> = [args.semanticNameHint];
+    if (nameCollisionBehavior === "error") {
+      baseHints.push(...(args.semanticNameHintAlternates ?? []));
+    }
+    // De-dupe while preserving order.
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const h of baseHints) {
+      const v = (h ?? "").trim();
+      if (!v) {
+        continue;
+      }
+      if (seen.has(v)) {
+        continue;
+      }
+      seen.add(v);
+      out.push(v);
+    }
+    // If we have no usable hints, allow the role-based fallback path.
+    if (!out.length) {
+      out.push("");
+    }
+    return out;
+  })();
+
+  const tryMergeWithExistingPrimary = (candidateActionName: string): boolean => {
+    const mergeKey = (args.pomMergeKey ?? "").trim();
+    if (!mergeKey) {
+      return false;
+    }
+
+    // For keyed selectors we intentionally do NOT merge: the semantics are ambiguous
+    // and merged locators would require additional runtime branching.
+    if (isKeyed) {
+      return false;
+    }
+
+    const existingEntry = primaryByActionName.get(candidateActionName);
+    const existingPom = existingEntry?.pom;
+    if (!existingEntry || !existingPom) {
+      return false;
+    }
+
+    if ((existingPom.mergeKey ?? "").trim() !== mergeKey) {
+      return false;
+    }
+
+    // Only merge when the semantic behavior matches.
+    if (existingPom.nativeRole !== normalizedRole) {
+      return false;
+    }
+    if ((existingEntry.targetPageObjectModelClass ?? null) !== (targetPageObjectModelClass ?? null)) {
+      return false;
+    }
+
+    // Merge the selector(s) into the existing primary.
+    if (existingPom.formattedDataTestId !== formattedDataTestIdForPom) {
+      existingPom.alternateFormattedDataTestIds ??= [];
+      if (!existingPom.alternateFormattedDataTestIds.includes(formattedDataTestIdForPom)) {
+        existingPom.alternateFormattedDataTestIds.push(formattedDataTestIdForPom);
+      }
+    }
+
+    return true;
+  };
+
+  let methodName = "";
+  let getterNameOverride: string | undefined;
+  let mergedIntoExisting = false;
+  let collisionDetails: { getterName: string; actionName: string } | null = null;
+  let collisionHint: string | null = null;
+
+  // Try each hint candidate. In error mode, we only try suffix=1 for each hint.
+  for (const hint of hintCandidates) {
+    const base = hint ? deriveBaseMethodNameFromHint(hint) : deriveBaseMethodName();
+    let suffix = 1;
+
+    while (true) {
+      const baseWithSuffix = suffix === 1 ? base : `${base}${suffix}`;
+      // Keep the ByKey segment at the end so downstream logic (and keyed getter naming)
+      // can reliably strip it when needed.
+      const candidate = isKeyed ? `${baseWithSuffix}ByKey` : baseWithSuffix;
+
+      const actionName = getPrimaryActionMethodName(candidate);
+
+      const getterCandidates = getPrimaryGetterNameCandidates(candidate);
+      let chosenGetterName = getterCandidates.primary;
+      let chosenGetterOverride: string | undefined;
+
+      const hasConflicts = (getter: string) => reservedMembers.has(getter)
+        || reservedMembers.has(actionName)
+        || (args.dependencies.generatedMethods?.has(actionName) ?? false);
+
+      let conflicts = hasConflicts(chosenGetterName);
+
+      // Edge-case: keyed getter name (FooButton[key]) can collide with a non-keyed FooButton.
+      // When that happens, keep the ByKey segment on the keyed getter name.
+      if (conflicts && getterCandidates.alternate) {
+        const alt = getterCandidates.alternate;
+        const altConflicts = hasConflicts(alt);
+        if (!altConflicts) {
+          chosenGetterName = alt;
+          chosenGetterOverride = alt;
+          conflicts = false;
+        }
+      }
+
+      // In strict mode (error), prefer trying role-suffixed candidates over hint alternates.
+      // This prevents common collisions where different roles share the same semantic hint
+      // (e.g. a select + radio bound to the same v-model path), causing actionName clashes
+      // like `selectFoo` vs `selectFoo` with different signatures.
+      if (conflicts && nameCollisionBehavior === "error") {
+        const roleSuffix = upperFirst(normalizedRole || "Element");
+        const baseNameUpper = upperFirst(baseWithSuffix);
+
+        // Only try role-suffixing when the base name isn't already role-suffixed.
+        if (!hasRoleSuffix(baseNameUpper, roleSuffix)) {
+          const baseWithRoleSuffix = `${baseWithSuffix}${roleSuffix}`;
+          const candidateWithRoleSuffix = isKeyed ? `${baseWithRoleSuffix}ByKey` : baseWithRoleSuffix;
+          const actionNameWithRoleSuffix = getPrimaryActionMethodName(candidateWithRoleSuffix);
+
+          const getterCandidatesWithRoleSuffix = getPrimaryGetterNameCandidates(candidateWithRoleSuffix);
+          let chosenGetterNameWithRoleSuffix = getterCandidatesWithRoleSuffix.primary;
+          let chosenGetterOverrideWithRoleSuffix: string | undefined;
+
+          const hasConflictsWithRoleSuffix = (getter: string) => reservedMembers.has(getter)
+            || reservedMembers.has(actionNameWithRoleSuffix)
+            || (args.dependencies.generatedMethods?.has(actionNameWithRoleSuffix) ?? false);
+
+          let conflictsWithRoleSuffix = hasConflictsWithRoleSuffix(chosenGetterNameWithRoleSuffix);
+
+          // Preserve keyed edge-case behavior: allow keeping ByKey segment on the getter.
+          if (conflictsWithRoleSuffix && getterCandidatesWithRoleSuffix.alternate) {
+            const alt = getterCandidatesWithRoleSuffix.alternate;
+            const altConflicts = hasConflictsWithRoleSuffix(alt);
+            if (!altConflicts) {
+              chosenGetterNameWithRoleSuffix = alt;
+              chosenGetterOverrideWithRoleSuffix = alt;
+              conflictsWithRoleSuffix = false;
+            }
+          }
+
+          if (!conflictsWithRoleSuffix) {
+            methodName = candidateWithRoleSuffix;
+            getterNameOverride = chosenGetterOverrideWithRoleSuffix;
+            reservedMembers.add(chosenGetterNameWithRoleSuffix);
+            reservedMembers.add(actionNameWithRoleSuffix);
+            break;
+          }
+        }
+      }
+
+      if (!conflicts) {
+        methodName = candidate;
+        getterNameOverride = chosenGetterOverride;
+
+        if (collisionDetails && nameCollisionBehavior === "warn") {
+          const loc = args.element.loc?.start;
+          const locationHint = loc ? `${loc.line}:${loc.column}` : "unknown";
+          const file = args.contextFilename ?? args.dependencies.filePath ?? "unknown";
+          const hintLabel = (args.semanticNameHint ?? "").trim() || "<none>";
+          (warn ?? ((m) => console.warn(`[vue-pom-generator] ${m}`)))(
+            `[pom] member-name collision in ${args.parentComponentName} (${file}:${locationHint}). `
+            + `role=${normalizedRole}, semanticNameHint=${JSON.stringify(hintLabel)}. `
+            + `Conflicts: getter=${collisionDetails.getterName}, method=${collisionDetails.actionName}. `
+            + `Using suffixed name: ${candidate}.`,
+          );
+        }
+
+        reservedMembers.add(chosenGetterName);
+        reservedMembers.add(actionName);
+        break;
+      }
+
+      // Merge-by-handler/target: when we would otherwise throw in error mode, allow
+      // multiple elements that share the same semantic action to converge on a single
+      // POM member (getter/action). The primary spec is mutated to include alternate
+      // test id candidates.
+      if (nameCollisionBehavior === "error" && tryMergeWithExistingPrimary(actionName)) {
+        methodName = candidate;
+        mergedIntoExisting = true;
+        break;
+      }
+
+      if (!collisionDetails) {
+        collisionDetails = { getterName: chosenGetterName, actionName };
+        collisionHint = hint || (args.semanticNameHint ?? "").trim() || null;
+      }
+
+      // In error mode, do not suffix; instead, try the next hint candidate.
+      if (nameCollisionBehavior === "error") {
+        break;
+      }
+
+      suffix += 1;
+    }
+
+    if (methodName) {
+      break;
+    }
+  }
+
+  if (!methodName) {
+    const loc = args.element.loc?.start;
+    const locationHint = loc ? `${loc.line}:${loc.column}` : "unknown";
+    const file = args.contextFilename ?? args.dependencies.filePath ?? "unknown";
+    const hint = (collisionHint ?? "<none>").trim() || "<none>";
+    const last = collisionDetails ?? { getterName: "<unknown>", actionName: "<unknown>" };
+
+    throw new Error(
+      `[vue-pom-generator] POM member-name collision in ${args.parentComponentName} (${file}:${locationHint}).\n`
+      + `role=${normalizedRole}, semanticNameHint=${JSON.stringify(hint)}\n`
+      + `Conflicts: getter=${last.getterName}, method=${last.actionName}\n\n`
+      + `Fix: make the element identifiable (e.g. add id/name/inner text or use a more specific click handler name), `
+      + `or switch generation.nameCollisionBehavior to \"warn\"/\"suffix\".`,
+    );
+  }
+
+  const params: Record<string, string> = {};
+  if (isKeyed) {
+    params.key = keyTypeFromValues;
+  }
+
+  switch (normalizedRole) {
+    case "input":
+      params.text = "string";
+      params.annotationText = "string = \"\"";
+      delete params.key;
+      break;
+    case "select":
+      params.value = "string";
+      params.annotationText = "string = \"\"";
+      delete params.key;
+      break;
+    case "vselect":
+      params.value = "string";
+      params.timeOut = "number = 500";
+      params.annotationText = "string = \"\"";
+      delete params.key;
+      break;
+    case "radio":
+      // radio can be keyed (e.g. `${key}` option ids) or not.
+      params.annotationText = "string = \"\"";
+      break;
+    default:
+      break;
+  }
 
   // If the caller provided enumerable key values (e.g. derived from a static v-for list),
   // propagate a literal-union type into the underlying keyed locator method signature.
@@ -1652,28 +2399,30 @@ export function applyResolvedDataTestId(args: {
     ...entryOverrides,
   };
 
+  // Store the primary POM spec so emitters can generate POMs for multiple languages.
+  // Some special cases will mark emitPrimary=false and instead add extra methods.
+  dataTestIdEntry.pom = {
+    nativeRole: normalizedRole,
+    methodName,
+    getterNameOverride,
+    formattedDataTestId: formattedDataTestIdForPom,
+    alternateFormattedDataTestIds: undefined,
+    mergeKey: args.pomMergeKey,
+    params,
+    keyValuesOverride: args.keyValuesOverride ?? null,
+    // emitPrimary defaults to true; special cases (including merge) may set it to false below.
+  };
+
+  if (mergedIntoExisting && dataTestIdEntry.pom) {
+    dataTestIdEntry.pom.emitPrimary = false;
+  }
+
   args.dependencies.childrenComponentSet.add(childComponentName);
   args.dependencies.usedComponentSet.add(childComponentName);
   args.dependencies.dataTestIdSet.add(dataTestIdEntry);
 
-  const normalizeNativeRole = (value: string): NativeRole | undefined => {
-    const role = (value || "").toLowerCase();
-    switch (role) {
-      case "button":
-      case "input":
-      case "select":
-      case "vselect":
-      case "checkbox":
-      case "toggle":
-      case "radio":
-        return role;
-      default:
-        return undefined;
-    }
-  };
-
   const getGeneratedMethodName = () => {
-    const role = normalizeNativeRole(args.nativeRole);
+    const role = normalizedRole;
     const isNavigation = !!dataTestIdEntry.targetPageObjectModelClass;
 
     const methodNameUpper = upperFirst(methodName);
@@ -1697,7 +2446,7 @@ export function applyResolvedDataTestId(args: {
   };
 
   const getSignatureForGeneratedMethod = () => {
-    const role = normalizeNativeRole(args.nativeRole);
+    const role = normalizedRole;
     const isNavigation = !!dataTestIdEntry.targetPageObjectModelClass;
     const needsKey = Object.prototype.hasOwnProperty.call(params, "key");
     const keyType = keyTypeFromValues;
@@ -1728,30 +2477,57 @@ export function applyResolvedDataTestId(args: {
     }
   };
 
-  const methodContent = generateViewObjectModelMethodContent(
-    dataTestIdEntry.targetPageObjectModelClass,
-    methodName,
-    args.nativeRole,
-    elementDataTestIdForMethod,
-    params,
-  );
+  const registerPrimaryOnce = (pom: PomPrimarySpec) => {
+    const stableParams = pom.params
+      ? Object.fromEntries(Object.entries(pom.params).sort((a, b) => a[0].localeCompare(b[0])))
+      : undefined;
 
-  const appendMethodOnce = (content: string) => {
-    const normalizedKey = content.trim();
-    if (!normalizedKey) {
-      return;
-    }
+    const alternates = (pom.alternateFormattedDataTestIds ?? []).slice().sort();
+
+    // Deduplicate by a stable key rather than by emitted code strings.
+    const key = JSON.stringify({
+      kind: "primary",
+      role: pom.nativeRole,
+      methodName: pom.methodName,
+      getterNameOverride: pom.getterNameOverride ?? null,
+      formattedDataTestId: pom.formattedDataTestId,
+      alternateFormattedDataTestIds: alternates.length ? alternates : undefined,
+      params: stableParams,
+      target: dataTestIdEntry.targetPageObjectModelClass ?? null,
+      emitPrimary: pom.emitPrimary ?? true,
+    });
+
     const seen = args.generatedMethodContentByComponent.get(args.parentComponentName) ?? new Set<string>();
     if (!args.generatedMethodContentByComponent.has(args.parentComponentName)) {
       args.generatedMethodContentByComponent.set(args.parentComponentName, seen);
     }
-    if (!seen.has(normalizedKey)) {
-      seen.add(normalizedKey);
-      args.dependencies.methodsContent ??= "";
-      // Preserve indentation (important for readability in generated output).
-      // De-duping is done via a normalized key instead of mutating the content.
-      args.dependencies.methodsContent += `\n${content.trimEnd()}\n`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      dataTestIdEntry.pom = pom;
     }
+  };
+
+  const addExtraClickMethod = (spec: PomExtraClickMethodSpec): boolean => {
+    const stableParams = spec.params
+      ? Object.fromEntries(Object.entries(spec.params).sort((a, b) => a[0].localeCompare(b[0])))
+      : undefined;
+
+    // IMPORTANT:
+    // De-dupe based on semantic identity (testId+params+keyLiteral), not the emitted method name.
+    // This prevents repeated passes over the same element from generating new unique names
+    // (e.g. selectFoo -> selectFoo2) and growing the output.
+    const key = JSON.stringify({ kind: spec.kind, testId: spec.formattedDataTestId, keyLiteral: spec.keyLiteral ?? null, params: stableParams });
+    const seen = args.generatedMethodContentByComponent.get(args.parentComponentName) ?? new Set<string>();
+    if (!args.generatedMethodContentByComponent.has(args.parentComponentName)) {
+      args.generatedMethodContentByComponent.set(args.parentComponentName, seen);
+    }
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    args.dependencies.pomExtraMethods ??= [];
+    args.dependencies.pomExtraMethods.push(spec);
+    return true;
   };
 
   const registerGeneratedMethodSignature = (name: string, signature: { params: string; argNames: string[] } | null) => {
@@ -1897,14 +2673,14 @@ export function applyResolvedDataTestId(args: {
   // Special handling for option-driven wrappers.
   // If an element has an `:options` directive and represents a radio-group-like wrapper,
   // attempt to generate more ergonomic per-option methods.
-  const normalizedRole = normalizeNativeRole(args.nativeRole);
+  const roleForOptions = normalizedRole;
   const optionsDirective = findDirectiveByName(args.element, "bind", "options");
-  const canHandleOptions = normalizedRole === "radio" && !!optionsDirective?.exp;
+  const canHandleOptions = roleForOptions === "radio" && !!optionsDirective?.exp;
 
   if (canHandleOptions) {
     // The wrapper data-testid is typically: `${prefix}-radio`.
     // The option data-testid is typically: `${prefix}_${OptionText}_radio`.
-    const wrapperTestId = elementDataTestIdForMethod;
+    const wrapperTestId = formattedDataTestIdForPom;
     const prefix = wrapperTestId.endsWith("-radio")
       ? wrapperTestId.slice(0, -"-radio".length)
       : wrapperTestId;
@@ -1918,6 +2694,12 @@ export function applyResolvedDataTestId(args: {
     const baseUpper = upperFirst(base || "Radio");
 
     if (staticLabels && staticLabels.length) {
+      // Match legacy behavior: when we can enumerate static options, we only generate per-option
+      // helpers and skip the generic select/click method for the wrapper.
+      if (dataTestIdEntry.pom) {
+        dataTestIdEntry.pom.emitPrimary = false;
+        registerPrimaryOnce(dataTestIdEntry.pom);
+      }
       for (const label of staticLabels) {
         const optionPart = getDataTestIdFromGroupOption(label);
         if (!optionPart) {
@@ -1927,14 +2709,17 @@ export function applyResolvedDataTestId(args: {
         const optionTestId = `${prefix}_${optionPart}_radio`;
         const safeOptionSuffix = toPascalCase(label) || optionPart;
         const generatedName = ensureUniqueGeneratedName(`select${baseUpper}${safeOptionSuffix}`);
-        const optionTestIdLiteral = JSON.stringify(optionTestId);
 
-        appendMethodOnce(
-          `  async ${generatedName}(annotationText: string = "") {\n` +
-          `    await this.clickByTestId(${optionTestIdLiteral}, annotationText);\n` +
-          `  }\n`,
-        );
-        registerGeneratedMethodSignature(generatedName, { params: `annotationText: string = ""`, argNames: ["annotationText"] });
+        const added = addExtraClickMethod({
+          kind: "click",
+          name: generatedName,
+          formattedDataTestId: optionTestId,
+          params: { annotationText: `string = ""` },
+        });
+
+        if (added) {
+          registerGeneratedMethodSignature(generatedName, { params: `annotationText: string = ""`, argNames: ["annotationText"] });
+        }
       }
 
       // For statically-known options, we intentionally do NOT generate the generic parameterized method.
@@ -1943,14 +2728,24 @@ export function applyResolvedDataTestId(args: {
 
     // Dynamic options expression: generate a single method that accepts an option string.
     // We build the option test id using the provided value directly.
-    const generatedName = `select${upperFirst(methodName || "Radio")}`;
-    appendMethodOnce(
-      `  async ${generatedName}(value: string, annotationText: string = "") {\n`
-      + `    const testId = \`${prefix}_\${value}_radio\`;\n`
-      + `    await this.clickByTestId(testId, annotationText);\n`
-      + `  }\n`,
-    );
-    registerGeneratedMethodSignature(generatedName, { params: `value: string, annotationText: string = ""`, argNames: ["value", "annotationText"] });
+    const generatedName = ensureUniqueGeneratedName(`select${upperFirst(methodName || "Radio")}`);
+
+    if (dataTestIdEntry.pom) {
+      dataTestIdEntry.pom.emitPrimary = false;
+      registerPrimaryOnce(dataTestIdEntry.pom);
+    }
+
+    // Dynamic options expression: generate a single method that accepts an option string.
+    const added = addExtraClickMethod({
+      kind: "click",
+      name: generatedName,
+      formattedDataTestId: `${prefix}_${"${value}"}_radio`,
+      params: { value: "string", annotationText: `string = ""` },
+    });
+
+    if (added) {
+      registerGeneratedMethodSignature(generatedName, { params: `value: string, annotationText: string = ""`, argNames: ["value", "annotationText"] });
+    }
     return;
   }
 
@@ -1962,8 +2757,8 @@ export function applyResolvedDataTestId(args: {
   // This keeps the POM ergonomic and avoids pushing key plumbing into tests.
   const staticKeyValues = (args.keyValuesOverride ?? null);
   const needsKey = Object.prototype.hasOwnProperty.call(params, "key")
-    && typeof elementDataTestIdForMethod === "string"
-    && elementDataTestIdForMethod.includes("${key}");
+    && typeof formattedDataTestIdForPom === "string"
+    && formattedDataTestIdForPom.includes("${key}");
   const isNavigation = !!dataTestIdEntry.targetPageObjectModelClass;
 
   if (
@@ -1976,6 +2771,11 @@ export function applyResolvedDataTestId(args: {
     && normalizedRole !== "vselect"
     && normalizedRole !== "radio"
   ) {
+    if (dataTestIdEntry.pom) {
+      dataTestIdEntry.pom.emitPrimary = false;
+      registerPrimaryOnce(dataTestIdEntry.pom);
+    }
+
     const roleSuffix = upperFirst(toPascalCase(args.nativeRole || "Element"));
 
     for (const rawValue of staticKeyValues) {
@@ -1986,24 +2786,38 @@ export function applyResolvedDataTestId(args: {
 
       const generatedName = ensureUniqueGeneratedName(`click${valueName}${roleSuffix}`);
 
-      appendMethodOnce(
-        `  async ${generatedName}(wait: boolean = true) {\n`
-        + `    const key = ${JSON.stringify(rawValue)};\n`
-        + `    await this.clickByTestId(\`${elementDataTestIdForMethod}\`, "", wait);\n`
-        + `  }\n`,
-      );
+      const added = addExtraClickMethod({
+        kind: "click",
+        name: generatedName,
+        formattedDataTestId: formattedDataTestIdForPom,
+        keyLiteral: rawValue,
+        params: { wait: "boolean = true" },
+      });
 
-      registerGeneratedMethodSignature(generatedName, { params: `wait: boolean = true`, argNames: ["wait"] });
+      if (added) {
+        registerGeneratedMethodSignature(generatedName, { params: `wait: boolean = true`, argNames: ["wait"] });
+      }
     }
 
     // For statically-known keys, we intentionally do NOT emit the generic keyed method.
     return;
   }
 
-  appendMethodOnce(methodContent);
-  const signature = getSignatureForGeneratedMethod();
-  const generatedName = getGeneratedMethodName();
-  registerGeneratedMethodSignature(generatedName, signature);
+  // Default/legacy behavior: emit the primary method+locator for this element.
+  if (dataTestIdEntry.pom) {
+    // Register merge lookup only for emitted primaries.
+    if (dataTestIdEntry.pom.emitPrimary !== false) {
+      const actionName = getGeneratedMethodName();
+      primaryByActionName.set(actionName, dataTestIdEntry);
+      const getterName = dataTestIdEntry.pom.getterNameOverride ?? getPrimaryGetterName(methodName);
+      args.dependencies.__pomPrimaryByGetterName?.set(getterName, dataTestIdEntry);
+    }
+
+    registerPrimaryOnce(dataTestIdEntry.pom);
+    const signature = getSignatureForGeneratedMethod();
+    const generatedName = getGeneratedMethodName();
+    registerGeneratedMethodSignature(generatedName, signature);
+  }
 }
 
 export interface IDataTestId {
@@ -2013,6 +2827,60 @@ export interface IDataTestId {
   templateLiteral?: TemplateLiteral;
   /** When the element is a router-link-like navigation, the resolved target page class name (e.g. TenantDetailsPage). */
   targetPageObjectModelClass?: string;
+
+  /**
+   * Generator-provided Page Object Model info for this element.
+   *
+   * IMPORTANT: This exists so emitters (TS/C#) can generate the POM API without
+   * ever needing to parse the `data-testid` string itself.
+   */
+  pom?: PomPrimarySpec;
+}
+
+/**
+ * Structured representation of a generated element for POM emission.
+ *
+ * - `formattedDataTestId` may contain the placeholder `${key}` when keyed.
+ * - `params` is TypeScript-flavored today because TS is our reference emitter;
+ *   C# emission maps these params to C# types.
+ */
+export interface PomPrimarySpec {
+  nativeRole: NativeRole;
+  /** Base semantic name (PascalCase). Verb prefixes are added by emitters. */
+  methodName: string;
+  /** Optional override for the generated locator getter name (used for edge-case collision avoidance). */
+  getterNameOverride?: string;
+  /** Test id pattern used by generated POM methods (may include `${key}` placeholder). */
+  formattedDataTestId: string;
+  /** Additional test id patterns that should be treated as equivalent to formattedDataTestId (merge-by-action). */
+  alternateFormattedDataTestIds?: string[];
+
+  /** Optional key used to decide whether distinct elements should be merged into one POM member. */
+  mergeKey?: string;
+  /** TypeScript param blocks used by the TS emitter (and signature metadata). */
+  params: Record<string, string>;
+  /** Optional enum values for key when derived from a static v-for list. */
+  keyValuesOverride?: string[] | null;
+
+  /** When false, emitters should NOT emit the primary method/locator for this entry. */
+  emitPrimary?: boolean;
+}
+
+/**
+ * Extra generated methods that are not a 1:1 mapping of an element's primary role.
+ *
+ * Examples:
+ * - per-option radio helpers (selectFooBarBaz)
+ * - per-key v-for helpers (clickOneButton/clickTwoButton)
+ */
+export interface PomExtraClickMethodSpec {
+  kind: "click";
+  name: string;
+  /** Static or keyed test id; keyed uses `${key}` placeholder. */
+  formattedDataTestId: string;
+  /** Optional fixed key to substitute into `${key}` in the method body. */
+  keyLiteral?: string;
+  params: Record<string, string>;
 }
 
 export interface IComponentDependencies {
@@ -2041,4 +2909,27 @@ export interface IComponentDependencies {
    */
   generatedMethods?: Map<string, { params: string; argNames: string[] } | null>;
   isView?: boolean;
+
+  /**
+   * Extra methods emitted for this component/view (beyond the primary per-element methods).
+   * These are stored as structured specs so additional language emitters can mirror behavior.
+   */
+  pomExtraMethods?: PomExtraClickMethodSpec[];
+
+  /**
+   * Internal: names reserved for generated members (getters + methods) to avoid collisions.
+   *
+   * This is populated during transform-time collection so the generator never needs to
+   * parse `data-testid` values to disambiguate names.
+   */
+  reservedPomMemberNames?: Set<string>;
+
+  /**
+   * Internal: lookup of already-emitted primaries by their generated action method name.
+   * Used to merge multiple elements with the same click handler / navigation target.
+   */
+  __pomPrimaryByActionName?: Map<string, IDataTestId>;
+
+  /** Internal: lookup of already-emitted primaries by their generated getter name. */
+  __pomPrimaryByGetterName?: Map<string, IDataTestId>;
 }

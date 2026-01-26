@@ -1,6 +1,17 @@
-import type { ElementNode, NodeTransform, RootNode, TemplateChildNode, AttributeNode, DirectiveNode, SimpleExpressionNode } from "@vue/compiler-core";
+import type {
+  ElementNode,
+  NodeTransform,
+  RootNode,
+  TemplateChildNode,
+  AttributeNode,
+  DirectiveNode,
+  SimpleExpressionNode,
+  CompoundExpressionNode,
+  IfNode,
+  IfBranchNode,
+} from "@vue/compiler-core";
 import type { AttributeValue, HierarchyMap } from "./utils";
-import { NodeTypes } from "@vue/compiler-core";
+import { NodeTypes, stringifyExpression } from "@vue/compiler-core";
 import { parse as parseSfc } from "@vue/compiler-sfc";
 import { parse as parseTemplate } from "@vue/compiler-dom";
 import { parseExpression } from "@babel/parser";
@@ -20,10 +31,11 @@ import {
   getKeyDirectiveValue,
   getNativeWrapperTransformInfo,
   getSelfClosingForDirectiveKeyAttrValue,
-  nodeHandlerAttributeValue,
+  nodeHandlerAttributeInfo,
   tryGetClickDirective,
   nodeHasToDirective,
   generateToDirectiveDataTestId,
+  toDirectiveObjectFieldNameValue,
   staticAttributeValue,
   templateAttributeValue,
   tryResolveToDirectiveTargetComponentName,
@@ -40,6 +52,149 @@ const ENABLE_CLICK_INSTRUMENTATION = true;
 // Cache inferred wrapper configs across transforms/build passes.
 // Keyed by component tag name (e.g. "CustomInput").
 const inferredNativeWrapperConfigByTag = new Map<string, { role: string }>();
+
+function trimLeadingSeparators(value: string): string {
+  if (!value) {
+    return "";
+  }
+  let i = 0;
+  while (i < value.length) {
+    const ch = value[i];
+    if (ch === "-" || ch === "_" || ch === " " || ch === "\t" || ch === "\n" || ch === "\r") {
+      i += 1;
+      continue;
+    }
+    break;
+  }
+  return value.slice(i);
+}
+
+function getConditionalDirectiveInfo(element: ElementNode): { kind: "if" | "else-if" | "else"; source: string } | null {
+  const directive = element.props.find((p): p is DirectiveNode => {
+    return p.type === NodeTypes.DIRECTIVE && (p.name === "if" || p.name === "else-if" || p.name === "else" || p.name === "elseif");
+  });
+
+  if (!directive)
+    return null;
+
+  // Some compiler versions/paths represent `v-else-if` as directive.name === "else" with an expression.
+  if (directive.name === "else") {
+    const exp = directive.exp;
+    if (exp && (exp.type === NodeTypes.SIMPLE_EXPRESSION || exp.type === NodeTypes.COMPOUND_EXPRESSION)) {
+      const source = (exp.type === NodeTypes.SIMPLE_EXPRESSION
+        ? (exp as SimpleExpressionNode).content
+        : stringifyExpression(exp)).trim();
+      return { kind: "else-if", source };
+    }
+    return { kind: "else", source: "" };
+  }
+
+  // Alternate naming for else-if.
+  if (directive.name === "elseif") {
+    const exp = directive.exp;
+    if (!exp || (exp.type !== NodeTypes.SIMPLE_EXPRESSION && exp.type !== NodeTypes.COMPOUND_EXPRESSION))
+      return null;
+    const source = (exp.type === NodeTypes.SIMPLE_EXPRESSION
+      ? (exp as SimpleExpressionNode).content
+      : stringifyExpression(exp)).trim();
+    return { kind: "else-if", source };
+  }
+
+  const exp = directive.exp;
+  if (!exp || (exp.type !== NodeTypes.SIMPLE_EXPRESSION && exp.type !== NodeTypes.COMPOUND_EXPRESSION))
+    return null;
+
+  const source = (exp.type === NodeTypes.SIMPLE_EXPRESSION
+    ? (exp as SimpleExpressionNode).content
+    : stringifyExpression(exp)).trim();
+  return { kind: directive.name as "if" | "else-if", source };
+}
+
+function tryExtractStableHintFromConditionalExpressionSource(source: string): string | null {
+  const src = (source ?? "").trim();
+  if (!src)
+    return null;
+
+  const isIdentifierish = (value: string): boolean => {
+    const v = value.trim();
+    if (!v)
+      return false;
+    const isAlpha = (ch: number) => (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122);
+    const isDigit = (ch: number) => ch >= 48 && ch <= 57;
+    const isUnderscore = (ch: number) => ch === 95;
+
+    const first = v.charCodeAt(0);
+    if (!isAlpha(first))
+      return false;
+
+    for (let i = 1; i < v.length; i += 1) {
+      const ch = v.charCodeAt(i);
+      if (isAlpha(ch) || isDigit(ch) || isUnderscore(ch)) {
+        continue;
+      }
+      return false;
+    }
+    return true;
+  };
+
+  try {
+    const expr = parseExpression(src, { plugins: ["typescript"] }) as object;
+
+    const isNodeType = (n: object | null, type: string): n is { type: string } => {
+      return n !== null && (n as { type?: string }).type === type;
+    };
+    const isStringLiteralNode = (n: object | null): n is { type: "StringLiteral"; value: string } => {
+      return isNodeType(n, "StringLiteral") && typeof (n as { value?: string }).value === "string";
+    };
+    const isIdentifierNode = (n: object | null): n is { type: "Identifier"; name: string } => {
+      return isNodeType(n, "Identifier") && typeof (n as { name?: string }).name === "string";
+    };
+
+    const results: string[] = [];
+
+    const walk = (n: object | null) => {
+      if (!n)
+        return;
+
+      if (isStringLiteralNode(n)) {
+        const v = (n.value ?? "").trim();
+        if (isIdentifierish(v)) {
+          results.push(v);
+        }
+      }
+
+      if (isIdentifierNode(n)) {
+        const v = (n.name ?? "").trim();
+        if (isIdentifierish(v)) {
+          results.push(v);
+        }
+      }
+
+      const node = n as Record<string, unknown>;
+      for (const value of Object.values(node)) {
+        if (!value)
+          continue;
+        if (Array.isArray(value)) {
+          for (const item of value) {
+            if (item && typeof item === "object") {
+              walk(item as object);
+            }
+          }
+          continue;
+        }
+        if (typeof value === "object") {
+          walk(value as object);
+        }
+      }
+    };
+
+    walk(expr);
+    return results.length ? results[results.length - 1]! : null;
+  }
+  catch {
+    return null;
+  }
+}
 
 function tryInferNativeWrapperRoleFromSfc(tag: string): { role: "input" | "select" } | null {
   // Only attempt inference for PascalCase component tags.
@@ -342,10 +497,17 @@ export function createTestIdTransform(
   nativeWrappers: NativeWrappersMap = {},
   excludedComponents: string[] = [],
   viewsDirAbs: string,
-  options: { existingIdBehavior?: "preserve" | "overwrite" | "error"; testIdAttribute?: string } = {},
+  options: {
+    existingIdBehavior?: "preserve" | "overwrite" | "error";
+    testIdAttribute?: string;
+    nameCollisionBehavior?: "error" | "warn" | "suffix";
+    warn?: (message: string) => void;
+  } = {},
 ): NodeTransform {
   const existingIdBehavior = options.existingIdBehavior ?? "preserve";
   const testIdAttribute = (options.testIdAttribute || "data-testid").trim() || "data-testid";
+  const nameCollisionBehavior = options.nameCollisionBehavior ?? "suffix";
+  const warn = options.warn;
 
   // Some projects (and dev environments) use symlinks. We want viewsDir containment checks
   // to behave like the filesystem does (real paths), but we must not crash for virtual
@@ -365,8 +527,53 @@ export function createTestIdTransform(
   // Deduplicate by method *content* to avoid duplicate declarations in generated POM classes.
   const generatedMethodContentByComponent = new Map<string, Set<string>>();
 
+  // Track the most recent conditional (v-if / v-else-if) hint for a given parent element so
+  // adjacent v-else branches can derive a stable semantic hint (e.g. `else personId`).
+  const lastConditionalHintByParent = new WeakMap<object, string>();
+
+  // Track conditional hints per element so descendants can inherit context when they have
+  // an existing data-testid but no other naming signals.
+  const conditionalHintByElement = new WeakMap<ElementNode, string>();
+
+  // Track conditional hints per IF_BRANCH. This is required because Vue's structural transforms
+  // may remove v-if/v-else directives from element.props and instead wrap elements in IF/IF_BRANCH.
+  const conditionalHintByIfBranch = new WeakMap<IfBranchNode, string>();
+
   return (node: RootNode | TemplateChildNode, context) => {
     if (excludedComponents.includes(componentName)) {
+      return;
+    }
+
+    // Capture conditional information early (before we reach elements nested under IF_BRANCH).
+    if (node.type === NodeTypes.IF) {
+      const ifNode = node as IfNode;
+      const branches = ifNode.branches ?? [];
+
+      let lastHint: string | null = null;
+      for (const branch of branches) {
+        const cond = (branch.condition ?? null) as (SimpleExpressionNode | CompoundExpressionNode | null);
+
+        if (!cond) {
+          // else branch
+          const hint = lastHint ? `else ${lastHint}` : "else";
+          conditionalHintByIfBranch.set(branch, hint);
+          continue;
+        }
+
+        const condSource = (cond.type === NodeTypes.SIMPLE_EXPRESSION
+          ? (cond as SimpleExpressionNode).content
+          : stringifyExpression(cond)).trim();
+        const stable = tryExtractStableHintFromConditionalExpressionSource(condSource);
+
+        if (stable) {
+          conditionalHintByIfBranch.set(branch, stable);
+          lastHint = stable;
+        } else {
+          // Still set something so downstream code can distinguish the branch shape.
+          conditionalHintByIfBranch.set(branch, "if");
+        }
+      }
+
       return;
     }
 
@@ -383,7 +590,10 @@ export function createTestIdTransform(
 
     const element = node as ElementNode;
     const parentIsRoot = context?.parent?.type === NodeTypes.ROOT;
-    hierarchyMap.set(element, parentIsRoot ? null : context?.parent as ElementNode | null);
+    const parentElement = (!parentIsRoot && context?.parent?.type === NodeTypes.ELEMENT)
+      ? (context.parent as ElementNode)
+      : null;
+    hierarchyMap.set(element, parentElement);
 
     // Convert any path (including Windows "C:\\..." and Vite /@fs/ paths) into a
     // normalized POSIX-ish form so `path.posix.*` helpers behave predictably.
@@ -474,6 +684,81 @@ export function createTestIdTransform(
     // - narrow `key: string` parameters to a literal union where we still emit keyed methods
     const keyValuesOverride = tryGetContainedInStaticVForSourceLiteralValues(context, element, hierarchyMap);
 
+    // Derive a stable semantic hint from conditional directives (v-if/v-else-if/v-else) when available.
+    // This helps avoid generic Button/clickButton collisions for elements that provide a data-testid
+    // but otherwise have no naming signals (and we intentionally avoid innerText-based naming).
+    const parentKey = (!parentIsRoot && context?.parent) ? (context.parent as object) : null;
+    const conditional = getConditionalDirectiveInfo(element);
+
+    let conditionalHint: string | null = null;
+
+    // 1) If the v-if/v-else directive is still present on the element, use that.
+    if (conditional && (conditional.kind === "if" || conditional.kind === "else-if")) {
+      conditionalHint = tryExtractStableHintFromConditionalExpressionSource(conditional.source);
+      if (conditionalHint && parentKey) {
+        lastConditionalHintByParent.set(parentKey, conditionalHint);
+      }
+    }
+    else if (conditional && conditional.kind === "else") {
+      if (parentKey) {
+        const previousHint = lastConditionalHintByParent.get(parentKey) ?? null;
+        conditionalHint = previousHint ? `else ${previousHint}` : null;
+      }
+    }
+
+    // 2) If structural transforms already ran, infer from IF_BRANCH wrapper.
+    if (!conditionalHint && context?.parent?.type === NodeTypes.IF_BRANCH) {
+      const branch = context.parent as IfBranchNode;
+      conditionalHint = conditionalHintByIfBranch.get(branch) ?? null;
+
+      // Fallback: if we somehow missed the IF node pass (or the branch instance wasn't cached),
+      // derive a stable hint directly from the branch condition.
+      if (!conditionalHint) {
+        const cond = (branch.condition ?? null) as (SimpleExpressionNode | CompoundExpressionNode | null);
+        if (!cond) {
+          conditionalHint = "else";
+        } else {
+          const condSource = (cond.type === NodeTypes.SIMPLE_EXPRESSION
+            ? (cond as SimpleExpressionNode).content
+            : stringifyExpression(cond)).trim();
+          conditionalHint = tryExtractStableHintFromConditionalExpressionSource(condSource) ?? "if";
+        }
+      }
+    }
+
+    // 2b) Also consider v-show as contextual disambiguation (common for tab bodies).
+    // This is intentionally NOT innerText-based and does not parse data-testid values.
+    const showDirective = element.props.find((p): p is DirectiveNode => {
+      return p.type === NodeTypes.DIRECTIVE && p.name === "show";
+    });
+    if (showDirective?.exp && (showDirective.exp.type === NodeTypes.SIMPLE_EXPRESSION || showDirective.exp.type === NodeTypes.COMPOUND_EXPRESSION)) {
+      const exp = showDirective.exp as SimpleExpressionNode | CompoundExpressionNode;
+      const source = (exp.type === NodeTypes.SIMPLE_EXPRESSION
+        ? (exp as SimpleExpressionNode).content
+        : stringifyExpression(exp)).trim();
+      const showHint = tryExtractStableHintFromConditionalExpressionSource(source);
+      if (showHint) {
+        conditionalHint = conditionalHint ? `${conditionalHint} ${showHint}` : showHint;
+      }
+    }
+
+    // 3) Inherit conditional context from ancestor elements.
+    if (!conditionalHint) {
+      let cur = hierarchyMap.get(element) || null;
+      while (cur) {
+        const inherited = conditionalHintByElement.get(cur) ?? null;
+        if (inherited) {
+          conditionalHint = inherited;
+          break;
+        }
+        cur = hierarchyMap.get(cur) || null;
+      }
+    }
+
+    if (conditionalHint) {
+      conditionalHintByElement.set(element, conditionalHint);
+    }
+
     // Some branches need a formatted tag suffix / native role. Compute lazily and cache.
     let cachedTagSuffix: string | null = null;
     const getTagSuffix = () => {
@@ -507,6 +792,9 @@ export function createTestIdTransform(
       nativeRoleOverride?: string;
       entryOverrides?: Partial<IDataTestId>;
       addHtmlAttribute?: boolean;
+      semanticNameHint?: string;
+      semanticNameHintAlternates?: string[];
+      pomMergeKey?: string;
     }): void => {
       const nativeRole = args.nativeRoleOverride ?? getNativeRoleFromTagSuffix();
       applyResolvedDataTestId({
@@ -522,15 +810,20 @@ export function createTestIdTransform(
         bestKeyPlaceholder,
         keyValuesOverride,
         entryOverrides: args.entryOverrides,
+        semanticNameHint: args.semanticNameHint,
+        semanticNameHintAlternates: args.semanticNameHintAlternates,
+        pomMergeKey: args.pomMergeKey,
         addHtmlAttribute: args.addHtmlAttribute ?? true,
         testIdAttribute,
         existingIdBehavior,
+        nameCollisionBehavior,
+        warn,
       });
     };
 
     // Inline the old nodeShouldBeIgnored gating logic, but compute signals incrementally.
     // Native wrapper detection + option-prefix needs are computed in one place to avoid duplicate checks.
-    const { nativeWrappersValue, optionDataTestIdPrefixValue } = getNativeWrapperTransformInfo(element, componentName, nativeWrappers);
+    const { nativeWrappersValue, optionDataTestIdPrefixValue, semanticNameHint } = getNativeWrapperTransformInfo(element, componentName, nativeWrappers);
 
     if (nativeWrappersValue) {
       // Some wrappers (e.g. option-driven selects) require the option prefix even when we have a
@@ -540,9 +833,20 @@ export function createTestIdTransform(
       }
 
       const nativeRole = nativeWrappers[element.tag]?.role ?? element.tag;
+
+      // Wrapper-derived hints are often shared (e.g. many branches bind the same v-model path).
+      // In strict collision mode, keep the primary hint stable, but provide conditional context
+      // as an alternate hint so applyResolvedDataTestId can fall back to it only when needed.
+      const primarySemanticHint = semanticNameHint || conditionalHint || undefined;
+      const alternates = (nameCollisionBehavior === "error" && semanticNameHint && conditionalHint)
+        ? [`${semanticNameHint} ${conditionalHint}`]
+        : undefined;
+
       applyResolvedDataTestIdForElement({
         preferredGeneratedValue: nativeWrappersValue,
         nativeRoleOverride: nativeRole,
+        semanticNameHint: primarySemanticHint,
+        semanticNameHintAlternates: alternates,
       });
       return;
     }
@@ -552,6 +856,15 @@ export function createTestIdTransform(
     if (toDirective) {
       const dataTestId = generateToDirectiveDataTestId(componentName, element, toDirective, context, hierarchyMap, nativeWrappers);
       const target = tryResolveToDirectiveTargetComponentName(toDirective);
+      const routeNameHint = toDirectiveObjectFieldNameValue(toDirective);
+      // IMPORTANT: Do not use innerText as a naming disambiguator here; route target identity
+      // should drive merging when multiple elements navigate to the same target.
+      const semanticNameHint = routeNameHint || target || conditionalHint || undefined;
+
+      const rawTo = (toDirective.exp?.loc?.source ?? "").trim();
+      const pomMergeKey = routeNameHint
+        ? `to:name:${routeNameHint}`
+        : (rawTo ? `to:expr:${rawTo}` : undefined);
 
       // If the author already provided a data-testid, the generator may choose not to
       // auto-generate one for :to. In that case, still register the element so we
@@ -568,16 +881,20 @@ export function createTestIdTransform(
       applyResolvedDataTestIdForElement({
         preferredGeneratedValue,
         entryOverrides: target ? { targetPageObjectModelClass: target } : {},
+        semanticNameHint,
+        pomMergeKey,
       });
       return;
     }
 
-    const handlerAttributeValue = nodeHandlerAttributeValue(element);
-    if (handlerAttributeValue) {
-      const testId = getHandlerAttributeValueDataTestId(handlerAttributeValue);
+    const handlerInfo = nodeHandlerAttributeInfo(element);
+    if (handlerInfo) {
+      const testId = getHandlerAttributeValueDataTestId(handlerInfo.semanticNameHint);
 
       applyResolvedDataTestIdForElement({
         preferredGeneratedValue: testId,
+        semanticNameHint: handlerInfo.semanticNameHint || conditionalHint || undefined,
+        pomMergeKey: handlerInfo.mergeKey,
       });
       return;
     }
@@ -594,10 +911,24 @@ export function createTestIdTransform(
         contextFilename: context.filename,
       });
 
+      // Derive a semantic hint from the click suffix (which is already derived from AST and/or innerText).
+      // This is NOT derived by parsing the final data-testid.
+      const clickHint = trimLeadingSeparators(clickSuffix) || undefined;
+      const idOrName = getIdOrName(element) || undefined;
+      // IMPORTANT: Do not use innerText for semantic naming. When multiple mutually-exclusive
+      // elements share the same click handler, we merge by handler identity instead.
+      const semanticNameHint = clickHint || idOrName || conditionalHint || undefined;
+
+      // Use the same AST-derived click hint as the merge key so wrapper expressions like
+      // `() => doThing()` and `doThing()` can still merge.
+      const pomMergeKey = clickHint ? `click:hint:${clickHint}` : undefined;
+
       const testId = getClickDataTestId(clickSuffix);
 
       applyResolvedDataTestIdForElement({
         preferredGeneratedValue: testId,
+        semanticNameHint,
+        pomMergeKey,
       });
 
       // Instrument @click handlers so Playwright can wait on deterministic UI-side events
@@ -608,10 +939,30 @@ export function createTestIdTransform(
       return;
     }
 
-    const existingSubmitDataTestId = tryGetExistingElementDataTestId(element, testIdAttribute);
-    if (existingSubmitDataTestId?.value) {
+    const existingElementDataTestId = tryGetExistingElementDataTestId(element, testIdAttribute);
+    if (existingElementDataTestId?.value) {
+      // Only generate POM members for existing test ids when the element is something we
+      // consider interactive (based on role inferred from tag suffix).
+      //
+      // This avoids polluting POMs with static content nodes like <label>/<p> that often
+      // have data-testid for assertions but should not get click* APIs.
+      const inferredRole = getNativeRoleFromTagSuffix().toLowerCase();
+      const isRecognizedInteractiveRole = inferredRole === "button"
+        || inferredRole === "input"
+        || inferredRole === "select"
+        || inferredRole === "vselect"
+        || inferredRole === "checkbox"
+        || inferredRole === "toggle"
+        || inferredRole === "radio";
+
+      if (!isRecognizedInteractiveRole) {
+        return;
+      }
+
+      const identifierHint = getIdOrName(element) || conditionalHint || undefined;
       applyResolvedDataTestIdForElement({
-        preferredGeneratedValue: staticAttributeValue(existingSubmitDataTestId.value),
+        preferredGeneratedValue: staticAttributeValue(existingElementDataTestId.value),
+        semanticNameHint: identifierHint,
       });
       return;
     }
@@ -632,6 +983,7 @@ export function createTestIdTransform(
 
       applyResolvedDataTestIdForElement({
         preferredGeneratedValue: staticAttributeValue(testId),
+        semanticNameHint: identifier,
       });
     }
   };

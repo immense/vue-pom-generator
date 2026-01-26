@@ -1,11 +1,12 @@
 import path from "node:path";
 import process from "node:process";
-import { IComponentDependencies, IDataTestId, upperFirst } from "../utils";
+import { IComponentDependencies, IDataTestId, PomExtraClickMethodSpec, PomPrimarySpec, upperFirst } from "../utils";
 import { parseRouterFileFromCwd } from "../router-introspection";
 import fs from "node:fs";
 // NOTE: This module intentionally does not depend on Babel parsing.
 
-export { generateViewObjectModelMethodContent } from "../method-generation";
+import { generateViewObjectModelMethodContent } from "../method-generation";
+export { generateViewObjectModelMethodContent };
 
 const AUTO_GENERATED_COMMENT =
     ' * DO NOT MODIFY BY HAND\n'
@@ -107,6 +108,141 @@ function generateGoToSelfMethod(componentName: string): string {
     ].join("\n");
 }
 
+function formatMethodParams(params: Record<string, string> | undefined): string {
+    if (!params) return "";
+
+    // Keep output stable and somewhat intuitive.
+    const preferredOrder = ["key", "value", "text", "timeOut", "annotationText", "wait"];
+
+    const entries = Object.entries(params);
+    if (!entries.length) return "";
+
+    const score = (name: string) => {
+        const idx = preferredOrder.indexOf(name);
+        return idx < 0 ? 999 : idx;
+    };
+
+    return entries
+        .slice()
+        .sort((a, b) => score(a[0]) - score(b[0]) || a[0].localeCompare(b[0]))
+        .map(([name, typeExpr]) => `${name}: ${typeExpr}`)
+        .join(", ");
+}
+
+function generateExtraClickMethodContent(spec: PomExtraClickMethodSpec): string {
+    if (spec.kind !== "click") {
+        return "";
+    }
+
+    const params = spec.params ?? {};
+    const signatureParams = formatMethodParams(params);
+    const signature = signatureParams ? `(${signatureParams})` : "()";
+
+    const needsTemplate = spec.formattedDataTestId.includes("${");
+    const testIdExpr = needsTemplate
+        ? `\`${spec.formattedDataTestId}\``
+        : JSON.stringify(spec.formattedDataTestId);
+
+    const lines: string[] = [];
+    lines.push(
+        "",
+        `    async ${spec.name}${signature} {`,
+    );
+
+    if (spec.keyLiteral !== undefined) {
+        lines.push(`        const key = ${JSON.stringify(spec.keyLiteral)};`);
+    }
+
+    if (needsTemplate) {
+        lines.push(`        const testId = ${testIdExpr};`);
+    }
+
+    // clickByTestId(testId, annotationText = "", wait = true)
+    const hasAnnotationText = Object.prototype.hasOwnProperty.call(params, "annotationText");
+    const hasWait = Object.prototype.hasOwnProperty.call(params, "wait");
+
+    const clickArgs: string[] = [];
+    clickArgs.push(needsTemplate ? "testId" : testIdExpr);
+
+    if (hasAnnotationText || hasWait) {
+        clickArgs.push(hasAnnotationText ? "annotationText" : '""');
+    }
+    if (hasWait) {
+        clickArgs.push("wait");
+    }
+
+    lines.push(`        await this.clickByTestId(${clickArgs.join(", ")});`);
+    lines.push("    }");
+
+    return `${lines.join("\n")}\n`;
+}
+
+function generateMethodContentFromPom(primary: PomPrimarySpec, targetPageObjectModelClass?: string): string {
+    if (primary.emitPrimary === false) {
+        return "";
+    }
+
+    return generateViewObjectModelMethodContent(
+        targetPageObjectModelClass,
+        primary.methodName,
+        primary.nativeRole,
+        primary.formattedDataTestId,
+        primary.alternateFormattedDataTestIds,
+        primary.getterNameOverride,
+        primary.params ?? {},
+    );
+}
+
+function generateMethodsContentForDependencies(dependencies: IComponentDependencies): string {
+    const entries = Array.from(dependencies.dataTestIdSet ?? []);
+    const primarySpecsAll = entries
+        .map((e) => ({ pom: e.pom, target: e.targetPageObjectModelClass }))
+        .filter((x): x is { pom: PomPrimarySpec; target: string | undefined } => !!x.pom)
+        .sort((a, b) => a.pom.methodName.localeCompare(b.pom.methodName));
+
+    // IMPORTANT:
+    // `dependencies.dataTestIdSet` is a Set of objects; it does not de-dupe by semantic identity.
+    // It's possible to end up with multiple IDataTestId entries that carry identical `pom` specs.
+    // When we emit from IR, we must de-dupe here to avoid duplicate getters/methods.
+    const seenPrimaryKeys = new Set<string>();
+    const primarySpecs = primarySpecsAll.filter(({ pom, target }) => {
+        const stableParams = pom.params
+            ? Object.fromEntries(Object.entries(pom.params).sort((a, b) => a[0].localeCompare(b[0])))
+            : undefined;
+        const alternates = (pom.alternateFormattedDataTestIds ?? []).slice().sort();
+        const key = JSON.stringify({
+            role: pom.nativeRole,
+            methodName: pom.methodName,
+            getterNameOverride: pom.getterNameOverride ?? null,
+            testId: pom.formattedDataTestId,
+            alternateTestIds: alternates.length ? alternates : undefined,
+            params: stableParams,
+            target: target ?? null,
+            emitPrimary: pom.emitPrimary ?? true,
+        });
+        if (seenPrimaryKeys.has(key)) {
+            return false;
+        }
+        seenPrimaryKeys.add(key);
+        return true;
+    });
+
+    const extras = (dependencies.pomExtraMethods ?? [])
+        .slice()
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+    let content = "";
+    for (const { pom, target } of primarySpecs) {
+        content += generateMethodContentFromPom(pom, target);
+    }
+
+    for (const extra of extras) {
+        content += generateExtraClickMethodContent(extra);
+    }
+
+    return content;
+}
+
 export interface GenerateFilesOptions {
     /**
      * Output directory for generated files.
@@ -171,6 +307,9 @@ export interface GenerateFilesOptions {
     /** Attribute name to treat as the test id. Defaults to `data-testid`. */
     testIdAttribute?: string;
 
+    /** Which POM languages to emit. Defaults to ["ts"]. */
+    emitLanguages?: Array<"ts" | "csharp">;
+
     /** When true, generate router-aware helpers like goToSelf() on view POMs. */
     vueRouterFluentChaining?: boolean;
 
@@ -225,9 +364,14 @@ export async function generateFiles(
         customPomDir,
         customPomImportAliases,
         testIdAttribute,
+        emitLanguages: emitLanguagesOverride,
         vueRouterFluentChaining,
         routerEntry,
     } = options;
+
+    const emitLanguages: Array<"ts" | "csharp"> = emitLanguagesOverride?.length
+        ? emitLanguagesOverride
+        : ["ts"];
 
     const outDir = outDirOverride ?? "./pom";
 
@@ -235,25 +379,339 @@ export async function generateFiles(
         ? await getRouteMetaByComponent(projectRoot, routerEntry)
         : undefined;
 
-    const files = await generateAggregatedFiles(componentHierarchyMap, vueFilesPathMap, basePageClassPath, outDir, {
-        customPomAttachments,
-        projectRoot,
-        customPomDir,
-        customPomImportAliases,
-        testIdAttribute,
-        generateFixtures,
-        routeMetaByComponent,
-        vueRouterFluentChaining,
-    });
-    for (const file of files) {
-        createFile(file.filePath, file.content);
+    if (emitLanguages.includes("ts")) {
+        const files = await generateAggregatedFiles(componentHierarchyMap, vueFilesPathMap, basePageClassPath, outDir, {
+            customPomAttachments,
+            projectRoot,
+            customPomDir,
+            customPomImportAliases,
+            testIdAttribute,
+            generateFixtures,
+            routeMetaByComponent,
+            vueRouterFluentChaining,
+        });
+        for (const file of files) {
+            createFile(file.filePath, file.content);
+        }
+
+        maybeGenerateFixtureRegistry(componentHierarchyMap, {
+            generateFixtures,
+            pomOutDir: outDir,
+            projectRoot,
+        });
     }
 
-    maybeGenerateFixtureRegistry(componentHierarchyMap, {
-        generateFixtures,
-        pomOutDir: outDir,
-        projectRoot,
-    });
+    if (emitLanguages.includes("csharp")) {
+        const csFiles = generateAggregatedCSharpFiles(componentHierarchyMap, outDir, {
+            projectRoot,
+        });
+        for (const file of csFiles) {
+            createFile(file.filePath, file.content);
+        }
+    }
+}
+
+function toCSharpTestIdExpression(formattedDataTestId: string): string {
+    // Convert our `${var}` placeholder format into C# interpolated-string `{var}`.
+    const needsInterpolation = formattedDataTestId.includes("${");
+    if (!needsInterpolation) {
+        return JSON.stringify(formattedDataTestId);
+    }
+
+    const inner = formattedDataTestId.replace(/\$\{/g, "{");
+    // Use verbatim JSON escaping for quotes/backslashes, then adapt to C# string literal.
+    // JSON.stringify gives us a JS string literal with escapes, which is close enough for a C# normal string.
+    const quoted = JSON.stringify(inner);
+    return `$${quoted}`;
+}
+
+function toCSharpParam(paramTypeExpr: string): { type: string; defaultExpr?: string } {
+    const trimmed = (paramTypeExpr ?? "").trim();
+
+    // Handle default values: "boolean = true", "string = \"\"", "timeOut = 500".
+    const eqIdx = trimmed.indexOf("=");
+    const left = eqIdx >= 0 ? trimmed.slice(0, eqIdx).trim() : trimmed;
+    const right = eqIdx >= 0 ? trimmed.slice(eqIdx + 1).trim() : undefined;
+
+    // Collapse union types to their widest practical type.
+    const typePart = left.includes("|") ? "string" : left;
+
+    let type = "string";
+    if (/(^|\s)boolean(\s|$)/.test(typePart)) type = "bool";
+    else if (/(^|\s)string(\s|$)/.test(typePart)) type = "string";
+    else if (/(^|\s)number(\s|$)/.test(typePart)) type = "int";
+    else if (/\d+/.test(typePart) && typePart === "") type = "int";
+    else if (/\btimeOut\b/i.test(typePart)) type = "int";
+
+    let defaultExpr: string | undefined;
+    if (right !== undefined) {
+        if (type === "bool") {
+            defaultExpr = right.includes("true") ? "true" : right.includes("false") ? "false" : undefined;
+        }
+        else if (type === "int") {
+            const m = right.match(/\d+/);
+            defaultExpr = m ? m[0] : undefined;
+        }
+        else {
+            // string defaults, keep empty string if detected.
+            if (right === '""' || right === "\"\"" || right === "''") {
+                defaultExpr = "\"\"";
+            }
+        }
+    }
+
+    return { type, defaultExpr };
+}
+
+function formatCSharpParams(params: Record<string, string> | undefined): { signature: string; argNames: string[] } {
+    if (!params) return { signature: "", argNames: [] };
+
+    const entries = Object.entries(params);
+    if (!entries.length) return { signature: "", argNames: [] };
+
+    const signatureParts: string[] = [];
+    const argNames: string[] = [];
+
+    for (const [name, typeExpr] of entries) {
+        const { type, defaultExpr } = toCSharpParam(typeExpr);
+        argNames.push(name);
+        signatureParts.push(defaultExpr !== undefined ? `${type} ${name} = ${defaultExpr}` : `${type} ${name}`);
+    }
+
+    return { signature: signatureParts.join(", "), argNames };
+}
+
+function generateAggregatedCSharpFiles(
+    componentHierarchyMap: Map<string, IComponentDependencies>,
+    outDir: string,
+    options: { projectRoot?: string } = {},
+): Array<{ filePath: string; content: string }> {
+    const projectRoot = options.projectRoot ?? process.cwd();
+    const outAbs = path.isAbsolute(outDir) ? outDir : path.resolve(projectRoot, outDir);
+
+    const entries = Array.from(componentHierarchyMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+
+    const header = [
+        "// <auto-generated>",
+        "// DO NOT MODIFY BY HAND",
+        "//",
+        "// This file is auto-generated by vue-pom-generator.",
+        "// Changes should be made in the generator/template, not in the generated output.",
+        "// </auto-generated>",
+        "",
+        "using System;",
+        "using System.Threading.Tasks;",
+        "using Microsoft.Playwright;",
+        "",
+        "namespace ImmyBot.Playwright.Generated;",
+        "",
+        "public abstract class BasePage",
+        "{",
+        "    protected BasePage(IPage page) => Page = page;",
+        "    protected IPage Page { get; }",
+        "    protected ILocator LocatorByTestId(string testId) => Page.GetByTestId(testId);",
+        "",
+        "    // Minimal vue-select helper mirroring the TS BasePage.selectVSelectByTestId behavior.",
+        "    // Note: annotationText is currently a no-op in C# output (we don't render a cursor overlay).",
+        "    protected async Task SelectVSelectByTestIdAsync(string testId, string value, int timeOut = 500)",
+        "    {",
+        "        var root = LocatorByTestId(testId);",
+        "        var input = root.Locator(\"input\");",
+        "",
+        "        await input.ClickAsync(new LocatorClickOptions { Force = true });",
+        "        await input.FillAsync(value);",
+        "        await Page.WaitForTimeoutAsync(timeOut);",
+        "",
+        "        var option = root.Locator(\"ul.vs__dropdown-menu li[role='option']\").First;",
+        "        if (await option.CountAsync() > 0)",
+        "        {",
+        "            await option.ClickAsync();",
+        "        }",
+        "    }",
+        "}",
+        "",
+    ].join("\n");
+
+    const chunks: string[] = [header];
+
+    for (const [componentName, deps] of entries) {
+        chunks.push(
+            `public sealed class ${componentName} : BasePage\n{\n    public ${componentName}(IPage page) : base(page) { }\n`,
+        );
+
+        // Primary specs
+        const primaries = Array.from(deps.dataTestIdSet ?? [])
+            .map((e) => ({ pom: e.pom, target: e.targetPageObjectModelClass }))
+            .filter((x): x is { pom: PomPrimarySpec; target: string | undefined } => !!x.pom)
+            .sort((a, b) => a.pom.methodName.localeCompare(b.pom.methodName));
+
+        for (const { pom, target } of primaries) {
+            if (pom.emitPrimary === false) continue;
+
+            const roleSuffix = (pom.nativeRole || "Element") === "vselect" ? "VSelect" : upperFirst(pom.nativeRole || "Element");
+            const baseMethodName = upperFirst(pom.methodName);
+            const baseGetterName = upperFirst(pom.getterNameOverride ?? pom.methodName);
+            const locatorName = baseGetterName.endsWith(roleSuffix) ? baseGetterName : `${baseGetterName}${roleSuffix}`;
+            const testIdExpr = toCSharpTestIdExpression(pom.formattedDataTestId);
+            const { signature, argNames } = formatCSharpParams(pom.params);
+            const args = argNames.join(", ");
+
+            const allTestIds = [pom.formattedDataTestId, ...(pom.alternateFormattedDataTestIds ?? [])]
+                .filter((v, idx, arr) => v && arr.indexOf(v) === idx);
+
+            if (pom.formattedDataTestId.includes("${")) {
+                chunks.push(`    public ILocator ${locatorName}(${signature}) => LocatorByTestId(${testIdExpr});`);
+            }
+            else {
+                chunks.push(`    public ILocator ${locatorName} => LocatorByTestId(${testIdExpr});`);
+            }
+
+            // Action method
+            const actionPrefix = pom.nativeRole === "input"
+                ? "Type"
+                : (pom.nativeRole === "select" || pom.nativeRole === "vselect" || pom.nativeRole === "radio")
+                    ? "Select"
+                    : target
+                        ? "GoTo"
+                        : "Click";
+
+            const actionName = `${actionPrefix}${baseMethodName}Async`;
+            const sig = signature;
+
+            if (target) {
+                chunks.push(`    public async Task<${target}> ${actionName}(${sig})`);
+                chunks.push("    {");
+                if (pom.formattedDataTestId.includes("${") || allTestIds.length <= 1) {
+                    chunks.push(`        await ${locatorName}${pom.formattedDataTestId.includes("${") ? "(" + args + ")" : ""}.ClickAsync();`);
+                }
+                else {
+                    chunks.push("        Exception? lastError = null;");
+                    chunks.push(`        foreach (var testId in new[] { ${allTestIds.map(toCSharpTestIdExpression).join(", ")} })`);
+                    chunks.push("        {");
+                    chunks.push("            try");
+                    chunks.push("            {");
+                    chunks.push("                var locator = LocatorByTestId(testId);");
+                    chunks.push("                if (await locator.CountAsync() > 0)");
+                    chunks.push("                {");
+                    chunks.push("                    await locator.ClickAsync();");
+                    chunks.push("                    return new " + target + "(Page);");
+                    chunks.push("                }");
+                    chunks.push("            }");
+                    chunks.push("            catch (Exception e)");
+                    chunks.push("            {");
+                    chunks.push("                lastError = e;");
+                    chunks.push("            }");
+                    chunks.push("        }");
+                    chunks.push("        throw lastError ?? new System.Exception(\"[pom] Failed to navigate using any candidate test id.\");");
+                }
+                chunks.push(`        return new ${target}(Page);`);
+                chunks.push("    }");
+                chunks.push("");
+                continue;
+            }
+
+            chunks.push(`    public async Task ${actionName}(${sig})`);
+            chunks.push("    {");
+
+            const callSuffix = pom.formattedDataTestId.includes("${") ? "(" + args + ")" : "";
+
+            const emitActionCall = (locatorAccess: string) => {
+                if (pom.nativeRole === "input") {
+                    chunks.push(`        await ${locatorAccess}.FillAsync(text);`);
+                }
+                else if (pom.nativeRole === "select") {
+                    chunks.push(`        await ${locatorAccess}.SelectOptionAsync(value);`);
+                }
+                else if (pom.nativeRole === "vselect") {
+                    // vselect requires custom selection mechanics.
+                    chunks.push(`        await SelectVSelectByTestIdAsync(${testIdExpr}, value, timeOut);`);
+                }
+                else {
+                    chunks.push(`        await ${locatorAccess}.ClickAsync();`);
+                }
+            };
+
+            if (!pom.formattedDataTestId.includes("${") && allTestIds.length > 1) {
+                chunks.push("        Exception? lastError = null;");
+                chunks.push(`        foreach (var testId in new[] { ${allTestIds.map(toCSharpTestIdExpression).join(", ")} })`);
+                chunks.push("        {");
+                chunks.push("            try");
+                chunks.push("            {");
+                if (pom.nativeRole === "vselect") {
+                    chunks.push("                // vselect fallback: use the same selection routine for each candidate test id.");
+                    chunks.push("                var root = LocatorByTestId(testId);");
+                    chunks.push("                if (await root.CountAsync() > 0)");
+                    chunks.push("                {");
+                    chunks.push("                    await SelectVSelectByTestIdAsync(testId, value, timeOut);");
+                    chunks.push("                    return;");
+                    chunks.push("                }");
+                }
+                else {
+                    chunks.push("                var locator = LocatorByTestId(testId);");
+                    chunks.push("                if (await locator.CountAsync() > 0)");
+                    chunks.push("                {");
+                    if (pom.nativeRole === "input") {
+                        chunks.push("                    await locator.FillAsync(text);");
+                    }
+                    else if (pom.nativeRole === "select") {
+                        chunks.push("                    await locator.SelectOptionAsync(value);");
+                    }
+                    else {
+                        chunks.push("                    await locator.ClickAsync();");
+                    }
+                    chunks.push("                    return;");
+                    chunks.push("                }");
+                }
+                chunks.push("            }");
+                chunks.push("            catch (Exception e)");
+                chunks.push("            {");
+                chunks.push("                lastError = e;");
+                chunks.push("            }");
+                chunks.push("        }");
+                chunks.push("        throw lastError ?? new Exception(\"[pom] Failed to click any candidate test id.\");");
+                chunks.push("    }");
+                chunks.push("");
+                continue;
+            }
+
+            emitActionCall(`${locatorName}${callSuffix}`);
+
+            chunks.push("    }");
+            chunks.push("");
+        }
+
+        // Extra click specs
+        const extras = (deps.pomExtraMethods ?? []).slice().sort((a, b) => a.name.localeCompare(b.name));
+        for (const extra of extras) {
+            if (extra.kind !== "click") continue;
+            const { signature } = formatCSharpParams(extra.params);
+            const needsTemplate = extra.formattedDataTestId.includes("${");
+            const testIdExpr = toCSharpTestIdExpression(extra.formattedDataTestId);
+
+            const extraName = upperFirst(extra.name);
+
+            chunks.push(`    public async Task ${extraName}Async(${signature})`);
+            chunks.push("    {");
+            if (extra.keyLiteral !== undefined) {
+                chunks.push(`        var key = ${JSON.stringify(extra.keyLiteral)};`);
+            }
+            if (needsTemplate) {
+                chunks.push(`        var testId = ${testIdExpr};`);
+                chunks.push("        await LocatorByTestId(testId).ClickAsync();");
+            }
+            else {
+                chunks.push(`        await LocatorByTestId(${testIdExpr}).ClickAsync();`);
+            }
+            chunks.push("    }");
+            chunks.push("");
+        }
+
+        chunks.push("}");
+        chunks.push("");
+    }
+
+    const outputFile = path.join(outAbs, "page-object-models.g.cs");
+    return [{ filePath: outputFile, content: chunks.join("\n") }];
 }
 
 function maybeGenerateFixtureRegistry(
@@ -532,14 +990,7 @@ function generateViewObjectModelContent(
         content += generateGoToSelfMethod(componentName);
     }
 
-    if (dependencies.methodsContent === undefined) {
-        throw new Error(
-            `methodsContent was not generated for ${componentName}. ` +
-            `It should be computed during the Vue transform phase (RootNode exit).`,
-        );
-    }
-
-    content += dependencies.methodsContent;
+    content += generateMethodsContentForDependencies(dependencies);
 
     content += '}\n';
     return content;

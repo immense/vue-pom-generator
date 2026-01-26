@@ -3,6 +3,14 @@ import type { NativeWrappersMap } from "../utils";
 
 export type ExistingIdBehavior = "preserve" | "overwrite" | "error";
 
+/**
+ * Controls what happens when the generator would emit duplicate POM member names within a single class.
+ *
+ * This typically occurs when multiple elements fall back to role-based naming (e.g. "Button") because
+ * no semantic hint (click handler name, id/name, inner text, etc.) could be derived.
+ */
+export type PomNameCollisionBehavior = "error" | "warn" | "suffix";
+
 export interface VuePomGeneratorPluginOptions {
   /** Options forwarded to @vitejs/plugin-vue */
   vueOptions?: VuePluginOptions;
@@ -83,6 +91,26 @@ export interface VuePomGeneratorPluginOptions {
       * - `<outDir>/index.ts` (stable barrel that re-exports from `page-object-models.g`)
      */
     outDir?: string;
+
+    /**
+     * Which languages to emit Page Object Models for.
+     *
+     * Defaults to ["ts"].
+     *
+     * Notes:
+     * - "ts" emits the existing Playwright TypeScript POMs.
+     * - "csharp" emits Playwright .NET (C#) POMs.
+     */
+    emit?: Array<"ts" | "csharp">;
+
+    /**
+     * Controls how to handle POM member-name collisions (duplicate getter/method names) within a single class.
+     *
+     * - "error": throw and fail the compilation on the first collision encountered
+     * - "warn": log a warning and append a numeric suffix to disambiguate
+     * - "suffix": append a numeric suffix silently (default)
+     */
+    nameCollisionBehavior?: PomNameCollisionBehavior;
 
     /**
      * Absolute path to the BasePage template module to inline into generated output.
