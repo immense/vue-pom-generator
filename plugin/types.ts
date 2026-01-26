@@ -106,6 +106,31 @@ export interface VuePomGeneratorPluginOptions {
     /**
      * Controls how to handle POM member-name collisions (duplicate getter/method names) within a single class.
      *
+      * Why this can happen (examples):
+      *
+      * 1) **Two elements map to the same inferred action name**
+      *    - Example: a "Save" button and a toolbar "Save" link both end up inferred as `clickSave()`
+      *      (e.g. both call the same `@click="save"` handler, or the same router destination).
+      *
+      * 2) **Conditional branches produce the same semantic name**
+      *    - Example: `v-if="isCreate"` and `v-else` render two different buttons, but both infer the
+      *      same action name (e.g. `clickSubmit()`), because the naming signals are intentionally limited
+      *      (we do not use innerText-based disambiguation).
+      *
+      * 3) **Wrapper components collapse distinct elements into the same role/name**
+      *    - Example: multiple wrapper components that all behave like buttons (e.g. `<ImmyButton>`,
+      *      `<LoadButton>`) can generate very similar naming when neither element has a distinct id/name
+      *      or handler-derived hint.
+      *
+      * 4) **Keyed/templated test ids intentionally share a base name**
+      *    - Example: a list of row actions might yield `ClickDeleteByKey(key)` and a non-keyed
+      *      `ClickDelete()` in the same class if both exist in different template shapes.
+      *
+      * Recommended practice:
+      * - Use `"error"` in CI to catch accidental API ambiguity early.
+      * - Resolve collisions by adding a stable naming signal (distinct handler, distinct id/name, or
+      *   structural change) rather than relying on silent suffixing.
+      *
      * - "error": throw and fail the compilation on the first collision encountered
      * - "warn": log a warning and append a numeric suffix to disambiguate
      * - "suffix": append a numeric suffix silently (default)

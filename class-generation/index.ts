@@ -32,8 +32,14 @@ function changeExtension(filePath: string, expectedExt: string, nextExtWithDot: 
 }
 
 function stripExtension(filePath: string): string {
-    const parsed = path.parse(filePath);
-    return path.format({ ...parsed, base: parsed.name, ext: "" });
+    // IMPORTANT:
+    // This helper is used for generating *import specifiers*.
+    // On Windows, `path.parse/path.format` can re-introduce backslashes even when
+    // the input contains `/` separators, producing invalid TS string escapes like `"..\\pom\\custom\\nGrid"`.
+    // Keep these paths POSIX-normalized.
+    const posix = (filePath ?? "").replace(/\\/g, "/");
+    const parsed = path.posix.parse(posix);
+    return path.posix.format({ ...parsed, base: parsed.name, ext: "" });
 }
 
 function resolveRouterEntry(projectRoot?: string, routerEntry?: string) {
