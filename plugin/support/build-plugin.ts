@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 
 import type { PluginOption } from "vite";
 
@@ -99,6 +100,12 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
         this.error(`BasePage.ts not found at ${basePageClassPath}. Ensure it is included in the build.`);
       }
       this.addWatchFile(basePageClassPath);
+
+      const pointerPath = path.resolve(path.dirname(basePageClassPath), "Pointer.ts");
+      if (!fs.existsSync(pointerPath)) {
+        this.error(`Pointer.ts not found at ${pointerPath}. Ensure it is included in the build.`);
+      }
+      this.addWatchFile(pointerPath);
     },
     buildEnd() {
       const entryCount = componentHierarchyMap.size;

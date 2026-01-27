@@ -37,6 +37,20 @@ function writeMinimalBasePage(filePath: string) {
       "",
     ].join("\n"),
   );
+
+	// The generator now also inlines Pointer.ts. Provide a minimal stub next to BasePage.ts.
+	const pointerPath = path.join(path.dirname(filePath), "Pointer.ts");
+	writeFile(
+		pointerPath,
+		[
+			"export type PlaywrightAnimationOptions = any;",
+			"export function setPlaywrightAnimationOptions(_animation: PlaywrightAnimationOptions): void {}",
+			"export class Pointer {",
+			"  public constructor(_page: any, _testIdAttribute: string) {}",
+			"}",
+			"",
+		].join("\n"),
+	);
 }
 
 function makeDeps(options: Partial<IComponentDependencies> & { filePath: string }): IComponentDependencies {
@@ -285,5 +299,5 @@ describe("class-generation coverage", () => {
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 });

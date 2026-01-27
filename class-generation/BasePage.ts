@@ -1,6 +1,7 @@
 import type { Locator as PwLocator, Page as PwPage } from "@playwright/test";
 import { TESTID_CLICK_EVENT_NAME, TESTID_CLICK_EVENT_STRICT_FLAG } from "../click-instrumentation";
 import type { TestIdClickEventDetail } from "../click-instrumentation";
+import { Pointer } from "./Pointer";
 
 // Click instrumentation is a core contract for generated POMs.
 const REQUIRE_CLICK_EVENT = true;
@@ -76,101 +77,6 @@ export class ObjectId {
   }
 }
 
-const cursorImageId = "mouse_follower";
-const cursorAnnotationId = "cursor-annotation";
-
-export type PlaywrightAnimationOptions = false | {
-  pointer?: {
-    durationMilliseconds?: number;
-    transitionStyle?: "linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out";
-    clickDelayMilliseconds?: number;
-  };
-  keyboard?: {
-    typeDelayMilliseconds?: number;
-  };
-};
-
-const animationGlobalKey = "__VUE_TESTID_PLAYWRIGHT_ANIMATION__";
-
-/**
- * Centralized hook for Playwright fixtures to configure animation options.
- *
- * Generated POMs read these options via globalThis as a lightweight cross-cutting
- * configuration mechanism.
- */
-export function setPlaywrightAnimationOptions(animation: PlaywrightAnimationOptions): void {
-  Reflect.set(globalThis, animationGlobalKey, animation);
-}
-
-function getAnimationOptions(): PlaywrightAnimationOptions {
-  const fromFixture = Reflect.get(globalThis, animationGlobalKey);
-  if (fromFixture === false || typeof fromFixture === "object")
-    return fromFixture as PlaywrightAnimationOptions;
-
-  // If this code is used outside our standard fixtures, fall back to defaults.
-  return {
-    pointer: {
-      durationMilliseconds: 250,
-      transitionStyle: "ease-in-out",
-      clickDelayMilliseconds: 0,
-    },
-    keyboard: {
-      typeDelayMilliseconds: 100,
-    },
-  };
-}
-
-function getPointerMoveDurationMs(animation: PlaywrightAnimationOptions): number {
-  if (animation === false) return 0;
-  const ms = animation.pointer?.durationMilliseconds;
-  return typeof ms === "number" && Number.isFinite(ms) && ms >= 0 ? ms : 250;
-}
-
-function getPointerTransitionStyle(animation: PlaywrightAnimationOptions): string {
-  if (animation === false) return "linear";
-  const style = animation.pointer?.transitionStyle;
-  return typeof style === "string" && style.trim() ? style.trim() : "ease-in-out";
-}
-
-function getPointerClickDelayMs(animation: PlaywrightAnimationOptions): number {
-  if (animation === false) return 0;
-  const ms = animation.pointer?.clickDelayMilliseconds;
-  return typeof ms === "number" && Number.isFinite(ms) && ms >= 0 ? ms : 0;
-}
-
-function getKeyboardTypeDelayMs(animation: PlaywrightAnimationOptions): number {
-  if (animation === false) return 0;
-  const ms = animation.keyboard?.typeDelayMilliseconds;
-  return typeof ms === "number" && Number.isFinite(ms) && ms >= 0 ? ms : 100;
-}
-
-class BrowserCursorCoordinates {
-  private static _X: number = 0;
-  private static _Y: number = 0;
-
-  static get X(): number {
-    return BrowserCursorCoordinates._X;
-  }
-
-  static get Y(): number {
-    return BrowserCursorCoordinates._Y;
-  }
-
-  static set X(X: number) {
-    BrowserCursorCoordinates._X = X;
-  }
-
-  static set Y(Y: number) {
-    BrowserCursorCoordinates._Y = Y;
-  }
-
-  // Resets the cached cursor coordinates.
-  static reset(): void {
-    BrowserCursorCoordinates._X = 0;
-    BrowserCursorCoordinates._Y = 0;
-  }
-}
-
 /**
  * Base Page Object Model class that provides common functionality
  * for all component-specific Page Object Models
@@ -178,10 +84,7 @@ class BrowserCursorCoordinates {
 export class BasePage {
   protected readonly testIdAttribute: string;
 
-  // Cache whether we've attempted to initialize the in-page cursor for this
-  // page instance. The initializer is idempotent and will recreate the cursor
-  // if it was removed by navigation/reload.
-  private cursorInitAttempted = false;
+  private readonly pointer: Pointer;
 
   /**
    * @param {Page} page - Playwright page object
@@ -189,45 +92,7 @@ export class BasePage {
   constructor(protected page: PwPage, options?: { testIdAttribute?: string }) {
     this.testIdAttribute = (options?.testIdAttribute || "data-testid").trim() || "data-testid";
 
-    // Navigation/reload can wipe the cursor DOM node. Reset our cache so the
-    // next action re-initializes the cursor and resets cached coordinates.
-    this.page.on("framenavigated", (frame) => {
-      try {
-        if (frame === this.page.mainFrame()) {
-          this.cursorInitAttempted = false;
-        }
-      }
-      catch {
-        // Ignore; page may already be closing.
-      }
-    });
-  }
-
-  protected selectorForTestId(testId: string): string {
-    return `[${this.testIdAttribute}="${testId}"]`;
-  }
-
-  protected locatorByTestId(testId: string): PwLocator {
-    return this.page.locator(this.selectorForTestId(testId));
-  }
-
-  /**
-   * Creates an indexable proxy for keyed elements so generated POMs can expose
-   * ergonomic accessors like:
-   *   expect(page.SaveButton["MyKey"]).toBeVisible();
-   */
-  protected keyedLocators<TKey extends string>(getLocator: (key: TKey) => PwLocator): Record<TKey, PwLocator> {
-    const handler: ProxyHandler<object> = {
-      get: (_t, prop) => {
-        // Avoid confusing Promise-like detection and ignore symbols.
-        if (prop === "then" || typeof prop === "symbol") {
-          return undefined;
-        }
-        return getLocator(String(prop) as TKey);
-      },
-    };
-
-    return new Proxy({}, handler) as Record<TKey, PwLocator>;
+    this.pointer = new Pointer(this.page, this.testIdAttribute);
   }
 
   private async waitForTestIdClickEventAfter(testId: string, options?: { timeoutMs?: number }): Promise<void> {
@@ -257,14 +122,16 @@ export class BasePage {
               try {
                 type GlobalWithFlag = typeof globalThis & { [k: string]: boolean | undefined };
                 (g as GlobalWithFlag)[strictFlagName] = true;
-              } catch { /* noop */ }
+              }
+              catch { /* noop */ }
             }
 
             const cleanup = (timer: ReturnType<typeof setTimeout>, onEvent: (evt: Event) => void) => {
               clearTimeout(timer);
               try {
                 g.removeEventListener(eventName, onEvent);
-              } catch { /* noop */ }
+              }
+              catch { /* noop */ }
             };
 
             let finished = false;
@@ -314,7 +181,8 @@ export class BasePage {
                 console.log(`[testid-click-event][page] addEventListener(${eventName}) for '${expectedTestId}'`);
               }
               g.addEventListener(eventName, onEvent);
-            } catch {
+            }
+            catch {
               finishErr(new Error(`Click instrumentation not available (addEventListener threw) for '${expectedTestId}'`));
             }
           });
@@ -341,8 +209,31 @@ export class BasePage {
     }
   }
 
-  private getPointerMoveDurationMs(): number {
-    return getPointerMoveDurationMs(getAnimationOptions());
+  protected selectorForTestId(testId: string): string {
+    return `[${this.testIdAttribute}="${testId}"]`;
+  }
+
+  protected locatorByTestId(testId: string): PwLocator {
+    return this.page.locator(this.selectorForTestId(testId));
+  }
+
+  /**
+   * Creates an indexable proxy for keyed elements so generated POMs can expose
+   * ergonomic accessors like:
+   *   expect(page.SaveButton["MyKey"]).toBeVisible();
+   */
+  protected keyedLocators<TKey extends string>(getLocator: (key: TKey) => PwLocator): Record<TKey, PwLocator> {
+    const handler: ProxyHandler<object> = {
+      get: (_t, prop) => {
+        // Avoid confusing Promise-like detection and ignore symbols.
+        if (prop === "then" || typeof prop === "symbol") {
+          return undefined;
+        }
+        return getLocator(String(prop) as TKey);
+      },
+    };
+
+    return new Proxy({}, handler) as Record<TKey, PwLocator>;
   }
 
   public async getObjectId(options?: { timeoutMs?: number }): Promise<ObjectId> {
@@ -542,286 +433,37 @@ export class BasePage {
     return rootProxy;
   }
 
-  protected async animateCursorToElement(
-    selector: string | PwLocator,
-    executeClick = true,
-    delay: number = 100,
-    annotationText?: string,
-    waitForInstrumentationEvent: boolean = true,
-  ): Promise<PwLocator> {
-    await this.enableCursor();
-
-    // Interpret the public "delay" argument as a multiplier of our configured move duration.
-    // Keeping a "delay" parameter in the API lets existing generated methods control pacing
-    // (200 vs 100) while the config controls the base speed.
-    const baseDurationMs = this.getPointerMoveDurationMs();
-    const delayMultiplier = delay <= 0 ? 0 : delay / 100;
-    const configuredDurationMs = Math.round(baseDurationMs * delayMultiplier);
-    const transitionStyle = getPointerTransitionStyle(getAnimationOptions());
-    const element = typeof selector === "string" ? this.page.locator(selector) : selector;
-    if (!element) {
-      throw new Error(`Element with selector "${selector}" not found`);
-    }
-    const startX = BrowserCursorCoordinates.X;
-    const startY = BrowserCursorCoordinates.Y;
-
-    // Do scroll + geometry + annotation + cursor animation (and optional click
-    // pulse) in a single browser-context evaluation. Movement completion is
-    // detected via transitionend inside the page.
-    const { endX, endY, distance, durationMs, testId, instrumented } = await element.evaluate(
-      async (el, args) => {
-        const {
-          cursorImageId,
-          annotationId,
-          annotationText,
-          startX,
-          startY,
-          durationMs,
-          transitionStyle,
-          pulseOnArrival,
-          testIdAttribute,
-        } = args;
-
-        // Scroll the element into view before measuring.
-        try {
-          (el as HTMLElement).scrollIntoView({ block: "center", inline: "center", behavior: "instant" as ScrollBehavior });
-        }
-        catch {
-          try {
-            (el as HTMLElement).scrollIntoView();
-          }
-          catch { /* noop */ }
-        }
-
-        // Compute target coordinates relative to the viewport.
-        const rect = (el as Element).getBoundingClientRect();
-        const endX = rect.left + rect.width / 2;
-        const endY = rect.top + rect.height / 2;
-        const dx = endX - startX;
-        const dy = endY - startY;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-
-        const moveDurationMs = durationMs > 0 && distance > 0 ? durationMs : 0;
-
-        if (annotationText) {
-          const prev = document.getElementById(annotationId);
-          if (prev) prev.remove();
-
-          const annotation = document.createElement("div");
-          annotation.id = annotationId;
-          annotation.style.cssText = `
-            position: fixed;
-            background-color: red;
-            color: white;
-            padding: 5px;
-            border-radius: 3px;
-            font-size: 14px;
-            pointer-events: none;
-            z-index: 99999999999;
-            left: ${endX + 20}px;
-            top: ${endY - 30}px;
-          `;
-          annotation.textContent = annotationText;
-          document.body.appendChild(annotation);
-
-          // Auto-remove to avoid extra round-trips and to remain navigation-safe.
-          const cleanupAfterMs = Math.max(500, (moveDurationMs * 2) + 750);
-          setTimeout(() => {
-            try { annotation.remove(); } catch { /* noop */ }
-          }, cleanupAfterMs);
-        }
-
-        const cursorImage = document.getElementById(cursorImageId) as HTMLElement | null;
-        if (cursorImage) {
-          // Ensure we start from the cached coordinates before animating.
-          cursorImage.style.transition = "";
-          cursorImage.style.willChange = "left, top, transform";
-          cursorImage.style.left = `${startX}px`;
-          cursorImage.style.top = `${startY}px`;
-          void cursorImage.offsetWidth;
-
-          if (moveDurationMs > 0 && distance > 0) {
-            cursorImage.style.transition = `left ${moveDurationMs}ms ${transitionStyle}, top ${moveDurationMs}ms ${transitionStyle}`;
-          }
-          cursorImage.style.left = `${endX}px`;
-          cursorImage.style.top = `${endY}px`;
-
-          // Wait for movement completion without a Playwright-side timeout.
-          if (moveDurationMs > 0 && distance > 0) {
-            await new Promise<void>((resolve) => {
-              let done = false;
-              let onEnd: ((evt: TransitionEvent) => void) | null = null;
-              const finish = () => {
-                if (done) return;
-                done = true;
-                if (onEnd) {
-                  cursorImage.removeEventListener("transitionend", onEnd);
-                }
-                resolve();
-              };
-
-              onEnd = (evt: TransitionEvent) => {
-                if (evt.target !== cursorImage) return;
-                if (evt.propertyName !== "left" && evt.propertyName !== "top") return;
-                finish();
-              };
-
-              cursorImage.addEventListener("transitionend", onEnd);
-              // Fallback in case transitionend doesn't fire.
-              setTimeout(finish, moveDurationMs + 100);
-            });
-          }
-
-          if (pulseOnArrival) {
-            // Pulse the cursor in-page for visual feedback.
-            cursorImage.style.transition = "transform 120ms";
-            cursorImage.style.transform = "scale(0.5)";
-            setTimeout(() => {
-              cursorImage.style.transform = "scale(1)";
-            }, 100);
-          }
-        }
-
-        const testId = (el as HTMLElement | null)?.getAttribute?.(testIdAttribute) ?? null;
-        const instrumented = ((el as HTMLElement | null)?.getAttribute?.("data-click-instrumented") ?? "") === "1";
-
-        return { endX, endY, distance, durationMs: moveDurationMs, testId, instrumented };
-      },
-      {
-        cursorImageId,
-        annotationId: cursorAnnotationId,
-        annotationText: annotationText ?? "",
-        startX,
-        startY,
-        durationMs: configuredDurationMs,
-        transitionStyle,
-        pulseOnArrival: executeClick,
-        testIdAttribute: this.testIdAttribute,
-      },
-    );
-
-    console.warn(`Target coordinates: (${endX}, ${endY})`);
-    if (durationMs === 0) {
-      console.warn("Skipping animation (delay=0)");
-    }
-    else if (distance === 0) {
-      console.warn("Cursor already at target (distance=0); skipping animation");
-    }
-    else {
-      console.warn(`Animating cursor with CSS transition (duration=${durationMs}ms, distance=${distance}px)`);
-    }
-
-    BrowserCursorCoordinates.X = endX;
-    BrowserCursorCoordinates.Y = endY;
-
-    if (executeClick) {
-      const clickDelayMs = getPointerClickDelayMs(getAnimationOptions());
-      const waitAfter = (waitForInstrumentationEvent && testId && instrumented)
-        ? this.waitForTestIdClickEventAfter(testId)
-        : null;
-
-      console.warn(`Clicking ${typeof selector === "object" && "role" in selector ? `getByRole('${selector.role}', { name: ${typeof selector === "string" ? `'${selector}'` : selector} })` : selector}`);
-      await element.click({ timeout: 1000, force: true, delay: clickDelayMs });
-
-      if (waitAfter) {
-        await waitAfter;
-      }
-    }
-    else {
-      console.warn(`NOT clicking ${selector} (executeClick=false)`);
-      // No additional Playwright-side wait; the cursor animation already waited in-page.
-    }
-
-    return element;
-  }
-
-  protected async animateCursorToElementAndClickAndFill(selector: string | PwLocator, textContent: string, executeClick = true, delay: number = 100, annotationText?: string) {
-    const animation = getAnimationOptions();
-    const element = await this.animateCursorToElement(selector, executeClick, delay, annotationText);
-    await element.clear();
-    await this.page.keyboard.type(textContent, { delay: getKeyboardTypeDelayMs(animation) });
-    // // Use fill() to ensure frameworks receive the right input events.
-    // await element.fill(textContent);
-  }
-
-  /**
-   * Moves the animated cursor to an element and (optionally) clicks it.
-   *
-   * This is referenced by generated POM classes.
-   */
-  protected async animateCursorToElementAndClick(selector: string | PwLocator, executeClick = true, delay: number = 100, annotationText: string = ""): Promise<PwLocator> {
-    return await this.animateCursorToElement(selector, executeClick, delay, annotationText);
-  }
-
-  private async enableCursor() {
-    // Avoid re-running cursor initialization on every action. This flag is reset
-    // on navigation/reload.
-    if (this.cursorInitAttempted) {
-      return;
-    }
-
-    const created = await this.page.evaluate((cursorImageId) => {
-      const existing = document.getElementById(cursorImageId);
-      if (existing) {
-        return false;
-      }
-
-      const seleniumFollowerImg = document.createElement("img");
-      seleniumFollowerImg.setAttribute("src", "data:image/png;base64,"
-        + "iVBORw0KGgoAAAANSUhEUgAAABQAAAAeCAQAAACGG/bgAAAAAmJLR0QA/4ePzL8AAAAJcEhZcwAA"
-        + "HsYAAB7GAZEt8iwAAAAHdElNRQfgAwgMIwdxU/i7AAABZklEQVQ4y43TsU4UURSH8W+XmYwkS2I0"
-        + "9CRKpKGhsvIJjG9giQmliHFZlkUIGnEF7KTiCagpsYHWhoTQaiUUxLixYZb5KAAZZhbunu7O/PKf"
-        + "e+fcA+/pqwb4DuximEqXhT4iI8dMpBWEsWsuGYdpZFttiLSSgTvhZ1W/SvfO1CvYdV1kPghV68a3"
-        + "0zzUWZH5pBqEui7dnqlFmLoq0gxC1XfGZdoLal2kea8ahLoqKXNAJQBT2yJzwUTVt0bS6ANqy1ga"
-        + "VCEq/oVTtjji4hQVhhnlYBH4WIJV9vlkXLm+10R8oJb79Jl1j9UdazJRGpkrmNkSF9SOz2T71s7M"
-        + "SIfD2lmmfjGSRz3hK8l4w1P+bah/HJLN0sys2JSMZQB+jKo6KSc8vLlLn5ikzF4268Wg2+pPOWW6"
-        + "ONcpr3PrXy9VfS473M/D7H+TLmrqsXtOGctvxvMv2oVNP+Av0uHbzbxyJaywyUjx8TlnPY2YxqkD"
-        + "dAAAAABJRU5ErkJggg==");
-      seleniumFollowerImg.setAttribute("id", cursorImageId);
-      seleniumFollowerImg.setAttribute("style", "position: absolute; z-index: 99999999999; pointer-events: none; left:0; top:0");
-      document.body.appendChild(seleniumFollowerImg);
-      return true;
-    }, cursorImageId);
-
-    this.cursorInitAttempted = true;
-    if (created) {
-      BrowserCursorCoordinates.reset();
-    }
-  }
-
   /**
    * Clicks on an element with the specified data-testid
    * @param testId The data-testid of the element to click
    */
   protected async clickByTestId(testId: string, annotationText: string = "", wait: boolean = true): Promise<void> {
-    await this.animateCursorToElement(this.selectorForTestId(testId), true, 200, annotationText, wait);
+    await this.pointer.animateCursorToElement(this.selectorForTestId(testId), true, 200, annotationText, {
+      afterClick: async ({ testId: clickedTestId, instrumented }) => {
+        if (!wait) return;
+        if (!clickedTestId || !instrumented) return;
+        await this.waitForTestIdClickEventAfter(clickedTestId);
+      },
+    });
   }
 
   public async clickLocator(locator: PwLocator, annotationText: string = "", wait: boolean = true): Promise<void> {
-    await this.animateCursorToElement(locator, true, 200, annotationText, wait);
-  }
-
-  /**
-   * Clicks a locator but does NOT wait for the click-instrumentation event.
-   *
-   * Use this when the underlying click handler intentionally stays pending while a modal is open
-   * (e.g., it awaits user confirmation). Waiting for the "after" phase in that situation can
-   * deadlock the test.
-   */
-  public async clickLocatorNoWait(locator: PwLocator, annotationText: string = ""): Promise<void> {
-    await this.clickLocator(locator, annotationText, false);
+    await this.pointer.animateCursorToElement(locator, true, 200, annotationText, {
+      afterClick: async ({ testId: clickedTestId, instrumented }) => {
+        if (!wait) return;
+        if (!clickedTestId || !instrumented) return;
+        await this.waitForTestIdClickEventAfter(clickedTestId);
+      },
+    });
   }
 
   protected async fillInputByTestId(testId: string, text: string, annotationText: string = ""): Promise<void> {
-    await this.animateCursorToElementAndClickAndFill(this.selectorForTestId(testId), text, true, 200, annotationText);
-  }
-
-  /**
-   * Moves the animated cursor to an element without clicking.
-   * Useful for hover interactions and for ensuring the cursor animation is consistently used.
-   */
-  protected async moveCursorTo(selector: string | PwLocator, delay: number = 200, annotationText: string = ""): Promise<PwLocator> {
-    return await this.animateCursorToElement(selector, false, delay, annotationText);
+    await this.pointer.animateCursorToElementAndClickAndFill(this.selectorForTestId(testId), text, true, 200, annotationText, {
+      afterClick: async ({ testId: clickedTestId, instrumented }) => {
+        if (!clickedTestId || !instrumented) return;
+        await this.waitForTestIdClickEventAfter(clickedTestId);
+      },
+    });
   }
 
   /**
@@ -832,23 +474,38 @@ export class BasePage {
     const root = this.locatorByTestId(testId);
     const input = root.locator("input");
 
-    await this.moveCursorTo(input, 200, annotationText);
+    await this.pointer.animateCursorToElement(input, false, 200, annotationText);
     await input.click({ force: true });
-    await this.animateCursorToElementAndClickAndFill(input, value, false, 200, annotationText);
+    await this.pointer.animateCursorToElementAndClickAndFill(input, value, false, 200, annotationText);
     await this.page.waitForTimeout(timeOut);
 
     const option = root.locator("ul.vs__dropdown-menu li[role='option']").first();
     if (await option.count()) {
-      await this.animateCursorToElement(option, true, 200, annotationText);
+      await this.pointer.animateCursorToElement(option, true, 200, annotationText, {
+        afterClick: async ({ testId: clickedTestId, instrumented }) => {
+          if (!clickedTestId || !instrumented) return;
+          await this.waitForTestIdClickEventAfter(clickedTestId);
+        },
+      });
     }
   }
 
   public async fillInputByLocator(locator: PwLocator, text: string, annotationText: string = ""): Promise<void> {
-    await this.animateCursorToElementAndClickAndFill(locator, text, true, 200, annotationText);
+    await this.pointer.animateCursorToElementAndClickAndFill(locator, text, true, 200, annotationText, {
+      afterClick: async ({ testId: clickedTestId, instrumented }) => {
+        if (!clickedTestId || !instrumented) return;
+        await this.waitForTestIdClickEventAfter(clickedTestId);
+      },
+    });
   }
 
   protected async clickByAriaLabel(ariaLabel: string, annotationText: string = ""): Promise<void> {
-    await this.animateCursorToElement(`[aria-label="${ariaLabel}"]`, true, 200, annotationText);
+    await this.pointer.animateCursorToElement(`[aria-label="${ariaLabel}"]`, true, 200, annotationText, {
+      afterClick: async ({ testId: clickedTestId, instrumented }) => {
+        if (!clickedTestId || !instrumented) return;
+        await this.waitForTestIdClickEventAfter(clickedTestId);
+      },
+    });
   }
 
   /**
@@ -895,7 +552,7 @@ export class BasePage {
    */
   protected async hoverByTestId(testId: string): Promise<void> {
     const selector = this.selectorForTestId(testId);
-    await this.moveCursorTo(selector);
+    await this.pointer.animateCursorToElement(selector, false, 200, "");
     await this.page.hover(selector);
   }
 

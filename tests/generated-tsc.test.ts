@@ -107,6 +107,20 @@ describe("generated output", () => {
       ].join("\n"),
     );
 
+    // The generator now also inlines Pointer.ts. Provide a minimal stub next to BasePage.ts.
+    const pointerPath = path.join(tempRoot, "Pointer.ts");
+    writeFile(
+      pointerPath,
+      [
+        "export type PlaywrightAnimationOptions = any;",
+        "export function setPlaywrightAnimationOptions(_animation: PlaywrightAnimationOptions): void {}",
+        "export class Pointer {",
+        "  public constructor(_page: any, _testIdAttribute: string) {}",
+        "}",
+        "",
+      ].join("\n"),
+    );
+
     const componentName = "TestComponent";
 
     const formattedDataTestId = "TestComponent-${key}-Save-button";
@@ -186,6 +200,20 @@ describe("generated output", () => {
         "  protected async fillInputByTestId(_testId: string, _text: string, _annotationText: string = ''): Promise<void> {}",
         "  protected async selectVSelectByTestId(_testId: string, _value: string, _timeOut = 500, _annotationText: string = ''): Promise<void> {}",
         "  protected async animateCursorToElement(_selector: string, _executeClick = true, _delay = 100, _annotationText: string = '', _waitForInstrumentationEvent = true): Promise<void> {}",
+        "}",
+        "",
+      ].join("\n"),
+    );
+
+    // The generator now also inlines Pointer.ts. Provide a minimal stub next to BasePage.ts.
+    const pointerPath = path.join(tempRoot, "Pointer.ts");
+    writeFile(
+      pointerPath,
+      [
+        "export type PlaywrightAnimationOptions = any;",
+        "export function setPlaywrightAnimationOptions(_animation: PlaywrightAnimationOptions): void {}",
+        "export class Pointer {",
+        "  public constructor(_page: any, _testIdAttribute: string) {}",
         "}",
         "",
       ].join("\n"),

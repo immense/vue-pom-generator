@@ -1,9 +1,16 @@
 import path from "node:path";
 import process from "node:process";
+import { createRequire } from "node:module";
 import { IComponentDependencies, IDataTestId, PomExtraClickMethodSpec, PomPrimarySpec, upperFirst } from "../utils";
 import { parseRouterFileFromCwd } from "../router-introspection";
 import fs from "node:fs";
 // NOTE: This module intentionally does not depend on Babel parsing.
+
+// Intentionally imported so tooling understands this exported helper is part of the
+// generated POM public surface (it is consumed by generated Playwright fixtures).
+import { setPlaywrightAnimationOptions } from "./Pointer";
+
+void setPlaywrightAnimationOptions;
 
 import { generateViewObjectModelMethodContent } from "../method-generation";
 export { generateViewObjectModelMethodContent };
@@ -1117,17 +1124,56 @@ async function generateAggregatedFiles(
         //   "Cannot find module" at runtime.
         //
         // Inlining keeps the generated POMs self-contained and stable across platforms.
-        const inlineBasePageModule = () => {
-            const clickInstrumentationInline = [
-                "export const TESTID_CLICK_EVENT_NAME = \"__testid_event__\";",
-                "export const TESTID_CLICK_EVENT_STRICT_FLAG = \"__testid_click_event_strict__\";",
-                "export interface TestIdClickEventDetail {",
-                "  testId?: string;",
-                "  phase?: \"before\" | \"after\" | \"error\" | string;",
-                "  err?: string;",
-                "}",
-            ].join("\n");
+        const clickInstrumentationInline = [
+            "export const TESTID_CLICK_EVENT_NAME = \"__testid_event__\";",
+            "export const TESTID_CLICK_EVENT_STRICT_FLAG = \"__testid_click_event_strict__\";",
+            "export interface TestIdClickEventDetail {",
+            "  testId?: string;",
+            "  phase?: \"before\" | \"after\" | \"error\" | string;",
+            "  err?: string;",
+            "}",
+        ].join("\n");
 
+        const inlinePointerModule = () => {
+            const require = createRequire(import.meta.url);
+
+            // Pointer's implementation lives in playwright-test-videos, but we inline it into the
+            // aggregated POM output for runtime stability (same rationale as BasePage above).
+            const pwVideosPkgJson = require.resolve("playwright-test-videos/package.json");
+            const pwVideosRoot = path.dirname(pwVideosPkgJson);
+            const pointerPath = path.join(pwVideosRoot, "src", "pointer", "Pointer.ts");
+
+            let pointerSource = "";
+            try {
+                pointerSource = fs.readFileSync(pointerPath, "utf8");
+            }
+            catch {
+                throw new Error(`Failed to read Pointer.ts at ${pointerPath}`);
+            }
+
+            // Replace the click-instrumentation import with an inline copy.
+            pointerSource = pointerSource.replace(
+                /import\s*\{[\s\S]*?\}\s*from\s*["']\.\.\/click-instrumentation["'];?\s*/,
+                `${clickInstrumentationInline}\n\n`,
+            );
+
+            // If Pointer uses a split value import + type-only import, remove the type-only import too.
+            // The inline block already declares TestIdClickEventDetail.
+            pointerSource = pointerSource.replace(
+                /import\s+type\s*\{\s*TestIdClickEventDetail\s*\}\s*from\s*["']\.\.\/click-instrumentation["'];?\s*/g,
+                "",
+            );
+
+            // The aggregated file already imports these Playwright types once at the top.
+            pointerSource = pointerSource.replace(
+                /import\s+type\s*\{\s*Locator\s+as\s+PwLocator\s*,\s*Page\s+as\s+PwPage\s*\}\s*from\s*["']@playwright\/test["'];?\s*/,
+                "",
+            );
+
+            return pointerSource.trim();
+        };
+
+        const inlineBasePageModule = () => {
             let basePageSource = "";
             try {
                 basePageSource = fs.readFileSync(basePageClassPath, "utf8");
@@ -1156,9 +1202,16 @@ async function generateAggregatedFiles(
                 "",
             );
 
+            // BasePage references Pointer, but in aggregated output we inline Pointer above.
+            basePageSource = basePageSource.replace(
+                /import\s*\{\s*Pointer\s*\}\s*from\s*["']\.\/Pointer["'];?\s*/g,
+                "",
+            );
+
             return basePageSource.trim();
         };
 
+        const pointerInline = inlinePointerModule();
         const basePageInline = inlineBasePageModule();
 
         // Handwritten POM helpers for complicated/third-party widgets.
@@ -1402,6 +1455,8 @@ async function generateAggregatedFiles(
         const baseContent = [
             header,
             ...imports,
+            "",
+            pointerInline,
             "",
             basePageInline,
             "",
