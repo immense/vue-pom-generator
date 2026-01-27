@@ -588,7 +588,7 @@ function generateAggregatedCSharpFiles(
                 chunks.push(`    public async Task<${target}> ${actionName}(${sig})`);
                 chunks.push("    {");
                 if (pom.formattedDataTestId.includes("${") || allTestIds.length <= 1) {
-                    chunks.push(`        await ${locatorName}${pom.formattedDataTestId.includes("${") ? "(" + args + ")" : ""}.ClickAsync();`);
+                    chunks.push(`        await ${locatorName}${pom.formattedDataTestId.includes("${") ? `(${  args  })` : ""}.ClickAsync();`);
                 }
                 else {
                     chunks.push("        Exception? lastError = null;");
@@ -600,7 +600,7 @@ function generateAggregatedCSharpFiles(
                     chunks.push("                if (await locator.CountAsync() > 0)");
                     chunks.push("                {");
                     chunks.push("                    await locator.ClickAsync();");
-                    chunks.push("                    return new " + target + "(Page);");
+                    chunks.push(`                    return new ${  target  }(Page);`);
                     chunks.push("                }");
                     chunks.push("            }");
                     chunks.push("            catch (Exception e)");
@@ -619,7 +619,7 @@ function generateAggregatedCSharpFiles(
             chunks.push(`    public async Task ${actionName}(${sig})`);
             chunks.push("    {");
 
-            const callSuffix = pom.formattedDataTestId.includes("${") ? "(" + args + ")" : "";
+            const callSuffix = pom.formattedDataTestId.includes("${") ? `(${  args  })` : "";
 
             const emitActionCall = (locatorAccess: string) => {
                 if (pom.nativeRole === "input") {

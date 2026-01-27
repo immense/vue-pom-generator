@@ -1,3 +1,11 @@
+<script setup lang="ts">
+const shouldAbort = true
+const item = { key: "abc" }
+function cancel(_key: string) {
+  // noop
+}
+</script>
+
 <template>
   <div>
     <ImmyButton v-if="shouldAbort" variant="danger" @click="cancel(item.key)">
@@ -10,11 +18,3 @@
     </ImmyButton>
   </div>
 </template>
-
-<script setup lang="ts">
-const shouldAbort = true
-const item = { key: "abc" }
-function cancel(_key: string) {
-  // noop
-}
-</script>

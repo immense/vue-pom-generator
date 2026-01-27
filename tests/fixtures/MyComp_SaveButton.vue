@@ -1,3 +1,5 @@
 <template>
-  <button @click="save()">Save</button>
+  <button @click="save()">
+    Save
+  </button>
 </template>

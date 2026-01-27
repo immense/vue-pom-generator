@@ -94,10 +94,10 @@ function firstElement(root: RootNode): ElementNode {
         if (found) return found;
       }
     }
-      expect(toPascalCase("hello world")).toBe("HelloWorld");
-      expect(isSimpleExpressionNode(null)).toBe(false);
-      expect(isSimpleExpressionNode({})).toBe(false);
-      expect(isSimpleExpressionNode({ type: NodeTypes.SIMPLE_EXPRESSION } as any)).toBe(true);
+    expect(toPascalCase("hello world")).toBe("HelloWorld");
+    expect(isSimpleExpressionNode(null)).toBe(false);
+    expect(isSimpleExpressionNode({})).toBe(false);
+    expect(isSimpleExpressionNode({ type: NodeTypes.SIMPLE_EXPRESSION } as any)).toBe(true);
 
     return null;
   };
