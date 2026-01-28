@@ -437,7 +437,7 @@ export class BasePage {
    * Clicks on an element with the specified data-testid
    * @param testId The data-testid of the element to click
    */
-  protected async clickByTestId(testId: string, annotationText: string = "", wait: boolean = true): Promise<void> {
+  public async clickByTestId(testId: string, annotationText: string = "", wait: boolean = true): Promise<void> {
     await this.pointer.animateCursorToElement(this.selectorForTestId(testId), true, 200, annotationText, {
       afterClick: async ({ testId: clickedTestId, instrumented }) => {
         if (!wait) return;
