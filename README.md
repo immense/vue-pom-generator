@@ -80,6 +80,12 @@ export default defineConfig(() => {
 					// Default: tests/playwright/generated
 					outDir: "tests/playwright/generated",
 
+					// Controls how to handle duplicate generated member names within a single POM class.
+					// - "error": fail compilation
+					// - "warn": warn and suffix
+					// - "suffix": suffix silently (default)
+					nameCollisionBehavior: "suffix",
+
 					// Enable router introspection. When provided, router-aware POM helpers are generated.
 					router: { entry: "src/router.ts" },
 

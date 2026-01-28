@@ -23,6 +23,7 @@ interface DevProcessorOptions {
   basePageClassPath: string;
 
   outDir?: string;
+  emitLanguages?: Array<"ts" | "csharp">;
   generateFixtures?: boolean | string | { outDir?: string };
   customPomAttachments?: Array<{ className: string; propertyName: string; attachWhenUsesComponents: string[]; attachTo?: "views" | "components" | "both" }>;
   customPomDir?: string;
@@ -44,6 +45,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     normalizedBasePagePath,
     basePageClassPath,
     outDir,
+    emitLanguages,
     generateFixtures,
     customPomAttachments,
     customPomDir,
@@ -239,6 +241,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         const t0 = performance.now();
         generateFiles(snapshotHierarchy, snapshotVuePathMap, normalizedBasePagePath, {
           outDir,
+          emitLanguages,
           generateFixtures,
           customPomAttachments,
           projectRoot: projectRootRef.current,

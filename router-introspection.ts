@@ -113,13 +113,13 @@ interface GlobalDomShim {
   localStorage?: Storage;
   sessionStorage?: Storage;
   [key: string]:
-    | object
-    | string
-    | number
-    | boolean
-    | null
-    | undefined
-    | ((...args: never[]) => object);
+  | object
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | ((...args: never[]) => object);
 }
 
 type DocumentWithQueryCommandSupported = Document & {
@@ -284,27 +284,27 @@ async function ensureDomShim() {
   if (!g.navigator)
     g.navigator = dom.window.navigator;
   if (!g.history)
-    g.history = { pushState() {}, replaceState() {} };
+    g.history = { pushState() { }, replaceState() { } };
 
   if (!g.MutationObserver) {
     g.MutationObserver = class {
-      disconnect() {}
-      observe() {}
+      disconnect() { }
+      observe() { }
       takeRecords() { return []; }
     };
   }
   if (!g.ResizeObserver) {
     g.ResizeObserver = class {
-      disconnect() {}
-      observe() {}
-      unobserve() {}
+      disconnect() { }
+      observe() { }
+      unobserve() { }
     };
   }
   if (!g.IntersectionObserver) {
     g.IntersectionObserver = class {
-      disconnect() {}
-      observe() {}
-      unobserve() {}
+      disconnect() { }
+      observe() { }
+      unobserve() { }
       takeRecords() { return []; }
     };
   }

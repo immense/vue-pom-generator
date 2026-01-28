@@ -12,9 +12,13 @@ import type { ElementMetadata } from "../metadata-collector";
 import { createTestIdTransform } from "../transform";
 import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 
+import type { VuePomGeneratorLogger } from "./logger";
+import type { PomNameCollisionBehavior } from "./types";
+
 interface InternalFactoryOptions {
   vueOptions?: VuePluginOptions;
   existingIdBehavior: "preserve" | "overwrite" | "error";
+  nameCollisionBehavior: PomNameCollisionBehavior;
   nativeWrappers: NativeWrappersMap;
   elementMetadata: Map<string, Map<string, ElementMetadata>>;
   semanticNameMap: Map<string, string>;
@@ -23,12 +27,14 @@ interface InternalFactoryOptions {
   excludedComponents: string[];
   getViewsDirAbs: () => string;
   testIdAttribute: string;
+  loggerRef: { current: VuePomGeneratorLogger };
 }
 
 export function createVuePluginWithTestIds(options: InternalFactoryOptions): PluginOption {
   const {
     vueOptions,
     existingIdBehavior,
+    nameCollisionBehavior,
     nativeWrappers,
     elementMetadata,
     semanticNameMap,
@@ -37,6 +43,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): Plu
     excludedComponents,
     getViewsDirAbs,
     testIdAttribute,
+    loggerRef,
   } = options;
 
   const userTemplate = vueOptions?.template ?? {};
@@ -75,7 +82,12 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): Plu
               nativeWrappers,
               excludedComponents,
               getViewsDirAbs(),
-              { existingIdBehavior, testIdAttribute },
+              {
+                existingIdBehavior,
+                testIdAttribute,
+                nameCollisionBehavior,
+                warn: (message) => loggerRef.current.warn(message),
+              },
             ),
           );
         }
@@ -91,7 +103,12 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): Plu
             nativeWrappers,
             excludedComponents,
             getViewsDirAbs(),
-            { existingIdBehavior, testIdAttribute },
+            {
+              existingIdBehavior,
+              testIdAttribute,
+              nameCollisionBehavior,
+              warn: (message) => loggerRef.current.warn(message),
+            },
           );
           perFileTransform.set(componentName, transform);
         }

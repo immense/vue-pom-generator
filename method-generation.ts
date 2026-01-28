@@ -35,11 +35,57 @@ function removeByKeySegment(value: string): string {
   return value.slice(0, idx) + value.slice(idx + "ByKey".length);
 }
 
-function generateClickMethod(methodName: string, formattedDataTestId: string, params: Record<string, string>) {
+function uniqueAlternates(primary: string, alternates: string[] | undefined): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  seen.add(primary);
+  for (const a of alternates ?? []) {
+    if (!a) {
+      continue;
+    }
+    if (seen.has(a)) {
+      continue;
+    }
+    seen.add(a);
+    out.push(a);
+  }
+  return out;
+}
+
+function testIdExpression(formattedDataTestId: string): string {
+  return formattedDataTestId.includes("${") ? `\`${formattedDataTestId}\`` : JSON.stringify(formattedDataTestId);
+}
+
+function generateClickMethod(methodName: string, formattedDataTestId: string, alternateFormattedDataTestIds: string[] | undefined, params: Record<string, string>) {
   let content: string;
   const name = `click${methodName}`;
   const paramBlock = formatParams(params);
   const paramBlockWithWait = paramBlock ? `${paramBlock}, wait: boolean = true` : "wait: boolean = true";
+
+  const alternates = uniqueAlternates(formattedDataTestId, alternateFormattedDataTestIds);
+  if (alternates.length > 0) {
+    const candidatesExpr = [formattedDataTestId, ...alternates].map(testIdExpression).join(", ");
+    const waitSignature = hasParam(params, "key") ? paramBlockWithWait : "wait: boolean = true";
+    const waitArg = "wait";
+
+    content = `${INDENT}async ${name}(${waitSignature}) {\n`
+      + `${INDENT2}const candidates = [${candidatesExpr}] as const;\n`
+      + `${INDENT2}let lastError: unknown;\n`
+      + `${INDENT2}for (const testId of candidates) {\n`
+      + `${INDENT3}const locator = this.locatorByTestId(testId);\n`
+      + `${INDENT3}try {\n`
+      + `${INDENT3}${INDENT}if (await locator.count()) {\n`
+      + `${INDENT3}${INDENT2}await this.clickLocator(locator, "", ${waitArg});\n`
+      + `${INDENT3}${INDENT2}return;\n`
+      + `${INDENT3}${INDENT}}\n`
+      + `${INDENT3}} catch (e) {\n`
+      + `${INDENT3}${INDENT}lastError = e;\n`
+      + `${INDENT3}}\n`
+      + `${INDENT2}}\n`
+      + `${INDENT2}throw (lastError instanceof Error) ? lastError : new Error("[pom] Failed to click any candidate locator for ${name}.");\n`
+      + `${INDENT}}\n`;
+    return content;
+  }
 
   if (hasParam(params, "key")) {
     content = `${INDENT}async ${name}(${paramBlockWithWait}) {\n`
@@ -100,14 +146,20 @@ function generateTypeMethod(methodName: string, formattedDataTestId: string) {
   return content;
 }
 
-function generateGetElementByDataTestId(methodName: string, nativeRole: string, formattedDataTestId: string, params: Record<string, string>) {
+function generateGetElementByDataTestId(
+  methodName: string,
+  nativeRole: string,
+  formattedDataTestId: string,
+  alternateFormattedDataTestIds: string[] | undefined,
+  getterNameOverride: string | undefined,
+  params: Record<string, string>,
+) {
   // Avoid duplicate accessors when the same base name exists for different roles.
   // Example: "PackageHash" can exist as both "-input" and "-button".
   const roleSuffix = upperFirst(nativeRole || "Element");
   const baseName = upperFirst(methodName);
-  const propertyName = baseName.endsWith(roleSuffix)
-    ? `${baseName}`
-    : `${baseName}${roleSuffix}`;
+  const hasRoleSuffix = baseName.endsWith(roleSuffix) || new RegExp(`^${roleSuffix}\\d+$`).test(baseName);
+  const propertyName = hasRoleSuffix ? `${baseName}` : `${baseName}${roleSuffix}`;
   const needsKey = hasParam(params, "key") || formattedDataTestId.includes("${key}");
 
   if (needsKey) {
@@ -116,13 +168,27 @@ function generateGetElementByDataTestId(methodName: string, nativeRole: string, 
     //   expect(pom.SaveButton[myKey]).toBeVisible();
     // When method names include the "ByKey" segment, we remove it in the exposed property
     // name so `FooByKeyButton` becomes `FooButton[key]`.
-    const keyedPropertyName = removeByKeySegment(propertyName);
+    const keyedPropertyName = getterNameOverride ?? removeByKeySegment(propertyName);
     return `${INDENT}get ${keyedPropertyName}() {\n`
       + `${INDENT2}return this.keyedLocators((key: ${keyType}) => this.locatorByTestId(\`${formattedDataTestId}\`));\n`
       + `${INDENT}}\n\n`;
   }
 
-  return `${INDENT}get ${propertyName}() {\n`
+  const finalPropertyName = getterNameOverride ?? propertyName;
+
+  const alternates = uniqueAlternates(formattedDataTestId, alternateFormattedDataTestIds);
+  if (alternates.length > 0) {
+    const all = [formattedDataTestId, ...alternates];
+    const locatorExpr = all
+      .map((id) => `this.locatorByTestId(${testIdExpression(id)})`)
+      .reduce((acc, next) => `${acc}.or(${next})`);
+
+    return `${INDENT}get ${finalPropertyName}() {\n`
+      + `${INDENT2}return ${locatorExpr};\n`
+      + `${INDENT}}\n\n`;
+  }
+
+  return `${INDENT}get ${finalPropertyName}() {\n`
     + `${INDENT2}return this.locatorByTestId("${formattedDataTestId}");\n`
     + `${INDENT}}\n\n`;
 }
@@ -133,10 +199,12 @@ function generateNavigationMethod(args: {
   baseMethodName: string;
   /** data-testid string (may include `${key}` placeholder). */
   formattedDataTestId: string;
+  /** Alternative data-testid strings that represent the same navigation action. */
+  alternateFormattedDataTestIds?: string[];
   /** Method param name->type dictionary (e.g. { key: "string" }). */
   params: Record<string, string>;
 }) {
-  const { targetPageObjectModelClass: target, baseMethodName, formattedDataTestId, params } = args;
+  const { targetPageObjectModelClass: target, baseMethodName, formattedDataTestId, alternateFormattedDataTestIds, params } = args;
 
   // IMPORTANT:
   // Navigation method names must be derived from the element's semantic name (data-testid parts)
@@ -148,8 +216,31 @@ function generateNavigationMethod(args: {
     : `goTo${target.endsWith("Page") ? target.slice(0, -"Page".length) : target}`;
 
   const signature = `public ${methodName}(${formatParams(params)}): Fluent<${target}>`;
-  const clickExpr = `\`${formattedDataTestId}\``;
+  const alternates = uniqueAlternates(formattedDataTestId, alternateFormattedDataTestIds);
+  const candidatesExpr = [formattedDataTestId, ...alternates].map(testIdExpression).join(", ");
 
+  if (alternates.length > 0) {
+    return `${INDENT}${signature} {\n`
+      + `${INDENT2}return this.fluent(async () => {\n`
+      + `${INDENT3}const candidates = [${candidatesExpr}] as const;\n`
+      + `${INDENT3}let lastError: unknown;\n`
+      + `${INDENT3}for (const testId of candidates) {\n`
+      + `${INDENT3}${INDENT}const locator = this.locatorByTestId(testId);\n`
+      + `${INDENT3}${INDENT}try {\n`
+      + `${INDENT3}${INDENT2}if (await locator.count()) {\n`
+      + `${INDENT3}${INDENT3}await this.clickLocator(locator);\n`
+      + `${INDENT3}${INDENT3}return new ${target}(this.page);\n`
+      + `${INDENT3}${INDENT2}}\n`
+      + `${INDENT3}${INDENT}} catch (e) {\n`
+      + `${INDENT3}${INDENT2}lastError = e;\n`
+      + `${INDENT3}${INDENT}}\n`
+      + `${INDENT3}}\n`
+      + `${INDENT3}throw (lastError instanceof Error) ? lastError : new Error("[pom] Failed to navigate using any candidate locator for ${methodName}.");\n`
+      + `${INDENT2}});\n`
+      + `${INDENT}}\n`;
+  }
+
+  const clickExpr = `\`${formattedDataTestId}\``;
   return `${INDENT}${signature} {\n`
     + `${INDENT2}return this.fluent(async () => {\n`
     + `${INDENT3}await this.clickByTestId(${clickExpr});\n`
@@ -163,19 +254,22 @@ export function generateViewObjectModelMethodContent(
   methodName: string,
   nativeRole: string,
   formattedDataTestId: string,
+  alternateFormattedDataTestIds: string[] | undefined,
+  getterNameOverride: string | undefined,
   params: Record<string, string>,
 ) {
   const baseMethodName = (nativeRole === "radio")
     ? (methodName || "Radio")
     : methodName;
 
-  const getElementMethod = generateGetElementByDataTestId(baseMethodName, nativeRole, formattedDataTestId, params);
+  const getElementMethod = generateGetElementByDataTestId(baseMethodName, nativeRole, formattedDataTestId, alternateFormattedDataTestIds, getterNameOverride, params);
 
   if (targetPageObjectModelClass) {
     return getElementMethod + generateNavigationMethod({
       targetPageObjectModelClass,
       baseMethodName,
       formattedDataTestId,
+      alternateFormattedDataTestIds,
       params,
     });
   }
@@ -193,5 +287,5 @@ export function generateViewObjectModelMethodContent(
     return getElementMethod + generateRadioMethod(baseMethodName || "Radio", formattedDataTestId);
   }
 
-  return getElementMethod + generateClickMethod(baseMethodName, formattedDataTestId, params);
+  return getElementMethod + generateClickMethod(baseMethodName, formattedDataTestId, alternateFormattedDataTestIds, params);
 }

@@ -1,3 +1,5 @@
 <template>
-  <RouterLink :to="{ name: 'users' }">Users</RouterLink>
+  <RouterLink :to="{ name: 'users' }">
+    Users
+  </RouterLink>
 </template>

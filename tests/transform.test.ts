@@ -338,6 +338,40 @@ describe('createTestIdTransform', () => {
     expect(testId).toBe('`MyComp-${item.id}-Select-button`')
   })
 
+  it('merges @click POM members by click handler identity when nameCollisionBehavior is error', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+
+    // In this fixture, both buttons use the same @click handler expression.
+    // With nameCollisionBehavior="error" we expect compilation to succeed because the generator
+    // merges by click handler identity instead of trying to disambiguate names.
+    expect(() => {
+      compileAndCaptureAst(
+        readFixtureTemplate('MyComp_CancelButtons_InnerText.vue'),
+        {
+          filename: '/src/components/MyComp.vue',
+          nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views', { nameCollisionBehavior: 'error' })],
+        },
+      )
+    }).not.toThrow()
+
+    const deps = componentHierarchyMap.get('MyComp') as IComponentDependencies | undefined
+    expect(deps).toBeTruthy()
+
+    // Ensure we get a single merged click method.
+    expect(deps?.generatedMethods?.has('clickCancel')).toBe(true)
+    expect(deps?.generatedMethods?.has('clickTerminate')).toBe(false)
+    expect(deps?.generatedMethods?.has('clickRequestCancellation')).toBe(false)
+
+    // Ensure only one primary POM spec is emitted for the merged action.
+    const cancelPoms = Array.from(deps?.dataTestIdSet ?? [])
+      .map(e => e.pom)
+      .filter((p): p is NonNullable<typeof p> => !!p && p.methodName === 'Cancel')
+    const primaries = cancelPoms.filter(p => p.emitPrimary !== false)
+    const mergedSecondaries = cancelPoms.filter(p => p.emitPrimary === false)
+    expect(primaries.length).toBe(1)
+    expect(mergedSecondaries.length).toBe(1)
+  })
+
   it('emits per-key click methods when v-for iterates a static literal list', () => {
     const componentHierarchyMap = new Map()
 
@@ -349,7 +383,7 @@ describe('createTestIdTransform', () => {
       },
     )
 
-    const deps = componentHierarchyMap.get('MyComp') as { generatedMethods?: Map<string, { params: string, argNames: string[] } | null>, methodsContent?: string } | undefined
+    const deps = componentHierarchyMap.get('MyComp') as IComponentDependencies | undefined
     expect(deps).toBeTruthy()
 
     const sigOne = deps?.generatedMethods?.get('clickOneButton') as { params: string, argNames: string[] } | null | undefined
@@ -360,13 +394,19 @@ describe('createTestIdTransform', () => {
     expect(sigTwo?.params).toBe('wait: boolean = true')
     expect(sigTwo?.argNames).toEqual(['wait'])
 
-    // Ensure the emitted implementations bind a concrete key and reuse the template literal.
-    const methods = deps?.methodsContent ?? ''
-    expect(methods).toContain('async clickOneButton(wait: boolean = true)')
-    expect(methods).toContain('const key = "One"')
-    expect(methods).toContain('async clickTwoButton(wait: boolean = true)')
-    expect(methods).toContain('const key = "Two"')
-    expect(methods).toContain('clickByTestId(`MyComp-${key}-Select-button`')
+    // With the IR-based generator, v-for static literal keys are represented as extra click method specs.
+    const extras = deps?.pomExtraMethods ?? []
+    const one = extras.find(m => m.kind === 'click' && m.name === 'clickOneButton')
+    expect(one).toBeTruthy()
+    expect(one?.keyLiteral).toBe('One')
+    expect(one?.formattedDataTestId).toBe('MyComp-${key}-Select-button')
+    expect(one?.params).toEqual({ wait: 'boolean = true' })
+
+    const two = extras.find(m => m.kind === 'click' && m.name === 'clickTwoButton')
+    expect(two).toBeTruthy()
+    expect(two?.keyLiteral).toBe('Two')
+    expect(two?.formattedDataTestId).toBe('MyComp-${key}-Select-button')
+    expect(two?.params).toEqual({ wait: 'boolean = true' })
   })
 
   it('treats v-for source with Math.random() as dynamic via constType', () => {

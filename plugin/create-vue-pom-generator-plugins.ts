@@ -5,7 +5,7 @@ import type { PluginOption, ResolvedConfig } from "vite";
 
 import { createSupportPlugins } from "./support-plugins";
 import { createTestIdsVirtualModulesPlugin } from "./support/virtual-modules";
-import type { ExistingIdBehavior, VuePomGeneratorPluginOptions } from "./types";
+import type { ExistingIdBehavior, PomNameCollisionBehavior, VuePomGeneratorPluginOptions } from "./types";
 import { createVuePluginWithTestIds } from "./vue-plugin";
 import { createLogger } from "./logger";
 import type { VuePomGeneratorLogger, VuePomGeneratorVerbosity } from "./logger";
@@ -42,6 +42,10 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
   const existingIdBehavior: ExistingIdBehavior = injection.existingIdBehavior ?? "preserve";
 
   const outDir = (generationOptions?.outDir ?? "tests/playwright/generated").trim();
+  const emitLanguages: Array<"ts" | "csharp"> = (generationOptions?.emit && generationOptions.emit.length)
+    ? generationOptions.emit
+    : ["ts"];
+  const nameCollisionBehavior: PomNameCollisionBehavior = generationOptions?.nameCollisionBehavior ?? "suffix";
   const routerEntry = generationOptions?.router?.entry;
   const generateFixtures = generationOptions?.playwright?.fixtures;
   const customPoms = generationOptions?.playwright?.customPoms;
@@ -93,6 +97,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
   const vuePlugin = createVuePluginWithTestIds({
     vueOptions,
     existingIdBehavior,
+    nameCollisionBehavior,
     nativeWrappers,
     elementMetadata,
     semanticNameMap,
@@ -101,6 +106,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     excludedComponents,
     getViewsDirAbs,
     testIdAttribute,
+    loggerRef,
   });
 
   if (!generationEnabled) {
@@ -118,6 +124,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     excludedComponents,
     viewsDir,
     outDir,
+    emitLanguages,
     routerAwarePoms,
     routerEntry,
     generateFixtures,

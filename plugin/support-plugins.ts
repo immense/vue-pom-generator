@@ -18,6 +18,9 @@ interface SupportFactoryOptions {
 
   /** Output directory for generated files (POMs + optional fixtures). */
   outDir?: string;
+
+  /** Languages to emit POMs for. */
+  emitLanguages?: Array<"ts" | "csharp">;
   routerAwarePoms: boolean;
   routerEntry?: string;
 
@@ -42,6 +45,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     excludedComponents,
     viewsDir,
     outDir,
+    emitLanguages,
     routerAwarePoms,
     routerEntry,
     generateFixtures,
@@ -87,6 +91,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     basePageClassPath,
     normalizedBasePagePath,
     outDir,
+    emitLanguages,
     generateFixtures,
     customPomAttachments,
     projectRootRef,
@@ -106,6 +111,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     normalizedBasePagePath,
     basePageClassPath,
     outDir,
+    emitLanguages,
     generateFixtures,
     customPomAttachments,
     customPomDir,

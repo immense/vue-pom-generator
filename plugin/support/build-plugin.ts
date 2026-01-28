@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 
 import type { PluginOption } from "vite";
 
@@ -16,6 +17,7 @@ interface BuildProcessorOptions {
   normalizedBasePagePath: string;
 
   outDir?: string;
+  emitLanguages?: Array<"ts" | "csharp">;
   generateFixtures?: boolean | string | { outDir?: string };
   customPomAttachments?: Array<{ className: string; propertyName: string; attachWhenUsesComponents: string[]; attachTo?: "views" | "components" | "both" }>;
   projectRootRef: { current: string };
@@ -36,6 +38,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     basePageClassPath,
     normalizedBasePagePath,
     outDir,
+    emitLanguages,
     generateFixtures,
     customPomAttachments,
     projectRootRef,
@@ -97,6 +100,12 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
         this.error(`BasePage.ts not found at ${basePageClassPath}. Ensure it is included in the build.`);
       }
       this.addWatchFile(basePageClassPath);
+
+      const pointerPath = path.resolve(path.dirname(basePageClassPath), "Pointer.ts");
+      if (!fs.existsSync(pointerPath)) {
+        this.error(`Pointer.ts not found at ${pointerPath}. Ensure it is included in the build.`);
+      }
+      this.addWatchFile(pointerPath);
     },
     buildEnd() {
       const entryCount = componentHierarchyMap.size;
@@ -112,6 +121,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
 
       generateFiles(componentHierarchyMap, vueFilesPathMap, normalizedBasePagePath, {
         outDir,
+        emitLanguages,
         generateFixtures,
         customPomAttachments,
         projectRoot: projectRootRef.current,
