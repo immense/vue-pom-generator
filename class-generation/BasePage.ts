@@ -2,6 +2,7 @@ import type { Locator as PwLocator, Page as PwPage } from "@playwright/test";
 import { TESTID_CLICK_EVENT_NAME, TESTID_CLICK_EVENT_STRICT_FLAG } from "../click-instrumentation";
 import type { TestIdClickEventDetail } from "../click-instrumentation";
 import { Pointer } from "./Pointer";
+import type { AfterPointerClickInfo } from "./Pointer";
 
 // Click instrumentation is a core contract for generated POMs.
 const REQUIRE_CLICK_EVENT = true;
@@ -84,7 +85,7 @@ export class ObjectId {
 export class BasePage {
   protected readonly testIdAttribute: string;
 
-  private readonly pointer: Pointer;
+  private readonly pointer: InstanceType<typeof Pointer>;
 
   /**
    * @param {Page} page - Playwright page object
@@ -439,7 +440,7 @@ export class BasePage {
    */
   public async clickByTestId(testId: string, annotationText: string = "", wait: boolean = true): Promise<void> {
     await this.pointer.animateCursorToElement(this.selectorForTestId(testId), true, 200, annotationText, {
-      afterClick: async ({ testId: clickedTestId, instrumented }) => {
+      afterClick: async ({ testId: clickedTestId, instrumented }: AfterPointerClickInfo) => {
         if (!wait) return;
         if (!clickedTestId || !instrumented) return;
         await this.waitForTestIdClickEventAfter(clickedTestId);
@@ -449,7 +450,7 @@ export class BasePage {
 
   public async clickLocator(locator: PwLocator, annotationText: string = "", wait: boolean = true): Promise<void> {
     await this.pointer.animateCursorToElement(locator, true, 200, annotationText, {
-      afterClick: async ({ testId: clickedTestId, instrumented }) => {
+      afterClick: async ({ testId: clickedTestId, instrumented }: AfterPointerClickInfo) => {
         if (!wait) return;
         if (!clickedTestId || !instrumented) return;
         await this.waitForTestIdClickEventAfter(clickedTestId);
@@ -459,7 +460,7 @@ export class BasePage {
 
   protected async fillInputByTestId(testId: string, text: string, annotationText: string = ""): Promise<void> {
     await this.pointer.animateCursorToElementAndClickAndFill(this.selectorForTestId(testId), text, true, 200, annotationText, {
-      afterClick: async ({ testId: clickedTestId, instrumented }) => {
+      afterClick: async ({ testId: clickedTestId, instrumented }: AfterPointerClickInfo) => {
         if (!clickedTestId || !instrumented) return;
         await this.waitForTestIdClickEventAfter(clickedTestId);
       },
@@ -482,7 +483,7 @@ export class BasePage {
     const option = root.locator("ul.vs__dropdown-menu li[role='option']").first();
     if (await option.count()) {
       await this.pointer.animateCursorToElement(option, true, 200, annotationText, {
-        afterClick: async ({ testId: clickedTestId, instrumented }) => {
+        afterClick: async ({ testId: clickedTestId, instrumented }: AfterPointerClickInfo) => {
           if (!clickedTestId || !instrumented) return;
           await this.waitForTestIdClickEventAfter(clickedTestId);
         },
@@ -492,7 +493,7 @@ export class BasePage {
 
   public async fillInputByLocator(locator: PwLocator, text: string, annotationText: string = ""): Promise<void> {
     await this.pointer.animateCursorToElementAndClickAndFill(locator, text, true, 200, annotationText, {
-      afterClick: async ({ testId: clickedTestId, instrumented }) => {
+      afterClick: async ({ testId: clickedTestId, instrumented }: AfterPointerClickInfo) => {
         if (!clickedTestId || !instrumented) return;
         await this.waitForTestIdClickEventAfter(clickedTestId);
       },
@@ -501,7 +502,7 @@ export class BasePage {
 
   protected async clickByAriaLabel(ariaLabel: string, annotationText: string = ""): Promise<void> {
     await this.pointer.animateCursorToElement(`[aria-label="${ariaLabel}"]`, true, 200, annotationText, {
-      afterClick: async ({ testId: clickedTestId, instrumented }) => {
+      afterClick: async ({ testId: clickedTestId, instrumented }: AfterPointerClickInfo) => {
         if (!clickedTestId || !instrumented) return;
         await this.waitForTestIdClickEventAfter(clickedTestId);
       },
