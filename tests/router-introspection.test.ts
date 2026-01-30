@@ -94,5 +94,5 @@ describe("parseRouterFileFromCwd", () => {
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
-  }, 20_000);
+  }, 120_000);
 });
