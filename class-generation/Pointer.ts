@@ -59,7 +59,7 @@ export class Pointer {
 	private async getTestId(locator: PwLocator): Promise<string | undefined> {
 		const raw = await locator.first().getAttribute(this.testIdAttribute);
 		const trimmed = (raw ?? "").trim();
-		return trimmed ? trimmed : undefined;
+		return trimmed || undefined;
 	}
 
 	public async animateCursorToElement(
