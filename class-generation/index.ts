@@ -1,7 +1,7 @@
 import fs from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { generateViewObjectModelMethodContent } from "../method-generation";
 import { parseRouterFileFromCwd } from "../router-introspection";
 // NOTE: This module intentionally does not depend on Babel parsing.
@@ -1159,31 +1159,9 @@ async function generateAggregatedFiles(
     ].join("\n");
 
     const inlinePointerModule = () => {
-      const require = createRequire(import.meta.url);
-
-      // Pointer's implementation lives in playwright-test-videos, but we inline it into the
-      // aggregated POM output for runtime stability (same rationale as BasePage above).
-      // Note: Node 20+ (and especially Node 24+) will throw ERR_PACKAGE_PATH_NOT_EXPORTED
-      // if you try to resolve `pkg/package.json` and the package uses `exports`.
-      // Resolve the package entrypoint, then walk upwards to find the package root.
-      const pwVideosEntry = require.resolve("playwright-test-videos");
-      const pwVideosRoot = (() => {
-        let dir = path.dirname(pwVideosEntry);
-        while (true) {
-          const pkgJsonPath = path.join(dir, "package.json");
-          if (fs.existsSync(pkgJsonPath))
-            return dir;
-
-          const parent = path.dirname(dir);
-          if (parent === dir) {
-            throw new Error(
-              `Failed to locate playwright-test-videos package root starting from ${pwVideosEntry}`,
-            );
-          }
-          dir = parent;
-        }
-      })();
-      const pointerPath = path.join(pwVideosRoot, "src", "pointer", "Pointer.ts");
+      // Inline Pointer.ts from this package so generated POMs are self-contained and do not
+      // rely on runtime TS module resolution within workspace packages.
+      const pointerPath = fileURLToPath(new URL("./Pointer.ts", import.meta.url));
 
       let pointerSource = "";
       try {
