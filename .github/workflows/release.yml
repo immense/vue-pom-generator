@@ -88,13 +88,18 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_OUTPUT, 'previous_tag=' + latestTag + '\\n');"
 
       - name: Generate release notes (Copilot SDK)
-        run: node ./scripts/generate-release-notes.mjs
         env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           RELEASE_VERSION: ${{ steps.next.outputs.version }}
           RELEASE_PREVIOUS_TAG: ${{ steps.next.outputs.previous_tag }}
           RELEASE_NOTES_PATH: RELEASE_NOTES.md
-          COPILOT_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           COPILOT_MODEL: gpt-5
+        run: |
+          if [ -z "${COPILOT_GITHUB_TOKEN}" ]; then
+            echo "::error::Missing required secret COPILOT_GITHUB_TOKEN (needed for Copilot SDK release note generation)."
+            exit 1
+          fi
+          node ./scripts/generate-release-notes.mjs
 
       - name: Bump package.json version
         run: |
