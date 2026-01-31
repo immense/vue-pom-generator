@@ -53,7 +53,7 @@ jobs:
     name: Release
     needs: test
     runs-on: ubuntu-latest
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'github-actions[bot]') || github.event_name == 'workflow_dispatch'
+    if: ((github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'github-actions[bot]') || github.event_name == 'workflow_dispatch') && secrets.COPILOT_GITHUB_TOKEN != ''
     permissions:
       contents: write
       id-token: write
@@ -94,12 +94,7 @@ jobs:
           RELEASE_PREVIOUS_TAG: ${{ steps.next.outputs.previous_tag }}
           RELEASE_NOTES_PATH: RELEASE_NOTES.md
           COPILOT_MODEL: gpt-5
-        run: |
-          if [ -z "${COPILOT_GITHUB_TOKEN}" ]; then
-            echo "::error::Missing required secret COPILOT_GITHUB_TOKEN (needed for Copilot SDK release note generation)."
-            exit 1
-          fi
-          node ./scripts/generate-release-notes.mjs
+        run: node ./scripts/generate-release-notes.mjs
 
       - name: Bump package.json version
         run: |
