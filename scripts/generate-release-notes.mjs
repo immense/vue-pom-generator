@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 
 import { CopilotClient } from "@github/copilot-sdk";
@@ -12,24 +12,27 @@ function requireEnv(name) {
 }
 
 function runGit(args) {
-  return execSync(`git ${args}`, { stdio: ["ignore", "pipe", "pipe"] }).toString("utf8").trim();
+  return execFileSync("git", args, { stdio: ["ignore", "pipe", "pipe"] }).toString("utf8").trim();
 }
 
 function getLatestReleaseTag() {
-  const tagsRaw = runGit("tag --list 'v*' --sort=-v:refname");
+  const tagsRaw = runGit(["tag", "--list", "v*", "--sort=-v:refname"]);
   return tagsRaw.split(/\r?\n/).filter(Boolean)[0] ?? "";
 }
 
 function getCommitList(range) {
-  const rangePart = range ? ` ${range}` : "";
-  return runGit(`log --pretty=format:%s (%an) [%h]${rangePart}`);
+  const args = ["log", "--pretty=format:%s (%an) [%h]"];
+  if (range) {
+    args.push(range);
+  }
+  return runGit(args);
 }
 
 function getDiffStat(range) {
   if (!range) {
-    return runGit("show --stat");
+    return runGit(["show", "--stat"]);
   }
-  return runGit(`diff --stat ${range}`);
+  return runGit(["diff", "--stat", range]);
 }
 
 const version = requireEnv("RELEASE_VERSION");
