@@ -215,7 +215,7 @@ describe("class-generation coverage", () => {
       // Router introspection uses a Vite SSR server rooted at the router entry folder.
       // Ensure bare imports like "vue-router" can be resolved.
       const thisDir = path.dirname(fileURLToPath(import.meta.url));
-      const frontendNodeModules = path.resolve(thisDir, "..", "..", "..", "node_modules");
+      const frontendNodeModules = path.resolve(thisDir, "..", "node_modules");
       const tempNodeModules = path.join(tempRoot, "node_modules");
       if (!fs.existsSync(tempNodeModules)) {
         fs.symlinkSync(frontendNodeModules, tempNodeModules, "dir");

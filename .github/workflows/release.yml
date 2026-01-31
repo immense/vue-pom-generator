@@ -1,0 +1,131 @@
+name: Release
+
+on:
+  pull_request:
+    branches:
+      - main
+
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+    inputs:
+      publish_to_npm:
+        description: 'Publish to npm (with provenance)'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  release:
+    name: Release
+    needs: test
+    runs-on: ubuntu-latest
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'github-actions[bot]') || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout (full history + tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Install
+        run: npm ci
+
+      - name: Compute next version (patch)
+        id: next
+        run: |
+          node -e "const { execSync } = require('child_process'); const fs=require('fs');
+          const pkgPath='package.json';
+          const pkg=JSON.parse(fs.readFileSync(pkgPath,'utf8'));
+          const tagsRaw=execSync(\"git tag --list 'v*' --sort=-v:refname\", { stdio: ['ignore','pipe','ignore'] }).toString().trim();
+          const latestTag=tagsRaw.split(/\r?\n/).filter(Boolean)[0] || '';
+          function bumpPatch(v){ const m=/^(\d+)\.(\d+)\.(\d+)$/.exec(v); if(!m) throw new Error('Invalid semver: '+v); return `${m[1]}.${m[2]}.${Number(m[3])+1}`; }
+          const nextVersion = latestTag ? bumpPatch(latestTag.replace(/^v/,'')) : '0.0.1';
+          if(pkg.version === nextVersion){ throw new Error('Next version equals current package.json version: '+nextVersion); }
+          console.log('nextVersion='+nextVersion);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${nextVersion}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `previous_tag=${latestTag}\n`);"
+
+      - name: Generate release notes (Copilot SDK)
+        run: node ./scripts/generate-release-notes.mjs
+        env:
+          RELEASE_VERSION: ${{ steps.next.outputs.version }}
+          RELEASE_PREVIOUS_TAG: ${{ steps.next.outputs.previous_tag }}
+          RELEASE_NOTES_PATH: RELEASE_NOTES.md
+          COPILOT_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COPILOT_MODEL: gpt-5
+
+      - name: Bump package.json version
+        run: |
+          node -e "const fs=require('fs'); const pkgPath='package.json'; const pkg=JSON.parse(fs.readFileSync(pkgPath,'utf8')); pkg.version=process.env.NEXT_VERSION; fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');"
+        env:
+          NEXT_VERSION: ${{ steps.next.outputs.version }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit version bump
+        run: |
+          git add package.json
+          git commit -m "chore(release): v${{ steps.next.outputs.version }} [skip ci]"
+
+      - name: Tag release
+        run: git tag "v${{ steps.next.outputs.version }}"
+
+      - name: Push commit + tag
+        run: git push origin HEAD:main --follow-tags
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.next.outputs.version }}
+          body_path: RELEASE_NOTES.md
+
+      - name: Publish to npm (provenance)
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_to_npm == true
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

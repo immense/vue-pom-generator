@@ -30,7 +30,7 @@ describe("parseRouterFileFromCwd", () => {
     // node_modules up its directory chain. Since our temp dir lives in OS tmp, wire in a
     // node_modules symlink pointing back at the frontend workspace.
     const thisDir = path.dirname(fileURLToPath(import.meta.url));
-    const frontendNodeModules = path.resolve(thisDir, "..", "..", "..", "node_modules");
+    const frontendNodeModules = path.resolve(thisDir, "..", "node_modules");
     const tempNodeModules = path.join(tempRoot, "node_modules");
     if (!fs.existsSync(tempNodeModules)) {
       fs.symlinkSync(frontendNodeModules, tempNodeModules, "dir");

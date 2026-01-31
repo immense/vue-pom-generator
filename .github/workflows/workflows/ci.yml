@@ -1,0 +1,840 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+# CI trigger: 2026-01-20
+
+jobs:
+  playwright-demo:
+    name: Playwright Demo Test
+    if: github.actor == 'nektos/act' || github.event_name != 'push' || (github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message || '', '[skip ci]'))
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.58.0-jammy
+
+    steps:
+      - name: Checkout repository (CI only)
+        if: github.actor != 'nektos/act'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Use act-provided workspace (act only)
+        if: github.actor == 'nektos/act'
+        run: |
+          # Under act we want to use local sources, and avoid actions/checkout which would fetch from
+          # GitHub and lose local changes.
+          #
+          # Some act configurations can produce an empty workspace volume. When that happens, we seed
+          # the workspace volume from a read-only bind mount at /repo (provided via .actrc).
+
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "pwd=$(pwd)"
+
+          if [ ! -f "$GITHUB_WORKSPACE/package.json" ]; then
+            echo "Workspace volume appears empty (no package.json)."
+            if [ -f "/repo/package.json" ]; then
+              echo "Seeding workspace from /repo (read-only bind mount)."
+
+              # Copy everything we need, but avoid copying host-installed node_modules into the
+              # container workspace (it would be huge and contain the wrong platform binaries).
+              tar -C /repo \
+                --exclude='./node_modules' \
+                --exclude='./.act-cache' \
+                --exclude='./.act-artifacts' \
+                -cf - . \
+              | tar -C "$GITHUB_WORKSPACE" -xf -
+            else
+              echo "::error::act workspace is empty and /repo is not mounted. Ensure .actrc includes: --container-options \"-v .:/repo:ro\""
+              exit 1
+            fi
+          fi
+
+          echo "--- ls (GITHUB_WORKSPACE) ---"
+          ls -la "$GITHUB_WORKSPACE" || true
+          echo "Using act local sources; skipping actions/checkout."
+
+      - name: Mark workspace as safe for git
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE/external/vscode-test-playwright"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE/external/playwright-test-videos"
+
+      - name: Debug Actions runtime env (partial)
+        if: always() && github.actor != 'nektos/act'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Print only a small prefix/suffix of the runtime token to validate injection.
+          # Do NOT print the full token.
+          if [ -n "${ACTIONS_RUNTIME_TOKEN:-}" ]; then
+            token="$ACTIONS_RUNTIME_TOKEN"
+            len=${#token}
+            prefix=${token:0:6}
+            suffix=${token: -6}
+            echo "ACTIONS_RUNTIME_TOKEN=${prefix}…${suffix} (len=${len})"
+          else
+            echo "ACTIONS_RUNTIME_TOKEN=<unset>"
+          fi
+
+          echo "ACTIONS_RUNTIME_URL=${ACTIONS_RUNTIME_URL:-<unset>}"
+          echo "ACTIONS_RESULTS_URL=${ACTIONS_RESULTS_URL:-<unset>}"
+
+      - name: Init required submodules (CI only)
+        if: github.actor != 'nektos/act'
+        run: |
+          git submodule update --init --depth 1 \
+            external/vscode-test-playwright \
+            external/playwright-test-videos
+
+      - name: Verify required submodules are present (act only)
+        if: github.actor == 'nektos/act'
+        run: |
+          test -f external/vscode-test-playwright/index.ts
+          test -f external/vscode-test-playwright/tsconfig.json
+
+      # Local act runs also want an MP4 output for quick sharing/debugging.
+      # The existing `demo:pw:videos` script converts the recorded .webm to docs/pw-videos/demo.mp4.
+      - name: Init demo video submodule (act only)
+        if: github.actor == 'nektos/act'
+        run: |
+          git submodule update --init --depth 1 external/playwright-test-videos
+
+      # NOTE: Under act (Docker Desktop), actions/setup-node's caching can hang or behave
+      # unexpectedly because it relies on GitHub cache backends.
+      - name: Setup Node.js (CI)
+        if: github.actor != 'nektos/act'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - name: Use container Node.js (act)
+        if: github.actor == 'nektos/act'
+        shell: bash
+        run: |
+          node --version
+          npm --version
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build extension bundle
+        run: npm run build:dist
+
+      - name: Install system dependencies for Playwright demo
+        run: |
+          apt-get update
+          apt-get install -y \
+            dbus \
+            dbus-x11 \
+            ffmpeg \
+            xvfb
+
+      - name: Build playwright-test-videos CLI (no tests)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd external/playwright-test-videos
+          npm ci
+          npm run build
+
+      - name: Run Playwright demo test
+        shell: bash
+        env:
+          # Matches the demo test timeout and gives the VS Code test server more
+          # time to emit its readiness line on slower/colder CI hosts.
+          PW_VSCODE_WAIT_FOR_LINE_TIMEOUT_MS: '15000'
+          # The extension host may take significantly longer to start inside act/Docker Desktop.
+          # This controls how long the harness waits for the extension host to connect back.
+          PW_VSCODE_TEST_WS_CONNECT_TIMEOUT_MS: ${{ github.actor == 'nektos/act' && '180000' || '30000' }}
+          # Under act (Docker Desktop mounts / containerized Electron), video finalization can be slow.
+          # This controls how long vscode-test-playwright waits for the recorded .webm to appear.
+          PW_VSCODE_VIDEO_FINALIZE_TIMEOUT_MS: ${{ github.actor == 'nektos/act' && '180000' || '30000' }}
+          # Extra diagnostics for local act runs only.
+          PW_VSCODE_DEBUG: ${{ github.actor == 'nektos/act' && '1' || '0' }}
+        run: |
+          set -euo pipefail
+
+          # VS Code/Electron may try to talk to the DBus system bus. GitHub-hosted runners have
+          # one by default, but act containers often don't. If the system bus socket is missing,
+          # start a minimal system bus so Electron doesn't exit early.
+          printenv
+          echo "DBUS_SESSION_BUS_ADDRESS: ${DBUS_SESSION_BUS_ADDRESS:-<unset>}"
+          if [ ! -S /run/dbus/system_bus_socket ]; then
+            mkdir -p /run/dbus
+            echo "Starting minimal system bus..."
+            dbus-daemon --system --fork --nopidfile
+          else 
+            echo "System bus already running."
+          fi
+
+          # VS Code/Electron expects a DBus session bus. In containerized runs (e.g. act) the
+          # inherited DBUS_SESSION_BUS_ADDRESS can be invalid (e.g. macOS 'launchd:'), causing
+          # VS Code to exit before emitting the test server readiness line.
+          xvfb-run --auto-servernum --server-args='-screen 0 1280x1024x24' npm run demo:pw
+
+          # Re-arrange the recorded video(s) into a stable, shareable layout for artifact upload.
+          #
+          # Example:
+          #   test-results/demo-Copilot-Breakpoint-Debugger-demo-vscode-chat-demo/videos/<hash>.webm
+          # becomes:
+          #   videos/Breakpoint-Debugger-demo-vscode-chat-demo.webm
+          #   videos/Breakpoint-Debugger-demo-vscode-chat-demo.mp4
+          #
+          # Notes:
+          # - We normalize by stripping a leading "demo-" and then "Copilot-" from the
+          #   test-results directory name (if present).
+          # - If multiple .webm files exist for a given directory, we suffix with -<n>.
+          rm -rf videos
+          mkdir -p videos
+
+          found_any_webm=0
+          shopt -s nullglob
+          for video_dir in test-results/*/videos; do
+            [ -d "$video_dir" ] || continue
+
+            result_dir="$(dirname "$video_dir")"
+            result_base="$(basename "$result_dir")"
+            name="$result_base"
+            name="${name#demo-}"
+            name="${name#Copilot-}"
+
+            mapfile -t webms < <(find "$video_dir" -maxdepth 1 -type f -name '*.webm' | sort)
+            if [ "${#webms[@]}" -eq 0 ]; then
+              continue
+            fi
+
+            found_any_webm=1
+            idx=0
+            for webm in "${webms[@]}"; do
+              idx=$((idx + 1))
+              suffix=""
+              if [ "${#webms[@]}" -gt 1 ]; then
+                suffix="-$idx"
+              fi
+
+              out_base="${name}${suffix}"
+              out_webm="videos/${out_base}.webm"
+
+              cp "$webm" "$out_webm"
+            done
+          done
+
+          if [ "$found_any_webm" -eq 0 ]; then
+            echo "::warning::No .webm videos found under test-results/*/videos; skipping renamed video staging."
+          else
+            echo "Staged renamed video artifacts:"
+            ls -la videos || true
+          fi
+
+          # When running locally under act, also convert the recorded .webm to an .mp4
+          # so the developer has a single shareable artifact.
+          #
+          # Note: If the Playwright demo fails, this step will already have failed (as intended),
+          # and the act-only upload step (with if: always()) will still export trace/logs/videos.
+          if [ "${GITHUB_ACTOR:-}" = "nektos/act" ]; then
+            echo "Video files under test-results (if any):"
+            find test-results -type f \( -name '*.webm' -o -name '*.mp4' \) -maxdepth 6 -print 2>/dev/null || true
+
+            # NOTE: Do not call `npm run demo:pw:videos` here because it re-runs the demo test
+            # *without* Xvfb, which fails in containers without a DISPLAY.
+            # Instead, convert the recorded output from the already-run demo test.
+            mkdir -p docs/pw-videos
+            node external/playwright-test-videos/dist/cli.js \
+              --from test-results \
+              --to docs/pw-videos \
+              --readme README.md \
+              --max 1 \
+              --name demo.mp4 \
+              --dedupe
+          fi
+
+      - name: Convert staged videos to MP4 (dedupe)
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -d "videos" ]; then
+            echo "No videos/ directory present; nothing to convert."
+            exit 0
+          fi
+
+          shopt -s nullglob
+          webms=(videos/*.webm)
+          if [ "${#webms[@]}" -eq 0 ]; then
+            echo "No staged .webm files under videos/; nothing to convert."
+            exit 0
+          fi
+
+          # Convert in-place (videos/*.webm -> videos/*.mp4) using our mpdecimate-based de-dupe.
+          node external/playwright-test-videos/dist/cli.js \
+            --from videos \
+            --to videos \
+            --readme README.md \
+            --pattern '*.webm' \
+            --max "${#webms[@]}" \
+            --dedupe
+
+          echo "Converted MP4s:"
+          ls -la videos/*.mp4 || true
+
+      - name: Prepare demo video file (docs/pw-videos/demo.mp4)
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -f "docs/pw-videos/demo.mp4" ]; then
+            echo "docs/pw-videos/demo.mp4 already exists."
+            exit 0
+          fi
+
+          if [ ! -d "videos" ]; then
+            echo "::warning::No videos/ directory present; cannot create docs/pw-videos/demo.mp4"
+            exit 0
+          fi
+
+          shopt -s nullglob
+          mp4s=(videos/*.mp4)
+          if [ "${#mp4s[@]}" -eq 0 ]; then
+            echo "::warning::No videos/*.mp4 found; cannot create docs/pw-videos/demo.mp4"
+            exit 0
+          fi
+
+          mkdir -p docs/pw-videos
+          cp "${mp4s[0]}" docs/pw-videos/demo.mp4
+          echo "Prepared docs/pw-videos/demo.mp4 from ${mp4s[0]}"
+
+      - name: Upload Playwright demo artifacts (CI)
+        if: always() && github.actor != 'nektos/act'
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-demo-videos
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            videos/*.webm
+            videos/*.mp4
+            test-results/**/trace.zip
+            test-results/**/vscode-logs/**
+
+      - name: Upload Playwright video artifacts (act only)
+        if: always() && github.actor == 'nektos/act'
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # act runs the artifact server on the *host* and advertises an
+          # unreachable URL (127.0.0.1) to containers on Docker Desktop.
+          # Run upload-artifact's Node entrypoint ourselves and override the URLs.
+
+          rm -rf /tmp/actions-upload-artifact
+          git clone --depth 1 --branch v4 https://github.com/actions/upload-artifact /tmp/actions-upload-artifact
+
+          ACTIONS_RUNTIME_URL='http://host.docker.internal:34567/' \
+          ACTIONS_RESULTS_URL='http://host.docker.internal:34567/' \
+            node -e "
+              process.env['INPUT_NAME'] = 'playwright-demo-videos';
+              process.env['INPUT_IF-NO-FILES-FOUND'] = 'warn';
+              process.env['INPUT_RETENTION-DAYS'] = '3';
+              process.env['INPUT_OVERWRITE'] = 'false';
+              process.env['INPUT_INCLUDE-HIDDEN-FILES'] = 'false';
+              process.env['INPUT_PATH'] = [
+                'videos/*.webm',
+                'videos/*.mp4',
+                'test-results/**/trace.zip',
+                'test-results/**/vscode-logs/**'
+              ].join('\n');
+              require('/tmp/actions-upload-artifact/dist/upload/index.js');
+            "
+
+  release-notes:
+    name: Release Notes
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message || '', '[skip ci]') && github.actor != 'nektos/act'
+    runs-on: ubuntu-latest
+    needs: [playwright-demo]
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Init required submodules
+        run: |
+          git submodule update --init --depth 1 external/vscode-test-playwright
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Determine next version
+        id: version
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const latestRelease = await github.rest.repos.getLatestRelease({ owner: context.repo.owner, repo: context.repo.repo }).catch(()=>null);
+            let nextVersion;
+            let prevTagRaw = '';
+            if (latestRelease) {
+              prevTagRaw = latestRelease.data.tag_name || '';
+              const prev = prevTagRaw.replace(/^v/, '');
+              const parts = prev.split('.');
+              if (parts.length !== 3 || parts.some(p => isNaN(Number(p)))) {
+                core.setFailed(`Latest release tag '${prevTagRaw}' is not semver x.y.z`);
+                return;
+              }
+              parts[2] = String(Number(parts[2]) + 1);
+              nextVersion = parts.join('.');
+            } else {
+              nextVersion = '0.0.1';
+            }
+            core.info(`Computed next version: ${nextVersion}`);
+            core.setOutput('version', nextVersion);
+            core.setOutput('previous_tag', prevTagRaw);
+
+      - name: Generate Context
+        id: context
+        run: |
+          PREV_TAG="${{ steps.version.outputs.previous_tag }}"
+          if [ -n "$PREV_TAG" ]; then
+            RANGE="$PREV_TAG..HEAD"
+            echo "Generating context for range: $RANGE"
+          else
+            RANGE=""
+            echo "Generating context for initial release (all history)"
+          fi
+
+          {
+            echo 'commits<<EOF'
+            git log --pretty=format:"- %s (%an) [%h]" $RANGE
+            echo ''
+            echo 'EOF'
+          } >> $GITHUB_OUTPUT
+
+          {
+            echo 'stats<<EOF'
+            if [ -n "$RANGE" ]; then
+              git diff --stat $RANGE
+            else
+              git show --stat
+            fi
+            echo 'EOF'
+          } >> $GITHUB_OUTPUT
+
+      - name: Generate Release Notes
+        run: npm run release:notes
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PREV_TAG: ${{ steps.version.outputs.previous_tag }}
+          COMMITS: ${{ steps.context.outputs.commits }}
+          STATS: ${{ steps.context.outputs.stats }}
+
+      - name: Verify RELEASE_NOTES.md
+        run: |
+          test -s RELEASE_NOTES.md
+          echo "--- RELEASE_NOTES.md (first 40 lines) ---"
+          head -n 40 RELEASE_NOTES.md
+
+      - name: Upload release notes artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: |
+            RELEASE_NOTES.md
+
+  build-and-test:
+    name: Build and Test
+    runs-on: ${{ matrix.os }}
+    needs: [playwright-demo]
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+        node-version: [20.x]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Init required submodules
+        run: |
+          git submodule update --init --depth 1 external/vscode-test-playwright
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Compile TypeScript
+        run: npm run compile
+      - name: Run tests
+        shell: bash
+        run: |
+          npm test
+        env:
+          CI: true
+          # Enable detailed handshake tracing for the VS Code test server.
+          # This writes logs into test-results/** and also emits to stderr.
+          PW_VSCODE_TEST_TRACE: '1'
+
+      - name: Upload test results (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}-${{ matrix.node-version }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            test-results/**
+
+  build-and-test-linux:
+    name: Build and Test (Linux)
+    runs-on: ubuntu-latest
+    needs: [playwright-demo]
+    container:
+      image: mcr.microsoft.com/playwright:v1.58.0-jammy
+    strategy:
+      matrix:
+        node-version: [20.x]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Mark workspace as safe for git
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE/external/vscode-test-playwright"
+
+      - name: Init required submodules
+        run: |
+          git submodule update --init --depth 1 external/vscode-test-playwright
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Compile TypeScript
+        run: npm run compile
+
+      - name: Ensure virtual display tools
+        run: |
+          apt-get update
+          apt-get install -y xvfb
+
+      - name: Run tests (Xvfb)
+        shell: bash
+        run: |
+          xvfb-run --auto-servernum --server-args='-screen 0 1280x1024x24' npm test
+        env:
+          CI: true
+          PW_VSCODE_TEST_TRACE: '1'
+
+      - name: Upload test results (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-linux-${{ matrix.node-version }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            test-results/**
+
+  auto-release:
+    name: Auto Release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message || '', '[skip ci]') && github.actor != 'nektos/act'
+    runs-on: ubuntu-latest
+    needs: [build-and-test, build-and-test-linux, playwright-demo, release-notes]
+    container:
+      image: mcr.microsoft.com/playwright:v1.58.0-jammy
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      USE_CODEX: 'false' # Set to 'true' to use OpenAI Codex instead of Claude
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Mark workspace as safe for git
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE/external/vscode-test-playwright"
+
+      - name: Init required submodules
+        run: |
+          git submodule update --init --depth 1 external/vscode-test-playwright
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build extension bundle
+        run: npm run build:dist
+
+      - name: Install system dependencies for Playwright demo
+        run: |
+          apt-get update
+          apt-get install -y \
+            dbus-x11 \
+            xvfb \
+            ffmpeg \
+            fontconfig \
+            fonts-liberation \
+            libasound2 \
+            libatk-bridge2.0-0 \
+            libatk1.0-0 \
+            libcups2 \
+            libdrm2 \
+            libgbm1 \
+            libgtk-3-0 \
+            libnss3 \
+            libsecret-1-0 \
+            libx11-xcb1 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxfixes3 \
+            libxkbcommon0 \
+            libxkbfile1 \
+            libxrandr2 \
+            libxshmfence1 \
+            libxss1
+
+      - name: Determine next version
+        id: version
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const latestRelease = await github.rest.repos.getLatestRelease({ owner: context.repo.owner, repo: context.repo.repo }).catch(()=>null);
+            let nextVersion;
+            let prevTagRaw = '';
+            if (latestRelease) {
+              prevTagRaw = latestRelease.data.tag_name || '';
+              const prev = prevTagRaw.replace(/^v/, '');
+              const parts = prev.split('.');
+              if (parts.length !== 3 || parts.some(p => isNaN(Number(p)))) {
+                core.setFailed(`Latest release tag '${prevTagRaw}' is not semver x.y.z`);
+                return;
+              }
+              parts[2] = String(Number(parts[2]) + 1);
+              nextVersion = parts.join('.');
+            } else {
+              nextVersion = '0.0.1';
+            }
+            core.info(`Computed next version: ${nextVersion}`);
+            core.setOutput('version', nextVersion);
+            core.setOutput('previous_tag', prevTagRaw);
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Generate Context
+        id: context
+        run: |
+          PREV_TAG="${{ steps.version.outputs.previous_tag }}"
+          if [ -n "$PREV_TAG" ]; then
+            RANGE="$PREV_TAG..HEAD"
+            echo "Generating context for range: $RANGE"
+          else
+            RANGE=""
+            echo "Generating context for initial release (all history)"
+          fi
+
+          {
+            echo 'commits<<EOF'
+            git log --pretty=format:"- %s (%an) [%h]" $RANGE
+            echo ''
+            echo 'EOF'
+          } >> $GITHUB_OUTPUT
+
+          {
+            echo 'stats<<EOF'
+            if [ -n "$RANGE" ]; then
+              git diff --stat $RANGE
+            else
+              git show --stat
+            fi
+            echo 'EOF'
+          } >> $GITHUB_OUTPUT
+
+      - name: Init demo video submodule
+        run: |
+          git submodule update --init --depth 1 external/playwright-test-videos
+
+      - name: Update README demo video
+        shell: bash
+        env:
+          PW_VSCODE_WAIT_FOR_LINE_TIMEOUT_MS: '10000'
+        run: |
+          dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1280x1024x24' npm run demo:pw:update-readme
+
+      - name: Generate Release Notes
+        run: npm run release:notes
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PREV_TAG: ${{ steps.version.outputs.previous_tag }}
+          COMMITS: ${{ steps.context.outputs.commits }}
+          STATS: ${{ steps.context.outputs.stats }}
+
+      - name: Commit and Push Changes
+        run: |
+          git add CHANGELOG.md README.md package.json docs/pw-videos/demo.mp4
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "docs: update for release ${{ steps.version.outputs.version }} [skip ci]"
+            git push origin main
+          fi
+
+      - name: Create Tag
+        run: |
+          git tag ${{ steps.version.outputs.version }}
+          git push origin ${{ steps.version.outputs.version }}
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          body_path: RELEASE_NOTES.md
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  package:
+    name: Package Extension
+    runs-on: ubuntu-latest
+    needs: build-and-test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Init required submodules
+        run: |
+          git submodule update --init --depth 1 external/vscode-test-playwright
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install vsce
+        run: npm install -g @vscode/vsce
+
+      - name: Package extension
+        run: vsce package
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix-package
+          path: '*.vsix'
+          retention-days: 30
+
+  publish:
+    name: Publish to VS Code Marketplace
+    runs-on: ubuntu-latest
+    needs: [package, auto-release]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message || '', '[skip ci]') && github.actor != 'nektos/act'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Init required submodules
+        run: |
+          git submodule update --init --depth 1 external/vscode-test-playwright
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install vsce
+        run: npm install -g @vscode/vsce
+
+      - name: Sync package.json version to tag (no commit)
+        env:
+          TAG_VERSION: ${{ needs.auto-release.outputs.version }}
+        run: |
+          node -e "const fs=require('fs'); const tag=process.env.TAG_VERSION; const pkg=JSON.parse(fs.readFileSync('package.json','utf8')); if(pkg.version!==tag){ pkg.version=tag; fs.writeFileSync('package.json', JSON.stringify(pkg,null,2)+'\n'); console.log('Synced package.json version to tag', tag); } else { console.log('package.json version already matches tag', tag); }"
+
+      - name: Publish to VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: vsce publish -p $VSCE_PAT --allow-proposed-apis terminalDataWriteEvent
+
+      - name: Download VSIX artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vsix-package
+
+      - name: Upload VSIX to GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: '*.vsix'
+          tag_name: ${{ needs.auto-release.outputs.version }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

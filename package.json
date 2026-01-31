@@ -12,8 +12,8 @@
   },
   "homepage": "https://github.com/immense/vue-pom-generator#readme",
   "publishConfig": {
-    "access": "restricted",
-    "registry": "https://npm.pkg.github.com"
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
@@ -40,7 +40,7 @@
     "test:coverage": "vitest run --coverage",
     "smoke:pack": "node ./scripts/packed-smoke-check.mjs",
     "typecheck": "node -e \"process.argv = ['node','tsc',...process.argv.slice(1)]; require('typescript/bin/tsc')\" -- -p tsconfig.json --noEmit",
-    "prepublishOnly": "yarn build"
+    "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
     "@vitejs/plugin-vue": ">=5",
@@ -60,6 +60,7 @@
   },
   "devDependencies": {
     "@antfu/eslint-config": "5.3.0",
+    "@github/copilot-sdk": "^0.1.8",
     "@types/jsdom": "^27.0.0",
     "@types/node": "^24.1.0",
     "@vitest/coverage-v8": "^4.0.16",

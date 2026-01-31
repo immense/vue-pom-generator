@@ -11,12 +11,13 @@ Why you might want it:
 - **Less boilerplate**: POM generation keeps tests readable and centralized.
 - **Not just testing**: a consistent attribute can also help analytics/user-tracking tooling and ad-hoc automation.
 
-## Install (GitHub Packages)
+## Install (npm)
 
-This package is published to GitHub Packages.
+Package: `@immense/vue-pom-generator`
 
-- Package: `@immense/vue-pom-generator`
-- Registry: `https://npm.pkg.github.com`
+```sh
+npm install @immense/vue-pom-generator
+```
 
 ## Usage
 
