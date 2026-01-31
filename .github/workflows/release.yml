@@ -80,12 +80,12 @@ jobs:
           const pkg=JSON.parse(fs.readFileSync(pkgPath,'utf8'));
           const tagsRaw=execSync(\"git tag --list 'v*' --sort=-v:refname\", { stdio: ['ignore','pipe','ignore'] }).toString().trim();
           const latestTag=tagsRaw.split(/\r?\n/).filter(Boolean)[0] || '';
-          function bumpPatch(v){ const m=/^(\d+)\.(\d+)\.(\d+)$/.exec(v); if(!m) throw new Error('Invalid semver: '+v); return `${m[1]}.${m[2]}.${Number(m[3])+1}`; }
+          function bumpPatch(v){ const m=/^(\d+)\.(\d+)\.(\d+)$/.exec(v); if(!m) throw new Error('Invalid semver: '+v); return m[1] + '.' + m[2] + '.' + (Number(m[3]) + 1); }
           const nextVersion = latestTag ? bumpPatch(latestTag.replace(/^v/,'')) : '0.0.1';
           if(pkg.version === nextVersion){ throw new Error('Next version equals current package.json version: '+nextVersion); }
           console.log('nextVersion='+nextVersion);
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${nextVersion}\n`);
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `previous_tag=${latestTag}\n`);"
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, 'version=' + nextVersion + '\\n');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, 'previous_tag=' + latestTag + '\\n');"
 
       - name: Generate release notes (Copilot SDK)
         run: node ./scripts/generate-release-notes.mjs
