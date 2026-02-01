@@ -23,9 +23,6 @@ steps:
       fetch-depth: 0
 
 tools:
-  github:
-    allowed:
-      - pull_request_read
   bash:
     - "*"
 
@@ -41,9 +38,8 @@ Generate suggested GitHub release notes in Markdown for this pull request.
 ## Instructions
 
 1. Read the pull request context:
-  - Use GitHub tools to fetch PR details for `#${{ github.event.pull_request.number }}`.
-  - Extract: title, description, author, base/head branches, and PR link.
-  - Do NOT fetch changed files, patches, or diffs via GitHub tools.
+  - Do NOT use GitHub tools.
+  - Use the workflow context to derive the PR number and repository, and include a PR link.
 
 2. Determine changed files locally:
   - Use `git fetch` to ensure the base branch is present.
