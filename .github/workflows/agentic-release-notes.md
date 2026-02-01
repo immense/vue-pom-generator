@@ -12,7 +12,7 @@ safe-outputs:
   add-comment:
     max: 1
 
-timeout-minutes: 21
+timeout-minutes: 22
 
 network: defaults
 
@@ -66,10 +66,16 @@ Generate suggested GitHub release notes in Markdown for this pull request.
 
 ## Output
 
-- Output only Markdown.
+- Do NOT start your PR comment with backticks or code fences.
+- The first character of the PR comment body MUST be `<`.
 - Also write the final Markdown to `$GITHUB_STEP_SUMMARY` so it appears in the workflow run summary.
 - Do not invent changes; only summarize what you can justify from the collected evidence.
 - You MUST add a pull request comment containing the Markdown using the `output.add-comment` safe output.
 - The very first line of the PR comment body MUST be exactly: `<!-- vue-pom-generator:agentic-release-notes-preview -->`
 - Put the release notes Markdown immediately after that marker (no blank lines before the marker).
 - Do NOT wrap the output in code fences.
+
+Example PR comment start:
+
+<!-- vue-pom-generator:agentic-release-notes-preview -->
+## Highlights
