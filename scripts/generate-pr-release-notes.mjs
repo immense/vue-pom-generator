@@ -26,7 +26,7 @@ function runGh(args, { env } = {}) {
 }
 
 function ghApiJson(endpoint, { ghToken, fields } = {}) {
-  const args = ["api", endpoint];
+  const args = ["api", "-X", "GET", endpoint];
   for (const [key, value] of Object.entries(fields ?? {})) {
     args.push("-f", `${key}=${value}`);
   }

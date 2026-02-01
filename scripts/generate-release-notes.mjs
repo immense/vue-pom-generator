@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import process from "node:process";
 
 import { CopilotClient } from "@github/copilot-sdk";
 
@@ -38,8 +39,13 @@ function runGhJson(args, { env } = {}) {
 }
 
 function getLatestReleaseTag() {
-  const tagsRaw = runGit(["tag", "--list", "v*", "--sort=-v:refname"]);
-  return tagsRaw.split(/\r?\n/).filter(Boolean)[0] ?? "";
+  return runGit([
+    "for-each-ref",
+    "--sort=-v:refname",
+    "--count=1",
+    "--format=%(refname:short)",
+    "refs/tags/v*",
+  ]);
 }
 
 function getCommitList(range) {
@@ -81,6 +87,8 @@ function fetchMergedPullRequests({ repo, sinceISO, untilISO }) {
     const resp = runGhJson(
       [
         "api",
+        "-X",
+        "GET",
         "search/issues",
         "-f",
         `q=${q}`,

@@ -25,9 +25,7 @@ function runGh(args, { env } = {}) {
 
 function ghApiJson(endpoint, { ghToken, method, fields } = {}) {
   const args = ["api"];
-  if (method) {
-    args.push("-X", method);
-  }
+  args.push("-X", method ?? "GET");
   args.push(endpoint);
 
   for (const [key, value] of Object.entries(fields ?? {})) {
@@ -45,7 +43,7 @@ function ghApiJson(endpoint, { ghToken, method, fields } = {}) {
 function ghApiAllPages(endpoint, { ghToken, perPage = 100, maxPages = 10 } = {}) {
   const results = [];
   for (let page = 1; page <= maxPages; page += 1) {
-    const data = ghApiJson(endpoint, { ghToken, fields: { per_page: perPage, page } });
+    const data = ghApiJson(endpoint, { ghToken, method: "GET", fields: { per_page: perPage, page } });
 
     if (!Array.isArray(data)) {
       throw new TypeError(`Expected array response from ${endpoint} (page ${page}).`);
