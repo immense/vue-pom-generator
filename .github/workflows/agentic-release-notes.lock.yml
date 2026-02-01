@@ -1023,6 +1023,10 @@ jobs:
             body = body.lstrip()
             if not body.startswith(marker):
               body = marker + "\n" + body
+            # Clean up: remove a stray standalone '<' line after the marker.
+            lines = body.splitlines()
+            if len(lines) >= 2 and lines[0] == marker and lines[1].strip() == "<":
+              body = "\n".join([lines[0], *lines[2:]])
             item["body"] = body
           with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f)
