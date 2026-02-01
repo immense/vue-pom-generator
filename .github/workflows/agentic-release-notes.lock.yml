@@ -1045,3 +1045,66 @@ jobs:
             const { main } = require('/opt/gh-aw/actions/safe_output_handler_manager.cjs');
             await main();
 
+      - name: Cleanup older agentic marker comments
+        env:
+          GH_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          token = os.environ.get('GH_TOKEN')
+          repo = os.environ.get('GITHUB_REPOSITORY')
+          pr_number = os.environ.get('PR_NUMBER')
+          if not token or not repo or not pr_number:
+            raise SystemExit('Missing GH_TOKEN/GITHUB_REPOSITORY/PR_NUMBER')
+
+          marker = '<!-- vue-pom-generator:agentic-release-notes-preview -->'
+          base = f'https://api.github.com/repos/{repo}/issues/{pr_number}/comments'
+
+          def api(method, url):
+            req = urllib.request.Request(url, method=method)
+            req.add_header('Authorization', f'Bearer {token}')
+            req.add_header('Accept', 'application/vnd.github+json')
+            req.add_header('X-GitHub-Api-Version', '2022-11-28')
+            with urllib.request.urlopen(req) as resp:
+              data = resp.read()
+              if not data:
+                return None
+              return json.loads(data.decode('utf-8'))
+
+          # List comments (page a few times; PRs can have many comments).
+          comments = []
+          per_page = 100
+          for page in range(1, 6):
+            url = f'{base}?per_page={per_page}&page={page}'
+            batch = api('GET', url)
+            if not isinstance(batch, list):
+              raise SystemExit('Unexpected comments API response')
+            comments.extend(batch)
+            if len(batch) < per_page:
+              break
+
+          marked = [
+            {
+              'id': c.get('id'),
+              'created_at': c.get('created_at') or '',
+            }
+            for c in comments
+            if isinstance(c, dict) and isinstance(c.get('body'), str) and marker in c.get('body')
+          ]
+
+          # Keep the newest marker comment; delete the rest.
+          marked = [m for m in marked if isinstance(m.get('id'), int)]
+          marked.sort(key=lambda m: m.get('created_at'))
+          to_delete = marked[:-1] if len(marked) > 1 else []
+
+          for m in to_delete:
+            api('DELETE', f'https://api.github.com/repos/{repo}/issues/comments/{m["id"]}')
+
+          print(f'Found {len(marked)} marker comment(s); deleted {len(to_delete)} older comment(s).')
+          PY
+
