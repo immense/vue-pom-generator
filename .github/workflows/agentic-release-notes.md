@@ -12,7 +12,7 @@ safe-outputs:
   add-comment:
     max: 1
 
-timeout-minutes: 20
+timeout-minutes: 21
 
 network: defaults
 
