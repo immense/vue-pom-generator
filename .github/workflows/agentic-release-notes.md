@@ -28,7 +28,7 @@ tools:
 
 engine:
   id: copilot
-  model: gpt-4o
+  model: gpt-4.1
 ---
 
 # Agentic Release Notes
