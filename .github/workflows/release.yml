@@ -91,7 +91,7 @@ jobs:
 
       - name: Comment suggested release notes on PR
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BODY_PATH: PR_RELEASE_NOTES.md
