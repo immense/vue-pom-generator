@@ -91,11 +91,16 @@ jobs:
 
       - name: Comment suggested release notes on PR
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PR_COMMENT_GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BODY_PATH: PR_RELEASE_NOTES.md
-        run: node ./scripts/upsert-pr-comment.mjs
+        run: |
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "::error::Missing required secret PR_COMMENT_GITHUB_TOKEN. Create a fine-grained PAT with access to this repo and Issues: Read and write, then set it as a repo secret."
+            exit 1
+          fi
+          node ./scripts/upsert-pr-comment.mjs
 
   release:
     name: Release
