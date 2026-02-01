@@ -1,0 +1,29 @@
+{
+  "entries": {
+    "actions/checkout@v4": {
+      "repo": "actions/checkout",
+      "version": "v4",
+      "sha": "34e114876b0b11c390a56381ad16ebd13914f8d5"
+    },
+    "actions/download-artifact@v6.0.0": {
+      "repo": "actions/download-artifact",
+      "version": "v6.0.0",
+      "sha": "018cc2cf5baa6db3ef3c5f8a56943fffe632ef53"
+    },
+    "actions/github-script@v8.0.0": {
+      "repo": "actions/github-script",
+      "version": "v8.0.0",
+      "sha": "ed597411d8f924073f98dfc5c65a23a2325f34cd"
+    },
+    "actions/upload-artifact@v6.0.0": {
+      "repo": "actions/upload-artifact",
+      "version": "v6.0.0",
+      "sha": "b7c566a772e6b6bfb58ed0dc250532a479d7789f"
+    },
+    "githubnext/gh-aw/actions/setup@v0.38.5": {
+      "repo": "githubnext/gh-aw/actions/setup",
+      "version": "v0.38.5",
+      "sha": "c62cb1aecba894a20fdb4c6bbc39992bc6ce37e2"
+    }
+  }
+}

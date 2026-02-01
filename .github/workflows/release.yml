@@ -108,6 +108,54 @@ jobs:
       - name: Build
         run: npm run build
 
+  pr_release_notes_comment:
+    name: PR Release Notes Comment
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        run: npm ci
+
+      - name: Generate suggested release notes (PR)
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          COPILOT_MODEL: gpt-5
+          PR_RELEASE_NOTES_PATH: PR_RELEASE_NOTES.md
+        run: |
+          if [ -z "${COPILOT_GITHUB_TOKEN}" ]; then
+            echo "::error::Missing required secret COPILOT_GITHUB_TOKEN (needed for Copilot SDK PR release note generation)."
+            exit 1
+          fi
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "::error::Missing required env var GH_TOKEN (needed for GitHub API queries used in PR release note generation)."
+            exit 1
+          fi
+          node ./scripts/generate-pr-release-notes.mjs
+
+      - name: Comment suggested release notes on PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BODY_PATH: PR_RELEASE_NOTES.md
+        run: node ./scripts/upsert-pr-comment.mjs
+
   release:
     name: Release
     needs: test
@@ -149,6 +197,8 @@ jobs:
       - name: Generate release notes (Copilot SDK)
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
           RELEASE_VERSION: ${{ steps.next.outputs.version }}
           RELEASE_PREVIOUS_TAG: ${{ steps.next.outputs.previous_tag }}
           RELEASE_NOTES_PATH: RELEASE_NOTES.md
@@ -156,6 +206,10 @@ jobs:
         run: |
           if [ -z "${COPILOT_GITHUB_TOKEN}" ]; then
             echo "::error::Missing required secret COPILOT_GITHUB_TOKEN (needed for Copilot SDK release note generation)."
+            exit 1
+          fi
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "::error::Missing required env var GH_TOKEN (needed for GitHub API queries used in release note generation)."
             exit 1
           fi
           node ./scripts/generate-release-notes.mjs
