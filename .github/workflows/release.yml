@@ -25,8 +25,34 @@ permissions:
   contents: read
 
 jobs:
+  copilot_smoke:
+    name: Copilot Smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Tooling presence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          echo "Runner: $(uname -a)"
+          echo "gh: $(command -v gh || true)"
+          gh --version || true
+          echo ""
+          echo "gh auth status (via GH_TOKEN):"
+          gh auth status || true
+          echo ""
+          echo "gh extensions:"
+          gh extension list || true
+          echo ""
+          echo "copilot (system): $(command -v copilot || true)"
+          copilot --version || true
+          echo ""
+          echo "gh copilot (extension):"
+          gh copilot --version || true
+
   test:
     name: Test
+    needs: copilot_smoke
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -39,6 +65,39 @@ jobs:
 
       - name: Install
         run: npm ci
+
+      - name: Copilot SDK auth probe (GITHUB_TOKEN)
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          echo "node: $(node -v)"
+          echo "copilot (node_modules): $(./node_modules/.bin/copilot --version || true)"
+          echo "Probing SDK auth with github.token (30s timeout)..."
+          timeout 30s node --input-type=module -e '
+            import { CopilotClient } from "@github/copilot-sdk";
+
+            const token = process.env.COPILOT_GITHUB_TOKEN;
+            const client = new CopilotClient({
+              githubToken: token,
+              useLoggedInUser: false,
+              cliPath: "./node_modules/.bin/copilot",
+              logLevel: "error",
+            });
+
+            try {
+              await client.start();
+              const status = await client.getAuthStatus();
+              console.log("auth.isAuthenticated=", status?.isAuthenticated);
+              console.log("auth.authType=", status?.authType ?? "<none>");
+              console.log("auth.login=", status?.login ?? "<none>");
+              console.log("auth.statusMessage=", status?.statusMessage ?? "<none>");
+            } catch (err) {
+              console.log("auth probe error:", err?.message ?? String(err));
+            } finally {
+              try { await client.stop(); } catch {}
+            }
+          ' || true
 
       - name: Typecheck
         run: npm run typecheck
