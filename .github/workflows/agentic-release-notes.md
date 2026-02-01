@@ -42,13 +42,19 @@ Generate suggested GitHub release notes in Markdown for this pull request.
 
 1. Read the pull request context:
   - Use GitHub tools to fetch PR details for `#${{ github.event.pull_request.number }}`.
-  - Extract: title, description, author, base/head branches, and changed files.
+  - Extract: title, description, author, base/head branches, and PR link.
+  - Do NOT fetch changed files, patches, or diffs via GitHub tools.
 
-2. Summarize only what is in this PR:
+2. Determine changed files locally:
+  - Use `git fetch` to ensure the base branch is present.
+  - Compute the changed file list using `git diff` between the base branch and the PR HEAD.
+  - If you need more detail for a specific file, inspect it with `git diff` for that file only.
+
+3. Summarize only what is in this PR:
   - Do not include unrelated changes from main.
   - Do not invent changes.
 
-3. Write release notes in this exact structure:
+4. Write release notes in this exact structure:
 
 - `## Highlights` (3–6 bullets)
 - `## Changes` (bulleted; grouped by theme if possible)
