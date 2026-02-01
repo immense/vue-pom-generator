@@ -76,7 +76,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          COPILOT_MODEL: gpt-5
+          COPILOT_MODEL: gpt-4o
           PR_RELEASE_NOTES_PATH: PR_RELEASE_NOTES.md
         run: |
           if [ -z "${COPILOT_GITHUB_TOKEN}" ]; then

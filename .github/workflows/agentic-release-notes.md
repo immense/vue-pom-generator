@@ -28,7 +28,7 @@ tools:
 
 engine:
   id: copilot
-  model: gpt-5
+  model: gpt-4o
 ---
 
 # Agentic Release Notes
@@ -46,11 +46,17 @@ Generate suggested GitHub release notes in Markdown for this pull request.
   - Compute the changed file list using `git diff` between the base branch and the PR HEAD.
   - If you need more detail for a specific file, inspect it with `git diff` for that file only.
 
-3. Summarize only what is in this PR:
+3. Bash tool usage constraints:
+  - Fail fast: do not use `|| true` or other silent recovery.
+  - Keep tool output small: do not print long diffs or the final Markdown to stdout.
+    - Write any large outputs to files instead.
+    - Only print short status lines (counts / filenames) if needed.
+
+4. Summarize only what is in this PR:
   - Do not include unrelated changes from main.
   - Do not invent changes.
 
-4. Write release notes in this exact structure:
+5. Write release notes in this exact structure:
 
 - `## Highlights` (3–6 bullets)
 - `## Changes` (bulleted; grouped by theme if possible)
