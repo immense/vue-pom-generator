@@ -19,8 +19,9 @@
 #   gh aw compile
 # For more information: https://github.com/githubnext/gh-aw/blob/main/.github/aw/github-agentic-workflows.md
 #
+# Agentic PR release notes preview (prompt rev 8)
 #
-# frontmatter-hash: a020d88779350009ded0f7c5bbc2c399a7266c7acc9ea3f790adf5cc1c1dbd17
+# frontmatter-hash: d0dc8a207962656044f945de714ed37b15b1adf0d1c6beee075c28a8d100ef13
 
 name: "Agentic Release Notes"
 "on":
@@ -831,7 +832,7 @@ jobs:
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         env:
           WORKFLOW_NAME: "Agentic Release Notes"
-          WORKFLOW_DESCRIPTION: "No description provided"
+          WORKFLOW_DESCRIPTION: "Agentic PR release notes preview (prompt rev 8)"
           HAS_PATCH: ${{ needs.agent.outputs.has_patch }}
         with:
           script: |

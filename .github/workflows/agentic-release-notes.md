@@ -1,5 +1,6 @@
 ---
 name: Agentic Release Notes
+description: Agentic PR release notes preview (prompt rev 8)
 
 on:
   pull_request:
@@ -35,6 +36,16 @@ engine:
 
 Generate suggested GitHub release notes in Markdown for this pull request.
 
+## Output requirements (must follow)
+
+- You MUST add exactly one pull request comment using the `output.add-comment` safe output.
+- The PR comment body MUST start with this exact first line (no leading whitespace):
+  `<!-- vue-pom-generator:agentic-release-notes-preview -->`
+- The PR comment body MUST NOT contain the backtick character (`) anywhere.
+- The first character of the PR comment body MUST be `<`.
+- Do NOT wrap any part of the output in code fences.
+- If you cannot comply with these requirements, do NOT add a comment; instead use `output.noop` with a short explanation.
+
 ## Instructions
 
 1. Read the pull request context:
@@ -66,16 +77,5 @@ Generate suggested GitHub release notes in Markdown for this pull request.
 
 ## Output
 
-- Do NOT start your PR comment with backticks or code fences.
-- The first character of the PR comment body MUST be `<`.
 - Also write the final Markdown to `$GITHUB_STEP_SUMMARY` so it appears in the workflow run summary.
 - Do not invent changes; only summarize what you can justify from the collected evidence.
-- You MUST add a pull request comment containing the Markdown using the `output.add-comment` safe output.
-- The very first line of the PR comment body MUST be exactly: `<!-- vue-pom-generator:agentic-release-notes-preview -->`
-- Put the release notes Markdown immediately after that marker (no blank lines before the marker).
-- Do NOT wrap the output in code fences.
-
-Example PR comment start:
-
-<!-- vue-pom-generator:agentic-release-notes-preview -->
-## Highlights
