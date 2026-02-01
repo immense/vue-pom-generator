@@ -997,6 +997,36 @@ jobs:
           mkdir -p /tmp/gh-aw/safeoutputs/
           find "/tmp/gh-aw/safeoutputs/" -type f -print
           echo "GH_AW_AGENT_OUTPUT=/tmp/gh-aw/safeoutputs/agent_output.json" >> "$GITHUB_ENV"
+      - name: Normalize agent comment body
+        env:
+          GH_AW_AGENT_OUTPUT: /tmp/gh-aw/safeoutputs/agent_output.json
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          path = os.environ["GH_AW_AGENT_OUTPUT"]
+          marker = "<!-- vue-pom-generator:agentic-release-notes-preview -->"
+          with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+          items = data.get("items")
+          if not isinstance(items, list):
+            raise SystemExit("agent_output.json missing items list")
+          for item in items:
+            if item.get("type") != "add_comment":
+              continue
+            body = item.get("body")
+            if not isinstance(body, str) or not body.strip():
+              raise SystemExit("add_comment body is missing or empty")
+            # Enforce: no backticks anywhere.
+            body = body.replace("`", "")
+            # Enforce: marker must be the first line.
+            body = body.lstrip()
+            if not body.startswith(marker):
+              body = marker + "\n" + body
+            item["body"] = body
+          with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+          PY
       - name: Process Safe Outputs
         id: process_safe_outputs
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
