@@ -62,4 +62,5 @@ Generate suggested GitHub release notes in Markdown for this pull request.
 - Also write the final Markdown to `$GITHUB_STEP_SUMMARY` so it appears in the workflow run summary.
 - Do not invent changes; only summarize what you can justify from the collected evidence.
 - You MUST add a pull request comment containing the Markdown using the `output.add-comment` safe output.
-- Start the comment body with: `<!-- vue-pom-generator:release-notes-preview -->`
+- Start the comment body with: `<!-- vue-pom-generator:agentic-release-notes-preview -->`
+- Do NOT wrap the output in code fences.
