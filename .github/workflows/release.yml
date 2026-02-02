@@ -10,12 +10,6 @@ on:
       - main
 
   workflow_dispatch:
-    inputs:
-      publish_to_npm:
-        description: 'Publish to npm (with provenance)'
-        required: false
-        default: false
-        type: boolean
 
 concurrency:
   group: release-main
@@ -49,55 +43,6 @@ jobs:
       - name: Build
         run: npm run build
 
-  pr_release_notes_comment:
-    name: PR Release Notes Comment
-    needs: test
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    permissions:
-      contents: read
-      pull-requests: write
-      issues: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install
-        run: npm ci
-
-      - name: Generate suggested release notes (PR)
-        env:
-          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          COPILOT_MODEL: gpt-4.1
-          PR_RELEASE_NOTES_PATH: PR_RELEASE_NOTES.md
-        run: |
-          if [ -z "${COPILOT_GITHUB_TOKEN}" ]; then
-            echo "::error::Missing required secret COPILOT_GITHUB_TOKEN (needed for Copilot SDK PR release note generation)."
-            exit 1
-          fi
-          if [ -z "${GH_TOKEN}" ]; then
-            echo "::error::Missing required env var GH_TOKEN (needed for GitHub API queries used in PR release note generation)."
-            exit 1
-          fi
-          node ./scripts/generate-pr-release-notes.mjs
-
-      - name: Comment suggested release notes on PR
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          BODY_PATH: PR_RELEASE_NOTES.md
-        run: |
-          node ./scripts/upsert-pr-comment.mjs
-
   release:
     name: Release
     needs: test
@@ -105,7 +50,6 @@ jobs:
     if: ((github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'github-actions[bot]') || github.event_name == 'workflow_dispatch') && vars.ENABLE_AUTO_RELEASE == 'true'
     permissions:
       contents: write
-      id-token: write
     steps:
       - name: Checkout (full history + tags)
         uses: actions/checkout@v4
@@ -136,25 +80,123 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_OUTPUT, 'version=' + nextVersion + '\\n');
           fs.appendFileSync(process.env.GITHUB_OUTPUT, 'previous_tag=' + latestTag + '\\n');"
 
-      - name: Generate release notes (Copilot SDK)
+      - name: Generate release notes (agentic Copilot CLI)
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_REPOSITORY: ${{ github.repository }}
           RELEASE_VERSION: ${{ steps.next.outputs.version }}
           RELEASE_PREVIOUS_TAG: ${{ steps.next.outputs.previous_tag }}
-          RELEASE_NOTES_PATH: RELEASE_NOTES.md
           COPILOT_MODEL: gpt-5
         run: |
+          set -euo pipefail
+
           if [ -z "${COPILOT_GITHUB_TOKEN}" ]; then
-            echo "::error::Missing required secret COPILOT_GITHUB_TOKEN (needed for Copilot SDK release note generation)."
+            echo "::error::Missing required secret COPILOT_GITHUB_TOKEN (needed for Copilot CLI release note generation)."
             exit 1
           fi
           if [ -z "${GH_TOKEN}" ]; then
             echo "::error::Missing required env var GH_TOKEN (needed for GitHub API queries used in release note generation)."
             exit 1
           fi
-          node ./scripts/generate-release-notes.mjs
+
+          VERSION="${RELEASE_VERSION}"
+          PREV_TAG="${RELEASE_PREVIOUS_TAG}"
+
+          if [ -n "$PREV_TAG" ]; then
+            RANGE="$PREV_TAG..HEAD"
+          else
+            RANGE=""
+          fi
+
+          COMMITS="$(git log --pretty=format:'- %s (%an) [%h]' $RANGE)"
+          if [ -n "$RANGE" ]; then
+            DIFFSTAT="$(git diff --stat $RANGE)"
+            NAME_STATUS="$(git diff --name-status $RANGE)"
+            SINCE_ISO="$(git show -s --format=%cI "$PREV_TAG")"
+          else
+            DIFFSTAT="$(git show --stat)"
+            NAME_STATUS="$(git show --name-status)"
+            SINCE_ISO=""
+          fi
+          UNTIL_ISO="$(git show -s --format=%cI HEAD)"
+
+          # Collect merged PRs in window (best-effort, but fail-fast if gh errors).
+          MERGED_PRS=""
+          if [ -n "$SINCE_ISO" ]; then
+            Q="repo:${RELEASE_REPOSITORY} is:pr is:merged merged:>=${SINCE_ISO} merged:<=${UNTIL_ISO}"
+          else
+            Q="repo:${RELEASE_REPOSITORY} is:pr is:merged"
+          fi
+
+          for page in 1 2 3 4 5; do
+            RESP="$(gh api -X GET search/issues -f "q=${Q}" -f per_page=100 -f "page=${page}" --jq '.items')"
+            COUNT="$(printf '%s' "$RESP" | jq 'length')"
+            if [ "$COUNT" -eq 0 ]; then
+              break
+            fi
+            MERGED_PRS+="$(printf '%s' "$RESP" | jq -r '.[] | "- #\(.number) \(.title) (\(.html_url)) (by @\(.user.login))"')"
+            MERGED_PRS+="\n"
+            if [ "$COUNT" -lt 100 ]; then
+              break
+            fi
+          done
+
+          PROMPT_FILE="/tmp/release-notes-prompt.txt"
+          cat > "$PROMPT_FILE" << 'EOF'
+          You write concise, high-signal GitHub release notes in Markdown. Use headings and bullets.
+          Do not invent changes; only summarize what is provided.
+
+          Follow this structure:
+          - ## Highlights (3-6 bullets)
+          - ## Changes (bulleted; group by theme when possible)
+          - ## Breaking Changes (only if any)
+          - ## Pull Requests Included (bulleted, with links)
+          - ## Testing (brief; mention if none)
+
+          Output only Markdown.
+          EOF
+
+          {
+            echo ""
+            echo "Generate release notes for version v${VERSION}."
+            echo ""
+            if [ -n "$PREV_TAG" ]; then
+              echo "Compare range: ${PREV_TAG}..HEAD (exclude the release bump commit if it appears)."
+              echo "Window: merged PRs between ${SINCE_ISO} and ${UNTIL_ISO}."
+            else
+              echo "This is the initial release; summarize the project based on commit history."
+              echo "Window: recent context up to ${UNTIL_ISO}."
+            fi
+            echo ""
+            echo "Repository: ${RELEASE_REPOSITORY}"
+            echo ""
+            echo "Commits:"
+            echo "${COMMITS:-<no commits>}"
+            echo ""
+            echo "Diffstat:"
+            echo "${DIFFSTAT:-<no stats>}"
+            echo ""
+            echo "Files (name-status):"
+            echo "${NAME_STATUS:-<no files>}"
+            echo ""
+            echo "Merged pull requests in this release window:"
+            if [ -n "${MERGED_PRS//\n/}" ]; then
+              printf '%b' "$MERGED_PRS"
+            else
+              echo "<none found>"
+            fi
+          } >> "$PROMPT_FILE"
+
+          ./node_modules/.bin/copilot \
+            --log-level none \
+            --stream off \
+            --model "${COPILOT_MODEL}" \
+            --prompt "$(cat "$PROMPT_FILE")" \
+            --silent \
+            > RELEASE_NOTES.md
+
+          test -s RELEASE_NOTES.md
 
       - name: Bump package.json version
         run: |
@@ -183,9 +225,3 @@ jobs:
         with:
           tag_name: v${{ steps.next.outputs.version }}
           body_path: RELEASE_NOTES.md
-
-      - name: Publish to npm (provenance)
-        if: github.event_name == 'workflow_dispatch' && inputs.publish_to_npm == true
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

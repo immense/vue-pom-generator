@@ -121,8 +121,20 @@ function fetchMergedPullRequests({ repo, sinceISO, untilISO }) {
   return [...prsByNumber.values()].sort((a, b) => a.number - b.number);
 }
 
+function getOutputTarget(envVarName) {
+  const raw = process.env[envVarName];
+
+  // Explicitly requested stdout.
+  if (raw === "-") return { type: "stdout" };
+
+  // If unspecified, default to stdout (callers that want a file must set the env var).
+  if (!raw) return { type: "stdout" };
+
+  return { type: "file", path: raw };
+}
+
 const version = requireEnv("RELEASE_VERSION");
-const outPath = process.env.RELEASE_NOTES_PATH || "RELEASE_NOTES.md";
+const outputTarget = getOutputTarget("RELEASE_NOTES_PATH");
 
 const repo = process.env.RELEASE_REPOSITORY || process.env.GITHUB_REPOSITORY;
 if (!repo) {
@@ -208,8 +220,14 @@ try {
     throw new Error("Copilot SDK returned an empty response");
   }
 
-  fs.writeFileSync(outPath, content.endsWith("\n") ? content : `${content}\n`, "utf8");
-  process.stdout.write(`Wrote ${outPath}\n`);
+  const markdown = content.endsWith("\n") ? content : `${content}\n`;
+
+  if (outputTarget.type === "file") {
+    fs.writeFileSync(outputTarget.path, markdown, "utf8");
+    process.stderr.write(`Wrote ${outputTarget.path}\n`);
+  } else {
+    process.stdout.write(markdown);
+  }
 } finally {
   await session.destroy();
   await client.stop();

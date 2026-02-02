@@ -87,7 +87,19 @@ if (!Number.isFinite(prNumber) || prNumber <= 0) {
 const ghToken = requireEnv("GH_TOKEN");
 const copilotToken = requireEnv("COPILOT_GITHUB_TOKEN");
 
-const outPath = process.env.PR_RELEASE_NOTES_PATH || "PR_RELEASE_NOTES.md";
+function getOutputTarget(envVarName) {
+  const raw = process.env[envVarName];
+
+  // Explicitly requested stdout.
+  if (raw === "-") return { type: "stdout" };
+
+  // If unspecified, default to stdout (callers that want a file must set the env var).
+  if (!raw) return { type: "stdout" };
+
+  return { type: "file", path: raw };
+}
+
+const outputTarget = getOutputTarget("PR_RELEASE_NOTES_PATH");
 
 const pr = ghApiJson(`repos/${repo}/pulls/${prNumber}`, { ghToken });
 const prUrl = pr?.html_url ?? "";
@@ -160,8 +172,14 @@ try {
     throw new Error("Copilot SDK returned an empty response");
   }
 
-  fs.writeFileSync(outPath, content.endsWith("\n") ? content : `${content}\n`, "utf8");
-  process.stdout.write(`Wrote ${outPath}\n`);
+  const markdown = content.endsWith("\n") ? content : `${content}\n`;
+
+  if (outputTarget.type === "file") {
+    fs.writeFileSync(outputTarget.path, markdown, "utf8");
+    process.stderr.write(`Wrote ${outputTarget.path}\n`);
+  } else {
+    process.stdout.write(markdown);
+  }
 } finally {
   await session.destroy();
   await client.stop();
