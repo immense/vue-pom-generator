@@ -109,7 +109,7 @@ jobs:
             RANGE=""
           fi
 
-          COMMITS="$(git log --pretty=format:'- %s (%an) [%h]' $RANGE)"
+          COMMITS="$(git log --pretty=format:'- %s (%an) [%h]' $RANGE | head -n 200)"
           if [ -n "$RANGE" ]; then
             DIFFSTAT="$(git diff --stat $RANGE)"
             NAME_STATUS="$(git diff --name-status $RANGE)"
@@ -135,7 +135,7 @@ jobs:
             if [ "$COUNT" -eq 0 ]; then
               break
             fi
-            MERGED_PRS+="$(printf '%s' "$RESP" | jq -r '.[] | "- #\(.number) \(.title) (\(.html_url)) (by @\(.user.login))"')"
+            MERGED_PRS+="$(printf '%s' "$RESP" | jq -r '.[] | "- #\(.number) \(.title) (\(.html_url)) (by @\(.user.login))"' | head -n 200)"
             MERGED_PRS+="\n"
             if [ "$COUNT" -lt 100 ]; then
               break
@@ -181,7 +181,7 @@ jobs:
             echo "${NAME_STATUS:-<no files>}"
             echo ""
             echo "Merged pull requests in this release window:"
-            if [ -n "${MERGED_PRS//\n/}" ]; then
+            if [ -n "$MERGED_PRS" ]; then
               printf '%b' "$MERGED_PRS"
             else
               echo "<none found>"
