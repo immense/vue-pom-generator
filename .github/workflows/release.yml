@@ -47,7 +47,7 @@ jobs:
     name: Release
     needs: test
     runs-on: ubuntu-latest
-    if: ((github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'github-actions[bot]') || github.event_name == 'workflow_dispatch') && vars.ENABLE_AUTO_RELEASE == 'true'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'github-actions[bot]') || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
       id-token: write
@@ -66,20 +66,20 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Compute next version (patch)
+      - name: Read version from package.json
         id: next
         run: |
           node -e "const { execSync } = require('child_process'); const fs=require('fs');
-          const pkgPath='package.json';
-          const pkg=JSON.parse(fs.readFileSync(pkgPath,'utf8'));
+          const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));
+          const version = String(pkg.version || '').trim();
+          if(!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error('Invalid package.json version: ' + version);
+          const currentTag = 'v' + version;
           const tagsRaw=execSync(\"git tag --list 'v*' --sort=-v:refname\", { stdio: ['ignore','pipe','ignore'] }).toString().trim();
-          const latestTag=tagsRaw.split(/\r?\n/).filter(Boolean)[0] || '';
-          function bumpPatch(v){ const m=/^(\d+)\.(\d+)\.(\d+)$/.exec(v); if(!m) throw new Error('Invalid semver: '+v); return m[1] + '.' + m[2] + '.' + (Number(m[3]) + 1); }
-          const nextVersion = latestTag ? bumpPatch(latestTag.replace(/^v/,'')) : '0.0.1';
-          if(pkg.version === nextVersion){ throw new Error('Next version equals current package.json version: '+nextVersion); }
-          console.log('nextVersion='+nextVersion);
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, 'version=' + nextVersion + '\\n');
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, 'previous_tag=' + latestTag + '\\n');"
+          const tags=tagsRaw.split(/\r?\n/).filter(Boolean);
+          const previousTag = tags.find(t => t !== currentTag) || '';
+          try { execSync('git rev-parse --verify ' + currentTag, { stdio: ['ignore','ignore','ignore'] }); throw new Error('Tag already exists: ' + currentTag); } catch (e) { /* ok */ }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, 'version=' + version + '\\n');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, 'previous_tag=' + previousTag + '\\n');"
 
       - name: Generate release notes (agentic Copilot CLI)
         env:
@@ -199,27 +199,16 @@ jobs:
 
           test -s RELEASE_NOTES.md
 
-      - name: Bump package.json version
-        run: |
-          npm version "${NEXT_VERSION}" --no-git-tag-version
-        env:
-          NEXT_VERSION: ${{ steps.next.outputs.version }}
-
       - name: Configure git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Commit version bump
-        run: |
-          git add package.json package-lock.json
-          git commit -m "chore(release): v${{ steps.next.outputs.version }} [skip ci]"
-
       - name: Tag release
         run: git tag "v${{ steps.next.outputs.version }}"
 
-      - name: Push commit + tag
-        run: git push origin HEAD:main --follow-tags
+      - name: Push tag
+        run: git push origin --tags
 
       - name: Upgrade npm (required for trusted publishing)
         run: |
