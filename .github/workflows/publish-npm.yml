@@ -57,9 +57,28 @@ jobs:
 
       - name: Setup Node
         uses: actions/setup-node@v4
+        env:
+          NODE_AUTH_TOKEN: ""
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
+
+      - name: Ensure no token-based npm auth
+        run: |
+          set -euo pipefail
+
+          # Trusted Publishing (OIDC) must not use a legacy npm token.
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::warning::NODE_AUTH_TOKEN is set in the environment; overriding to use OIDC."
+          fi
+
+          # actions/setup-node writes npm config to a temp userconfig file.
+          # Remove any auth token lines so npm must use OIDC.
+          NPMRC_PATH="${NPM_CONFIG_USERCONFIG:-}"
+          if [ -n "$NPMRC_PATH" ] && [ -f "$NPMRC_PATH" ]; then
+            sed -i.bak '/_authToken/d' "$NPMRC_PATH"
+            rm -f "${NPMRC_PATH}.bak"
+          fi
 
       - name: Install
         run: npm ci
@@ -78,3 +97,5 @@ jobs:
 
       - name: Publish
         run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ""
