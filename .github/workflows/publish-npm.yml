@@ -80,6 +80,14 @@ jobs:
             rm -f "${NPMRC_PATH}.bak"
           fi
 
+      - name: Upgrade npm (required for trusted publishing)
+        run: |
+          set -euo pipefail
+          echo "Node: $(node --version)"
+          echo "npm (before): $(npm --version)"
+          npm install -g npm@^11.5.1
+          echo "npm (after): $(npm --version)"
+
       - name: Install
         run: npm ci
 
