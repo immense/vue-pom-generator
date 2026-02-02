@@ -200,7 +200,7 @@ jobs:
 
       - name: Bump package.json version
         run: |
-          node -e "const fs=require('fs'); const pkgPath='package.json'; const pkg=JSON.parse(fs.readFileSync(pkgPath,'utf8')); pkg.version=process.env.NEXT_VERSION; fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');"
+          npm version "${NEXT_VERSION}" --no-git-tag-version
         env:
           NEXT_VERSION: ${{ steps.next.outputs.version }}
 
@@ -211,7 +211,7 @@ jobs:
 
       - name: Commit version bump
         run: |
-          git add package.json
+          git add package.json package-lock.json
           git commit -m "chore(release): v${{ steps.next.outputs.version }} [skip ci]"
 
       - name: Tag release
