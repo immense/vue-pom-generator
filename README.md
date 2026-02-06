@@ -47,69 +47,69 @@ import vue from "@vitejs/plugin-vue";
 import { createVuePomGeneratorPlugins } from "@immense/vue-pom-generator";
 
 export default defineConfig(() => {
-	const vueOptions = {
-		script: { defineModel: true, propsDestructure: true },
-	};
+  const vueOptions = {
+    script: { defineModel: true, propsDestructure: true },
+ };
 
-	return {
-		plugins: [
-			...createVuePomGeneratorPlugins({
-				vueOptions,
-				logging: { verbosity: "info" },
+ return {
+  plugins: [
+   ...createVuePomGeneratorPlugins({
+    vueOptions,
+    logging: { verbosity: "info" },
 
-				injection: {
-					// Attribute to inject/read as the test id (default: data-testid)
-					attribute: "data-testid",
+    injection: {
+     // Attribute to inject/read as the test id (default: data-testid)
+     attribute: "data-testid",
 
-					// Used to classify Vue files as "views" vs components (default: src/views)
-					viewsDir: "src/views",
+     // Used to classify Vue files as "views" vs components (default: src/views)
+     viewsDir: "src/views",
 
-					// Optional: wrapper semantics for design-system components
-					nativeWrappers: {
-						ImmyButton: { role: "button" },
-						ImmyInput: { role: "input" },
-					},
+     // Optional: wrapper semantics for design-system components
+     nativeWrappers: {
+      ImmyButton: { role: "button" },
+      ImmyInput: { role: "input" },
+     },
 
-					// Optional: opt specific components out of injection
-					excludeComponents: ["ImmyButton"],
+     // Optional: opt specific components out of injection
+     excludeComponents: ["ImmyButton"],
 
-					// Optional: preserve/overwrite/error when an author already set the attribute
-					existingIdBehavior: "preserve",
-				},
+     // Optional: preserve/overwrite/error when an author already set the attribute
+     existingIdBehavior: "preserve",
+    },
 
-				generation: {
-					// Default: tests/playwright/generated
-					outDir: "tests/playwright/generated",
+    generation: {
+     // Default: tests/playwright/generated
+     outDir: "tests/playwright/generated",
 
-					// Controls how to handle duplicate generated member names within a single POM class.
-					// - "error": fail compilation
-					// - "warn": warn and suffix
-					// - "suffix": suffix silently (default)
-					nameCollisionBehavior: "suffix",
+     // Controls how to handle duplicate generated member names within a single POM class.
+     // - "error": fail compilation
+     // - "warn": warn and suffix
+     // - "suffix": suffix silently (default)
+     nameCollisionBehavior: "suffix",
 
-					// Enable router introspection. When provided, router-aware POM helpers are generated.
-					router: { entry: "src/router.ts" },
+     // Enable router introspection. When provided, router-aware POM helpers are generated.
+     router: { entry: "src/router.ts" },
 
-					playwright: {
-						fixtures: true,
-						customPoms: {
-							// Default: tests/playwright/pom/custom
-							dir: "tests/playwright/pom/custom",
-							importAliases: { ImmyCheckBox: "CheckboxWidget" },
-							attachments: [
-								{
-									className: "ConfirmationModal",
-									propertyName: "confirmationModal",
-									attachWhenUsesComponents: ["Page"],
-								},
-							],
-						},
-					},
-				},
-			}),
-			vue(vueOptions),
-		],
-	};
+     playwright: {
+      fixtures: true,
+      customPoms: {
+       // Default: tests/playwright/pom/custom
+       dir: "tests/playwright/pom/custom",
+       importAliases: { ImmyCheckBox: "CheckboxWidget" },
+       attachments: [
+        {
+         className: "ConfirmationModal",
+         propertyName: "confirmationModal",
+         attachWhenUsesComponents: ["Page"],
+        },
+       ],
+      },
+     },
+    },
+   }),
+   vue(vueOptions),
+  ],
+ };
 });
 ```
 
