@@ -1163,133 +1163,21 @@ async function generateAggregatedFiles(
       throw new Error("basePageClassPath is required for aggregated generation");
     }
 
-    // Inline BasePage into the aggregated output.
+    // Aggregate mode goal: consolidate all generated POM classes into one file.
+    // Instead of inlining BasePage/Pointer helpers and stripping imports via regex, we
+    // emit/copy those dependencies into the output folder and import them normally.
     //
-    // Why:
-    // - Playwright's runtime loader can treat workspace packages (like `vue-pom-generator`)
-    //   as external and not apply TS transforms/module resolution consistently.
-    // - Importing a .ts file from inside a "type": "module" package can fail with
-    //   "Cannot find module" at runtime.
-    //
-    // Inlining keeps the generated POMs self-contained and stable across platforms.
-    const clickInstrumentationInline = [
-      "export const TESTID_CLICK_EVENT_NAME = \"__testid_event__\";",
-      "export const TESTID_CLICK_EVENT_STRICT_FLAG = \"__testid_click_event_strict__\";",
-      "export interface TestIdClickEventDetail {",
-      "  testId?: string;",
-      "  phase?: \"before\" | \"after\" | \"error\" | string;",
-      "  err?: string;",
-      "}",
-    ].join("\n");
+    // This keeps output deterministic and avoids fragile source rewriting.
+    const runtimeDirRel = "./_pom-runtime";
+    const runtimeClassGenRel = `${runtimeDirRel}/class-generation`;
 
-    const inlinePlaywrightTypesModule = () => {
-      const typesPath = fileURLToPath(new URL("./playwright-types.ts", import.meta.url));
-
-      let typesSource = "";
-      try {
-        typesSource = fs.readFileSync(typesPath, "utf8");
-      }
-      catch {
-        throw new Error(`Failed to read playwright-types.ts at ${typesPath}`);
-      }
-
-      // Strip the import from the inlined types.
-      typesSource = typesSource.replace(
-        /import\s+type\s*\{\s*Locator\s+as\s+PwLocator\s*,\s*Page\s+as\s+PwPage\s*\}\s*from\s*["']@playwright\/test["'];?\s*/,
-        "",
-      );
-
-      return typesSource.trim();
-    };
-
-    const inlinePointerModule = () => {
-      // Inline Pointer.ts from this package so generated POMs are self-contained and do not
-      // rely on runtime TS module resolution within workspace packages.
-      const pointerPath = fileURLToPath(new URL("./Pointer.ts", import.meta.url));
-
-      let pointerSource = "";
-      try {
-        pointerSource = fs.readFileSync(pointerPath, "utf8");
-      }
-      catch {
-        throw new Error(`Failed to read Pointer.ts at ${pointerPath}`);
-      }
-
-      // Replace the click-instrumentation import with an inline copy.
-      pointerSource = pointerSource.replace(
-        /import\s*\{[\s\S]*?\}\s*from\s*["']\.\.\/click-instrumentation["'];?\s*/,
-        `${clickInstrumentationInline}\n\n`,
-      );
-
-      // If Pointer uses a split value import + type-only import, remove the type-only import too.
-      // The inline block already declares TestIdClickEventDetail.
-      pointerSource = pointerSource.replace(
-        /import\s+type\s*\{\s*TestIdClickEventDetail\s*\}\s*from\s*["']\.\.\/click-instrumentation["'];?\s*/g,
-        "",
-      );
-
-      // The aggregated file already imports these Playwright types once at the top.
-      pointerSource = pointerSource.replace(
-        /import\s+type\s*\{\s*Locator\s+as\s+PwLocator\s*,\s*Page\s+as\s+PwPage\s*\}\s*from\s*["']@playwright\/test["'];?\s*/,
-        "",
-      );
-
-      // The aggregated file inlines these structural types once at the top.
-      pointerSource = pointerSource.replace(
-        /import\s+type\s*\{\s*PwLocator\s*,\s*PwPage\s*\}\s*from\s*["']\.\/playwright-types["'];?\s*/,
-        "",
-      );
-
-      return pointerSource.trim();
-    };
-
-    const inlineBasePageModule = () => {
-      let basePageSource = "";
-      try {
-        basePageSource = fs.readFileSync(basePageClassPath, "utf8");
-      }
-      catch {
-        throw new Error(`Failed to read BasePage.ts at ${basePageClassPath}`);
-      }
-
-      // Replace the click-instrumentation import with an inline copy.
-      basePageSource = basePageSource.replace(
-        /import\s*\{[\s\S]*?\}\s*from\s*["']\.\.\/click-instrumentation["'];?\s*/,
-        `${clickInstrumentationInline}\n\n`,
-      );
-
-      // If BasePage uses a split value import + type-only import, remove the type-only import too.
-      // The inline block already declares TestIdClickEventDetail.
-      basePageSource = basePageSource.replace(
-        /import\s+type\s*\{\s*TestIdClickEventDetail\s*\}\s*from\s*["']\.\.\/click-instrumentation["'];?\s*/g,
-        "",
-      );
-
-      // The aggregated file already imports these Playwright types once at the top.
-      // Remove BasePage's own import to avoid duplicate identifiers.
-      basePageSource = basePageSource.replace(
-        /import\s+type\s*\{\s*Locator\s+as\s+PwLocator\s*,\s*Page\s+as\s+PwPage\s*\}\s*from\s*["']@playwright\/test["'];?\s*/,
-        "",
-      );
-
-      // The aggregated file inlines these structural types once at the top.
-      basePageSource = basePageSource.replace(
-        /import\s+type\s*\{\s*PwLocator\s*,\s*PwPage\s*\}\s*from\s*["']\.\/playwright-types["'];?\s*/,
-        "",
-      );
-
-      // BasePage references Pointer, but in aggregated output we inline Pointer above.
-      basePageSource = basePageSource.replace(
-        /import\s+(?:type\s*)?\{[\s\S]*?\}\s*from\s*["']\.\/Pointer["'];?\s*/g,
-        "",
-      );
-
-      return basePageSource.trim();
-    };
-
-    const playwrightTypesInline = inlinePlaywrightTypesModule();
-    const pointerInline = inlinePointerModule();
-    const basePageInline = inlineBasePageModule();
+    imports.push(`import type { PwLocator, PwPage } from "${runtimeClassGenRel}/playwright-types";`);
+    imports.push(`import { BasePage } from "${runtimeClassGenRel}/BasePage";`);
+    imports.push(`import type { Fluent } from "${runtimeClassGenRel}/BasePage";`);
+    imports.push(`export * from "${runtimeDirRel}/click-instrumentation";`);
+    imports.push(`export * from "${runtimeClassGenRel}/playwright-types";`);
+    imports.push(`export * from "${runtimeClassGenRel}/Pointer";`);
+    imports.push(`export * from "${runtimeClassGenRel}/BasePage";`);
 
     // Handwritten POM helpers for complicated/third-party widgets.
     // Convention: place them in `tests/playwright/pom/custom/*.ts`.
@@ -1545,13 +1433,6 @@ async function generateAggregatedFiles(
     const baseContent = [
       header,
       ...imports,
-      "",
-      playwrightTypesInline,
-      "",
-      pointerInline,
-      "",
-      basePageInline,
-      "",
       ...classes,
       ...(stubs.length ? ["", ...stubs] : []),
     ].filter(Boolean).join("\n\n");
@@ -1561,15 +1442,53 @@ async function generateAggregatedFiles(
 
   const base = ensureDir(outDir);
   const outputFile = path.join(base, "page-object-models.g.ts");
-  const header = `/// <reference lib="es2015" />\n${eslintSuppressionHeader}import type { Locator as PwLocator, Page as PwPage } from "@playwright/test";\n/**\n * Aggregated generated POMs\n${AUTO_GENERATED_COMMENT}`;
+  const header = `/// <reference lib="es2015" />\n${eslintSuppressionHeader}/**\n * Aggregated generated POMs\n${AUTO_GENERATED_COMMENT}`;
   const content = makeAggregatedContent(header, path.dirname(outputFile), [...views, ...components]);
 
   const indexFile = path.join(base, "index.ts");
   const indexContent = `${eslintSuppressionHeader}/**\n * POM exports\n${AUTO_GENERATED_COMMENT}\n\nexport * from "./page-object-models.g";\n`;
 
+  const runtimeDirAbs = path.join(base, "_pom-runtime");
+  const runtimeClassGenAbs = path.join(runtimeDirAbs, "class-generation");
+
+  const readText = (absPath: string, description: string) => {
+    try {
+      return fs.readFileSync(absPath, "utf8");
+    }
+    catch {
+      throw new Error(`Failed to read ${description} at ${absPath}`);
+    }
+  };
+
+  // Copy runtime dependencies into the output folder so the aggregated POM file can
+  // import them without relying on workspace package resolution.
+  const clickInstrumentationAbs = fileURLToPath(new URL("../click-instrumentation.ts", import.meta.url));
+  const pointerAbs = fileURLToPath(new URL("./Pointer.ts", import.meta.url));
+  const playwrightTypesAbs = fileURLToPath(new URL("./playwright-types.ts", import.meta.url));
+
+  const runtimeFiles: Array<{ filePath: string; content: string }> = [
+    {
+      filePath: path.join(runtimeDirAbs, "click-instrumentation.ts"),
+      content: readText(clickInstrumentationAbs, "click-instrumentation.ts"),
+    },
+    {
+      filePath: path.join(runtimeClassGenAbs, "Pointer.ts"),
+      content: readText(pointerAbs, "Pointer.ts"),
+    },
+    {
+      filePath: path.join(runtimeClassGenAbs, "playwright-types.ts"),
+      content: readText(playwrightTypesAbs, "playwright-types.ts"),
+    },
+    {
+      filePath: path.join(runtimeClassGenAbs, "BasePage.ts"),
+      content: readText(basePageClassPath, "BasePage.ts"),
+    },
+  ];
+
   return [
     { filePath: outputFile, content },
     { filePath: indexFile, content: indexContent },
+    ...runtimeFiles,
   ];
 }
 
