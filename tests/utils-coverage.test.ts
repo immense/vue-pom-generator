@@ -1,11 +1,14 @@
+/* eslint-disable no-restricted-syntax */
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 
 import type {
+  DirectiveNode,
   ElementNode,
   ForNode,
   RootNode,
   TemplateChildNode,
+  TransformContext,
 } from "@vue/compiler-core";
 import { ConstantTypes, NodeTypes } from "@vue/compiler-core";
 import type { CompilerOptions } from "@vue/compiler-dom";
@@ -90,14 +93,14 @@ function firstElement(root: RootNode): ElementNode {
 
     if (node.type === NodeTypes.ROOT) {
       for (const c of (node as RootNode).children) {
-        const found = visit(c as any);
+        const found = visit(c);
         if (found) return found;
       }
     }
     expect(toPascalCase("hello world")).toBe("HelloWorld");
     expect(isSimpleExpressionNode(null)).toBe(false);
     expect(isSimpleExpressionNode({})).toBe(false);
-    expect(isSimpleExpressionNode({ type: NodeTypes.SIMPLE_EXPRESSION } as any)).toBe(true);
+    expect(isSimpleExpressionNode({ type: NodeTypes.SIMPLE_EXPRESSION })).toBe(true);
 
     return null;
   };
@@ -112,7 +115,7 @@ function firstElement(root: RootNode): ElementNode {
 function findFirstForNode(root: RootNode): ForNode {
   let found: ForNode | null = null;
 
-  const visitAny = (node: any) => {
+  const visitAny = (node: RootNode | TemplateChildNode) => {
     if (!node || found) return;
 
     if (node.type === NodeTypes.FOR) {
@@ -150,7 +153,7 @@ function findFirstForNode(root: RootNode): ForNode {
 function findFirstTag(root: RootNode, tag: string): ElementNode {
   let found: ElementNode | null = null;
 
-  const visitAny = (node: any) => {
+  const visitAny = (node: RootNode | TemplateChildNode) => {
     if (!node || found) return;
 
     if (node.type === NodeTypes.ELEMENT) {
@@ -187,7 +190,7 @@ function findFirstTag(root: RootNode, tag: string): ElementNode {
 function buildHierarchyMap(root: RootNode): HierarchyMap {
   const map: HierarchyMap = new Map();
 
-  const visit = (node: any, parent: ElementNode | null) => {
+  const visit = (node: RootNode | TemplateChildNode, parent: ElementNode | null) => {
     if (!node) return;
 
     if (node.type === NodeTypes.ELEMENT) {
@@ -220,16 +223,18 @@ function buildHierarchyMap(root: RootNode): HierarchyMap {
 
 function setBindAst(node: ElementNode, argName: string, expAstSource: string) {
   const dir = node.props.find(
-    (p): p is any =>
+    (p)  =>
       p.type === NodeTypes.DIRECTIVE
       && p.name === "bind"
       && p.arg?.type === NodeTypes.SIMPLE_EXPRESSION
       && p.arg.content === argName,
   );
-  if (!dir || !dir.exp || dir.exp.type !== NodeTypes.SIMPLE_EXPRESSION) {
+  const directiveNode = dir as DirectiveNode;
+  if (!directiveNode || directiveNode === undefined || directiveNode.exp === undefined) {
     throw new Error(`Missing :${argName} directive with SIMPLE_EXPRESSION`);
   }
-  (dir.exp as any).ast = parseExpression(expAstSource, { plugins: ["typescript"] });
+  else
+    directiveNode.exp.ast = parseExpression(expAstSource, { plugins: ["typescript"] });
 }
 
 describe("utils.ts coverage", () => {
@@ -241,7 +246,7 @@ describe("utils.ts coverage", () => {
 
     expect(isSimpleExpressionNode(null)).toBe(false);
     expect(isSimpleExpressionNode({})).toBe(false);
-    expect(isSimpleExpressionNode({ type: NodeTypes.SIMPLE_EXPRESSION } as any)).toBe(true);
+    expect(isSimpleExpressionNode({ type: NodeTypes.SIMPLE_EXPRESSION })).toBe(true);
 
     const ast = parseTemplate("<button @click=\"save()\">Save</button>");
     const btn = firstElement(ast);
@@ -265,9 +270,9 @@ describe("utils.ts coverage", () => {
     setRouteNameToComponentNameMap(null);
     setResolveToComponentNameFn((to) => {
       if (typeof to === "string") return null;
-      const keys = Object.keys((to as any).params ?? {}).sort();
+      const keys = Object.keys((to).params ?? {}).sort();
       expect(keys).toEqual(["id"]);
-      expect((to as any).params.id).toBe("__placeholder__");
+      expect(to.params?.id).toBe("__placeholder__");
       return "UsersViaResolve";
     });
 
@@ -354,7 +359,7 @@ describe("utils.ts coverage", () => {
     const el = firstElement(ast);
     expect(getKeyDirectiveValue(el)).toBe("${item.id}");
     // any non-null context triggers stringifyExpression branch
-    expect(getKeyDirectiveValue(el, {} as any)).toBe("${item.id}");
+    expect(getKeyDirectiveValue(el, {} as TransformContext)).toBe("${item.id}");
 
     const ast2 = parseTemplate("<Foo v-for=\"x in xs\" :key=\"x.id\" />");
     const foo = firstElement(ast2);
@@ -407,8 +412,8 @@ describe("utils.ts coverage", () => {
     const span = findFirstTag(ast, "span");
     const map = buildHierarchyMap(ast);
 
-    expect(getContainedInVForDirectiveKeyValue({ scopes: { vFor: 0 } } as any, span, map)).toBeNull();
-    expect(getContainedInVForDirectiveKeyValue({ scopes: { vFor: 1 } } as any, span, map)).toBe("${item.id}");
+    expect(getContainedInVForDirectiveKeyValue({ scopes: { vFor: 0 } } as TransformContext, span, map)).toBeNull();
+    expect(getContainedInVForDirectiveKeyValue({ scopes: { vFor: 1 } } as TransformContext, span, map)).toBe("${item.id}");
 
     const astStatic = compileAndCaptureAst(
       "<div v-for=\"item in ['One','Two']\" :key=\"item\"><span /></div>",
@@ -416,8 +421,8 @@ describe("utils.ts coverage", () => {
     );
     const forNode = findFirstForNode(astStatic);
 
-    const ctx = { scopes: { vFor: 1 }, parent: forNode } as any;
-    const values = tryGetContainedInStaticVForSourceLiteralValues(ctx, {} as any, buildHierarchyMap(astStatic));
+    const ctx = { scopes: { vFor: 1 }, parent: forNode } as TransformContext;
+    const values = tryGetContainedInStaticVForSourceLiteralValues(ctx, {} as ElementNode, buildHierarchyMap(astStatic));
     expect(values).toEqual(["One", "Two"]);
 
     const astStaticTpl = compileAndCaptureAst(
@@ -425,14 +430,14 @@ describe("utils.ts coverage", () => {
       { filename: "/src/components/Test.vue" },
     );
     const forNodeTpl = findFirstForNode(astStaticTpl);
-    const ctxTpl = { scopes: { vFor: 1 }, parent: forNodeTpl } as any;
-    const valuesTpl = tryGetContainedInStaticVForSourceLiteralValues(ctxTpl, {} as any, buildHierarchyMap(astStaticTpl));
+    const ctxTpl = { scopes: { vFor: 1 }, parent: forNodeTpl } as TransformContext;
+    const valuesTpl = tryGetContainedInStaticVForSourceLiteralValues(ctxTpl, {} as ElementNode, buildHierarchyMap(astStaticTpl));
     expect(valuesTpl).toEqual(["One", "Two"]);
 
     // Branches: NOT_CONSTANT => null
-    const fakeSimple = { type: NodeTypes.SIMPLE_EXPRESSION, constType: ConstantTypes.NOT_CONSTANT } as any;
-    const fakeFor = { type: NodeTypes.FOR, source: fakeSimple } as any;
-    expect(tryGetContainedInStaticVForSourceLiteralValues({ scopes: { vFor: 1 }, parent: fakeFor } as any, {} as any, buildHierarchyMap(astStatic))).toBeNull();
+    const fakeSimple = { type: NodeTypes.SIMPLE_EXPRESSION, constType: ConstantTypes.NOT_CONSTANT };
+    const fakeFor = { type: NodeTypes.FOR, source: fakeSimple };
+    expect(tryGetContainedInStaticVForSourceLiteralValues({ scopes: { vFor: 1 }, parent: fakeFor } as TransformContext, {} as ElementNode, buildHierarchyMap(astStatic))).toBeNull();
   });
 
   it("extracts handler names from :handler bindings", () => {
@@ -523,14 +528,14 @@ describe("utils.ts coverage", () => {
     const ast = parseTemplate("<RouterLink :to=\"{ name: 'Users' }\">Go</RouterLink>");
     const el = firstElement(ast);
     const toDir = nodeHasToDirective(el)!;
-    const id1 = generateToDirectiveDataTestId("MyComp", el, toDir, { scopes: { vFor: 0 } } as any, new Map() as any, wrappers);
+    const id1 = generateToDirectiveDataTestId("MyComp", el, toDir, { scopes: { vFor: 0 } } as TransformContext, new Map(), wrappers);
     expect(getAttributeValueText(id1!)).toBe("MyComp-Users-Go-routerlink");
 
     // string expression (no static name)
     const ast2 = parseTemplate("<RouterLink :to=\"toVar\">Go</RouterLink>");
     const el2 = firstElement(ast2);
     const toDir2 = nodeHasToDirective(el2)!;
-    const id2 = generateToDirectiveDataTestId("MyComp", el2, toDir2, { scopes: { vFor: 0 } } as any, new Map() as any, wrappers);
+    const id2 = generateToDirectiveDataTestId("MyComp", el2, toDir2, { scopes: { vFor: 0 } } as TransformContext, new Map(), wrappers);
     expect(id2!.kind).toBe("template");
     expect(getAttributeValueText(id2!)).toContain("toVar");
 
@@ -538,7 +543,7 @@ describe("utils.ts coverage", () => {
     const ast3 = parseTemplate("<RouterLink v-for=\"item in items\" :key=\"item.id\" :to=\"{ name: 'Users' }\">Go</RouterLink>");
     const el3 = firstElement(ast3);
     const toDir3 = nodeHasToDirective(el3)!;
-    const id3 = generateToDirectiveDataTestId("MyComp", el3, toDir3, { scopes: { vFor: 1 } } as any, buildHierarchyMap(ast3), wrappers);
+    const id3 = generateToDirectiveDataTestId("MyComp", el3, toDir3, { scopes: { vFor: 1 } } as TransformContext, buildHierarchyMap(ast3), wrappers);
     expect(id3!.kind).toBe("template");
     expect(getAttributeValueText(id3!)).toContain("item.id");
 
@@ -793,7 +798,7 @@ describe("utils.ts coverage", () => {
 
   it("supports configurable primary POM name collision behavior (error/warn/suffix)", () => {
     const root = parseTemplate("<button /><button />");
-    const els = (root.children ?? []).filter((c: any) => c?.type === NodeTypes.ELEMENT) as ElementNode[];
+    const els = (root.children ?? []).filter((c) => c?.type === NodeTypes.ELEMENT) as ElementNode[];
     expect(els.length).toBe(2);
 
     const makeDeps = (): IComponentDependencies => ({
@@ -936,7 +941,7 @@ describe("utils.ts coverage", () => {
 
   it("avoids select/radio action-name collisions by role-suffixing in strict mode", () => {
     const root = parseTemplate("<MySelect /><MyRadioGroup />");
-    const els = (root.children ?? []).filter((c: any) => c?.type === NodeTypes.ELEMENT) as ElementNode[];
+    const els = (root.children ?? []).filter((c) => c?.type === NodeTypes.ELEMENT) as ElementNode[];
     expect(els.length).toBe(2);
 
     const deps: IComponentDependencies = {
@@ -1030,12 +1035,12 @@ describe("utils.ts coverage", () => {
   it("covers composed click handler content fallback", () => {
     const ast = parseTemplate("<button>Save</button>");
     const btn = firstElement(ast);
-    expect(getComposedClickHandlerContent(btn, { scopes: { vFor: 0 } } as any, "Save")).toBe("");
+    expect(getComposedClickHandlerContent(btn, { scopes: { vFor: 0 } } as TransformContext, "Save")).toBe("");
   });
 
   it("extracts composed click handler content for @click.prevent call expressions", () => {
     const ast = parseTemplate("<button @click.prevent=\"appPrefEmailBccRemoved(email)\">{{ email }}</button>");
     const btn = firstElement(ast);
-    expect(getComposedClickHandlerContent(btn, { scopes: { vFor: 0 } } as any, null)).toBe("-AppPrefEmailBccRemoved");
+    expect(getComposedClickHandlerContent(btn, { scopes: { vFor: 0 }} as TransformContext, null)).toBe("-AppPrefEmailBccRemoved");
   });
 });

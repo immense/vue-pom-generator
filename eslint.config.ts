@@ -87,9 +87,5 @@ export default antfu({
   files: ["**/tests/**/*.ts"],
   rules: {
     "no-console": "off",
-    "@typescript-eslint/no-explicit-any": "off",
-    "ts/no-explicit-any": "off",
-    // Tests frequently use regex and string parsing to build fixtures/expectations.
-    "no-restricted-syntax": "off",
   },
 });
