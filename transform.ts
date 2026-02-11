@@ -27,10 +27,12 @@ import {
   getIdOrName,
   getInnerText,
   getContainedInVForDirectiveKeyValue,
+  getContainedInSlotDataKeyValue,
   tryGetContainedInStaticVForSourceLiteralValues,
   getKeyDirectiveValue,
   getNativeWrapperTransformInfo,
   getSelfClosingForDirectiveKeyAttrValue,
+  nodeHandlerAttributeValue,
   nodeHandlerAttributeInfo,
   tryGetClickDirective,
   nodeHasToDirective,
@@ -42,6 +44,7 @@ import {
   IDataTestId,
   IComponentDependencies,
   NativeWrappersMap,
+  NativeRole,
   applyResolvedDataTestId,
   tryGetExistingElementDataTestId,
 } from "./utils";
@@ -196,7 +199,7 @@ function tryExtractStableHintFromConditionalExpressionSource(source: string): st
   }
 }
 
-function tryInferNativeWrapperRoleFromSfc(tag: string): { role: "input" | "select" } | null {
+function tryInferNativeWrapperRoleFromSfc(tag: string, vueFilesPathMap?: Map<string, string>): { role: NativeRole } | null {
   // Only attempt inference for PascalCase component tags.
   const first = tag.charCodeAt(0);
   const isUpper = first >= 65 && first <= 90;
@@ -205,12 +208,20 @@ function tryInferNativeWrapperRoleFromSfc(tag: string): { role: "input" | "selec
 
   const cached = inferredNativeWrapperConfigByTag.get(tag);
   if (cached)
-    return cached as { role: "input" | "select" };
+    return cached as { role: "input" | "select" | "button" };
 
   // Prefer conventional paths in this repo.
   const candidates = [
     path.resolve(process.cwd(), "src/components", `${tag}.vue`),
+    path.resolve(process.cwd(), "components", `${tag}.vue`),
+    path.resolve(process.cwd(), "app/components", `${tag}.vue`),
   ];
+
+  // If we have a map of all vue files, use it to find the tag's file directly even in subdirs.
+  const registeredPath = vueFilesPathMap?.get(tag);
+  if (registeredPath) {
+    candidates.unshift(path.resolve(process.cwd(), registeredPath));
+  }
 
   const filePath = candidates.find(p => fs.existsSync(p));
   if (!filePath) {
@@ -267,13 +278,21 @@ function tryInferNativeWrapperRoleFromSfc(tag: string): { role: "input" | "selec
   }
 
   // Only infer for a few safe primitives.
-  if (rootTag === "input" || rootTag === "textarea") {
+  if (rootTag === "input" || rootTag === "textarea" || rootTag === "uinput" || rootTag === "utextarea") {
     inferredNativeWrapperConfigByTag.set(tag, { role: "input" });
     return { role: "input" };
   }
-  if (rootTag === "select") {
+  if (rootTag === "select" || rootTag === "uselect") {
     inferredNativeWrapperConfigByTag.set(tag, { role: "select" });
     return { role: "select" };
+  }
+  if (rootTag === "vselect") {
+    inferredNativeWrapperConfigByTag.set(tag, { role: "vselect" });
+    return { role: "vselect" };
+  }
+  if (rootTag === "button" || rootTag === "ubutton") {
+    inferredNativeWrapperConfigByTag.set(tag, { role: "button" });
+    return { role: "button" };
   }
 
   inferredNativeWrapperConfigByTag.set(tag, { role: "" });
@@ -502,12 +521,14 @@ export function createTestIdTransform(
     testIdAttribute?: string;
     nameCollisionBehavior?: "error" | "warn" | "suffix";
     warn?: (message: string) => void;
+    vueFilesPathMap?: Map<string, string>;
   } = {},
 ): NodeTransform {
   const existingIdBehavior = options.existingIdBehavior ?? "preserve";
   const testIdAttribute = (options.testIdAttribute || "data-testid").trim() || "data-testid";
   const nameCollisionBehavior = options.nameCollisionBehavior ?? "suffix";
   const warn = options.warn;
+  const vueFilesPathMap = options.vueFilesPathMap;
 
   // Some projects (and dev environments) use symlinks. We want viewsDir containment checks
   // to behave like the filesystem does (real paths), but we must not crash for virtual
@@ -604,24 +625,18 @@ export function createTestIdTransform(
     // identifiers like `export class C:\\Users\\...`.
     const normalizeFilePath = (filePath: string) => path.normalize(safeRealpath(path.resolve(filePath)));
 
-    const getParentComponentName = () => {
-      const normalizedFilePath = normalizeFilePath(context.filename);
-      return path.basename(normalizedFilePath, ".vue");
-    };
-
-    const parentComponentName = getParentComponentName();
-
     const normalizedFilePath = normalizeFilePath(context.filename);
+    const parentComponentName = componentName;
 
-    // Treat a component as a "view" when its .vue file is contained under viewsDir.
-    // This uses a real path containment check instead of substring matching.
-    const relToViewsDir = path.relative(normalizedViewsDirAbs, normalizedFilePath);
-    const isView = !relToViewsDir.startsWith("..") && !path.isAbsolute(relToViewsDir);
+    const dependencies = (() => {
+      let deps = componentHierarchyMap.get(componentName);
+      if (!deps) {
+        // Treat a component as a "view" when its .vue file is contained under viewsDir.
+        // This uses a real path containment check instead of substring matching.
+        const relToViewsDir = path.relative(normalizedViewsDirAbs, normalizedFilePath);
+        const isView = !relToViewsDir.startsWith("..") && !path.isAbsolute(relToViewsDir);
 
-    const ensureDependencies = (parentComponentName: string) => {
-      let dependencies = componentHierarchyMap.get(parentComponentName);
-      if (!dependencies) {
-        dependencies = {
+        deps = {
           filePath: context.filename,
           childrenComponentSet: new Set<string>(),
           usedComponentSet: new Set<string>(),
@@ -629,18 +644,10 @@ export function createTestIdTransform(
           isView,
           methodsContent: "",
         };
-        componentHierarchyMap.set(parentComponentName, dependencies);
+        componentHierarchyMap.set(componentName, deps);
       }
-      return dependencies;
-    };
-
-    // Always register a dependencies entry for the current file.
-    // Without this, files that happen to have no component-like tags and no injectable test ids
-    // can be omitted from `componentHierarchyMap`, which then causes aggregated POM generation
-    // to miss expected exported classes.
-    //
-    // NOTE: This is intentionally cheap and safe to call repeatedly.
-    const dependencies = ensureDependencies(parentComponentName);
+      return deps;
+    })();
 
     const isComponentLikeTag = (tag: string) => {
       // Vue component tags are typically PascalCase or kebab-case.
@@ -663,20 +670,32 @@ export function createTestIdTransform(
     // (e.g. CustomInput/CustomTextArea) so they behave like real inputs without requiring
     // explicit configuration in vite.config.ts.
     if (!nativeWrappers[element.tag]) {
-      const inferred = tryInferNativeWrapperRoleFromSfc(element.tag);
+      const inferred = tryInferNativeWrapperRoleFromSfc(element.tag, vueFilesPathMap);
       if (inferred?.role) {
         // Cache onto the nativeWrappers map so downstream utilities (formatTagName, wrapper transform)
         // see it consistently.
         (nativeWrappers as NativeWrappersMap)[element.tag] = { role: inferred.role };
+      } else if (element.tag.endsWith("Button") || element.tag === "AylaButton") {
+        // Recognition of conventional naming for button components.
+        (nativeWrappers as NativeWrappersMap)[element.tag] = { role: "button" };
+      } else if (element.tag === "DxDataGrid") {
+        (nativeWrappers as NativeWrappersMap)[element.tag] = { role: "grid" };
       }
     }
 
-    const getBestAvailableKeyValue = () =>
-      getKeyDirectiveValue(element, context)
-      || getSelfClosingForDirectiveKeyAttrValue(element)
-      || getContainedInVForDirectiveKeyValue(context, element, hierarchyMap);
+    const getBestAvailableKeyValue = () => {
+      const vForKey = getKeyDirectiveValue(element, context)
+        || getSelfClosingForDirectiveKeyAttrValue(element)
+        || getContainedInVForDirectiveKeyValue(context, element, hierarchyMap);
+      if (vForKey) return vForKey;
 
-    const bestKeyPlaceholder = getBestAvailableKeyValue();
+      return getContainedInSlotDataKeyValue(element, hierarchyMap);
+    };
+
+    const bestKeyInferred = getBestAvailableKeyValue();
+    const isSlotKey = bestKeyInferred && !bestKeyInferred.startsWith("${");
+    const bestKeyPlaceholder = isSlotKey ? `\${${bestKeyInferred}}` : bestKeyInferred;
+    const bestKeyVariable = isSlotKey ? bestKeyInferred : null;
 
     // If we can prove the v-for iterable is a static literal list, capture the concrete
     // values (e.g. ['One', 'Two']). Downstream codegen can use this to:
@@ -808,6 +827,7 @@ export function createTestIdTransform(
         nativeRole,
         preferredGeneratedValue: args.preferredGeneratedValue,
         bestKeyPlaceholder,
+        bestKeyVariable,
         keyValuesOverride,
         entryOverrides: args.entryOverrides,
         semanticNameHint: args.semanticNameHint,
@@ -851,28 +871,34 @@ export function createTestIdTransform(
       return;
     }
 
+    const innerText = getInnerText(element) || null;
+
     // RouterLink / :to is a special case; handle it early.
     const toDirective = nodeHasToDirective(element);
     if (toDirective) {
       const dataTestId = generateToDirectiveDataTestId(componentName, element, toDirective, context, hierarchyMap, nativeWrappers);
       const target = tryResolveToDirectiveTargetComponentName(toDirective);
       const routeNameHint = toDirectiveObjectFieldNameValue(toDirective);
+
+      const existing = tryGetExistingElementDataTestId(element, testIdAttribute);
+
       // IMPORTANT: Do not use innerText as a naming disambiguator here; route target identity
       // should drive merging when multiple elements navigate to the same target.
-      const semanticNameHint = routeNameHint || target || conditionalHint || undefined;
+      const semanticNameHint = routeNameHint || target || undefined;
+
+      // HOWEVER, if we have no stable target identity (routeNameHint/target are missing), 
+      // we must use other signals (innerText, existing data-testid) to avoid generic collisions.
+      const alternates = (target ? [] : [innerText, existing?.value, conditionalHint]).filter(Boolean) as string[];
 
       const rawTo = (toDirective.exp?.loc?.source ?? "").trim();
       const pomMergeKey = routeNameHint
         ? `to:name:${routeNameHint}`
         : (rawTo ? `to:expr:${rawTo}` : undefined);
 
-      // If the author already provided a data-testid, the generator may choose not to
-      // auto-generate one for :to. In that case, still register the element so we
-      // generate the fluent goTo* method using the existing id.
-      const existing = tryGetExistingElementDataTestId(element, testIdAttribute);
-
       const preferredGeneratedValue = dataTestId
-        ?? (existing ? staticAttributeValue(existing.value) : null);
+        ?? (existing
+          ? (existing.isDynamic ? templateAttributeValue(existing.template!) : staticAttributeValue(existing.value!))
+          : null);
 
       if (!preferredGeneratedValue) {
         return;
@@ -882,6 +908,7 @@ export function createTestIdTransform(
         preferredGeneratedValue,
         entryOverrides: target ? { targetPageObjectModelClass: target } : {},
         semanticNameHint,
+        semanticNameHintAlternates: alternates,
         pomMergeKey,
       });
       return;
@@ -903,7 +930,6 @@ export function createTestIdTransform(
     // - @click nodes
     // - submit buttons with an id/name
     // - nodes that require option-data-testid-prefix (even if they don't have click/submit)
-    const innerText = getInnerText(element) || null;
     const clickDirective = tryGetClickDirective(element);
     if (clickDirective) {
       const clickSuffix = getComposedClickHandlerContent(element, context, innerText, clickDirective, {
@@ -915,9 +941,10 @@ export function createTestIdTransform(
       // This is NOT derived by parsing the final data-testid.
       const clickHint = trimLeadingSeparators(clickSuffix) || undefined;
       const idOrName = getIdOrName(element) || undefined;
-      // IMPORTANT: Do not use innerText for semantic naming. When multiple mutually-exclusive
-      // elements share the same click handler, we merge by handler identity instead.
-      const semanticNameHint = clickHint || idOrName || conditionalHint || undefined;
+
+      // Prefer semantic signal from the handler or explicit id/name.
+      // Fall back to inner text (computed above) for naming when handler is generic.
+      const semanticNameHint = clickHint || idOrName || innerText || conditionalHint || undefined;
 
       // Use the same AST-derived click hint as the merge key so wrapper expressions like
       // `() => doThing()` and `doThing()` can still merge.
@@ -940,7 +967,7 @@ export function createTestIdTransform(
     }
 
     const existingElementDataTestId = tryGetExistingElementDataTestId(element, testIdAttribute);
-    if (existingElementDataTestId?.value) {
+    if (existingElementDataTestId) {
       // Only generate POM members for existing test ids when the element is something we
       // consider interactive (based on role inferred from tag suffix).
       //
@@ -953,15 +980,32 @@ export function createTestIdTransform(
         || inferredRole === "vselect"
         || inferredRole === "checkbox"
         || inferredRole === "toggle"
-        || inferredRole === "radio";
+        || inferredRole === "radio"
+        || inferredRole === "grid"
+        || isComponentLikeTag(element.tag);
 
       if (!isRecognizedInteractiveRole) {
         return;
       }
 
-      const identifierHint = getIdOrName(element) || conditionalHint || undefined;
+      // More aggressive hints for existing test-ids:
+      // 1) id/name
+      // 2) handler attribute
+      // 3) inner text (labels)
+      // 4) the data-testid value itself (last resort hint)
+      const identifierHint = getIdOrName(element)
+        || nodeHandlerAttributeValue(element)
+        || innerText
+        || existingElementDataTestId.value
+        || conditionalHint
+        || undefined;
+
+      const preferredGeneratedValue = existingElementDataTestId.isDynamic
+        ? templateAttributeValue(existingElementDataTestId.template!)
+        : staticAttributeValue(existingElementDataTestId.value!);
+
       applyResolvedDataTestIdForElement({
-        preferredGeneratedValue: staticAttributeValue(existingElementDataTestId.value),
+        preferredGeneratedValue,
         semanticNameHint: identifierHint,
       });
       return;

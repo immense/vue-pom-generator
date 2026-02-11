@@ -4,9 +4,9 @@ import path from "node:path";
 import type { PluginOption } from "vite";
 
 import { generateFiles } from "../../class-generation";
-import { parseRouterFileFromCwd } from "../../router-introspection";
+import { introspectNuxtPages, parseRouterFileFromCwd } from "../../router-introspection";
+import type { IComponentDependencies, RouterIntrospectionResult } from "../../utils";
 import { setResolveToComponentNameFn, setRouteNameToComponentNameMap, toPascalCase } from "../../utils";
-import type { IComponentDependencies } from "../../utils";
 import type { VuePomGeneratorLogger } from "../logger";
 
 interface BuildProcessorOptions {
@@ -18,6 +18,9 @@ interface BuildProcessorOptions {
 
   outDir?: string;
   emitLanguages?: Array<"ts" | "csharp">;
+  csharp?: {
+    namespace?: string;
+  };
   generateFixtures?: boolean | string | { outDir?: string };
   customPomAttachments?: Array<{ className: string; propertyName: string; attachWhenUsesComponents: string[]; attachTo?: "views" | "components" | "both" }>;
   projectRootRef: { current: string };
@@ -27,6 +30,7 @@ interface BuildProcessorOptions {
 
   routerAwarePoms: boolean;
   resolvedRouterEntry?: string;
+  routerType?: "vue-router" | "nuxt";
 
   loggerRef: { current: VuePomGeneratorLogger };
 }
@@ -39,6 +43,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     normalizedBasePagePath,
     outDir,
     emitLanguages,
+    csharp,
     generateFixtures,
     customPomAttachments,
     projectRootRef,
@@ -47,6 +52,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     testIdAttribute,
     routerAwarePoms,
     resolvedRouterEntry,
+    routerType,
     loggerRef,
   } = options;
 
@@ -72,9 +78,18 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
         return;
       }
 
-      if (!resolvedRouterEntry)
-        throw new Error("[vue-pom-generator] router.entry is required when router introspection is enabled.");
-      const { routeNameMap, routePathMap } = await parseRouterFileFromCwd(resolvedRouterEntry);
+      let result: RouterIntrospectionResult;
+
+      if (routerType === "nuxt") {
+        result = await introspectNuxtPages(projectRootRef.current);
+      }
+      else {
+        if (!resolvedRouterEntry)
+          throw new Error("[vue-pom-generator] router.entry is required when router introspection is enabled.");
+        result = await parseRouterFileFromCwd(resolvedRouterEntry);
+      }
+
+      const { routeNameMap, routePathMap } = result;
       setRouteNameToComponentNameMap(routeNameMap);
 
       // Provide a resolve()-like helper:
@@ -122,6 +137,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
       generateFiles(componentHierarchyMap, vueFilesPathMap, normalizedBasePagePath, {
         outDir,
         emitLanguages,
+        csharp,
         generateFixtures,
         customPomAttachments,
         projectRoot: projectRootRef.current,
@@ -130,6 +146,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
         testIdAttribute,
         vueRouterFluentChaining: routerAwarePoms,
         routerEntry: resolvedRouterEntry,
+        routerType,
       });
       lastGeneratedEntryCount = entryCount;
       loggerRef.current.info(`generated POMs (${entryCount} entries)`);

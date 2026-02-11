@@ -1,8 +1,8 @@
-import type { Locator as PwLocator, Page as PwPage } from "@playwright/test";
+import type { PwLocator, PwPage } from "./playwright-types";
 import { TESTID_CLICK_EVENT_NAME, TESTID_CLICK_EVENT_STRICT_FLAG } from "../click-instrumentation";
 import type { TestIdClickEventDetail } from "../click-instrumentation";
 import { Pointer } from "./Pointer";
-import type { AfterPointerClickInfo } from "./Pointer";
+import type { AfterPointerClick, AfterPointerClickInfo } from "./Pointer";
 
 // Click instrumentation is a core contract for generated POMs.
 const REQUIRE_CLICK_EVENT = true;
@@ -216,6 +216,21 @@ export class BasePage {
 
   protected locatorByTestId(testId: string): PwLocator {
     return this.page.locator(this.selectorForTestId(testId));
+  }
+
+  /**
+   * Animates the cursor to an element.
+   */
+  protected async animateCursorToElement(
+    target: string | PwLocator,
+    executeClick: boolean = true,
+    delayMs: number = 100,
+    annotationText: string = "",
+    options?: {
+      afterClick?: AfterPointerClick;
+    },
+  ): Promise<void> {
+    await this.pointer.animateCursorToElement(target, executeClick, delayMs, annotationText, options);
   }
 
   /**

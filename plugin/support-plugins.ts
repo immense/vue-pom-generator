@@ -2,11 +2,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PluginOption } from "vite";
 
+import type { IComponentDependencies, NativeWrappersMap } from "../utils";
+import type { VuePomGeneratorLogger } from "./logger";
 import { createBuildProcessorPlugin } from "./support/build-plugin";
 import { createDevProcessorPlugin } from "./support/dev-plugin";
 import { createTestIdsVirtualModulesPlugin } from "./support/virtual-modules";
-import type { VuePomGeneratorLogger } from "./logger";
-import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 
 interface SupportFactoryOptions {
   componentTestIds: Map<string, Set<string>>;
@@ -15,14 +15,21 @@ interface SupportFactoryOptions {
   nativeWrappers: NativeWrappersMap;
   excludedComponents: string[];
   viewsDir: string;
+  scanDirs: string[];
 
   /** Output directory for generated files (POMs + optional fixtures). */
   outDir?: string;
 
   /** Languages to emit POMs for. */
   emitLanguages?: Array<"ts" | "csharp">;
+
+  csharp?: {
+    namespace?: string;
+  };
+
   routerAwarePoms: boolean;
   routerEntry?: string;
+  routerType?: "vue-router" | "nuxt";
 
   /** Generate Playwright fixtures alongside generated POMs. */
   generateFixtures?: boolean | string | { outDir?: string };
@@ -44,10 +51,13 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     nativeWrappers,
     excludedComponents,
     viewsDir,
+    scanDirs,
     outDir,
     emitLanguages,
+    csharp,
     routerAwarePoms,
     routerEntry,
+    routerType,
     generateFixtures,
     customPomAttachments,
     projectRootRef,
@@ -61,6 +71,8 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
   const resolveRouterEntry = () => {
     if (!routerAwarePoms)
       return undefined;
+    if (routerType === "nuxt")
+      return undefined; // Nuxt uses directory walking, no router entry file.
     if (!routerEntry)
       throw new Error("[vue-pom-generator] router.entry is required when router introspection is enabled.");
     return path.isAbsolute(routerEntry) ? routerEntry : path.resolve(projectRootRef.current, routerEntry);
@@ -92,6 +104,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     normalizedBasePagePath,
     outDir,
     emitLanguages,
+    csharp,
     generateFixtures,
     customPomAttachments,
     projectRootRef,
@@ -99,6 +112,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     customPomImportAliases,
     testIdAttribute,
     routerAwarePoms,
+    routerType,
     resolvedRouterEntry,
     loggerRef,
   });
@@ -107,6 +121,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     nativeWrappers,
     excludedComponents,
     viewsDir,
+    scanDirs,
     projectRootRef,
     normalizedBasePagePath,
     basePageClassPath,
@@ -118,6 +133,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     customPomImportAliases,
     testIdAttribute,
     routerAwarePoms,
+    routerType,
     resolvedRouterEntry,
     loggerRef,
   });

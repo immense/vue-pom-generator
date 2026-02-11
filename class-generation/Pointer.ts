@@ -1,4 +1,4 @@
-import type { Locator as PwLocator, Page as PwPage } from "@playwright/test";
+import type { PwLocator, PwPage } from "./playwright-types";
 
 export interface PlaywrightAnimationOptions {
 	/**

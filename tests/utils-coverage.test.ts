@@ -659,7 +659,7 @@ describe("utils.ts coverage", () => {
   });
 
   it("drives applyResolvedDataTestId through option-driven radio handling and de-duping", () => {
-    const wrappers: NativeWrappersMap = { "dx-radio-group": { role: "radio" } };
+    const _wrappers: NativeWrappersMap = { "dx-radio-group": { role: "radio" } };
 
     const ast = parseTemplate("<dx-radio-group :options=\"['One','Two']\" />");
     const el = firstElement(ast);
@@ -935,7 +935,7 @@ describe("utils.ts coverage", () => {
   });
 
   it("avoids select/radio action-name collisions by role-suffixing in strict mode", () => {
-    const root = parseTemplate("<ImmySelect /><ImmyRadioGroup />");
+    const root = parseTemplate("<MySelect /><MyRadioGroup />");
     const els = (root.children ?? []).filter((c: any) => c?.type === NodeTypes.ELEMENT) as ElementNode[];
     expect(els.length).toBe(2);
 

@@ -7,16 +7,17 @@ import { parse as parseSfc } from "@vue/compiler-sfc";
 import type { PluginOption, ViteDevServer } from "vite";
 
 import { generateFiles } from "../../class-generation";
-import { parseRouterFileFromCwd } from "../../router-introspection";
+import { introspectNuxtPages, parseRouterFileFromCwd } from "../../router-introspection";
 import { createTestIdTransform } from "../../transform";
+import type { IComponentDependencies, NativeWrappersMap, RouterIntrospectionResult } from "../../utils";
 import { setResolveToComponentNameFn, setRouteNameToComponentNameMap, toPascalCase } from "../../utils";
-import type { IComponentDependencies, NativeWrappersMap } from "../../utils";
 import type { VuePomGeneratorLogger } from "../logger";
 
 interface DevProcessorOptions {
   nativeWrappers: NativeWrappersMap;
   excludedComponents: string[];
   viewsDir: string;
+  scanDirs: string[];
 
   projectRootRef: { current: string };
   normalizedBasePagePath: string;
@@ -24,6 +25,9 @@ interface DevProcessorOptions {
 
   outDir?: string;
   emitLanguages?: Array<"ts" | "csharp">;
+  csharp?: {
+    namespace?: string;
+  };
   generateFixtures?: boolean | string | { outDir?: string };
   customPomAttachments?: Array<{ className: string; propertyName: string; attachWhenUsesComponents: string[]; attachTo?: "views" | "components" | "both" }>;
   customPomDir?: string;
@@ -32,6 +36,7 @@ interface DevProcessorOptions {
 
   routerAwarePoms: boolean;
   resolvedRouterEntry?: string;
+  routerType?: "vue-router" | "nuxt";
 
   loggerRef: { current: VuePomGeneratorLogger };
 }
@@ -41,11 +46,13 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     nativeWrappers,
     excludedComponents,
     viewsDir,
+    scanDirs,
     projectRootRef,
     normalizedBasePagePath,
     basePageClassPath,
     outDir,
     emitLanguages,
+    csharp,
     generateFixtures,
     customPomAttachments,
     customPomDir,
@@ -53,6 +60,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     testIdAttribute,
     routerAwarePoms,
     resolvedRouterEntry,
+    routerType,
     loggerRef,
   } = options;
 
@@ -70,7 +78,13 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         return;
       if (!ctx.file.endsWith(".vue"))
         return;
-      if (!ctx.file.includes(`${path.sep}src${path.sep}`))
+
+      const isContainedInScanDirs = scanDirs.some((dir) => {
+        const absDir = path.resolve(projectRootRef.current, dir);
+        return ctx.file.startsWith(absDir + path.sep);
+      });
+
+      if (!isContainedInScanDirs)
         return;
 
       scheduleVueFileRegen(ctx.file, "hmr");
@@ -85,9 +99,18 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
           return;
         }
 
-        if (!resolvedRouterEntry)
-          throw new Error("[vue-pom-generator] router.entry is required when router introspection is enabled.");
-        const { routeNameMap, routePathMap } = await parseRouterFileFromCwd(resolvedRouterEntry);
+        let result: RouterIntrospectionResult;
+
+        if (routerType === "nuxt") {
+          result = await introspectNuxtPages(projectRootRef.current);
+        }
+        else {
+          if (!resolvedRouterEntry)
+            throw new Error("[vue-pom-generator] router.entry is required when router introspection is enabled.");
+          result = await parseRouterFileFromCwd(resolvedRouterEntry);
+        }
+
+        const { routeNameMap, routePathMap } = result;
         setRouteNameToComponentNameMap(routeNameMap);
         setResolveToComponentNameFn((to) => {
           if (typeof to === "string") {
@@ -214,27 +237,32 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
       };
 
       const fullRebuildSnapshotFromFilesystem = () => {
-        const srcDir = path.resolve(projectRootRef.current, "src");
-        if (!fs.existsSync(srcDir))
-          return;
-
         const t0 = performance.now();
         snapshotHierarchy.clear();
         snapshotVuePathMap.clear();
         filePathToComponentName.clear();
 
-        const vueFiles = walkFilesRecursive(srcDir);
-        logInfo(`initial scan: found ${vueFiles.length} .vue files under src/`);
-
+        let totalVueFiles = 0;
         let compiledCount = 0;
-        for (const file of vueFiles) {
-          const res = compileVueFileIntoSnapshot(file);
-          if (res.compiled)
-            compiledCount++;
+
+        for (const dir of scanDirs) {
+          const absDir = path.resolve(projectRootRef.current, dir);
+          if (!fs.existsSync(absDir))
+            continue;
+
+          const vueFiles = walkFilesRecursive(absDir);
+          totalVueFiles += vueFiles.length;
+
+          for (const file of vueFiles) {
+            const res = compileVueFileIntoSnapshot(file);
+            if (res.compiled)
+              compiledCount++;
+          }
         }
 
         const t1 = performance.now();
-        logInfo(`initial compile: ${compiledCount}/${vueFiles.length} files in ${formatMs(t1 - t0)} (components=${snapshotHierarchy.size})`);
+        logInfo(`initial scan: found ${totalVueFiles} .vue files in ${scanDirs.join(", ")}`);
+        logInfo(`initial compile: ${compiledCount}/${totalVueFiles} files in ${formatMs(t1 - t0)} (components=${snapshotHierarchy.size})`);
       };
 
       const generateAggregatedFromSnapshot = (reason: string) => {
@@ -242,6 +270,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         generateFiles(snapshotHierarchy, snapshotVuePathMap, normalizedBasePagePath, {
           outDir,
           emitLanguages,
+          csharp,
           generateFixtures,
           customPomAttachments,
           projectRoot: projectRootRef.current,
@@ -250,6 +279,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
           testIdAttribute,
           vueRouterFluentChaining: routerAwarePoms,
           routerEntry: resolvedRouterEntry,
+          routerType,
         });
         const t1 = performance.now();
         logInfo(`generate(${reason}): components=${snapshotHierarchy.size} in ${formatMs(t1 - t0)}`);
@@ -264,9 +294,9 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         logInfo(`startup total: ${formatMs(t1 - t0)}`);
       })();
 
-      const watchedVueGlob = path.resolve(projectRootRef.current, "src", "**", "*.vue");
+      const watchedVueGlobs = scanDirs.map(dir => path.resolve(projectRootRef.current, dir, "**", "*.vue"));
       const watchedPluginGlob = path.resolve(projectRootRef.current, "vite-plugins", "vue-pom-generator", "**", "*.ts");
-      server.watcher.add([watchedVueGlob, watchedPluginGlob, basePageClassPath]);
+      server.watcher.add([...watchedVueGlobs, watchedPluginGlob, basePageClassPath]);
 
       let timer: NodeJS.Timeout | null = null;
       let maxWaitTimer: NodeJS.Timeout | null = null;
@@ -393,8 +423,17 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
       server.watcher.on("add", (p) => {
         if (typeof p !== "string")
           return;
-        if (!p.endsWith(".vue") || !p.includes(`${path.sep}src${path.sep}`))
+        if (!p.endsWith(".vue"))
           return;
+
+        const isContainedInScanDirs = scanDirs.some((dir) => {
+          const absDir = path.resolve(projectRootRef.current, dir);
+          return p.startsWith(absDir + path.sep);
+        });
+
+        if (!isContainedInScanDirs)
+          return;
+
         void (async () => {
           await initialBuildPromise;
           pendingChangedVueFiles.add(p);
@@ -405,8 +444,17 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
       server.watcher.on("unlink", (p) => {
         if (typeof p !== "string")
           return;
-        if (!p.endsWith(".vue") || !p.includes(`${path.sep}src${path.sep}`))
+        if (!p.endsWith(".vue"))
           return;
+
+        const isContainedInScanDirs = scanDirs.some((dir) => {
+          const absDir = path.resolve(projectRootRef.current, dir);
+          return p.startsWith(absDir + path.sep);
+        });
+
+        if (!isContainedInScanDirs)
+          return;
+
         void (async () => {
           await initialBuildPromise;
           const absolutePath = path.resolve(p);

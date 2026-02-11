@@ -1,11 +1,11 @@
+import { JSDOM } from "jsdom";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
-import { toPascalCase } from "./utils";
-import type { Router, RouteLocationNormalizedLoaded, RouteRecordNormalized } from "vue-router";
-import { JSDOM } from "jsdom";
 import type { Plugin as VitePlugin } from "vite";
+import type { RouteLocationNormalizedLoaded, Router, RouteRecordNormalized } from "vue-router";
+import { toPascalCase } from "./utils";
 
 // Router introspection spins up a short-lived Vite SSR server and installs a global DOM shim.
 // When called concurrently (e.g. multiple Vitest files running in parallel), those operations can
@@ -383,6 +383,105 @@ async function ensureDomShim() {
 
   if (!g.requestAnimationFrame)
     g.requestAnimationFrame = cb => setTimeout(() => cb(Date.now()), 16);
+}
+
+export async function introspectNuxtPages(projectRoot: string): Promise<RouterIntrospectionResult> {
+  const possiblePagesDirs = ["app/pages", "pages"];
+  let pagesDir = "";
+
+  for (const dir of possiblePagesDirs) {
+    const abs = path.resolve(projectRoot, dir);
+    if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) {
+      pagesDir = abs;
+      break;
+    }
+  }
+
+  if (!pagesDir) {
+    debugLog(`[router-introspection][nuxt] Could not find pages directory in ${projectRoot}`);
+    return { routeNameMap: new Map(), routePathMap: new Map(), routeMetaEntries: [] };
+  }
+
+  const routeMetaEntries: RouterIntrospectionResult["routeMetaEntries"] = [];
+
+  const walk = (dir: string, baseRoute: string) => {
+    const files = fs.readdirSync(dir);
+    for (const file of files) {
+      const fullPath = path.join(dir, file);
+      const stat = fs.statSync(fullPath);
+
+      if (stat.isDirectory()) {
+        walk(fullPath, `${baseRoute}/${file}`);
+        continue;
+      }
+
+      if (!file.endsWith(".vue"))
+        continue;
+
+      // Extract component name (basename without extension).
+      const componentName = file.slice(0, -4);
+      if (componentName === "index" && baseRoute === "") {
+        // Root index.vue
+        routeMetaEntries.push({
+          componentName: "index",
+          pathTemplate: "/",
+          params: [],
+          query: [],
+        });
+        continue;
+      }
+
+      let routePath = componentName === "index" ? baseRoute : `${baseRoute}/${componentName}`;
+      if (!routePath.startsWith("/"))
+        routePath = `/${routePath}`;
+
+      // Convert Nuxt dynamic params: [id].vue -> :id
+      const params: Array<{ name: string; optional: boolean }> = [];
+      let pathTemplate = "";
+      for (let i = 0; i < routePath.length; i++) {
+        const ch = routePath[i];
+        if (ch !== "[") {
+          pathTemplate += ch;
+          continue;
+        }
+
+        // Collect name until closing bracket.
+        let name = "";
+        i++;
+        while (i < routePath.length) {
+          const c = routePath[i];
+          if (c === "]")
+            break;
+          name += c;
+          i++;
+        }
+
+        if (name) {
+          params.push({ name, optional: false });
+          pathTemplate += `:${name}`;
+        }
+        else {
+          // Malformed: preserve as-is.
+          pathTemplate += "[]";
+        }
+      }
+
+      routeMetaEntries.push({
+        componentName,
+        pathTemplate,
+        params,
+        query: [],
+      });
+    }
+  };
+
+  walk(pagesDir, "");
+
+  return {
+    routeNameMap: new Map(),
+    routePathMap: new Map(),
+    routeMetaEntries,
+  };
 }
 
 /**

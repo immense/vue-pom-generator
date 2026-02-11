@@ -3,12 +3,12 @@ import process from "node:process";
 
 import type { PluginOption, ResolvedConfig } from "vite";
 
+import type { VuePomGeneratorLogger, VuePomGeneratorVerbosity } from "./logger";
+import { createLogger } from "./logger";
 import { createSupportPlugins } from "./support-plugins";
 import { createTestIdsVirtualModulesPlugin } from "./support/virtual-modules";
 import type { ExistingIdBehavior, PomNameCollisionBehavior, VuePomGeneratorPluginOptions } from "./types";
 import { createVuePluginWithTestIds } from "./vue-plugin";
-import { createLogger } from "./logger";
-import type { VuePomGeneratorLogger, VuePomGeneratorVerbosity } from "./logger";
 
 import type { ElementMetadata } from "../metadata-collector";
 import type { IComponentDependencies, NativeWrappersMap } from "../utils";
@@ -36,6 +36,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
   const vueOptions = options.vueOptions;
 
   const viewsDir = injection.viewsDir ?? "src/views";
+  const scanDirs = injection.scanDirs ?? ["src"];
   const nativeWrappers = (injection.nativeWrappers ?? {}) as NativeWrappersMap;
   const excludedComponents = injection.excludeComponents ?? [];
   const testIdAttribute = (injection.attribute ?? "data-testid").trim() || "data-testid";
@@ -47,6 +48,8 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     : ["ts"];
   const nameCollisionBehavior: PomNameCollisionBehavior = generationOptions?.nameCollisionBehavior ?? "suffix";
   const routerEntry = generationOptions?.router?.entry;
+  const routerType = generationOptions?.router?.type ?? "vue-router";
+  const csharp = generationOptions?.csharp;
   const generateFixtures = generationOptions?.playwright?.fixtures;
   const customPoms = generationOptions?.playwright?.customPoms;
 
@@ -76,14 +79,15 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
       if (generationEnabled) {
         assertNonEmptyString(outDir, "[vue-pom-generator] generation.outDir");
 
-        if (generationOptions?.router) {
+        if (generationOptions?.router && routerType === "vue-router") {
           assertNonEmptyString(routerEntry, "[vue-pom-generator] generation.router.entry");
         }
       }
 
       // Small but helpful diagnostics.
-      loggerRef.current.debug(`projectRoot=${projectRootRef.current}`);
-    },
+      loggerRef.current.info(`projectRoot=${projectRootRef.current}`);
+      loggerRef.current.info(`Active plugins: ${config.plugins.map(p => p.name).filter(n => n.includes('vue-pom')).join(', ')}`);
+    }
   };
 
   const getViewsDirAbs = () => resolveFromProjectRoot(projectRootRef.current, viewsDir);
@@ -94,7 +98,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
   const componentHierarchyMap = new Map<string, IComponentDependencies>();
   const vueFilesPathMap = new Map<string, string>();
 
-  const vuePlugin = createVuePluginWithTestIds({
+  const { metadataCollectorPlugin, internalVuePlugin } = createVuePluginWithTestIds({
     vueOptions,
     existingIdBehavior,
     nameCollisionBehavior,
@@ -107,14 +111,11 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     getViewsDirAbs,
     testIdAttribute,
     loggerRef,
+    scanDirs,
+    getProjectRoot: () => projectRootRef.current,
   });
 
-  if (!generationEnabled) {
-    const virtualModules = createTestIdsVirtualModulesPlugin(componentTestIds);
-    return [configPlugin, vuePlugin, virtualModules];
-  }
-
-  const routerAwarePoms = typeof routerEntry === "string" && routerEntry.trim().length > 0;
+  const routerAwarePoms = (typeof routerEntry === "string" && routerEntry.trim().length > 0) || routerType === "nuxt";
 
   const supportPlugins = createSupportPlugins({
     componentTestIds,
@@ -123,8 +124,10 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     nativeWrappers,
     excludedComponents,
     viewsDir,
+    scanDirs,
     outDir,
     emitLanguages,
+    csharp,
     routerAwarePoms,
     routerEntry,
     generateFixtures,
@@ -135,9 +138,33 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     customPomImportAliases: resolvedCustomPomImportAliases,
     testIdAttribute,
     loggerRef,
+    routerType,
   });
 
-  return [configPlugin, vuePlugin, ...supportPlugins];
+  const isNuxt = routerType === "nuxt";
+
+  if (isNuxt) {
+    loggerRef.current.info("Nuxt environment detected. Skipping internal @vitejs/plugin-vue to avoid conflicts.");
+  }
+
+  const resultPlugins = [
+    configPlugin,
+    metadataCollectorPlugin,
+    ...(isNuxt ? [] : [internalVuePlugin]),
+    ...supportPlugins,
+  ];
+
+  if (!generationEnabled) {
+    const virtualModules = createTestIdsVirtualModulesPlugin(componentTestIds);
+    return [
+      configPlugin,
+      metadataCollectorPlugin,
+      ...(isNuxt ? [] : [internalVuePlugin]),
+      virtualModules,
+    ];
+  }
+
+  return resultPlugins;
 }
 
 export default createVuePomGeneratorPlugins;

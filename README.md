@@ -49,67 +49,85 @@ import { createVuePomGeneratorPlugins } from "@immense/vue-pom-generator";
 export default defineConfig(() => {
   const vueOptions = {
     script: { defineModel: true, propsDestructure: true },
- };
+  };
 
- return {
-  plugins: [
-   ...createVuePomGeneratorPlugins({
-    vueOptions,
-    logging: { verbosity: "info" },
+  return {
+    plugins: [
+      ...createVuePomGeneratorPlugins({
+        vueOptions,
+        logging: { verbosity: "info" },
 
-    injection: {
-     // Attribute to inject/read as the test id (default: data-testid)
-     attribute: "data-testid",
+        injection: {
+          // Attribute to inject/read as the test id (default: data-testid)
+          attribute: "data-testid",
 
-     // Used to classify Vue files as "views" vs components (default: src/views)
-     viewsDir: "src/views",
+          // Used to classify Vue files as "views" vs components (default: src/views)
+          viewsDir: "src/views",
 
-     // Optional: wrapper semantics for design-system components
-     nativeWrappers: {
-      ImmyButton: { role: "button" },
-      ImmyInput: { role: "input" },
-     },
+          // Directories to scan for .vue files when building the POM library (default: ["src"])
+          // For Nuxt, you might want ["app", "components", "pages", "layouts"]
+          scanDirs: ["src"],
 
-     // Optional: opt specific components out of injection
-     excludeComponents: ["ImmyButton"],
+          // Optional: wrapper semantics for design-system components
+          nativeWrappers: {
+            MyButton: { role: "button" },
+            MyInput: { role: "input" },
+          },
 
-     // Optional: preserve/overwrite/error when an author already set the attribute
-     existingIdBehavior: "preserve",
-    },
+          // Optional: opt specific components out of injection
+          excludeComponents: ["MyButton"],
 
-    generation: {
-     // Default: tests/playwright/generated
-     outDir: "tests/playwright/generated",
-
-     // Controls how to handle duplicate generated member names within a single POM class.
-     // - "error": fail compilation
-     // - "warn": warn and suffix
-     // - "suffix": suffix silently (default)
-     nameCollisionBehavior: "suffix",
-
-     // Enable router introspection. When provided, router-aware POM helpers are generated.
-     router: { entry: "src/router.ts" },
-
-     playwright: {
-      fixtures: true,
-      customPoms: {
-       // Default: tests/playwright/pom/custom
-       dir: "tests/playwright/pom/custom",
-       importAliases: { ImmyCheckBox: "CheckboxWidget" },
-       attachments: [
-        {
-         className: "ConfirmationModal",
-         propertyName: "confirmationModal",
-         attachWhenUsesComponents: ["Page"],
+          // Optional: preserve/overwrite/error when an author already set the attribute
+          existingIdBehavior: "preserve",
         },
-       ],
-      },
-     },
-    },
-   }),
-   vue(vueOptions),
-  ],
- };
+
+        generation: {
+          // Default: ["ts"]
+          emit: ["ts", "csharp"],
+
+          // C# specific configuration
+          csharp: {
+            // The namespace for generated C# classes (default: Playwright.Generated)
+            namespace: "MyProject.Tests.Generated",
+          },
+
+          // Default: tests/playwright/generated
+          outDir: "tests/playwright/generated",
+
+          // Controls how to handle duplicate generated member names within a single POM class.
+          // - "error": fail compilation
+          // - "warn": warn and suffix
+          // - "suffix": suffix silently (default)
+          nameCollisionBehavior: "suffix",
+
+          // Enable router introspection. When provided, router-aware POM helpers are generated.
+          router: {
+            // For standard Vue apps:
+            entry: "src/router.ts",
+            // For Nuxt apps (file-based routing):
+            // type: "nuxt"
+          },
+
+          playwright: {
+            fixtures: true,
+            customPoms: {
+              // Default: tests/playwright/pom/custom
+              dir: "tests/playwright/pom/custom",
+              importAliases: { MyCheckBox: "CheckboxWidget" },
+              attachments: [
+                {
+                  className: "ConfirmationModal",
+                  propertyName: "confirmationModal",
+                  attachWhenUsesComponents: ["Page"],
+                },
+              ],
+            },
+          },
+        },
+      }),
+      vue(vueOptions),
+    ],
+  };
 });
 ```
 
@@ -119,16 +137,12 @@ Notes:
 - **Generation is enabled by default** and can be disabled via `generation: false`.
 - **Router-aware POM helpers are enabled** when `generation.router.entry` is provided (the generator will introspect your router).
 
-### `generation.router.entry: string`
+### `generation.router`
 
-Controls where router introspection loads your Vue Router definition from (used for `:to` analysis and navigation helper generation).
+Controls router introspection for `:to` analysis and navigation helper generation.
 
-Resolution:
-
-- relative paths are resolved relative to Vite's resolved `config.root`
-- absolute paths are used as-is
-
-This file must export a **default router factory function** (e.g. `export default makeRouter`).
+- `entry: string`: For standard Vue apps, where router introspection loads your Vue Router definition from. This file must export a **default router factory function** (e.g. `export default makeRouter`).
+- `type: "vue-router" | "nuxt"`: The introspection provider. Defaults to `"vue-router"`. Use `"nuxt"` for file-based routing discovery (e.g. `app/pages` or `pages`).
 
 ### `generation.playwright.fixtures: boolean | string | { outDir?: string }`
 

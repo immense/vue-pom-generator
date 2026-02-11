@@ -3,9 +3,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { generateViewObjectModelMethodContent } from "../method-generation";
-import { parseRouterFileFromCwd } from "../router-introspection";
-// NOTE: This module intentionally does not depend on Babel parsing.
-
+import { introspectNuxtPages, parseRouterFileFromCwd } from "../router-introspection";
 import { IComponentDependencies, IDataTestId, PomExtraClickMethodSpec, PomPrimarySpec, upperFirst } from "../utils";
 
 // Intentionally imported so tooling understands this exported helper is part of the
@@ -62,9 +60,16 @@ interface RouteMeta {
   template: string;
 }
 
-async function getRouteMetaByComponent(projectRoot?: string, routerEntry?: string): Promise<Record<string, RouteMeta>> {
-  const resolvedRouterEntry = resolveRouterEntry(projectRoot, routerEntry);
-  const { routeMetaEntries } = await parseRouterFileFromCwd(resolvedRouterEntry);
+async function getRouteMetaByComponent(
+  projectRoot?: string,
+  routerEntry?: string,
+  routerType?: "vue-router" | "nuxt",
+): Promise<Record<string, RouteMeta>> {
+  const root = projectRoot ?? process.cwd();
+
+  const { routeMetaEntries } = routerType === "nuxt"
+    ? await introspectNuxtPages(root)
+    : await parseRouterFileFromCwd(resolveRouterEntry(root, routerEntry));
 
   const map = new Map<string, RouteMeta[]>();
   for (const entry of routeMetaEntries) {
@@ -327,11 +332,19 @@ export interface GenerateFilesOptions {
   /** Which POM languages to emit. Defaults to ["ts"]. */
   emitLanguages?: Array<"ts" | "csharp">;
 
+  /** C# generation options. */
+  csharp?: {
+    namespace?: string;
+  };
+
   /** When true, generate router-aware helpers like goToSelf() on view POMs. */
   vueRouterFluentChaining?: boolean;
 
   /** Router entry path used for vue-router introspection when fluent chaining is enabled. */
   routerEntry?: string;
+
+  /** The type of router introspection to perform. */
+  routerType?: "vue-router" | "nuxt";
 
   routeMetaByComponent?: Record<string, RouteMeta>;
 }
@@ -382,8 +395,10 @@ export async function generateFiles(
     customPomImportAliases,
     testIdAttribute,
     emitLanguages: emitLanguagesOverride,
+    csharp,
     vueRouterFluentChaining,
     routerEntry,
+    routerType,
   } = options;
 
   const emitLanguages: Array<"ts" | "csharp"> = emitLanguagesOverride?.length
@@ -393,7 +408,7 @@ export async function generateFiles(
   const outDir = outDirOverride ?? "./pom";
 
   const routeMetaByComponent = vueRouterFluentChaining
-    ? await getRouteMetaByComponent(projectRoot, routerEntry)
+    ? await getRouteMetaByComponent(projectRoot, routerEntry, routerType)
     : undefined;
 
   if (emitLanguages.includes("ts")) {
@@ -421,6 +436,8 @@ export async function generateFiles(
   if (emitLanguages.includes("csharp")) {
     const csFiles = generateAggregatedCSharpFiles(componentHierarchyMap, outDir, {
       projectRoot,
+      testIdAttribute,
+      csharp,
     });
     for (const file of csFiles) {
       createFile(file.filePath, file.content);
@@ -454,11 +471,11 @@ function toCSharpParam(paramTypeExpr: string): { type: string; defaultExpr?: str
   const typePart = left.includes("|") ? "string" : left;
 
   let type = "string";
-  if (/(^|\s)boolean(\s|$)/.test(typePart))
+  if (/(?:^|\s)boolean(?:\s|$)/.test(typePart))
     type = "bool";
-  else if (/(^|\s)string(\s|$)/.test(typePart))
+  else if (/(?:^|\s)string(?:\s|$)/.test(typePart))
     type = "string";
-  else if (/(^|\s)number(\s|$)/.test(typePart))
+  else if (/(?:^|\s)number(?:\s|$)/.test(typePart))
     type = "int";
   else if (/\d+/.test(typePart) && typePart === "")
     type = "int";
@@ -508,10 +525,17 @@ function formatCSharpParams(params: Record<string, string> | undefined): { signa
 function generateAggregatedCSharpFiles(
   componentHierarchyMap: Map<string, IComponentDependencies>,
   outDir: string,
-  options: { projectRoot?: string } = {},
+  options: {
+    projectRoot?: string;
+    testIdAttribute?: string;
+    csharp?: {
+      namespace?: string;
+    };
+  } = {},
 ): Array<{ filePath: string; content: string }> {
-  const projectRoot = options.projectRoot ?? process.cwd();
-  const outAbs = path.isAbsolute(outDir) ? outDir : path.resolve(projectRoot, outDir);
+  const outAbs = ensureDir(outDir);
+  const namespace = options.csharp?.namespace ?? "Playwright.Generated";
+  const testIdAttribute = (options.testIdAttribute || "data-testid").trim() || "data-testid";
 
   const entries = Array.from(componentHierarchyMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
 
@@ -527,13 +551,13 @@ function generateAggregatedCSharpFiles(
     "using System.Threading.Tasks;",
     "using Microsoft.Playwright;",
     "",
-    "namespace ImmyBot.Playwright.Generated;",
+    `namespace ${namespace};`,
     "",
-    "public abstract class BasePage",
+    "public abstract partial class BasePage",
     "{",
     "    protected BasePage(IPage page) => Page = page;",
     "    protected IPage Page { get; }",
-    "    protected ILocator LocatorByTestId(string testId) => Page.GetByTestId(testId);",
+    `    protected ILocator LocatorByTestId(string testId) => Page.Locator($"[${testIdAttribute}=\\"{testId}\\"]");`,
     "",
     "    // Minimal vue-select helper mirroring the TS BasePage.selectVSelectByTestId behavior.",
     "    // Note: annotationText is currently a no-op in C# output (we don't render a cursor overlay).",
@@ -559,8 +583,9 @@ function generateAggregatedCSharpFiles(
   const chunks: string[] = [header];
 
   for (const [componentName, deps] of entries) {
+    const className = toPascalCaseLocal(componentName);
     chunks.push(
-      `public sealed class ${componentName} : BasePage\n{\n    public ${componentName}(IPage page) : base(page) { }\n`,
+      `public partial class ${className} : BasePage\n{\n    public ${className}(IPage page) : base(page) { }\n`,
     );
 
     // Primary specs
@@ -748,7 +773,7 @@ function maybeGenerateFixtureRegistry(
     projectRoot?: string;
   },
 ) {
-  const { generateFixtures, pomOutDir, projectRoot } = options;
+  const { generateFixtures, pomOutDir } = options;
   if (!generateFixtures)
     return;
 
@@ -767,7 +792,7 @@ function maybeGenerateFixtureRegistry(
   const fixtureOutDirRel = looksLikeFilePath ? path.dirname(fixtureOutRel) : fixtureOutRel;
   const fixtureFileName = looksLikeFilePath ? path.basename(fixtureOutRel) : "fixtures.g.ts";
 
-  const root = projectRoot ?? process.cwd();
+  const root = options.projectRoot ?? process.cwd();
   const fixtureOutDirAbs = path.isAbsolute(fixtureOutDirRel)
     ? fixtureOutDirRel
     : path.resolve(root, fixtureOutDirRel);
@@ -1132,8 +1157,7 @@ async function generateAggregatedFiles(
     outputDir: string,
     items: Array<[string, IComponentDependencies]>,
   ) => {
-    // Alias Playwright types to avoid collisions with generated classes (e.g. a Vue component named `Page`).
-    const imports: string[] = ["import type { Locator as PwLocator, Page as PwPage } from \"@playwright/test\";"];
+    const imports: string[] = [];
 
     if (!basePageClassPath) {
       throw new Error("basePageClassPath is required for aggregated generation");
@@ -1157,6 +1181,20 @@ async function generateAggregatedFiles(
       "  err?: string;",
       "}",
     ].join("\n");
+
+    const inlinePlaywrightTypesModule = () => {
+      const typesPath = fileURLToPath(new URL("./playwright-types.ts", import.meta.url));
+
+      let typesSource = "";
+      try {
+        typesSource = fs.readFileSync(typesPath, "utf8");
+      }
+      catch {
+        throw new Error(`Failed to read playwright-types.ts at ${typesPath}`);
+      }
+
+      return typesSource.trim();
+    };
 
     const inlinePointerModule = () => {
       // Inline Pointer.ts from this package so generated POMs are self-contained and do not
@@ -1187,6 +1225,12 @@ async function generateAggregatedFiles(
       // The aggregated file already imports these Playwright types once at the top.
       pointerSource = pointerSource.replace(
         /import\s+type\s*\{\s*Locator\s+as\s+PwLocator\s*,\s*Page\s+as\s+PwPage\s*\}\s*from\s*["']@playwright\/test["'];?\s*/,
+        "",
+      );
+
+      // The aggregated file inlines these structural types once at the top.
+      pointerSource = pointerSource.replace(
+        /import\s+type\s*\{\s*PwLocator\s*,\s*PwPage\s*\}\s*from\s*["']\.\/playwright-types["'];?\s*/,
         "",
       );
 
@@ -1222,15 +1266,22 @@ async function generateAggregatedFiles(
         "",
       );
 
+      // The aggregated file inlines these structural types once at the top.
+      basePageSource = basePageSource.replace(
+        /import\s+type\s*\{\s*PwLocator\s*,\s*PwPage\s*\}\s*from\s*["']\.\/playwright-types["'];?\s*/,
+        "",
+      );
+
       // BasePage references Pointer, but in aggregated output we inline Pointer above.
       basePageSource = basePageSource.replace(
-        /import\s*\{\s*Pointer\s*\}\s*from\s*["']\.\/Pointer["'];?\s*/g,
+        /import\s+(?:type\s*)?\{[\s\S]*?\}\s*from\s*["']\.\/Pointer["'];?\s*/g,
         "",
       );
 
       return basePageSource.trim();
     };
 
+    const playwrightTypesInline = inlinePlaywrightTypesModule();
     const pointerInline = inlinePointerModule();
     const basePageInline = inlineBasePageModule();
 
@@ -1244,7 +1295,7 @@ async function generateAggregatedFiles(
       const importAliases: Record<string, string> = {
         Toggle: "ToggleWidget",
         Checkbox: "CheckboxWidget",
-        ...(options.customPomImportAliases ?? {}),
+        ...(options.customPomImportAliases),
       };
 
       const customDirRelOrAbs = options.customPomDir ?? "tests/playwright/pom/custom";
@@ -1489,6 +1540,8 @@ async function generateAggregatedFiles(
       header,
       ...imports,
       "",
+      playwrightTypesInline,
+      "",
       pointerInline,
       "",
       basePageInline,
@@ -1502,7 +1555,7 @@ async function generateAggregatedFiles(
 
   const base = ensureDir(outDir);
   const outputFile = path.join(base, "page-object-models.g.ts");
-  const header = `${eslintSuppressionHeader}/**\n * Aggregated generated POMs\n${AUTO_GENERATED_COMMENT}`;
+  const header = `/// <reference lib="es2015" />\n${eslintSuppressionHeader}/**\n * Aggregated generated POMs\n${AUTO_GENERATED_COMMENT}`;
   const content = makeAggregatedContent(header, path.dirname(outputFile), [...views, ...components]);
 
   const indexFile = path.join(base, "index.ts");

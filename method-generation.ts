@@ -146,6 +146,17 @@ function generateTypeMethod(methodName: string, formattedDataTestId: string) {
   return content;
 }
 
+function isAllDigits(value: string): boolean {
+  if (!value)
+    return false;
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code < 48 || code > 57)
+      return false;
+  }
+  return true;
+}
+
 function generateGetElementByDataTestId(
   methodName: string,
   nativeRole: string,
@@ -158,7 +169,8 @@ function generateGetElementByDataTestId(
   // Example: "PackageHash" can exist as both "-input" and "-button".
   const roleSuffix = upperFirst(nativeRole || "Element");
   const baseName = upperFirst(methodName);
-  const hasRoleSuffix = baseName.endsWith(roleSuffix) || new RegExp(`^${roleSuffix}\\d+$`).test(baseName);
+  const numericSuffix = baseName.startsWith(roleSuffix) ? baseName.slice(roleSuffix.length) : "";
+  const hasRoleSuffix = baseName.endsWith(roleSuffix) || (baseName.startsWith(roleSuffix) && isAllDigits(numericSuffix));
   const propertyName = hasRoleSuffix ? `${baseName}` : `${baseName}${roleSuffix}`;
   const needsKey = hasParam(params, "key") || formattedDataTestId.includes("${key}");
 

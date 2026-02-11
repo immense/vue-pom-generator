@@ -1,0 +1,11 @@
+
+> @immense/vue-pom-generator@1.0.7 build
+> vite build
+
+vite v7.3.1 building ssr environment for production...
+transforming...
+✓ 19 modules transformed.
+rendering chunks...
+dist/index.mjs  201.31 kB │ map: 434.21 kB
+dist/index.cjs  204.93 kB │ map: 436.20 kB
+✓ built in 176ms

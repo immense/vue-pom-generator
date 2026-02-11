@@ -25,8 +25,8 @@ describe("createVuePomGeneratorPlugins options", () => {
   it("returns only vue + virtual modules when generation is disabled", () => {
     const plugins = createVuePomGeneratorPlugins({ generation: false });
 
-    // Config plugin + Vue SFC plugin + virtual:testids module.
-    expect(plugins.length).toBe(3);
+    // Config plugin + Metadata collector + Vue SFC plugin + virtual:testids module.
+    expect(plugins.length).toBe(4);
 
     const names = plugins
       .map(p => (typeof p === "object" && p && "name" in p ? (p as { name?: string }).name : undefined))

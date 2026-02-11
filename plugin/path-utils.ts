@@ -1,5 +1,14 @@
 import path from "node:path";
 
+function toPosixSlashes(value: string): string {
+  let out = "";
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    out += ch === "\\" ? "/" : ch;
+  }
+  return out;
+}
+
 export function isPathWithinDir(filePathAbs: string, dirPathAbs: string): boolean {
   const fileAbs = path.resolve(filePathAbs);
   const dirAbs = path.resolve(dirPathAbs);
@@ -16,8 +25,11 @@ export function isPathWithinDir(filePathAbs: string, dirPathAbs: string): boolea
 }
 
 export function toPosixRelativeImport(fromDirAbs: string, toPathAbs: string): string {
-  let rel = path.relative(fromDirAbs, toPathAbs).replace(/\\/g, "/");
-  rel = rel.replace(/\.(ts|tsx|mts|cts)$/i, "");
+  let rel = toPosixSlashes(path.relative(fromDirAbs, toPathAbs));
+  const ext = path.extname(rel).toLowerCase();
+  if (ext === ".ts" || ext === ".tsx" || ext === ".mts" || ext === ".cts") {
+    rel = rel.slice(0, -ext.length);
+  }
   if (!rel.startsWith(".")) {
     rel = `./${rel}`;
   }

@@ -66,6 +66,15 @@ export interface VuePomGeneratorPluginOptions {
     excludeComponents?: string[];
 
     /**
+     * Directories to scan for Vue files when building the POM library.
+     *
+     * Defaults to `["src"]`.
+     *
+     * For Nuxt projects, you might want to include `["app", "components", "pages", "layouts"]`.
+     */
+    scanDirs?: string[];
+
+    /**
      * What to do when the author already provided a test id attribute.
      *
      * - `"preserve"` (default): keep the existing value
@@ -104,6 +113,18 @@ export interface VuePomGeneratorPluginOptions {
     emit?: Array<"ts" | "csharp">;
 
     /**
+     * Configuration for C# generation.
+     */
+    csharp?: {
+      /**
+       * The namespace to use for the generated C# classes.
+       *
+       * Defaults to `Playwright.Generated`.
+       */
+      namespace?: string;
+    };
+
+    /**
      * Controls how to handle POM member-name collisions (duplicate getter/method names) within a single class.
      *
       * Why this can happen (examples):
@@ -118,7 +139,7 @@ export interface VuePomGeneratorPluginOptions {
       *      (we do not use innerText-based disambiguation).
       *
       * 3) **Wrapper components collapse distinct elements into the same role/name**
-      *    - Example: multiple wrapper components that all behave like buttons (e.g. `<ImmyButton>`,
+      *    - Example: multiple wrapper components that all behave like buttons (e.g. `<MyButton>`,
       *      `<LoadButton>`) can generate very similar naming when neither element has a distinct id/name
       *      or handler-derived hint.
       *
@@ -148,7 +169,24 @@ export interface VuePomGeneratorPluginOptions {
      *
      * If omitted, router introspection is disabled.
      */
-    router?: { entry: string };
+    router?: {
+      /**
+       * The entry point for router introspection.
+       *
+       * For standard Vue apps, this is usually `src/router/index.ts`.
+       *
+       * For Nuxt projects, this can be omitted if `type` is set to `"nuxt"`.
+       */
+      entry?: string;
+
+      /**
+       * The type of router introspection to perform.
+       *
+       * - `"vue-router"` (default): loads the router entry via Vite SSR and enumerates routes.
+       * - `"nuxt"`: infers routes from the directory structure (e.g. `app/pages` or `pages`).
+       */
+      type?: "vue-router" | "nuxt";
+    };
 
     /** Playwright-specific generation features (fixtures + custom POM helpers). */
     playwright?: {

@@ -8,13 +8,13 @@ function cancel(_key: string) {
 
 <template>
   <div>
-    <ImmyButton v-if="shouldAbort" variant="danger" @click="cancel(item.key)">
+    <MyButton v-if="shouldAbort" variant="danger" @click="cancel(item.key)">
       <i class="fal fa-skull" />
       Terminate
-    </ImmyButton>
+    </MyButton>
 
-    <ImmyButton v-else variant="warning" @click="cancel(item.key)">
+    <MyButton v-else variant="warning" @click="cancel(item.key)">
       Request Cancellation
-    </ImmyButton>
+    </MyButton>
   </div>
 </template>

@@ -49,6 +49,7 @@ import {
 import { parse, parseExpression } from "@babel/parser";
 
 export { isSimpleExpressionNode } from "./compiler/ast-guards";
+export type { RouterIntrospectionResult } from "./router-introspection";
 export {
   getRouteNameKeyFromToDirective,
   setResolveToComponentNameFn,
@@ -73,7 +74,7 @@ export function upperFirst(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-export type NativeRole = 'button' | 'input' | 'select' | 'vselect' | 'checkbox' | 'toggle' | 'radio'
+export type NativeRole = 'button' | 'input' | 'select' | 'vselect' | 'checkbox' | 'toggle' | 'radio' | 'grid'
 // In this plugin, the hierarchy map stores: key = child element, value = parent element (or null for root).
 export type Child = ElementNode;
 export type Parent = ElementNode | null;
@@ -209,6 +210,35 @@ export function nodeHasClickDirective(node: ElementNode): boolean {
 }
 
 /**
+ * Detects if a node is a <template> element with slot scope data and returns the scope expression.
+ *
+ * This detects template elements with v-slot directives that have parameters,
+ * such as <template #item="{ data }"> or <template v-slot="item">.
+ *
+ * @internal
+ */
+function getTemplateSlotScope(node: ElementNode): string | null {
+  if (node.tag !== "template") {
+    return null;
+  }
+
+  const slotProp = node.props.find((prop): prop is DirectiveNode => {
+    return prop.type === NodeTypes.DIRECTIVE && prop.name === "slot";
+  });
+
+  if (slotProp?.exp) {
+    if (slotProp.exp.type === NodeTypes.SIMPLE_EXPRESSION) {
+      return slotProp.exp.content;
+    }
+    if (slotProp.exp.type === NodeTypes.COMPOUND_EXPRESSION) {
+      return stringifyExpression(slotProp.exp);
+    }
+  }
+
+  return null;
+}
+
+/**
  * Checks if a node is a <template> element with slot scope data
  *
  * This detects template elements with v-slot directives that have parameters,
@@ -219,32 +249,7 @@ export function nodeHasClickDirective(node: ElementNode): boolean {
  * @internal
  */
 function isTemplateWithData(node: ElementNode): boolean {
-  if (node.tag !== "template") {
-    return false;
-  }
-
-  return node.props.some((prop) => {
-    if (prop.type !== NodeTypes.DIRECTIVE) {
-      return false;
-    }
-
-    const directive = prop as DirectiveNode;
-
-    // Check for v-slot directive (name === "slot")
-    // The Vue compiler normalizes both v-slot and # syntax to name: "slot"
-    if (directive.name !== "slot") {
-      return false;
-    }
-
-    // Check if the directive has an expression (the slot scope parameters)
-    // COMPOUND_EXPRESSION: destructuring like { data } or complex expressions
-    // SIMPLE_EXPRESSION: simple identifiers like "item"
-    return (
-      directive.exp !== undefined &&
-      (directive.exp.type === NodeTypes.SIMPLE_EXPRESSION ||
-        directive.exp.type === NodeTypes.COMPOUND_EXPRESSION)
-    );
-  });
+  return getTemplateSlotScope(node) !== null;
 }
 
 /**
@@ -414,6 +419,51 @@ export function isNodeContainedInTemplateWithData(node: ElementNode, hierarchyMa
     parent = getParent(hierarchyMap, parent);
   }
   return false;
+}
+
+/**
+ * Extracts a key placeholder from a parent <template> with slot scope data.
+ *
+ * If the node is within a slot that has scope variables (e.g. #item="{ data }"),
+ * returns a placeholder derived from that scope.
+ *
+ * @internal
+ */
+export function getContainedInSlotDataKeyValue(node: ElementNode, hierarchyMap: HierarchyMap): string | null {
+  let parent = getParent(hierarchyMap, node);
+  while (parent) {
+    if (parent.type === NodeTypes.ELEMENT && parent.tag === "template") {
+      const scope = getTemplateSlotScope(parent);
+      if (scope) {
+        // If it's a destructuring like { data }, try to extract the first identifier.
+        // Otherwise use the whole scope expression.
+        let key = scope.trim();
+        if (key.startsWith("{") && key.endsWith("}")) {
+          const inner = key.slice(1, -1).trim();
+          let cutIdx = -1;
+          const commaIdx = inner.indexOf(",");
+          const colonIdx = inner.indexOf(":");
+          if (commaIdx !== -1 && colonIdx !== -1) {
+            cutIdx = Math.min(commaIdx, colonIdx);
+          }
+          else if (commaIdx !== -1) {
+            cutIdx = commaIdx;
+          }
+          else if (colonIdx !== -1) {
+            cutIdx = colonIdx;
+          }
+
+          const first = (cutIdx === -1 ? inner : inner.slice(0, cutIdx)).trim();
+          if (first) {
+            key = first;
+          }
+        }
+        return key;
+      }
+    }
+    parent = getParent(hierarchyMap, parent);
+  }
+  return null;
 }
 
 /**
@@ -1078,7 +1128,7 @@ export function generateToDirectiveDataTestId(componentName: string, node: Eleme
       const source = stringifyExpression(toDirective.exp);
 
       const toAst = toDirective.exp.ast;
-      const interpolated = !(toAst == null || toAst === false || toAst) && isTemplateLiteral(toAst);
+      const interpolated = (toAst !== undefined && toAst !== null && toAst !== false) && isTemplateLiteral(toAst as BabelNode);
       return templateAttributeValue(`${componentName}-\${${source}${interpolated ? ".replaceAll(' ', '')" : "?.name?.replaceAll(' ', '') ?? ''"}}${formatTagName(node, nativeWrappers)}`);
     } else {
       const innerText = getInnerText(node);
@@ -1177,7 +1227,7 @@ export function addComponentTestIds(componentName: string, componentTestIds: Map
 export function getComposedClickHandlerContent(
   node: ElementNode,
   _context: TransformContext,
-  _innerText: string | null,
+  innerText: string | null,
   clickDirective?: DirectiveNode,
   _options: { componentName?: string; contextFilename?: string } = {}
 ): string {
@@ -1207,12 +1257,16 @@ export function getComposedClickHandlerContent(
     }
   }
 
-  handlerName = normalizeHandlerName(handlerName);
+  const hName = normalizeHandlerName(handlerName);
+
+  // Prefer semantic signal from the handler identity. If the handler is generic
+  // (e.g. an inline assignment), fall back to inner text to provide a stable name.
+  const name = hName || innerText || "";
 
   // Normalize handler names for codegen:
   // - innerText comes in kebab-ish already (via getInnerText)
   // - handler names are typically camelCase; convert to PascalCase for readability/stability
-  const normalizedHandlerSegment = handlerName ? `-${toPascalCase(handlerName)}` : "";
+  const normalizedHandlerSegment = name ? `-${toPascalCase(name)}` : "";
   const result = normalizedHandlerSegment;
 
   // eslint-disable-next-line no-restricted-syntax
@@ -1691,11 +1745,44 @@ export function tryGetExistingElementDataTestId(node: ElementNode, attributeName
     return { value, isDynamic: false, isStaticLiteral: true };
   }
 
-  // Fallback: we have no parseable AST shape (identifier/call/etc).
-  // Treat as dynamic/unknown to avoid false positives.
+  // Fallback: we have no parseable AST shape from Vue compiler.
+  // Attempt to parse manually to detect template literals (common for data-testid).
   const raw = (simpleExp.content ?? "").trim();
   if (!raw) {
     return null;
+  }
+
+  try {
+    const ast = parseExpression(raw, { plugins: ["typescript"] });
+    if (ast && typeof ast === "object" && "type" in ast && (ast as { type: string }).type === "TemplateLiteral") {
+      const tl = ast as { quasis: Array<{ value?: { cooked?: string } }>; expressions: unknown[] };
+      const cooked = (tl.quasis ?? []).map(q => q.value?.cooked ?? "").join("");
+      const expressionCount = (tl.expressions ?? []).length;
+      const isStatic = expressionCount === 0;
+
+      const unwrappedTemplate = (raw.startsWith("`") && raw.endsWith("`") && raw.length >= 2)
+        ? raw.slice(1, -1)
+        : cooked;
+
+      if (isStatic) {
+        return { value: unwrappedTemplate, isDynamic: false, isStaticLiteral: true };
+      }
+
+      return {
+        value: unwrappedTemplate,
+        isDynamic: true,
+        isStaticLiteral: false,
+        template: unwrappedTemplate,
+        templateExpressionCount: expressionCount,
+      };
+    }
+
+    if (ast && typeof ast === "object" && "type" in ast && (ast as { type: string }).type === "StringLiteral") {
+      const sl = ast as { value?: string };
+      return { value: sl.value ?? "", isDynamic: false, isStaticLiteral: true };
+    }
+  } catch {
+    // Ignore parse errors; fall through to generic dynamic fallback.
   }
 
   return { value: raw, isDynamic: true, isStaticLiteral: false, rawExpression: raw };
@@ -1834,6 +1921,8 @@ export function applyResolvedDataTestId(args: {
   nativeRole: string;
   preferredGeneratedValue: AttributeValue;
   bestKeyPlaceholder: string | null;
+  /** Optional variable name that must be present in a placeholder (e.g. "data" from slot scope). */
+  bestKeyVariable?: string | null;
   /** Optional enumerable key values (e.g. derived from v-for="item in ['One','Two']"). */
   keyValuesOverride?: string[] | null;
   entryOverrides?: Partial<IDataTestId>;
@@ -1931,13 +2020,16 @@ export function applyResolvedDataTestId(args: {
             );
           }
 
-          if (args.bestKeyPlaceholder && !existing.template.includes(args.bestKeyPlaceholder)) {
+          const hasExact = args.bestKeyPlaceholder && existing.template.includes(args.bestKeyPlaceholder);
+          const hasVarAccess = args.bestKeyVariable && existing.template.includes(args.bestKeyVariable);
+
+          if (!hasExact && !hasVarAccess && args.bestKeyPlaceholder) {
             throw new Error(
               `[vue-pom-generator] Existing ${attrLabel} appears to be missing the key placeholder needed to keep it unique.\n`
               + `Component: ${args.componentName}\n`
               + `File: ${file}:${locationHint}\n`
               + `Existing ${attrLabel}: ${JSON.stringify(existing.value)}\n`
-              + `Required placeholder: ${JSON.stringify(args.bestKeyPlaceholder)}\n\n`
+              + `Required placeholder: ${JSON.stringify(args.bestKeyPlaceholder)}${args.bestKeyVariable ? ` or an access on "${args.bestKeyVariable}"` : ""}\n\n`
               + `Fix: either (1) include ${args.bestKeyPlaceholder} in your :${attrLabel} template literal, or (2) remove the explicit ${attrLabel} so it can be auto-generated.`,
             );
           }
@@ -1963,7 +2055,7 @@ export function applyResolvedDataTestId(args: {
             + `Component: ${args.componentName}\n`
             + `File: ${file}:${locationHint}\n`
             + `Existing ${attrLabel}: ${JSON.stringify(existing.value)}\n`
-            + `Required placeholder: ${JSON.stringify(args.bestKeyPlaceholder)}\n\n`
+            + `Required placeholder: ${JSON.stringify(args.bestKeyPlaceholder)}${args.bestKeyVariable ? ` or an access on "${args.bestKeyVariable}"` : ""}\n\n`
             + `Fix: either (1) include ${args.bestKeyPlaceholder} in your :${attrLabel} template literal, or (2) remove the explicit ${attrLabel} so it can be auto-generated.`,
           );
         }
@@ -2000,6 +2092,7 @@ export function applyResolvedDataTestId(args: {
       case "checkbox":
       case "toggle":
       case "radio":
+      case "grid":
         return role;
       default:
         return undefined;
@@ -2131,12 +2224,16 @@ export function applyResolvedDataTestId(args: {
   const primaryByActionName = args.dependencies.__pomPrimaryByActionName;
 
   const hintCandidates = (() => {
-    // Keep the existing behavior stable: in warn/suffix modes we suffix based on the primary hint.
-    // In error mode, we try provided alternates (typically id/name/label text) before throwing.
-    const baseHints: Array<string | undefined> = [args.semanticNameHint];
-    if (nameCollisionBehavior === "error") {
-      baseHints.push(...(args.semanticNameHintAlternates ?? []));
-    }
+    // We always consider alternates (typically id/name/label text) when choosing a 1st-pass name,
+    // so that we prefer e.g. "EditButton" over generic "Button" even in suffix mode.
+    //
+    // Note that in "suffix"/"warn" modes, once a base hint is chosen it will be suffixed 
+    // (e.g. Button2) rather than trying the next hint in the list. Alternates are mainly 
+    // useful when the primary hint is missing or when in "error" mode.
+    const baseHints: Array<string | undefined> = [
+      args.semanticNameHint,
+      ...(args.semanticNameHintAlternates ?? []),
+    ];
     // De-dupe while preserving order.
     const out: string[] = [];
     const seen = new Set<string>();
@@ -2347,7 +2444,7 @@ export function applyResolvedDataTestId(args: {
       + `role=${normalizedRole}, semanticNameHint=${JSON.stringify(hint)}\n`
       + `Conflicts: getter=${last.getterName}, method=${last.actionName}\n\n`
       + `Fix: make the element identifiable (e.g. add id/name/inner text or use a more specific click handler name), `
-      + `or switch generation.nameCollisionBehavior to \"warn\"/\"suffix\".`,
+      + `or switch generation.nameCollisionBehavior to "warn"/"suffix".`,
     );
   }
 
