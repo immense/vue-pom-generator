@@ -4,8 +4,15 @@ import type { TestIdClickEventDetail } from "../click-instrumentation";
 import { Pointer } from "./Pointer";
 import type { AfterPointerClick, AfterPointerClickInfo } from "./Pointer";
 
-// Click instrumentation is a core contract for generated POMs.
-const REQUIRE_CLICK_EVENT = true;
+// Click instrumentation is optional for generated POMs.
+//
+// When enabled, POM click/fill helpers will wait for the app to emit
+// `__testid_event__` { testId, phase: "after" } after interacting with an
+// element that has a data-testid.
+//
+// Default: disabled. (Playwright already has robust auto-waiting; requiring a
+// custom event makes tests depend on app runtime instrumentation.)
+const REQUIRE_CLICK_EVENT = false;
 
 // Keep logging off by default.
 const CLICK_EVENT_DEBUG = false;
@@ -97,6 +104,10 @@ export class BasePage {
   }
 
   private async waitForTestIdClickEventAfter(testId: string, options?: { timeoutMs?: number }): Promise<void> {
+    if (!REQUIRE_CLICK_EVENT) {
+      return;
+    }
+
     const timeoutMs = options?.timeoutMs ?? 2_000;
     const requireEvent = REQUIRE_CLICK_EVENT;
 

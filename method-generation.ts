@@ -59,8 +59,10 @@ function testIdExpression(formattedDataTestId: string): string {
 function generateClickMethod(methodName: string, formattedDataTestId: string, alternateFormattedDataTestIds: string[] | undefined, params: Record<string, string>) {
   let content: string;
   const name = `click${methodName}`;
+  const noWaitName = `${name}NoWait`;
   const paramBlock = formatParams(params);
   const paramBlockWithWait = paramBlock ? `${paramBlock}, wait: boolean = true` : "wait: boolean = true";
+  const argsForForward = Object.keys(params).join(", ");
 
   const alternates = uniqueAlternates(formattedDataTestId, alternateFormattedDataTestIds);
   if (alternates.length > 0) {
@@ -84,6 +86,13 @@ function generateClickMethod(methodName: string, formattedDataTestId: string, al
       + `${INDENT2}}\n`
       + `${INDENT2}throw (lastError instanceof Error) ? lastError : new Error("[pom] Failed to click any candidate locator for ${name}.");\n`
       + `${INDENT}}\n`;
+
+    // Convenience forwarder that disables click-event waiting.
+    const noWaitSig = hasParam(params, "key") ? paramBlock : "";
+    const noWaitArgs = argsForForward ? `${argsForForward}, false` : "false";
+    content += `\n${INDENT}async ${noWaitName}(${noWaitSig}) {\n`
+      + `${INDENT2}await this.${name}(${noWaitArgs});\n`
+      + `${INDENT}}\n`;
     return content;
   }
 
@@ -91,10 +100,18 @@ function generateClickMethod(methodName: string, formattedDataTestId: string, al
     content = `${INDENT}async ${name}(${paramBlockWithWait}) {\n`
       + `${INDENT2}await this.clickByTestId(\`${formattedDataTestId}\`, "", wait);\n`
       + `${INDENT}}\n`;
+
+    content += `\n${INDENT}async ${noWaitName}(${paramBlock}) {\n`
+      + `${INDENT2}await this.${name}(${argsForForward}, false);\n`
+      + `${INDENT}}\n`;
   }
   else {
     content = `${INDENT}async ${name}(wait: boolean = true) {\n`
       + `${INDENT2}await this.clickByTestId("${formattedDataTestId}", "", wait);\n`
+      + `${INDENT}}\n`;
+
+    content += `\n${INDENT}async ${noWaitName}() {\n`
+      + `${INDENT2}await this.${name}(false);\n`
       + `${INDENT}}\n`;
   }
   return content;
