@@ -1,6 +1,6 @@
 import type { Logger as ViteLogger } from "vite";
 
-export type VuePomGeneratorVerbosity = "silent" | "info" | "debug";
+export type VuePomGeneratorVerbosity = "silent" | "warn" | "info" | "debug";
 
 export interface VuePomGeneratorLogger {
   info: (message: string) => void;
@@ -52,7 +52,7 @@ export function createLogger(options: {
 
   return {
     info(message: string) {
-      if (verbosity === "silent")
+      if (verbosity === "silent" || verbosity === "warn")
         return;
       sinkInfo(message);
     },

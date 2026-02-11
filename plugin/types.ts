@@ -26,10 +26,11 @@ export interface VuePomGeneratorPluginOptions {
      * Controls log volume.
      *
      * - `"silent"`: no logs
-     * - `"info"` (default): high-level lifecycle logs
+     * - `"warn"` (default): only warnings and errors
+     * - `"info"`: high-level lifecycle logs
      * - `"debug"`: verbose diagnostics
      */
-    verbosity?: "silent" | "info" | "debug";
+    verbosity?: "silent" | "warn" | "info" | "debug";
   };
 
   /**

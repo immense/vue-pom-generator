@@ -320,7 +320,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
       }
 
       const componentName = getComponentNameFromPath(cleanPath);
-      loggerRef.current.info(`Collecting metadata for ${cleanPath} (component: ${componentName})`);
+      loggerRef.current.debug(`Collecting metadata for ${cleanPath} (component: ${componentName})`);
       try {
         const { parse } = await import("@vue/compiler-sfc");
         const compilerDom = await import("@vue/compiler-dom");
@@ -334,7 +334,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
             filename: cleanPath,
             nodeTransforms: getNodeTransforms(cleanPath, componentName),
           });
-          loggerRef.current.info(`Metadata collected for ${cleanPath}`);
+          loggerRef.current.debug(`Metadata collected for ${cleanPath}`);
         }
       } catch (e) {
         loggerRef.current.warn(`Metadata collection failed for ${cleanPath}: ${e}`);

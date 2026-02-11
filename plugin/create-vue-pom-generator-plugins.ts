@@ -31,7 +31,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
   const generationOptions: GenerationConfig | null = generationSetting === false ? null : (generationSetting ?? {});
   const generationEnabled = generationOptions !== null;
 
-  const verbosity: VuePomGeneratorVerbosity = options.logging?.verbosity ?? "info";
+  const verbosity: VuePomGeneratorVerbosity = options.logging?.verbosity ?? "warn";
 
   const vueOptions = options.vueOptions;
 
