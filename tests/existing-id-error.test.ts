@@ -29,6 +29,6 @@ describe("existingIdBehavior: 'error'", () => {
     // Using string matching instead of RegExp literal to satisfy linting rules.
     const expectedError = "[vue-pom-generator] Found existing data-testid while existingIdBehavior=\"error\".";
 
-    await expect(metadataPlugin.transform.call({}, code, id)).rejects.toThrow(expectedError);
+    await expect((metadataPlugin.transform as any).call({}, code, id)).rejects.toThrow(expectedError);
   });
 });
