@@ -1,6 +1,6 @@
 {
   "name": "@immense/vue-pom-generator",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Injects data-testid attributes for all interactive elements and generates page object models for every page.",
   "type": "module",
   "repository": {
@@ -40,8 +40,8 @@
     "test:coverage": "vitest run --coverage",
     "smoke:pack": "node ./scripts/packed-smoke-check.mjs",
     "typecheck": "node -e \"process.argv = ['node','tsc',...process.argv.slice(1)]; require('typescript/bin/tsc')\" -- -p tsconfig.json --noEmit",
-    "prepublishOnly": "npm run build",
-    "postinstall": "simple-git-hooks"
+    "prepare": "simple-git-hooks",
+    "prepublishOnly": "npm run build"
   },
   "simple-git-hooks": {
     "pre-push": "bash scripts/git-hooks/pre-push.sh"

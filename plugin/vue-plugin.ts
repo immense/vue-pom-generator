@@ -5,7 +5,7 @@ import process from "node:process";
 import type { Options as VuePluginOptions } from "@vitejs/plugin-vue";
 import vue from "@vitejs/plugin-vue";
 import type { PluginOption } from "vite";
-import type { ElementNode, RootNode, TemplateChildNode, TransformContext } from "@vue/compiler-core";
+import type { ElementNode, NodeTransform, RootNode, TemplateChildNode, TransformContext } from "@vue/compiler-core";
 import { NodeTypes } from "@vue/compiler-core";
 
 import { findDataTestIdProp, tryCreateElementMetadata } from "../compiler-metadata-utils";
@@ -299,8 +299,20 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     ...userCompilerOptions,
     prefixIdentifiers: true,
     nodeTransforms: [
-        // This will be used if the user uses the returned vue plugin.
-        // We'll populate it via the hook below for better compatibility.
+      ...userNodeTransforms,
+      (node: RootNode | TemplateChildNode, context: TransformContext) => {
+        // This transform is intended for the main @vitejs/plugin-vue instance.
+        // It delegates to the same per-file transform logic used by the metadata collector,
+        // using the filename provided by the compiler context.
+        const filename = context.filename;
+        if (!filename || !filename.endsWith(".vue") || !isFileInScope(filename)) {
+          return;
+        }
+
+        const transforms = getNodeTransforms(filename);
+        const ourTransform = transforms[transforms.length - 1] as NodeTransform;
+        return ourTransform(node, context);
+      },
     ],
   };
 
@@ -321,23 +333,20 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
 
       const componentName = getComponentNameFromPath(cleanPath);
       loggerRef.current.debug(`Collecting metadata for ${cleanPath} (component: ${componentName})`);
-      try {
-        const { parse } = await import("@vue/compiler-sfc");
-        const compilerDom = await import("@vue/compiler-dom");
-        const compile = compilerDom.compile as (template: string, options: object) => object;
-        const { descriptor } = parse(code, { filename: cleanPath });
-        if (descriptor.template) {
-          // Run the template compiler with our transforms.
-          // We don't care about the result, only the side effects on our shared maps.
-          compile(descriptor.template.content, {
-            ...userCompilerOptions,
-            filename: cleanPath,
-            nodeTransforms: getNodeTransforms(cleanPath, componentName),
-          });
-          loggerRef.current.debug(`Metadata collected for ${cleanPath}`);
-        }
-      } catch (e) {
-        loggerRef.current.warn(`Metadata collection failed for ${cleanPath}: ${e}`);
+
+      const { parse } = await import("@vue/compiler-sfc");
+      const compilerDom = await import("@vue/compiler-dom");
+      const compile = compilerDom.compile as (template: string, options: object) => object;
+      const { descriptor } = parse(code, { filename: cleanPath });
+      if (descriptor.template) {
+        // Run the template compiler with our transforms.
+        // We don't care about the result, only the side effects on our shared maps.
+        compile(descriptor.template.content, {
+          ...userCompilerOptions,
+          filename: cleanPath,
+          nodeTransforms: getNodeTransforms(cleanPath, componentName),
+        });
+        loggerRef.current.debug(`Metadata collected for ${cleanPath}`);
       }
 
       return null;
