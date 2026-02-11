@@ -1193,6 +1193,12 @@ async function generateAggregatedFiles(
         throw new Error(`Failed to read playwright-types.ts at ${typesPath}`);
       }
 
+      // Strip the import from the inlined types.
+      typesSource = typesSource.replace(
+        /import\s+type\s*\{\s*Locator\s+as\s+PwLocator\s*,\s*Page\s+as\s+PwPage\s*\}\s*from\s*["']@playwright\/test["'];?\s*/,
+        "",
+      );
+
       return typesSource.trim();
     };
 
@@ -1555,7 +1561,7 @@ async function generateAggregatedFiles(
 
   const base = ensureDir(outDir);
   const outputFile = path.join(base, "page-object-models.g.ts");
-  const header = `/// <reference lib="es2015" />\n${eslintSuppressionHeader}/**\n * Aggregated generated POMs\n${AUTO_GENERATED_COMMENT}`;
+  const header = `/// <reference lib="es2015" />\n${eslintSuppressionHeader}import type { Locator as PwLocator, Page as PwPage } from "@playwright/test";\n/**\n * Aggregated generated POMs\n${AUTO_GENERATED_COMMENT}`;
   const content = makeAggregatedContent(header, path.dirname(outputFile), [...views, ...components]);
 
   const indexFile = path.join(base, "index.ts");
