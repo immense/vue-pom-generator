@@ -1463,8 +1463,11 @@ async function generateAggregatedFiles(
   // Copy runtime dependencies into the output folder so the aggregated POM file can
   // import them without relying on workspace package resolution.
   const clickInstrumentationAbs = fileURLToPath(new URL("../click-instrumentation.ts", import.meta.url));
-  const pointerAbs = fileURLToPath(new URL("./Pointer.ts", import.meta.url));
-  const playwrightTypesAbs = fileURLToPath(new URL("./playwright-types.ts", import.meta.url));
+  // These runtime .ts files must resolve correctly both when running from source
+  // (e.g. during development/tests) and when bundled into dist/index.* for npm.
+  // Resolving via package-root `class-generation/*` is stable across both.
+  const pointerAbs = fileURLToPath(new URL("../class-generation/Pointer.ts", import.meta.url));
+  const playwrightTypesAbs = fileURLToPath(new URL("../class-generation/playwright-types.ts", import.meta.url));
 
   const runtimeFiles: Array<{ filePath: string; content: string }> = [
     {
