@@ -348,7 +348,6 @@ describe("class-generation coverage", () => {
       await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
         outDir,
         projectRoot: tempRoot,
-        aggregated: true,
       });
 
       const pomPath = path.join(outDir, "page-object-models.g.ts");
