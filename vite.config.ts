@@ -3,10 +3,15 @@ import { defineConfig } from "vite";
 export default defineConfig({
   build: {
     // This package is a Vite plugin; it must run in Node.
-    ssr: "./index.ts",
+    ssr: true,
     sourcemap: true,
     emptyOutDir: true,
     rollupOptions: {
+      input: {
+        index: "./index.ts",
+        // eslint sub-export: import "@immense/vue-pom-generator/eslint"
+        "eslint/index": "./eslint/index.ts",
+      },
       external: (() => {
         const externals = new Set<string>([
           "vite",
@@ -26,11 +31,11 @@ export default defineConfig({
       output: [
         {
           format: "es",
-          entryFileNames: "index.mjs",
+          entryFileNames: "[name].mjs",
         },
         {
           format: "cjs",
-          entryFileNames: "index.cjs",
+          entryFileNames: "[name].cjs",
           exports: "named",
         },
       ],

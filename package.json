@@ -1,6 +1,6 @@
 {
   "name": "@immense/vue-pom-generator",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "description": "Injects data-testid attributes for all interactive elements and generates page object models for every page.",
   "type": "module",
   "repository": {
@@ -23,6 +23,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
       "require": "./dist/index.cjs"
+    },
+    "./eslint": {
+      "types": "./dist/eslint/index.d.ts",
+      "import": "./dist/eslint/index.mjs",
+      "require": "./dist/eslint/index.cjs"
     }
   },
   "files": [
@@ -49,9 +54,15 @@
   },
   "peerDependencies": {
     "@vitejs/plugin-vue": ">=5",
+    "eslint": ">=9",
     "vite": ">=7",
     "vitest": "^4",
     "vue": ">=3"
+  },
+  "peerDependenciesMeta": {
+    "eslint": {
+      "optional": true
+    }
   },
   "dependencies": {
     "@babel/parser": "^7.28.5",

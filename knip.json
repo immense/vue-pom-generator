@@ -15,6 +15,7 @@
   ],
   "entry": [
     "index.ts",
+    "eslint/index.ts",
     "types-generator.ts",
     "plugin/**/*.ts",
     "class-generation/**/*.ts",
