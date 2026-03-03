@@ -300,4 +300,75 @@ describe("class-generation coverage", () => {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
   }, 120_000);
+
+  it("generates valid PascalCase class names for kebab-case and dot-separated component names", async () => {
+    // Regression test: class-generation/index.ts used the raw componentName in the class
+    // declaration instead of converting it to PascalCase first.  Names like "error-test" and
+    // "FirmsGrid.client" are valid Vue file names but are illegal TypeScript identifiers, so the
+    // generated file would fail to compile.
+    const tempRoot = makeTempRoot("vue-pom-pascal-");
+
+    try {
+      const basePagePath = path.join(tempRoot, "BasePage.ts");
+      writeMinimalBasePage(basePagePath);
+
+      const componentHierarchyMap = new Map<string, IComponentDependencies>([
+        [
+          "error-test",
+          makeDeps({
+            filePath: path.join(tempRoot, "src", "views", "error-test.vue"),
+            isView: true,
+          }),
+        ],
+        [
+          "FirmsGrid.client",
+          makeDeps({
+            filePath: path.join(tempRoot, "src", "components", "FirmsGrid.client.vue"),
+            isView: false,
+          }),
+        ],
+        [
+          "forgot-password",
+          makeDeps({
+            filePath: path.join(tempRoot, "src", "views", "forgot-password.vue"),
+            isView: true,
+          }),
+        ],
+        [
+          "template-library",
+          makeDeps({
+            filePath: path.join(tempRoot, "src", "views", "template-library.vue"),
+            isView: true,
+          }),
+        ],
+      ]);
+
+      const outDir = path.join(tempRoot, "pom");
+
+      await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
+        outDir,
+        projectRoot: tempRoot,
+        aggregated: true,
+      });
+
+      const pomPath = path.join(outDir, "page-object-models.g.ts");
+      expect(fs.existsSync(pomPath)).toBe(true);
+
+      const content = readFile(pomPath);
+
+      // Valid PascalCase class names must be emitted.
+      expect(content).toContain("export class ErrorTest extends BasePage");
+      expect(content).toContain("export class FirmsGridClient extends BasePage");
+      expect(content).toContain("export class ForgotPassword extends BasePage");
+      expect(content).toContain("export class TemplateLibrary extends BasePage");
+
+      // The raw (illegal) names must NOT appear as class declarations.
+      expect(content).not.toMatch(/export class error-test/);
+      expect(content).not.toMatch(/export class FirmsGrid\.client/);
+      expect(content).not.toMatch(/export class forgot-password/);
+      expect(content).not.toMatch(/export class template-library/);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
 });

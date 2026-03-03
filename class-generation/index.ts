@@ -998,7 +998,10 @@ function generateViewObjectModelContent(
     content = doc;
   }
 
-  content += `\nexport class ${componentName} extends BasePage {\n`;
+  // Convert raw component name (may contain hyphens/dots, e.g. "error-test", "FirmsGrid.client")
+  // to a valid PascalCase TypeScript identifier for the class declaration.
+  const className = toPascalCaseLocal(componentName);
+  content += `\nexport class ${className} extends BasePage {\n`;
 
   const widgetInstances = isView
     ? getWidgetInstancesForView(componentName, dependencies.dataTestIdSet)
@@ -1044,7 +1047,8 @@ function generateViewObjectModelContent(
   if (isView && options.vueRouterFluentChaining) {
     const routeMeta = options.routeMetaByComponent?.[componentName] ?? null;
     content += generateRouteProperty(routeMeta);
-    content += generateGoToSelfMethod(componentName);
+    // Pass className (PascalCase) so the generated route self-reference is a valid identifier.
+    content += generateGoToSelfMethod(className);
   }
 
   content += generateMethodsContentForDependencies(dependencies);
