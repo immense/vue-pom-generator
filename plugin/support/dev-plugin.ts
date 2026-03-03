@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
+import process from "node:process";
 
 import * as compilerDom from "@vue/compiler-dom";
 import { parse as parseSfc } from "@vue/compiler-sfc";
@@ -12,6 +13,7 @@ import { createTestIdTransform } from "../../transform";
 import type { IComponentDependencies, NativeWrappersMap, RouterIntrospectionResult } from "../../utils";
 import { setResolveToComponentNameFn, setRouteNameToComponentNameMap, toPascalCase } from "../../utils";
 import type { VuePomGeneratorLogger } from "../logger";
+import { resolveComponentNameFromPath } from "../path-utils";
 
 interface DevProcessorOptions {
   nativeWrappers: NativeWrappersMap;
@@ -186,7 +188,13 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         const existing = filePathToComponentName.get(normalized);
         if (existing)
           return existing;
-        const name = path.basename(normalized, ".vue");
+        const name = resolveComponentNameFromPath({
+          filename: normalized,
+          projectRoot: projectRootRef.current,
+          viewsDirAbs: getViewsDirAbs(),
+          scanDirs,
+          extraRoots: [process.cwd()],
+        });
         filePathToComponentName.set(normalized, name);
         return name;
       };

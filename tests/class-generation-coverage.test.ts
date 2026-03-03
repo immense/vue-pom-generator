@@ -370,4 +370,59 @@ describe("class-generation coverage", () => {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
   });
+
+  it("C#: dynamic-test-id input element generates key+text params so the locator compiles", async () => {
+    // Regression: when an <input> has :data-testid="`...-${key}`", the C# generator was
+    // emitting `(string text, string annotationText = "")` but the locator body referenced
+    // `{key}` — causing a CS0103 compile error.  Both params must appear together.
+    //
+    // Simulate the broken state: params lacks `key` (as utils.ts incorrectly deletes it
+    // for input elements with dynamic test IDs).  The C# generator must add it when the
+    // formattedDataTestId contains `${key}`.
+    const tempRoot = makeTempRoot("vue-pom-csharp-dyn-input-");
+
+    try {
+      const dt: IDataTestId = {
+        value: "items-check-${key}",
+        pom: {
+          nativeRole: "input",
+          methodName: "ItemsCheckByKey",
+          formattedDataTestId: "items-check-${key}",
+          // Broken params as currently produced by utils.ts: key is absent
+          params: { text: "string", annotationText: "string = \"\"" },
+        },
+      };
+
+      const componentHierarchyMap = new Map<string, IComponentDependencies>([
+        [
+          "ItemsPage",
+          makeDeps({
+            filePath: path.join(tempRoot, "src", "views", "ItemsPage.vue"),
+            isView: true,
+            dataTestIdSet: new Set([dt]),
+          }),
+        ],
+      ]);
+
+      const outDir = path.join(tempRoot, "pom");
+      await generateFiles(componentHierarchyMap, new Map(), null as any, {
+        outDir,
+        emitLanguages: ["csharp"],
+        csharp: { namespace: "Test.Generated" },
+      });
+
+      const csFile = path.join(outDir, "page-object-models.g.cs");
+      const cs = readFile(csFile);
+
+      // The locator must include key as a parameter, not just text.
+      expect(cs).toContain("string key");
+      // Locator body must use {key} interpolation.
+      expect(cs).toContain("items-check-{key}");
+      // The method must compile: key must not be an undeclared reference.
+      // (If key appears only in the template but not in the signature, C# throws CS0103.)
+      expect(cs).toMatch(/ItemsCheckByKeyInput\(string key/);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
 });

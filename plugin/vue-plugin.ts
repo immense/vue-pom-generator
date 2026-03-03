@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
@@ -11,10 +10,10 @@ import { NodeTypes } from "@vue/compiler-core";
 import { findDataTestIdProp, tryCreateElementMetadata } from "../compiler-metadata-utils";
 import type { ElementMetadata } from "../metadata-collector";
 import { createTestIdTransform } from "../transform";
-import { toPascalCase } from "../utils";
 import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 
 import type { VuePomGeneratorLogger } from "./logger";
+import { resolveComponentNameFromPath } from "./path-utils";
 import type { PomNameCollisionBehavior } from "./types";
 
 interface InternalFactoryOptions {
@@ -117,56 +116,13 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
   } = options;
 
   const getComponentNameFromPath = (filename: string): string => {
-    const cleanPath = filename.includes("?") ? filename.substring(0, filename.indexOf("?")) : filename;
-    const projectRoot = getProjectRoot();
-    const absFilename = path.isAbsolute(cleanPath) ? cleanPath : path.resolve(projectRoot, cleanPath);
-    const viewsDirAbs = getViewsDirAbs();
-
-    // Determine a unique component name based on its relative path within the project.
-    // We check common roots (viewsDir, scanDirs) and use the most specific match.
-    //
-    // Nuxt-specific: if projectRoot is /web and scanDir is 'app', potentialRoots includes /web/app.
-    // /web/app/pages/foo/index.vue -> rel: pages/foo/index -> PagesFooIndex.
-    const roots = [viewsDirAbs, ...scanDirs.map(d => path.resolve(projectRoot, d))];
-
-    // Add conventional Nuxt/Vue subdirectories as potential roots to get cleaner names
-    // (e.g. AdministrationFirmsIndex instead of PagesAdministrationFirmsIndex).
-    for (const dir of scanDirs) {
-      const absDir = path.resolve(projectRoot, dir);
-      try {
-        const pagesDir = path.join(absDir, "pages");
-        if (fs.existsSync(pagesDir)) {
-          roots.push(pagesDir);
-        }
-        const componentsDir = path.join(absDir, "components");
-        if (fs.existsSync(componentsDir)) {
-          roots.push(componentsDir);
-        }
-      } catch {
-        // Ignore fs errors
-      }
-    }
-
-    const potentialRoots = Array.from(new Set(roots.map(r => path.normalize(r))))
-      .sort((a, b) => b.length - a.length);
-
-    let componentName = "";
-    for (const root of potentialRoots) {
-      if (absFilename.startsWith(root + path.sep) || absFilename === root) {
-        const rel = path.relative(root, absFilename);
-        const parsed = path.parse(rel);
-        const segments = path.join(parsed.dir, parsed.name);
-        componentName = toPascalCase(segments);
-        break;
-      }
-    }
-
-    if (!componentName) {
-      const parsed = path.parse(absFilename);
-      componentName = toPascalCase(parsed.name);
-    }
-
-    return componentName;
+    return resolveComponentNameFromPath({
+      filename,
+      projectRoot: getProjectRoot(),
+      viewsDirAbs: getViewsDirAbs(),
+      scanDirs,
+      extraRoots: [process.cwd()],
+    });
   };
 
   const isFileInScope = (filename: string | undefined): boolean => {

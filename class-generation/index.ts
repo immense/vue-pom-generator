@@ -603,7 +603,25 @@ function generateAggregatedCSharpFiles(
       const baseGetterName = upperFirst(pom.getterNameOverride ?? pom.methodName);
       const locatorName = baseGetterName.endsWith(roleSuffix) ? baseGetterName : `${baseGetterName}${roleSuffix}`;
       const testIdExpr = toCSharpTestIdExpression(pom.formattedDataTestId);
-      const { signature, argNames } = formatCSharpParams(pom.params);
+
+      // Ensure all template variables referenced in formattedDataTestId (e.g. `${key}`)
+      // appear in the C# method signature.  utils.ts may omit `key` for input/select
+      // elements even when the test ID is dynamic, causing CS0103 compile errors.
+      const templateVarMatches = [...pom.formattedDataTestId.matchAll(/\$\{(\w+)\}/g)];
+      const templateVars = templateVarMatches.map(m => m[1]);
+      const augmentedParams: Record<string, string> = { ...pom.params };
+      for (const v of templateVars) {
+        if (!Object.prototype.hasOwnProperty.call(augmentedParams, v)) {
+          augmentedParams[v] = "string";
+        }
+      }
+      // Place template vars first so they precede text/value/annotationText.
+      const orderedParams: Record<string, string> = Object.fromEntries([
+        ...templateVars.map(v => [v, augmentedParams[v]] as [string, string]),
+        ...Object.entries(augmentedParams).filter(([k]) => !templateVars.includes(k)),
+      ]);
+
+      const { signature, argNames } = formatCSharpParams(orderedParams);
       const args = argNames.join(", ");
 
       const allTestIds = [pom.formattedDataTestId, ...(pom.alternateFormattedDataTestIds ?? [])]

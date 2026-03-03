@@ -2457,18 +2457,18 @@ export function applyResolvedDataTestId(args: {
     case "input":
       params.text = "string";
       params.annotationText = "string = \"\"";
-      delete params.key;
+      if (!isKeyed) delete params.key;
       break;
     case "select":
       params.value = "string";
       params.annotationText = "string = \"\"";
-      delete params.key;
+      if (!isKeyed) delete params.key;
       break;
     case "vselect":
       params.value = "string";
       params.timeOut = "number = 500";
       params.annotationText = "string = \"\"";
-      delete params.key;
+      if (!isKeyed) delete params.key;
       break;
     case "radio":
       // radio can be keyed (e.g. `${key}` option ids) or not.
@@ -2557,11 +2557,17 @@ export function applyResolvedDataTestId(args: {
 
     switch (role) {
       case "input":
-        return { params: "text: string, annotationText: string = \"\"", argNames: ["text", "annotationText"] };
+        return needsKey
+          ? { params: `key: ${keyType}, text: string, annotationText: string = ""`, argNames: ["key", "text", "annotationText"] }
+          : { params: "text: string, annotationText: string = \"\"", argNames: ["text", "annotationText"] };
       case "select":
-        return { params: "value: string, annotationText: string = \"\"", argNames: ["value", "annotationText"] };
+        return needsKey
+          ? { params: `key: ${keyType}, value: string, annotationText: string = ""`, argNames: ["key", "value", "annotationText"] }
+          : { params: "value: string, annotationText: string = \"\"", argNames: ["value", "annotationText"] };
       case "vselect":
-        return { params: "value: string, timeOut = 500", argNames: ["value", "timeOut"] };
+        return needsKey
+          ? { params: `key: ${keyType}, value: string, timeOut = 500`, argNames: ["key", "value", "timeOut"] }
+          : { params: "value: string, timeOut = 500", argNames: ["value", "timeOut"] };
       case "radio":
         return needsKey
           ? { params: `key: ${keyType}, annotationText: string = ""`, argNames: ["key", "annotationText"] }

@@ -1,6 +1,6 @@
 {
   "name": "@immense/vue-pom-generator",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "description": "Injects data-testid attributes for all interactive elements and generates page object models for every page.",
   "type": "module",
   "repository": {
@@ -66,17 +66,17 @@
   "devDependencies": {
     "@antfu/eslint-config": "5.3.0",
     "@github/copilot-sdk": "^0.1.8",
+    "@playwright/test": "^1.57.0",
     "@types/jsdom": "^27.0.0",
     "@types/node": "^24.1.0",
     "@vitest/coverage-v8": "^4.0.16",
-    "@playwright/test": "^1.57.0",
     "eslint": "^9.27.0",
     "knip": "^5.82.1",
     "simple-git-hooks": "^2.13.1",
     "typescript": "^5.9.2",
-    "vue-router": "^4.2.5",
+    "vite": "^7.3.1",
     "vitest": "^4.0.16",
-    "vite": "^7.3.1"
+    "vue-router": "^4.2.5"
   },
   "license": "MIT"
 }
