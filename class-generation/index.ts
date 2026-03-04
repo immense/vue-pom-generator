@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { generateViewObjectModelMethodContent } from "../method-generation";
 import { introspectNuxtPages, parseRouterFileFromCwd } from "../router-introspection";
 import { IComponentDependencies, IDataTestId, PomExtraClickMethodSpec, PomPrimarySpec, upperFirst } from "../utils";
@@ -1483,16 +1484,24 @@ async function generateAggregatedFiles(
 
   // Copy runtime dependencies into the output folder so the aggregated POM file can
   // import them without relying on workspace package resolution.
-  // Use import.meta.dirname (a plain absolute path string) instead of
-  // fileURLToPath(new URL(..., import.meta.url)) to avoid ERR_INVALID_URL_SCHEME
-  // when globalThis.document has been shimmed by JSDOM (as done in ensureDomShim
-  // for router introspection) — the Rollup CJS shim for import.meta.url then
-  // picks up document.baseURI (https://example.test/) instead of a file:// URL.
-  // Rollup transforms import.meta.dirname to __dirname in the CJS bundle, which
-  // is always a valid absolute path regardless of any document globals.
-  const clickInstrumentationAbs = path.resolve(import.meta.dirname, "../click-instrumentation.ts");
-  const pointerAbs = path.resolve(import.meta.dirname, "../class-generation/Pointer.ts");
-  const playwrightTypesAbs = path.resolve(import.meta.dirname, "../class-generation/playwright-types.ts");
+  // Resolve paths to bundled runtime files.  Mirror the pattern in support-plugins.ts:
+  // try fileURLToPath(new URL(..., import.meta.url)) (works in ESM where import.meta.url
+  // is a proper file:// URL), then fall back to __dirname (available in the CJS bundle
+  // via Node's module wrapper).  The fallback is needed because ensureDomShim() in
+  // router-introspection sets globalThis.document via JSDOM (url "https://example.test/"),
+  // after which Rollup's CJS shim for import.meta.url resolves to document.baseURI
+  // ("https://example.test/index.cjs") — not a file:// URL — causing fileURLToPath to throw.
+  const resolvePluginAsset = (relative: string): string => {
+    try {
+      return fileURLToPath(new URL(relative, import.meta.url));
+    }
+    catch {
+      return path.resolve(__dirname, relative);
+    }
+  };
+  const clickInstrumentationAbs = resolvePluginAsset("../click-instrumentation.ts");
+  const pointerAbs = resolvePluginAsset("../class-generation/Pointer.ts");
+  const playwrightTypesAbs = resolvePluginAsset("../class-generation/playwright-types.ts");
 
   const runtimeFiles: Array<{ filePath: string; content: string }> = [
     {
