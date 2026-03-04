@@ -39,7 +39,7 @@
   "sideEffects": false,
   "scripts": {
     "clean": "rm -rf dist",
-    "build": "vite build",
+    "build": "vite build && tsc --emitDeclarationOnly --declarationMap --outDir dist",
     "knip": "knip",
     "lint": "eslint .",
     "test": "vitest run",

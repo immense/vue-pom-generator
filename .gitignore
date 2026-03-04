@@ -1,6 +1,9 @@
 # Local-only vendor clones (for type inspection)
 /.vendor/
 
+# Yarn metadata
+.yarn-metadata.json
+
 # Typical
 /node_modules/
 /dist/
