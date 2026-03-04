@@ -30,6 +30,7 @@ interface SupportFactoryOptions {
   routerAwarePoms: boolean;
   routerEntry?: string;
   routerType?: "vue-router" | "nuxt";
+  routerModuleShims?: Record<string, string>;
 
   /** Generate Playwright fixtures alongside generated POMs. */
   generateFixtures?: boolean | string | { outDir?: string };
@@ -58,6 +59,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     routerAwarePoms,
     routerEntry,
     routerType,
+    routerModuleShims,
     generateFixtures,
     customPomAttachments,
     projectRootRef,
@@ -114,6 +116,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     routerAwarePoms,
     routerType,
     resolvedRouterEntry,
+    routerModuleShims,
     loggerRef,
   });
 
@@ -135,6 +138,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     routerAwarePoms,
     routerType,
     resolvedRouterEntry,
+    routerModuleShims,
     loggerRef,
   });
 

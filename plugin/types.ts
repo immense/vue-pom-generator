@@ -187,6 +187,16 @@ export interface VuePomGeneratorPluginOptions {
        * - `"nuxt"`: infers routes from the directory structure (e.g. `app/pages` or `pages`).
        */
       type?: "vue-router" | "nuxt";
+
+      /**
+       * Optional module-source -> ESM source map used only while SSR-loading the router entry.
+       *
+       * Useful for stubbing browser-only/heavy imports that are irrelevant to route enumeration.
+       *
+       * Example:
+       * - `"@/config/app-insights": "export const getAppInsights = () => null;"`
+       */
+      moduleShims?: Record<string, string>;
     };
 
     /** Playwright-specific generation features (fixtures + custom POM helpers). */

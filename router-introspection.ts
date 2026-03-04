@@ -35,11 +35,71 @@ function debugLog(message: string) {
   }
 }
 
-function createRouterIntrospectionVueStubPlugin(options: { routerEntryAbs: string }): VitePlugin {
+export interface RouterIntrospectionOptions {
+  /**
+   * Optional module-source -> ESM source map used only while SSR-loading the router entry.
+   * This allows consumers to stub browser-only or heavy modules during route enumeration.
+   */
+  moduleShims?: Record<string, string>;
+}
+
+function normalizeRouterIntrospectionModuleShims(moduleShims: RouterIntrospectionOptions["moduleShims"]) {
+  if (!moduleShims)
+    return {};
+
+  if (typeof moduleShims !== "object" || Array.isArray(moduleShims)) {
+    throw new TypeError("[vue-pom-generator] router moduleShims must be an object map of module source -> ESM source.");
+  }
+
+  const normalized: Record<string, string> = {};
+  for (const [moduleSource, shimSource] of Object.entries(moduleShims)) {
+    if (!moduleSource.trim()) {
+      throw new TypeError("[vue-pom-generator] router moduleShims contains an empty module source key.");
+    }
+    if (typeof shimSource !== "string" || !shimSource.trim()) {
+      throw new TypeError(`[vue-pom-generator] router moduleShims[${JSON.stringify(moduleSource)}] must be a non-empty ESM source string.`);
+    }
+    normalized[moduleSource] = shimSource;
+  }
+  return normalized;
+}
+
+function createRouterIntrospectionVueStubPlugin(options: { routerEntryAbs: string; moduleShims?: Record<string, string> }): VitePlugin {
   const routerEntryAbs = path.resolve(options.routerEntryAbs);
+  const projectRoot = path.dirname(routerEntryAbs);
+  const shimVirtualIdPrefix = "\0vue-testid-router-introspection-shim:";
+  const shimVirtualIdsBySource = new Map<string, string>();
+  const shimSourceByVirtualId = new Map<string, string>();
+  const addShimMatcher = (source: string, virtualId: string) => {
+    shimVirtualIdsBySource.set(source, virtualId);
+    shimVirtualIdsBySource.set(path.posix.normalize(source), virtualId);
+  };
+
+  for (const [moduleSource, shimSource] of Object.entries(options.moduleShims ?? {})) {
+    const virtualId = `${shimVirtualIdPrefix}${encodeURIComponent(moduleSource)}`;
+    addShimMatcher(moduleSource, virtualId);
+    if (moduleSource.startsWith("@/")) {
+      const withoutAlias = moduleSource.slice(2);
+      const absoluteNoExt = path.resolve(projectRoot, withoutAlias);
+      addShimMatcher(absoluteNoExt, virtualId);
+      addShimMatcher(`${absoluteNoExt}.ts`, virtualId);
+      addShimMatcher(`${absoluteNoExt}.tsx`, virtualId);
+      addShimMatcher(`${absoluteNoExt}.js`, virtualId);
+      addShimMatcher(`${absoluteNoExt}.mjs`, virtualId);
+      addShimMatcher(`${absoluteNoExt}.cjs`, virtualId);
+    }
+    shimSourceByVirtualId.set(virtualId, shimSource);
+  }
+
   return {
     name: "vue-testid-router-introspection-vue-stub",
     enforce: "pre",
+    resolveId(source) {
+      const virtualId = shimVirtualIdsBySource.get(source);
+      if (virtualId)
+        return virtualId;
+      return null;
+    },
     load(id) {
       // Vite passes plugin `load(id)` a *resolved* id. In practice this is usually a normalized absolute
       // filesystem path (posix separators) or a Vite fs-prefixed path like `/@fs/<abs>`, optionally with
@@ -53,6 +113,10 @@ function createRouterIntrospectionVueStubPlugin(options: { routerEntryAbs: strin
       // Strip query string (e.g. ?v=... or ?import).
       const queryIndex = id.indexOf("?");
       const cleanId = queryIndex === -1 ? id : id.slice(0, queryIndex);
+
+      const shimSource = shimSourceByVirtualId.get(cleanId);
+      if (shimSource)
+        return shimSource;
 
       // Virtual modules should not be handled here.
       if (cleanId.startsWith("\0"))
@@ -491,7 +555,10 @@ export async function introspectNuxtPages(projectRoot: string): Promise<RouterIn
  * This replaces the previous regex-based parsing so we can support nested route shapes,
  * redirects, and any non-trivial route record composition without maintaining a parser.
  */
-export async function parseRouterFileFromCwd(routerEntryPath: string): Promise<RouterIntrospectionResult> {
+export async function parseRouterFileFromCwd(
+  routerEntryPath: string,
+  options: RouterIntrospectionOptions = {},
+): Promise<RouterIntrospectionResult> {
   return await runRouterIntrospectionExclusive(async () => {
     const routerEntry = path.resolve(routerEntryPath);
     if (!fs.existsSync(routerEntry)) {
@@ -499,6 +566,7 @@ export async function parseRouterFileFromCwd(routerEntryPath: string): Promise<R
     }
 
     const cwd = path.dirname(routerEntry);
+    const moduleShims = normalizeRouterIntrospectionModuleShims(options.moduleShims);
 
     await ensureDomShim();
 
@@ -542,7 +610,7 @@ export async function parseRouterFileFromCwd(routerEntryPath: string): Promise<R
       // Important: Do NOT include @vitejs/plugin-vue here.
       // We stub all `.vue` imports ourselves, and including the Vue plugin would attempt to parse
       // those stubbed modules as real SFCs (and fail).
-      plugins: [createRouterIntrospectionVueStubPlugin({ routerEntryAbs: routerEntry })],
+      plugins: [createRouterIntrospectionVueStubPlugin({ routerEntryAbs: routerEntry, moduleShims })],
     });
 
     try {

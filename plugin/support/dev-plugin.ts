@@ -39,6 +39,7 @@ interface DevProcessorOptions {
   routerAwarePoms: boolean;
   resolvedRouterEntry?: string;
   routerType?: "vue-router" | "nuxt";
+  routerModuleShims?: Record<string, string>;
 
   loggerRef: { current: VuePomGeneratorLogger };
 }
@@ -63,6 +64,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     routerAwarePoms,
     resolvedRouterEntry,
     routerType,
+    routerModuleShims,
     loggerRef,
   } = options;
 
@@ -109,7 +111,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         else {
           if (!resolvedRouterEntry)
             throw new Error("[vue-pom-generator] router.entry is required when router introspection is enabled.");
-          result = await parseRouterFileFromCwd(resolvedRouterEntry);
+          result = await parseRouterFileFromCwd(resolvedRouterEntry, { moduleShims: routerModuleShims });
         }
 
         const { routeNameMap, routePathMap } = result;

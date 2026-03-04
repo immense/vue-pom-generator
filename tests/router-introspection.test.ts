@@ -19,22 +19,25 @@ function writeFile(filePath: string, content: string) {
   fs.writeFileSync(filePath, content, "utf8");
 }
 
+function ensureTempNodeModules(tempRoot: string) {
+  // parseRouterFileFromCwd creates an internal Vite server rooted at the router entry folder.
+  // For bare imports like "vue-router" to resolve, that folder needs to be able to find a
+  // node_modules up its directory chain. Since our temp dir lives in OS tmp, wire in a
+  // node_modules symlink pointing back at the frontend workspace.
+  const thisDir = path.dirname(fileURLToPath(import.meta.url));
+  const frontendNodeModules = path.resolve(thisDir, "..", "node_modules");
+  const tempNodeModules = path.join(tempRoot, "node_modules");
+  if (!fs.existsSync(tempNodeModules)) {
+    fs.symlinkSync(frontendNodeModules, tempNodeModules, "dir");
+  }
+}
+
 describe("parseRouterFileFromCwd", () => {
   it("extracts route name/path maps and route meta (params/query)", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-router-"));
 
     try {
-
-    // parseRouterFileFromCwd creates an internal Vite server rooted at the router entry folder.
-    // For bare imports like "vue-router" to resolve, that folder needs to be able to find a
-    // node_modules up its directory chain. Since our temp dir lives in OS tmp, wire in a
-    // node_modules symlink pointing back at the frontend workspace.
-    const thisDir = path.dirname(fileURLToPath(import.meta.url));
-    const frontendNodeModules = path.resolve(thisDir, "..", "node_modules");
-    const tempNodeModules = path.join(tempRoot, "node_modules");
-    if (!fs.existsSync(tempNodeModules)) {
-      fs.symlinkSync(frontendNodeModules, tempNodeModules, "dir");
-    }
+      ensureTempNodeModules(tempRoot);
 
       // These files are never actually parsed as Vue SFCs during introspection; they are stubbed.
       // But Vite's resolver still expects them to exist on disk.
@@ -91,6 +94,55 @@ describe("parseRouterFileFromCwd", () => {
       const thingsMeta = result.routeMetaEntries.find(e => e.componentName === "ThingsView");
       expect(thingsMeta).toBeTruthy();
       expect(thingsMeta!.params).toEqual([{ name: "thingId", optional: true }]);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("supports module shims while introspecting the router", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-router-shims-"));
+
+    try {
+      ensureTempNodeModules(tempRoot);
+
+      const stubViewContent = readFixture("StubView.vue");
+      writeFile(path.join(tempRoot, "UsersView.vue"), stubViewContent);
+
+      const routerEntry = path.join(tempRoot, "router.ts");
+      writeFile(
+        routerEntry,
+        [
+          "import { createMemoryHistory, createRouter } from 'vue-router';",
+          "import UsersView from './UsersView.vue';",
+          "import { getAppInsights } from '@/config/app-insights';",
+          "import { useAppAlertsStore } from '@/store/pinia/app-alert-store';",
+          "import { usePermissionStore } from '@/store/pinia/permission-store';",
+          "",
+          "export default function makeRouter() {",
+          "  getAppInsights()?.startTrackPage?.('Users');",
+          "  useAppAlertsStore().clear();",
+          "  usePermissionStore().can('users:view');",
+          "  return createRouter({",
+          "    history: createMemoryHistory(),",
+          "    routes: [",
+          "      { path: '/users', name: 'users', component: UsersView },",
+          "    ],",
+          "  });",
+          "}",
+          "",
+        ].join("\n"),
+      );
+
+      const result = await parseRouterFileFromCwd(routerEntry, {
+        moduleShims: {
+          "@/config/app-insights": "export const getAppInsights = () => ({ startTrackPage() {}, stopTrackPage() {} });",
+          "@/store/pinia/app-alert-store": "export const useAppAlertsStore = () => ({ clear() {} });",
+          "@/store/pinia/permission-store": "export const usePermissionStore = () => ({ can() { return true; } });",
+        },
+      });
+
+      expect(result.routeNameMap.get("Users")).toBe("UsersView");
+      expect(result.routePathMap.get("/users")).toBe("UsersView");
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

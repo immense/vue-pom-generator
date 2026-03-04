@@ -19,6 +19,16 @@ function assertNonEmptyString(value: string | undefined | null, name: string): a
   }
 }
 
+function assertStringMap(value: Record<string, string> | undefined, name: string): asserts value is Record<string, string> {
+  if (!value)
+    return;
+
+  for (const [k, v] of Object.entries(value)) {
+    assertNonEmptyString(k, `${name} key`);
+    assertNonEmptyString(v, `${name}[${JSON.stringify(k)}]`);
+  }
+}
+
 function resolveFromProjectRoot(projectRoot: string, maybePath: string): string {
   return path.isAbsolute(maybePath) ? maybePath : path.resolve(projectRoot, maybePath);
 }
@@ -49,6 +59,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
   const nameCollisionBehavior: PomNameCollisionBehavior = generationOptions?.nameCollisionBehavior ?? "suffix";
   const routerEntry = generationOptions?.router?.entry;
   const routerType = generationOptions?.router?.type ?? "vue-router";
+  const routerModuleShims = generationOptions?.router?.moduleShims;
   const csharp = generationOptions?.csharp;
   const generateFixtures = generationOptions?.playwright?.fixtures;
   const customPoms = generationOptions?.playwright?.customPoms;
@@ -78,6 +89,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
 
       if (generationEnabled) {
         assertNonEmptyString(outDir, "[vue-pom-generator] generation.outDir");
+        assertStringMap(routerModuleShims, "[vue-pom-generator] generation.router.moduleShims");
 
         if (generationOptions?.router && routerType === "vue-router") {
           assertNonEmptyString(routerEntry, "[vue-pom-generator] generation.router.entry");
@@ -139,6 +151,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     testIdAttribute,
     loggerRef,
     routerType,
+    routerModuleShims,
   });
 
   const isNuxt = routerType === "nuxt";

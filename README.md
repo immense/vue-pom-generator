@@ -104,6 +104,9 @@ export default defineConfig(() => {
           router: {
             // For standard Vue apps:
             entry: "src/router.ts",
+            moduleShims: {
+              "@/config/app-insights": "export const getAppInsights = () => null;",
+            },
             // For Nuxt apps (file-based routing):
             // type: "nuxt"
           },
@@ -143,6 +146,7 @@ Controls router introspection for `:to` analysis and navigation helper generatio
 
 - `entry: string`: For standard Vue apps, where router introspection loads your Vue Router definition from. This file must export a **default router factory function** (e.g. `export default makeRouter`).
 - `type: "vue-router" | "nuxt"`: The introspection provider. Defaults to `"vue-router"`. Use `"nuxt"` for file-based routing discovery (e.g. `app/pages` or `pages`).
+- `moduleShims: Record<string, string>`: Optional module-source -> ESM source map used only while introspecting the router. This is useful for stubbing browser-only or heavy imports that are irrelevant to route discovery.
 
 ### `generation.playwright.fixtures: boolean | string | { outDir?: string }`
 

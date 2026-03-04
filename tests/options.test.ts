@@ -4,22 +4,39 @@ import { describe, expect, it } from "vitest";
 import { createVuePomGeneratorPlugins } from "../index";
 
 describe("createVuePomGeneratorPlugins options", () => {
+  interface TestViteLogger {
+    info: () => void;
+    warn: () => void;
+    error: () => void;
+  }
+
+  interface ConfigPlugin {
+    name?: string;
+    configResolved?: (config: { root: string; logger: TestViteLogger }) => void;
+  }
+
   const runConfigResolved = (plugins: unknown[], root: string = "/project") => {
     const configPlugin = plugins
-      .map(p => (typeof p === "object" && p && "name" in p ? p as { name?: string } : null))
-      .find(p => p?.name === "vue-pom-generator-config") as any;
+      .map((p) => {
+        if (typeof p !== "object" || !p || !("name" in p))
+          return null;
+        return p as ConfigPlugin;
+      })
+      .find(p => p?.name === "vue-pom-generator-config");
 
     if (!configPlugin?.configResolved)
       throw new Error("config plugin not found");
 
+    const logger: TestViteLogger = {
+      info() {},
+      warn() {},
+      error() {},
+    };
+
     configPlugin.configResolved({
       root,
-      logger: {
-        info() {},
-        warn() {},
-        error() {},
-      },
-    } as any);
+      logger,
+    });
   };
 
   it("returns only vue + virtual modules when generation is disabled", () => {
@@ -79,5 +96,16 @@ describe("createVuePomGeneratorPlugins options", () => {
     });
 
     expect(() => runConfigResolved(plugins)).toThrow("generation.router.entry");
+  });
+
+  it("fails fast when generation.router.moduleShims has an empty value", () => {
+    const plugins = createVuePomGeneratorPlugins({
+      generation: {
+        outDir: "tests/playwright/generated",
+        router: { entry: "src/router.ts", moduleShims: { "@/fake/module": "   " } },
+      },
+    });
+
+    expect(() => runConfigResolved(plugins)).toThrow("generation.router.moduleShims");
   });
 });
