@@ -98,11 +98,22 @@ describe("createVuePomGeneratorPlugins options", () => {
     expect(() => runConfigResolved(plugins)).toThrow("generation.router.entry");
   });
 
-  it("fails fast when generation.router.moduleShims has an empty value", () => {
+  it("fails fast when generation.router.moduleShims has an empty export list", () => {
     const plugins = createVuePomGeneratorPlugins({
       generation: {
         outDir: "tests/playwright/generated",
-        router: { entry: "src/router.ts", moduleShims: { "@/fake/module": "   " } },
+        router: { entry: "src/router.ts", moduleShims: { "@/fake/module": [] } },
+      },
+    });
+
+    expect(() => runConfigResolved(plugins)).toThrow("generation.router.moduleShims");
+  });
+
+  it("fails fast when generation.router.moduleShims uses '*' wildcard export names", () => {
+    const plugins = createVuePomGeneratorPlugins({
+      generation: {
+        outDir: "tests/playwright/generated",
+        router: { entry: "src/router.ts", moduleShims: { "@/fake/module": ["*"] } },
       },
     });
 

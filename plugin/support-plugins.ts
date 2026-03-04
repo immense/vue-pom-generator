@@ -4,6 +4,7 @@ import type { PluginOption } from "vite";
 
 import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 import type { VuePomGeneratorLogger } from "./logger";
+import type { RouterModuleShimDefinition } from "./types";
 import { createBuildProcessorPlugin } from "./support/build-plugin";
 import { createDevProcessorPlugin } from "./support/dev-plugin";
 import { createTestIdsVirtualModulesPlugin } from "./support/virtual-modules";
@@ -30,7 +31,7 @@ interface SupportFactoryOptions {
   routerAwarePoms: boolean;
   routerEntry?: string;
   routerType?: "vue-router" | "nuxt";
-  routerModuleShims?: Record<string, string>;
+  routerModuleShims?: Record<string, RouterModuleShimDefinition>;
 
   /** Generate Playwright fixtures alongside generated POMs. */
   generateFixtures?: boolean | string | { outDir?: string };

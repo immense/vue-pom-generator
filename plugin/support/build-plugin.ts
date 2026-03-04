@@ -8,6 +8,7 @@ import { introspectNuxtPages, parseRouterFileFromCwd } from "../../router-intros
 import type { IComponentDependencies, RouterIntrospectionResult } from "../../utils";
 import { setResolveToComponentNameFn, setRouteNameToComponentNameMap, toPascalCase } from "../../utils";
 import type { VuePomGeneratorLogger } from "../logger";
+import type { RouterModuleShimDefinition } from "../types";
 
 interface BuildProcessorOptions {
   componentHierarchyMap: Map<string, IComponentDependencies>;
@@ -31,7 +32,7 @@ interface BuildProcessorOptions {
   routerAwarePoms: boolean;
   resolvedRouterEntry?: string;
   routerType?: "vue-router" | "nuxt";
-  routerModuleShims?: Record<string, string>;
+  routerModuleShims?: Record<string, RouterModuleShimDefinition>;
 
   loggerRef: { current: VuePomGeneratorLogger };
 }

@@ -14,6 +14,7 @@ import type { IComponentDependencies, NativeWrappersMap, RouterIntrospectionResu
 import { setResolveToComponentNameFn, setRouteNameToComponentNameMap, toPascalCase } from "../../utils";
 import type { VuePomGeneratorLogger } from "../logger";
 import { resolveComponentNameFromPath } from "../path-utils";
+import type { RouterModuleShimDefinition } from "../types";
 
 interface DevProcessorOptions {
   nativeWrappers: NativeWrappersMap;
@@ -39,7 +40,7 @@ interface DevProcessorOptions {
   routerAwarePoms: boolean;
   resolvedRouterEntry?: string;
   routerType?: "vue-router" | "nuxt";
-  routerModuleShims?: Record<string, string>;
+  routerModuleShims?: Record<string, RouterModuleShimDefinition>;
 
   loggerRef: { current: VuePomGeneratorLogger };
 }

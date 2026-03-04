@@ -7,7 +7,7 @@ import type { VuePomGeneratorLogger, VuePomGeneratorVerbosity } from "./logger";
 import { createLogger } from "./logger";
 import { createSupportPlugins } from "./support-plugins";
 import { createTestIdsVirtualModulesPlugin } from "./support/virtual-modules";
-import type { ExistingIdBehavior, PomNameCollisionBehavior, VuePomGeneratorPluginOptions } from "./types";
+import type { ExistingIdBehavior, PomNameCollisionBehavior, RouterModuleShimDefinition, VuePomGeneratorPluginOptions } from "./types";
 import { createVuePluginWithTestIds } from "./vue-plugin";
 
 import type { ElementMetadata } from "../metadata-collector";
@@ -19,13 +19,38 @@ function assertNonEmptyString(value: string | undefined | null, name: string): a
   }
 }
 
-function assertStringMap(value: Record<string, string> | undefined, name: string): asserts value is Record<string, string> {
+function assertRouterModuleShims(
+  value: Record<string, RouterModuleShimDefinition> | undefined,
+  name: string,
+): asserts value is Record<string, RouterModuleShimDefinition> {
   if (!value)
     return;
 
-  for (const [k, v] of Object.entries(value)) {
-    assertNonEmptyString(k, `${name} key`);
-    assertNonEmptyString(v, `${name}[${JSON.stringify(k)}]`);
+  for (const [moduleSource, shimDefinition] of Object.entries(value)) {
+    assertNonEmptyString(moduleSource, `${name} key`);
+
+    if (Array.isArray(shimDefinition)) {
+      if (!shimDefinition.length)
+        throw new TypeError(`${name}[${JSON.stringify(moduleSource)}] must contain at least one export name.`);
+      for (const exportName of shimDefinition) {
+        assertNonEmptyString(exportName, `${name}[${JSON.stringify(moduleSource)}] export`);
+        if (exportName === "*")
+          throw new TypeError(`${name}[${JSON.stringify(moduleSource)}] does not support '*' export wildcard.`);
+      }
+      continue;
+    }
+
+    const entries = Object.entries(shimDefinition);
+    if (!entries.length)
+      throw new TypeError(`${name}[${JSON.stringify(moduleSource)}] must contain at least one export.`);
+    for (const [exportName, shimValue] of entries) {
+      assertNonEmptyString(exportName, `${name}[${JSON.stringify(moduleSource)}] export`);
+      if (exportName === "*")
+        throw new TypeError(`${name}[${JSON.stringify(moduleSource)}] does not support '*' export wildcard.`);
+      if (typeof shimValue !== "function") {
+        throw new TypeError(`${name}[${JSON.stringify(moduleSource)}][${JSON.stringify(exportName)}] must be a function.`);
+      }
+    }
   }
 }
 
@@ -89,7 +114,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
 
       if (generationEnabled) {
         assertNonEmptyString(outDir, "[vue-pom-generator] generation.outDir");
-        assertStringMap(routerModuleShims, "[vue-pom-generator] generation.router.moduleShims");
+        assertRouterModuleShims(routerModuleShims, "[vue-pom-generator] generation.router.moduleShims");
 
         if (generationOptions?.router && routerType === "vue-router") {
           assertNonEmptyString(routerEntry, "[vue-pom-generator] generation.router.entry");

@@ -11,6 +11,10 @@ export type ExistingIdBehavior = "preserve" | "overwrite" | "error";
  */
 export type PomNameCollisionBehavior = "error" | "warn" | "suffix";
 
+type RouterModuleShimPrimitive = string | number | boolean | null | undefined;
+export type RouterModuleShimFunction = (...args: Array<object | RouterModuleShimPrimitive>) => object | RouterModuleShimPrimitive;
+export type RouterModuleShimDefinition = string[] | Record<string, RouterModuleShimFunction>;
+
 export interface VuePomGeneratorPluginOptions {
   /** Options forwarded to @vitejs/plugin-vue */
   vueOptions?: VuePluginOptions;
@@ -189,14 +193,17 @@ export interface VuePomGeneratorPluginOptions {
       type?: "vue-router" | "nuxt";
 
       /**
-       * Optional module-source -> ESM source map used only while SSR-loading the router entry.
+       * Optional module-source -> shim definition map used only while SSR-loading the router entry.
        *
-       * Useful for stubbing browser-only/heavy imports that are irrelevant to route enumeration.
+       * Each module can be shimmed as either:
+       * - `string[]`: exported function names that should be replaced with generic no-op functions.
+       * - `Record<string, fn>`: explicit exported shim functions (including `"default"` when needed).
        *
        * Example:
-       * - `"@/config/app-insights": "export const getAppInsights = () => null;"`
+       * - `"@/config/app-insights": { getAppInsights: () => null }`
+       * - `"@/store/pinia/app-alert-store": ["useAppAlertsStore"]`
        */
-      moduleShims?: Record<string, string>;
+      moduleShims?: Record<string, RouterModuleShimDefinition>;
     };
 
     /** Playwright-specific generation features (fixtures + custom POM helpers). */

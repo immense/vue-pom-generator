@@ -37,10 +37,72 @@ function debugLog(message: string) {
 
 export interface RouterIntrospectionOptions {
   /**
-   * Optional module-source -> ESM source map used only while SSR-loading the router entry.
+   * Optional module-source -> shim definition map used only while SSR-loading the router entry.
    * This allows consumers to stub browser-only or heavy modules during route enumeration.
    */
-  moduleShims?: Record<string, string>;
+  moduleShims?: Record<string, RouterModuleShimDefinition>;
+}
+
+type RouterModuleShimPrimitive = string | number | boolean | null | undefined;
+export type RouterModuleShimFunction = (...args: Array<object | RouterModuleShimPrimitive>) => object | RouterModuleShimPrimitive;
+export type RouterModuleShimDefinition = string[] | Record<string, RouterModuleShimFunction>;
+
+type RouterModuleShimExports = Record<string, RouterModuleShimFunction>;
+
+interface GlobalRouterModuleShimRegistry {
+  __VUE_TESTID_ROUTER_INTROSPECTION_SHIMS__?: Record<string, RouterModuleShimExports>;
+}
+
+function isAsciiLetterCode(code: number) {
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
+function isAsciiDigitCode(code: number) {
+  return code >= 48 && code <= 57;
+}
+
+function isIdentifierStartCode(code: number) {
+  return code === 95 || code === 36 || isAsciiLetterCode(code);
+}
+
+function isIdentifierPartCode(code: number) {
+  return isIdentifierStartCode(code) || isAsciiDigitCode(code);
+}
+
+function isValidJsIdentifier(name: string) {
+  if (!name.length)
+    return false;
+  const first = name.charCodeAt(0);
+  if (!isIdentifierStartCode(first))
+    return false;
+  for (let i = 1; i < name.length; i++) {
+    if (!isIdentifierPartCode(name.charCodeAt(i)))
+      return false;
+  }
+  return true;
+}
+
+function assertValidNamedExportName(exportName: string, moduleSource: string) {
+  if (exportName === "default")
+    return;
+  if (!isValidJsIdentifier(exportName)) {
+    throw new TypeError(`[vue-pom-generator] router moduleShims[${JSON.stringify(moduleSource)}] contains invalid export name ${JSON.stringify(exportName)}.`);
+  }
+}
+
+function createNoopShimFunction(): RouterModuleShimFunction {
+  type NoopShimCallable = RouterModuleShimFunction & { [key: string]: NoopShimCallable };
+  let value!: NoopShimCallable;
+  const base = (() => value) as NoopShimCallable;
+  value = new Proxy(base, {
+    apply() {
+      return value;
+    },
+    get() {
+      return value;
+    },
+  });
+  return value;
 }
 
 function normalizeRouterIntrospectionModuleShims(moduleShims: RouterIntrospectionOptions["moduleShims"]) {
@@ -48,34 +110,75 @@ function normalizeRouterIntrospectionModuleShims(moduleShims: RouterIntrospectio
     return {};
 
   if (typeof moduleShims !== "object" || Array.isArray(moduleShims)) {
-    throw new TypeError("[vue-pom-generator] router moduleShims must be an object map of module source -> ESM source.");
+    throw new TypeError("[vue-pom-generator] router moduleShims must be an object map of module source -> shim definition.");
   }
 
-  const normalized: Record<string, string> = {};
-  for (const [moduleSource, shimSource] of Object.entries(moduleShims)) {
+  const normalized: Record<string, RouterModuleShimExports> = {};
+  for (const [moduleSource, shimDefinition] of Object.entries(moduleShims)) {
     if (!moduleSource.trim()) {
       throw new TypeError("[vue-pom-generator] router moduleShims contains an empty module source key.");
     }
-    if (typeof shimSource !== "string" || !shimSource.trim()) {
-      throw new TypeError(`[vue-pom-generator] router moduleShims[${JSON.stringify(moduleSource)}] must be a non-empty ESM source string.`);
+
+    if (Array.isArray(shimDefinition)) {
+      if (!shimDefinition.length) {
+        throw new TypeError(`[vue-pom-generator] router moduleShims[${JSON.stringify(moduleSource)}] must contain at least one export name.`);
+      }
+      const exports: RouterModuleShimExports = {};
+      for (const exportName of shimDefinition) {
+        if (!exportName.trim()) {
+          throw new TypeError(`[vue-pom-generator] router moduleShims[${JSON.stringify(moduleSource)}] contains an empty export name.`);
+        }
+        if (exportName === "*") {
+          throw new TypeError(`[vue-pom-generator] router moduleShims[${JSON.stringify(moduleSource)}] does not support '*' export wildcard.`);
+        }
+        assertValidNamedExportName(exportName, moduleSource);
+        exports[exportName] = createNoopShimFunction();
+      }
+      normalized[moduleSource] = exports;
+      continue;
     }
-    normalized[moduleSource] = shimSource;
+
+    if (!shimDefinition || typeof shimDefinition !== "object") {
+      throw new TypeError(`[vue-pom-generator] router moduleShims[${JSON.stringify(moduleSource)}] must be a string[] or export->function map.`);
+    }
+
+    const entries = Object.entries(shimDefinition);
+    if (!entries.length) {
+      throw new TypeError(`[vue-pom-generator] router moduleShims[${JSON.stringify(moduleSource)}] must contain at least one export.`);
+    }
+
+    const exports: RouterModuleShimExports = {};
+    for (const [exportName, shimValue] of entries) {
+      if (!exportName.trim()) {
+        throw new TypeError(`[vue-pom-generator] router moduleShims[${JSON.stringify(moduleSource)}] contains an empty export name.`);
+      }
+      if (exportName === "*") {
+        throw new TypeError(`[vue-pom-generator] router moduleShims[${JSON.stringify(moduleSource)}] does not support '*' export wildcard.`);
+      }
+      assertValidNamedExportName(exportName, moduleSource);
+      if (typeof shimValue !== "function") {
+        throw new TypeError(`[vue-pom-generator] router moduleShims[${JSON.stringify(moduleSource)}][${JSON.stringify(exportName)}] must be a function.`);
+      }
+      exports[exportName] = shimValue;
+    }
+
+    normalized[moduleSource] = exports;
   }
   return normalized;
 }
 
-function createRouterIntrospectionVueStubPlugin(options: { routerEntryAbs: string; moduleShims?: Record<string, string> }): VitePlugin {
+function createRouterIntrospectionVueStubPlugin(options: { routerEntryAbs: string; moduleShims?: Record<string, RouterModuleShimExports> }): VitePlugin {
   const routerEntryAbs = path.resolve(options.routerEntryAbs);
   const projectRoot = path.dirname(routerEntryAbs);
   const shimVirtualIdPrefix = "\0vue-testid-router-introspection-shim:";
   const shimVirtualIdsBySource = new Map<string, string>();
-  const shimSourceByVirtualId = new Map<string, string>();
+  const shimExportsByVirtualId = new Map<string, RouterModuleShimExports>();
   const addShimMatcher = (source: string, virtualId: string) => {
     shimVirtualIdsBySource.set(source, virtualId);
     shimVirtualIdsBySource.set(path.posix.normalize(source), virtualId);
   };
 
-  for (const [moduleSource, shimSource] of Object.entries(options.moduleShims ?? {})) {
+  for (const [moduleSource, shimExports] of Object.entries(options.moduleShims ?? {})) {
     const virtualId = `${shimVirtualIdPrefix}${encodeURIComponent(moduleSource)}`;
     addShimMatcher(moduleSource, virtualId);
     if (moduleSource.startsWith("@/")) {
@@ -88,7 +191,7 @@ function createRouterIntrospectionVueStubPlugin(options: { routerEntryAbs: strin
       addShimMatcher(`${absoluteNoExt}.mjs`, virtualId);
       addShimMatcher(`${absoluteNoExt}.cjs`, virtualId);
     }
-    shimSourceByVirtualId.set(virtualId, shimSource);
+    shimExportsByVirtualId.set(virtualId, shimExports);
   }
 
   return {
@@ -114,9 +217,26 @@ function createRouterIntrospectionVueStubPlugin(options: { routerEntryAbs: strin
       const queryIndex = id.indexOf("?");
       const cleanId = queryIndex === -1 ? id : id.slice(0, queryIndex);
 
-      const shimSource = shimSourceByVirtualId.get(cleanId);
-      if (shimSource)
-        return shimSource;
+      const shimExports = shimExportsByVirtualId.get(cleanId);
+      if (shimExports) {
+        const globalRegistry = globalThis as GlobalRouterModuleShimRegistry;
+        if (!globalRegistry.__VUE_TESTID_ROUTER_INTROSPECTION_SHIMS__)
+          globalRegistry.__VUE_TESTID_ROUTER_INTROSPECTION_SHIMS__ = {};
+        globalRegistry.__VUE_TESTID_ROUTER_INTROSPECTION_SHIMS__[cleanId] = shimExports;
+
+        const sortedExportNames = Object.keys(shimExports).sort((a, b) => a.localeCompare(b));
+        const lines = [
+          `const __shim = globalThis.__VUE_TESTID_ROUTER_INTROSPECTION_SHIMS__[${JSON.stringify(cleanId)}];`,
+        ];
+        for (const exportName of sortedExportNames) {
+          if (exportName === "default")
+            continue;
+          lines.push(`export const ${exportName} = __shim[${JSON.stringify(exportName)}];`);
+        }
+        if (sortedExportNames.includes("default"))
+          lines.push(`export default __shim[${JSON.stringify("default")}];`);
+        return lines.join("\n");
+      }
 
       // Virtual modules should not be handled here.
       if (cleanId.startsWith("\0"))

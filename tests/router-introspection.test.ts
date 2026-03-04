@@ -135,14 +135,58 @@ describe("parseRouterFileFromCwd", () => {
 
       const result = await parseRouterFileFromCwd(routerEntry, {
         moduleShims: {
-          "@/config/app-insights": "export const getAppInsights = () => ({ startTrackPage() {}, stopTrackPage() {} });",
-          "@/store/pinia/app-alert-store": "export const useAppAlertsStore = () => ({ clear() {} });",
-          "@/store/pinia/permission-store": "export const usePermissionStore = () => ({ can() { return true; } });",
+          "@/config/app-insights": {
+            getAppInsights: () => ({ startTrackPage() {}, stopTrackPage() {} }),
+          },
+          "@/store/pinia/app-alert-store": ["useAppAlertsStore"],
+          "@/store/pinia/permission-store": ["usePermissionStore"],
         },
       });
 
       expect(result.routeNameMap.get("Users")).toBe("UsersView");
       expect(result.routePathMap.get("/users")).toBe("UsersView");
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("fails fast when module shims use '*' wildcard export names", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-router-shims-star-"));
+
+    try {
+      ensureTempNodeModules(tempRoot);
+
+      const stubViewContent = readFixture("StubView.vue");
+      writeFile(path.join(tempRoot, "UsersView.vue"), stubViewContent);
+
+      const routerEntry = path.join(tempRoot, "router.ts");
+      writeFile(
+        routerEntry,
+        [
+          "import { createMemoryHistory, createRouter } from 'vue-router';",
+          "import UsersView from './UsersView.vue';",
+          "import { getAppInsights } from '@/config/app-insights';",
+          "",
+          "export default function makeRouter() {",
+          "  getAppInsights();",
+          "  return createRouter({",
+          "    history: createMemoryHistory(),",
+          "    routes: [",
+          "      { path: '/users', name: 'users', component: UsersView },",
+          "    ],",
+          "  });",
+          "}",
+          "",
+        ].join("\n"),
+      );
+
+      await expect(() =>
+        parseRouterFileFromCwd(routerEntry, {
+          moduleShims: {
+            "@/config/app-insights": ["*"],
+          },
+        })
+      ).rejects.toThrow("does not support '*'");
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
