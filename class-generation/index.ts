@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
 import { generateViewObjectModelMethodContent } from "../method-generation";
 import { introspectNuxtPages, parseRouterFileFromCwd } from "../router-introspection";
 import { IComponentDependencies, IDataTestId, PomExtraClickMethodSpec, PomPrimarySpec, upperFirst } from "../utils";
@@ -1484,12 +1483,16 @@ async function generateAggregatedFiles(
 
   // Copy runtime dependencies into the output folder so the aggregated POM file can
   // import them without relying on workspace package resolution.
-  const clickInstrumentationAbs = fileURLToPath(new URL("../click-instrumentation.ts", import.meta.url));
-  // These runtime .ts files must resolve correctly both when running from source
-  // (e.g. during development/tests) and when bundled into dist/index.* for npm.
-  // Resolving via package-root `class-generation/*` is stable across both.
-  const pointerAbs = fileURLToPath(new URL("../class-generation/Pointer.ts", import.meta.url));
-  const playwrightTypesAbs = fileURLToPath(new URL("../class-generation/playwright-types.ts", import.meta.url));
+  // Use import.meta.dirname (a plain absolute path string) instead of
+  // fileURLToPath(new URL(..., import.meta.url)) to avoid ERR_INVALID_URL_SCHEME
+  // when globalThis.document has been shimmed by JSDOM (as done in ensureDomShim
+  // for router introspection) — the Rollup CJS shim for import.meta.url then
+  // picks up document.baseURI (https://example.test/) instead of a file:// URL.
+  // Rollup transforms import.meta.dirname to __dirname in the CJS bundle, which
+  // is always a valid absolute path regardless of any document globals.
+  const clickInstrumentationAbs = path.resolve(import.meta.dirname, "../click-instrumentation.ts");
+  const pointerAbs = path.resolve(import.meta.dirname, "../class-generation/Pointer.ts");
+  const playwrightTypesAbs = path.resolve(import.meta.dirname, "../class-generation/playwright-types.ts");
 
   const runtimeFiles: Array<{ filePath: string; content: string }> = [
     {
