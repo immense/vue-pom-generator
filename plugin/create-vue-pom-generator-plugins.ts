@@ -120,6 +120,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
   const resolvedCustomPomAttachments = customPoms?.attachments ?? [];
   const resolvedCustomPomDir = customPoms?.dir ?? "tests/playwright/pom/custom";
   const resolvedCustomPomImportAliases = customPoms?.importAliases;
+  const resolvedCustomPomImportCollisionBehavior = customPoms?.importNameCollisionBehavior ?? "error";
 
   const basePageClassPathOverride = generationOptions?.basePageClassPath;
 
@@ -201,6 +202,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     customPomAttachments: resolvedCustomPomAttachments,
     customPomDir: resolvedCustomPomDir,
     customPomImportAliases: resolvedCustomPomImportAliases,
+    customPomImportNameCollisionBehavior: resolvedCustomPomImportCollisionBehavior,
     testIdAttribute,
     loggerRef,
     routerType,

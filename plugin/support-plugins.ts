@@ -40,6 +40,7 @@ interface SupportFactoryOptions {
   basePageClassPath?: string;
   customPomDir?: string;
   customPomImportAliases?: Record<string, string>;
+  customPomImportNameCollisionBehavior?: "error" | "alias";
   testIdAttribute: string;
 
   loggerRef: { current: VuePomGeneratorLogger };
@@ -67,6 +68,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     basePageClassPath: basePageClassPathOverride,
     customPomDir,
     customPomImportAliases,
+    customPomImportNameCollisionBehavior,
     testIdAttribute,
     loggerRef,
   } = options;
@@ -113,6 +115,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     projectRootRef,
     customPomDir,
     customPomImportAliases,
+    customPomImportNameCollisionBehavior,
     testIdAttribute,
     routerAwarePoms,
     routerType,
@@ -135,6 +138,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     customPomAttachments,
     customPomDir,
     customPomImportAliases,
+    customPomImportNameCollisionBehavior,
     testIdAttribute,
     routerAwarePoms,
     routerType,

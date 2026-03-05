@@ -35,6 +35,7 @@ interface DevProcessorOptions {
   customPomAttachments?: Array<{ className: string; propertyName: string; attachWhenUsesComponents: string[]; attachTo?: "views" | "components" | "both" }>;
   customPomDir?: string;
   customPomImportAliases?: Record<string, string>;
+  customPomImportNameCollisionBehavior?: "error" | "alias";
   testIdAttribute: string;
 
   routerAwarePoms: boolean;
@@ -61,6 +62,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     customPomAttachments,
     customPomDir,
     customPomImportAliases,
+    customPomImportNameCollisionBehavior,
     testIdAttribute,
     routerAwarePoms,
     resolvedRouterEntry,
@@ -287,6 +289,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
           projectRoot: projectRootRef.current,
           customPomDir,
           customPomImportAliases,
+          customPomImportNameCollisionBehavior,
           testIdAttribute,
           vueRouterFluentChaining: routerAwarePoms,
           routerEntry: resolvedRouterEntry,

@@ -228,6 +228,14 @@ export interface VuePomGeneratorPluginOptions {
         /** Optional import aliases for handwritten helpers (basename -> alias). */
         importAliases?: Record<string, string>;
 
+        /**
+         * Controls collisions between custom helper import identifiers and generated class names.
+         *
+         * - "error" (default): fail generation and require explicit rename/alias
+         * - "alias": auto-alias colliding custom imports
+         */
+        importNameCollisionBehavior?: "error" | "alias";
+
         /** Conditional helper attachments. */
         attachments?: Array<{
           className: string;

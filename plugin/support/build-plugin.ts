@@ -27,6 +27,7 @@ interface BuildProcessorOptions {
   projectRootRef: { current: string };
   customPomDir?: string;
   customPomImportAliases?: Record<string, string>;
+  customPomImportNameCollisionBehavior?: "error" | "alias";
   testIdAttribute: string;
 
   routerAwarePoms: boolean;
@@ -51,6 +52,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     projectRootRef,
     customPomDir,
     customPomImportAliases,
+    customPomImportNameCollisionBehavior,
     testIdAttribute,
     routerAwarePoms,
     resolvedRouterEntry,
@@ -146,6 +148,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
         projectRoot: projectRootRef.current,
         customPomDir,
         customPomImportAliases,
+        customPomImportNameCollisionBehavior,
         testIdAttribute,
         vueRouterFluentChaining: routerAwarePoms,
         routerEntry: resolvedRouterEntry,

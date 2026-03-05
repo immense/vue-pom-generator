@@ -169,6 +169,99 @@ describe("generated output", () => {
     }
   });
 
+  it("fails by default when custom POM import collides with generated class name", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-"));
+
+    writePlaywrightTypeStub(tempRoot);
+
+    const basePagePath = path.join(tempRoot, "BasePage.ts");
+    writeFile(basePagePath, "export class BasePage { constructor(public page?: any) {} }");
+    writeFile(
+      path.join(tempRoot, "Pointer.ts"),
+      "export type PlaywrightAnimationOptions = any; export function setPlaywrightAnimationOptions(_: PlaywrightAnimationOptions): void {} export class Pointer { constructor(_: any, __: string) {} }",
+    );
+
+    writeFile(
+      path.join(tempRoot, "tests", "playwright", "pom", "custom", "PersonListPage.ts"),
+      "export class PersonListPage { constructor(_: any, __?: any) {} }",
+    );
+
+    const deps: IComponentDependencies = {
+      filePath: path.join(tempRoot, "src", "views", "PersonListPage.vue"),
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set(),
+      generatedMethods: new Map(),
+      isView: true,
+    };
+
+    const componentHierarchyMap = new Map<string, IComponentDependencies>([["PersonListPage", deps]]);
+    const vueFilesPathMap = new Map<string, string>();
+
+    await expect(generateFiles(componentHierarchyMap, vueFilesPathMap, basePagePath, {
+      outDir: path.join(tempRoot, "out"),
+      projectRoot: tempRoot,
+      customPomDir: "tests/playwright/pom/custom",
+    })).rejects.toThrow(/Custom POM import name collision detected/);
+  });
+
+  it("can auto-alias colliding custom POM imports when configured", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-"));
+
+    writePlaywrightTypeStub(tempRoot);
+
+    const basePagePath = path.join(tempRoot, "BasePage.ts");
+    writeFile(
+      basePagePath,
+      [
+        "export class BasePage {",
+        "  constructor(public page?: any, _options?: { testIdAttribute?: string }) {}",
+        "}",
+      ].join("\n"),
+    );
+    writeFile(
+      path.join(tempRoot, "Pointer.ts"),
+      "export type PlaywrightAnimationOptions = any; export function setPlaywrightAnimationOptions(_: PlaywrightAnimationOptions): void {} export class Pointer { constructor(_: any, __: string) {} }",
+    );
+
+    writeFile(
+      path.join(tempRoot, "tests", "playwright", "pom", "custom", "PersonListPage.ts"),
+      "export class PersonListPage { constructor(_: any, __?: any) {} }",
+    );
+
+    const deps: IComponentDependencies = {
+      filePath: path.join(tempRoot, "src", "views", "PersonListPage.vue"),
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(["Page"]),
+      dataTestIdSet: new Set(),
+      generatedMethods: new Map(),
+      isView: true,
+    };
+
+    const componentHierarchyMap = new Map<string, IComponentDependencies>([["PersonListPage", deps]]);
+    const vueFilesPathMap = new Map<string, string>();
+    const outDir = path.join(tempRoot, "out");
+
+    await generateFiles(componentHierarchyMap, vueFilesPathMap, basePagePath, {
+      outDir,
+      projectRoot: tempRoot,
+      customPomDir: "tests/playwright/pom/custom",
+      customPomImportNameCollisionBehavior: "alias",
+      customPomAttachments: [{
+        className: "PersonListPage",
+        propertyName: "personListHelper",
+        attachWhenUsesComponents: ["Page"],
+      }],
+    });
+
+    const generatedFile = path.join(outDir, "page-object-models.g.ts");
+    const generatedContent = fs.readFileSync(generatedFile, "utf8");
+
+    expect(generatedContent).toContain("import { PersonListPage as PersonListPageCustom }");
+    expect(generatedContent).toContain("personListHelper: PersonListPageCustom;");
+    expect(generatedContent).toContain("this.personListHelper = new PersonListPageCustom(page, this);");
+  });
+
   it("only emits view passthrough methods when the view has a single child component POM", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-"));
 

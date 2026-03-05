@@ -310,6 +310,14 @@ export interface GenerateFilesOptions {
   customPomImportAliases?: Record<string, string>;
 
   /**
+   * How to handle collisions between custom POM import identifiers and generated class names.
+   *
+   * - "error" (default): fail generation with a descriptive error
+   * - "alias": auto-alias colliding custom imports (e.g. PersonListPage -> PersonListPageCustom)
+   */
+  customPomImportNameCollisionBehavior?: "error" | "alias";
+
+  /**
    * Handwritten POM helper attachments. These helpers are assumed to be present in the
    * aggregated output (e.g. via `tests/playwright/pom/custom/*.ts` inlining), but we only attach them to
    * view classes that actually use certain components.
@@ -370,6 +378,7 @@ interface GenerateContentOptions {
   projectRoot?: string;
   customPomDir?: string;
   customPomImportAliases?: Record<string, string>;
+  customPomClassIdentifierMap?: Record<string, string>;
 
   /** Attribute name to treat as the test id. Defaults to `data-testid`. */
   testIdAttribute?: string;
@@ -393,6 +402,7 @@ export async function generateFiles(
     projectRoot,
     customPomDir,
     customPomImportAliases,
+    customPomImportNameCollisionBehavior = "error",
     testIdAttribute,
     emitLanguages: emitLanguagesOverride,
     csharp,
@@ -417,6 +427,7 @@ export async function generateFiles(
       projectRoot,
       customPomDir,
       customPomImportAliases,
+      customPomImportNameCollisionBehavior,
       testIdAttribute,
       generateFixtures,
       routeMetaByComponent,
@@ -970,7 +981,10 @@ function generateViewObjectModelContent(
         return false;
       return a.attachWhenUsesComponents.some(c => hasChildComponent(c));
     })
-    .map(a => ({ className: a.className, propertyName: a.propertyName }));
+    .map(a => ({
+      className: options.customPomClassIdentifierMap?.[a.className] ?? a.className,
+      propertyName: a.propertyName,
+    }));
 
   let content: string = "";
 
@@ -1161,6 +1175,7 @@ async function generateAggregatedFiles(
     projectRoot?: GenerateFilesOptions["projectRoot"];
     customPomDir?: GenerateFilesOptions["customPomDir"];
     customPomImportAliases?: GenerateFilesOptions["customPomImportAliases"];
+    customPomImportNameCollisionBehavior?: GenerateFilesOptions["customPomImportNameCollisionBehavior"];
     testIdAttribute?: GenerateFilesOptions["testIdAttribute"];
     generateFixtures?: GenerateFilesOptions["generateFixtures"];
     routeMetaByComponent?: Record<string, RouteMeta>;
@@ -1180,6 +1195,7 @@ async function generateAggregatedFiles(
     items: Array<[string, IComponentDependencies]>,
   ) => {
     const imports: string[] = [];
+    const generatedClassNames = new Set(items.map(([name]) => name));
 
     if (!basePageClassPath) {
       throw new Error("basePageClassPath is required for aggregated generation");
@@ -1213,6 +1229,28 @@ async function generateAggregatedFiles(
         Checkbox: "CheckboxWidget",
         ...(options.customPomImportAliases),
       };
+      const importCollisionBehavior = options.customPomImportNameCollisionBehavior ?? "error";
+
+      const reservedIdentifiers = new Set<string>([
+        "PwLocator",
+        "PwPage",
+        "BasePage",
+        "Fluent",
+        ...generatedClassNames,
+      ]);
+      const usedImportIdentifiers = new Set<string>();
+      const customPomClassIdentifierMap: Record<string, string> = {};
+
+      const ensureUniqueIdentifier = (base: string) => {
+        let candidate = base;
+        let i = 2;
+        while (reservedIdentifiers.has(candidate) || usedImportIdentifiers.has(candidate)) {
+          candidate = `${base}${i}`;
+          i++;
+        }
+        usedImportIdentifiers.add(candidate);
+        return candidate;
+      };
 
       const customDirRelOrAbs = options.customPomDir ?? "tests/playwright/pom/custom";
       const customDirAbs = path.isAbsolute(customDirRelOrAbs)
@@ -1231,20 +1269,44 @@ async function generateAggregatedFiles(
         const exportName = file.replace(/\.ts$/i, "");
         // In this repo, custom POMs are authored as `export class <Name> { ... }`.
         // Import by the basename, which matches the class name convention.
-        const alias = importAliases[exportName];
+        const requested = importAliases[exportName] ?? exportName;
+        const collidesWithGeneratedClass = generatedClassNames.has(requested);
+        const explicitAliasProvided = Object.prototype.hasOwnProperty.call(importAliases, exportName);
+
+        if (collidesWithGeneratedClass && importCollisionBehavior === "error") {
+          throw new Error(
+            `[vue-pom-generator] Custom POM import name collision detected for "${exportName}".\n`
+            + `The identifier "${requested}" conflicts with a generated POM class.\n`
+            + `Fix by setting generation.playwright.customPoms.importAliases["${exportName}"] to a unique name, `
+            + `or set generation.playwright.customPoms.importNameCollisionBehavior = "alias" to auto-alias collisions.`,
+          );
+        }
+
+        let localIdentifier = requested;
+        if (collidesWithGeneratedClass && importCollisionBehavior === "alias") {
+          const aliasBase = explicitAliasProvided ? requested : `${exportName}Custom`;
+          localIdentifier = ensureUniqueIdentifier(aliasBase);
+        }
+        else {
+          localIdentifier = ensureUniqueIdentifier(requested);
+        }
+
+        customPomClassIdentifierMap[exportName] = localIdentifier;
         const customFileAbs = path.join(customDirAbs, file);
         const fromOutputDir = outputDir;
         const importPath = stripExtension(toPosixRelativePath(fromOutputDir, customFileAbs));
-        if (alias) {
-          imports.push(`import { ${exportName} as ${alias} } from "${importPath}";`);
+        if (localIdentifier !== exportName) {
+          imports.push(`import { ${exportName} as ${localIdentifier} } from "${importPath}";`);
         }
         else {
           imports.push(`import { ${exportName} } from "${importPath}";`);
         }
       }
+
+      return customPomClassIdentifierMap;
     };
 
-    addCustomPomImports();
+    const customPomClassIdentifierMap = addCustomPomImports();
 
     // Collect any navigation return types referenced by generated methods so we can emit
     // stub classes when the destination view has no generated test ids (and therefore no
@@ -1258,7 +1320,6 @@ async function generateAggregatedFiles(
       }
     }
 
-    const generatedClassNames = new Set(items.map(([name]) => name));
     const stubTargets = Array.from(referencedTargets)
       .filter(t => !generatedClassNames.has(t))
       .sort((a, b) => a.localeCompare(b));
@@ -1446,6 +1507,7 @@ async function generateAggregatedFiles(
         aggregated: true,
 
         customPomAttachments: options.customPomAttachments ?? [],
+        customPomClassIdentifierMap,
         testIdAttribute: options.testIdAttribute,
         vueRouterFluentChaining: options.vueRouterFluentChaining,
         routeMetaByComponent: options.routeMetaByComponent,
