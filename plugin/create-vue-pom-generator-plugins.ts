@@ -58,7 +58,35 @@ function resolveFromProjectRoot(projectRoot: string, maybePath: string): string 
   return path.isAbsolute(maybePath) ? maybePath : path.resolve(projectRoot, maybePath);
 }
 
+function assertNotVitePluginInstance(options: VuePomGeneratorPluginOptions): void {
+  const candidate = options as Record<string, unknown>;
+  const pluginLikeKeys = [
+    "name",
+    "enforce",
+    "apply",
+    "transform",
+    "resolveId",
+    "load",
+    "config",
+    "configResolved",
+    "handleHotUpdate",
+  ];
+
+  const pluginLikeKey = pluginLikeKeys.find(key => key in candidate);
+  if (!pluginLikeKey) {
+    return;
+  }
+
+  throw new TypeError(
+    `[vue-pom-generator] Invalid options: received an object that looks like a Vite plugin (found key: ""). `
+    + `Do not pass vue() into createVuePomGeneratorPlugins(...). `
+    + `Pass Vue plugin options via { vueOptions: { ... } } instead.`
+  );
+}
+
 export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptions = {}): PluginOption[] {
+  assertNotVitePluginInstance(options);
+
   const injection = options.injection ?? {};
   type GenerationConfig = NonNullable<Exclude<VuePomGeneratorPluginOptions["generation"], false>>;
 

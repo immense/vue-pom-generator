@@ -20,6 +20,9 @@ import fs from "node:fs";
 import process from "node:process";
 import { TESTID_CLICK_EVENT_NAME, TESTID_CLICK_EVENT_STRICT_FLAG } from "./click-instrumentation";
 import {
+  isAsciiDigitCode,
+  isAsciiLetterCode,
+  isAsciiUppercaseLetterCode,
   upsertAttribute,
   findTestIdAttribute,
   formatTagName,
@@ -122,17 +125,15 @@ function tryExtractStableHintFromConditionalExpressionSource(source: string): st
     const v = value.trim();
     if (!v)
       return false;
-    const isAlpha = (ch: number) => (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122);
-    const isDigit = (ch: number) => ch >= 48 && ch <= 57;
     const isUnderscore = (ch: number) => ch === 95;
 
     const first = v.charCodeAt(0);
-    if (!isAlpha(first))
+    if (!isAsciiLetterCode(first))
       return false;
 
     for (let i = 1; i < v.length; i += 1) {
       const ch = v.charCodeAt(i);
-      if (isAlpha(ch) || isDigit(ch) || isUnderscore(ch)) {
+      if (isAsciiLetterCode(ch) || isAsciiDigitCode(ch) || isUnderscore(ch)) {
         continue;
       }
       return false;
@@ -202,7 +203,7 @@ function tryExtractStableHintFromConditionalExpressionSource(source: string): st
 function tryInferNativeWrapperRoleFromSfc(tag: string, vueFilesPathMap?: Map<string, string>): { role: NativeRole } | null {
   // Only attempt inference for PascalCase component tags.
   const first = tag.charCodeAt(0);
-  const isUpper = first >= 65 && first <= 90;
+  const isUpper = isAsciiUppercaseLetterCode(first);
   if (!isUpper)
     return null;
 
@@ -656,7 +657,7 @@ export function createTestIdTransform(
       // HTML tags are lowercase and do not contain '-'.
       if (!tag) return false;
       const first = tag.charCodeAt(0);
-      const isUpper = first >= 65 && first <= 90;
+      const isUpper = isAsciiUppercaseLetterCode(first);
       return isUpper || tag.includes("-");
     };
 

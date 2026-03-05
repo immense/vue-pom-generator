@@ -2,6 +2,11 @@ import type { DirectiveNode } from "@vue/compiler-core";
 import { stringifyExpression } from "@vue/compiler-core";
 import { parseExpression } from "@babel/parser";
 
+import {
+  isAsciiAlphaNumericCode,
+  isAsciiLowercaseLetterCode,
+} from "../utils";
+
 interface RouteLocationLike {
   name?: string;
   path?: string;
@@ -19,10 +24,8 @@ function toPascalCaseRouteKey(value: string): string {
     const ch = value[i];
     const code = ch.charCodeAt(0);
 
-    const isDigit = code >= 48 && code <= 57;
-    const isUpper = code >= 65 && code <= 90;
-    const isLower = code >= 97 && code <= 122;
-    const isAlphaNum = isDigit || isUpper || isLower;
+    const isLower = isAsciiLowercaseLetterCode(code);
+    const isAlphaNum = isAsciiAlphaNumericCode(code);
 
     if (!isAlphaNum) {
       newWord = true;

@@ -5,7 +5,7 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 import type { Plugin as VitePlugin } from "vite";
 import type { RouteLocationNormalizedLoaded, Router, RouteRecordNormalized } from "vue-router";
-import { toPascalCase } from "./utils";
+import { isAsciiDigitCode, isAsciiLetterCode, toPascalCase } from "./utils";
 
 // Router introspection spins up a short-lived Vite SSR server and installs a global DOM shim.
 // When called concurrently (e.g. multiple Vitest files running in parallel), those operations can
@@ -51,14 +51,6 @@ type RouterModuleShimExports = Record<string, RouterModuleShimFunction>;
 
 interface GlobalRouterModuleShimRegistry {
   __VUE_TESTID_ROUTER_INTROSPECTION_SHIMS__?: Record<string, RouterModuleShimExports>;
-}
-
-function isAsciiLetterCode(code: number) {
-  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
-}
-
-function isAsciiDigitCode(code: number) {
-  return code >= 48 && code <= 57;
 }
 
 function isIdentifierStartCode(code: number) {

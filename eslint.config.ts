@@ -21,6 +21,8 @@ export default antfu({
 
       // This package generates source and transforms Vue AST.
       // Enforce AST-based parsing/manipulation; avoid brittle string/regex approaches.
+      // If you're not actually parsing source code (e.g. you're doing a narrow identifier/char-code check),
+      // look for an existing helper in utils.ts before reaching for string parsing APIs or disabling this rule.
       //
       // If you truly must use string/regex for a narrow case, add an explicit allow comment:
       //   // eslint-disable-next-line no-restricted-syntax -- allowed: <reason>
@@ -42,7 +44,7 @@ export default antfu({
       // NOTE: selectors cannot reliably type-check the receiver; this intentionally errs on the side of safety.
       {
         selector: "CallExpression[callee.type='MemberExpression'][callee.property.name=/^(match|matchAll|replace|replaceAll|search|split)$/]",
-        message: "Avoid string.* parsing methods in this package (match/replace/split/etc). For paths prefer node:path. For source code use AST-based parsing and structured transforms.",
+        message: "Avoid string.* parsing methods in this package (match/replace/split/etc). For paths prefer node:path. For source code use AST-based parsing and structured transforms. If this is not parsing code, check utils.ts for an existing helper.",
       },
     ],
     "@typescript-eslint/no-explicit-any": "error",

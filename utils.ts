@@ -74,6 +74,26 @@ export function upperFirst(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+export function isAsciiUppercaseLetterCode(code: number): boolean {
+  return code >= 65 && code <= 90;
+}
+
+export function isAsciiLowercaseLetterCode(code: number): boolean {
+  return code >= 97 && code <= 122;
+}
+
+export function isAsciiLetterCode(code: number): boolean {
+  return isAsciiUppercaseLetterCode(code) || isAsciiLowercaseLetterCode(code);
+}
+
+export function isAsciiDigitCode(code: number): boolean {
+  return code >= 48 && code <= 57;
+}
+
+export function isAsciiAlphaNumericCode(code: number): boolean {
+  return isAsciiLetterCode(code) || isAsciiDigitCode(code);
+}
+
 export type NativeRole = 'button' | 'input' | 'select' | 'vselect' | 'checkbox' | 'toggle' | 'radio' | 'grid'
 // In this plugin, the hierarchy map stores: key = child element, value = parent element (or null for root).
 export type Child = ElementNode;
@@ -1799,8 +1819,8 @@ function isAllCapsOrDigits(value: string): boolean {
   }
   for (let i = 0; i < value.length; i++) {
     const c = value.charCodeAt(i);
-    const isUpper = c >= 65 && c <= 90;
-    const isDigit = c >= 48 && c <= 57;
+    const isUpper = isAsciiUppercaseLetterCode(c);
+    const isDigit = isAsciiDigitCode(c);
     if (!isUpper && !isDigit) {
       return false;
     }
@@ -1813,18 +1833,15 @@ function startsWithDigit(value: string): boolean {
     return false;
   }
   const c = value.charCodeAt(0);
-  return c >= 48 && c <= 57;
+  return isAsciiDigitCode(c);
 }
 
 function stripNonIdentifierChars(value: string): string {
   let out = "";
   for (let i = 0; i < value.length; i++) {
     const c = value.charCodeAt(i);
-    const isUpper = c >= 65 && c <= 90;
-    const isLower = c >= 97 && c <= 122;
-    const isDigit = c >= 48 && c <= 57;
     const isUnderscore = c === 95;
-    if (isUpper || isLower || isDigit || isUnderscore) {
+    if (isAsciiAlphaNumericCode(c) || isUnderscore) {
       out += value[i];
     }
   }
