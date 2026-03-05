@@ -78,7 +78,7 @@ function assertNotVitePluginInstance(options: VuePomGeneratorPluginOptions): voi
   }
 
   throw new TypeError(
-    `[vue-pom-generator] Invalid options: received an object that looks like a Vite plugin (found key: ""). `
+    `[vue-pom-generator] Invalid options: received an object that looks like a Vite plugin (found key: "${pluginLikeKey}"). `
     + `Do not pass vue() into createVuePomGeneratorPlugins(...). `
     + `Pass Vue plugin options via { vueOptions: { ... } } instead.`
   );

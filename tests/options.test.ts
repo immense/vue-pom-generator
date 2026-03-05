@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 
-import { createVuePomGeneratorPlugins } from "../index";
+import { createVuePomGeneratorPlugins, defineVuePomGeneratorConfig, vuePomGenerator } from "../index";
 
 describe("createVuePomGeneratorPlugins options", () => {
   interface TestViteLogger {
@@ -118,5 +118,27 @@ describe("createVuePomGeneratorPlugins options", () => {
     });
 
     expect(() => runConfigResolved(plugins)).toThrow("generation.router.moduleShims");
+  });
+
+  it("throws a helpful error when plugin-like options are passed", () => {
+    const mistakenPluginLikeOptions = {
+      name: "vite:vue",
+      enforce: "pre",
+    } as Parameters<typeof createVuePomGeneratorPlugins>[0];
+
+    expect(() => createVuePomGeneratorPlugins(mistakenPluginLikeOptions)).toThrow("Do not pass vue() into createVuePomGeneratorPlugins(...)");
+  });
+
+  it("supports alias and typed config helper exports", () => {
+    const config = defineVuePomGeneratorConfig({
+      generation: false,
+      vueOptions: {
+        script: { defineModel: true },
+      },
+    });
+
+    const plugins = vuePomGenerator(config);
+    expect(Array.isArray(plugins)).toBe(true);
+    expect(plugins.length).toBeGreaterThan(0);
   });
 });
