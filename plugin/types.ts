@@ -103,7 +103,8 @@ export interface VuePomGeneratorPluginOptions {
       * Generated outputs (by default):
       * - `<outDir>/page-object-models.g.ts`
       * - `<outDir>/index.ts` (stable barrel that re-exports from `page-object-models.g`)
-     */
+      * - managed `.gitattributes` entries so GitHub Linguist recognizes generated outputs by default
+      */
     outDir?: string;
 
     /**
@@ -213,6 +214,7 @@ export interface VuePomGeneratorPluginOptions {
        *
        * Default output (when `true`):
         * - `<projectRoot>/tests/playwright/generated/fixtures.g.ts`
+        * - managed `.gitattributes` entries in the generated fixture directory
        */
       fixtures?: boolean | string | { outDir?: string };
 

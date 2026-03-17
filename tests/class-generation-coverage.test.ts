@@ -99,6 +99,14 @@ describe("class-generation coverage", () => {
       ]);
 
       const outDir = path.join(tempRoot, "pom");
+      writeFile(
+        path.join(outDir, ".gitattributes"),
+        [
+          "# existing user-owned entry",
+          "README.md linguist-documentation",
+          "",
+        ].join("\n"),
+      );
 
       // 1) default location: <outDir>/fixtures.g.ts
       await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
@@ -117,6 +125,26 @@ describe("class-generation coverage", () => {
       // Reserved fixture name should not appear as a generated component fixture.
       expect(defaultFixtureContent).not.toContain("page: Pom.Page");
 
+      const defaultGitAttributesPath = path.join(outDir, ".gitattributes");
+      expect(fs.existsSync(defaultGitAttributesPath)).toBe(true);
+      const defaultGitAttributesContent = readFile(defaultGitAttributesPath);
+      expect(defaultGitAttributesContent).toContain("README.md linguist-documentation");
+      expect(defaultGitAttributesContent).toContain("page-object-models.g.ts linguist-generated");
+      expect(defaultGitAttributesContent).toContain("index.ts linguist-generated");
+      expect(defaultGitAttributesContent).toContain("fixtures.g.ts linguist-generated");
+
+      const runtimeGitAttributesPath = path.join(outDir, "_pom-runtime", ".gitattributes");
+      expect(fs.existsSync(runtimeGitAttributesPath)).toBe(true);
+      const runtimeGitAttributesContent = readFile(runtimeGitAttributesPath);
+      expect(runtimeGitAttributesContent).toContain("click-instrumentation.ts linguist-generated");
+
+      const runtimeClassGenGitAttributesPath = path.join(outDir, "_pom-runtime", "class-generation", ".gitattributes");
+      expect(fs.existsSync(runtimeClassGenGitAttributesPath)).toBe(true);
+      const runtimeClassGenGitAttributesContent = readFile(runtimeClassGenGitAttributesPath);
+      expect(runtimeClassGenGitAttributesContent).toContain("BasePage.ts linguist-generated");
+      expect(runtimeClassGenGitAttributesContent).toContain("Pointer.ts linguist-generated");
+      expect(runtimeClassGenGitAttributesContent).toContain("playwright-types.ts linguist-generated");
+
       // 2) explicit file path
       await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
         outDir,
@@ -126,6 +154,9 @@ describe("class-generation coverage", () => {
 
       const explicitFixturePath = path.join(tempRoot, "tests", "playwright", "fixture", "CustomFixtures.ts");
       expect(fs.existsSync(explicitFixturePath)).toBe(true);
+      const explicitGitAttributesPath = path.join(tempRoot, "tests", "playwright", "fixture", ".gitattributes");
+      expect(fs.existsSync(explicitGitAttributesPath)).toBe(true);
+      expect(readFile(explicitGitAttributesPath)).toContain("CustomFixtures.ts linguist-generated");
 
       // 3) explicit outDir via object
       await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
@@ -136,6 +167,9 @@ describe("class-generation coverage", () => {
 
       const altFixturePath = path.join(tempRoot, "tests", "playwright", "fixture-alt", "fixtures.g.ts");
       expect(fs.existsSync(altFixturePath)).toBe(true);
+      const altGitAttributesPath = path.join(tempRoot, "tests", "playwright", "fixture-alt", ".gitattributes");
+      expect(fs.existsSync(altGitAttributesPath)).toBe(true);
+      expect(readFile(altGitAttributesPath)).toContain("fixtures.g.ts linguist-generated");
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -413,6 +447,9 @@ describe("class-generation coverage", () => {
 
       const csFile = path.join(outDir, "page-object-models.g.cs");
       const cs = readFile(csFile);
+      const csGitAttributesPath = path.join(outDir, ".gitattributes");
+      expect(fs.existsSync(csGitAttributesPath)).toBe(true);
+      expect(readFile(csGitAttributesPath)).toContain("page-object-models.g.cs linguist-generated");
 
       // The locator must include key as a parameter, not just text.
       expect(cs).toContain("string key");
