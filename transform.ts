@@ -58,6 +58,151 @@ const ENABLE_CLICK_INSTRUMENTATION = true;
 // Cache inferred wrapper configs across transforms/build passes.
 // Keyed by component tag name (e.g. "CustomInput").
 const inferredNativeWrapperConfigByTag = new Map<string, { role: string }>();
+const inferredSfcPathByTag = new Map<string, string | null>();
+let indexedVueSfcPathsByBasename: Map<string, string[]> | null = null;
+
+function toKebabCaseTag(tag: string): string {
+  return tag
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/[_.\s]+/g, "-")
+    .toLowerCase();
+}
+
+function buildVueSfcPathIndex(): Map<string, string[]> {
+  if (indexedVueSfcPathsByBasename) {
+    return indexedVueSfcPathsByBasename;
+  }
+
+  const index = new Map<string, string[]>();
+  const ignoredDirNames = new Set([
+    ".git",
+    ".idea",
+    ".next",
+    ".nuxt",
+    ".output",
+    ".turbo",
+    ".yarn",
+    "coverage",
+    "dist",
+    "build",
+    "node_modules",
+    "out",
+    "tmp",
+  ]);
+
+  const cwd = process.cwd();
+  const parent = path.resolve(cwd, "..");
+  const searchRoots = new Set<string>();
+  const enqueueIfDirectory = (dirPath: string) => {
+    try {
+      if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
+        searchRoots.add(dirPath);
+      }
+    }
+    catch {
+      // Ignore unreadable paths.
+    }
+  };
+
+  for (const root of [cwd, parent]) {
+    for (const rel of ["src", "components", "app", "shared", "packages", "libs"]) {
+      enqueueIfDirectory(path.resolve(root, rel));
+    }
+  }
+
+  const stack = [...searchRoots];
+  const seenDirs = new Set<string>();
+
+  while (stack.length > 0) {
+    const dirPath = stack.pop()!;
+    const normalizedDir = path.normalize(dirPath);
+    if (seenDirs.has(normalizedDir)) {
+      continue;
+    }
+    seenDirs.add(normalizedDir);
+
+    let entries: fs.Dirent[] = [];
+    try {
+      entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    }
+    catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        if (ignoredDirNames.has(entry.name) || entry.name.startsWith(".")) {
+          continue;
+        }
+        stack.push(fullPath);
+        continue;
+      }
+
+      if (!entry.isFile() || !entry.name.endsWith(".vue")) {
+        continue;
+      }
+
+      const matches = index.get(entry.name) ?? [];
+      matches.push(fullPath);
+      index.set(entry.name, matches);
+    }
+  }
+
+  indexedVueSfcPathsByBasename = index;
+  return index;
+}
+
+function tryResolveSfcPathForTag(tag: string, vueFilesPathMap?: Map<string, string>): string | null {
+  if (inferredSfcPathByTag.has(tag)) {
+    return inferredSfcPathByTag.get(tag) ?? null;
+  }
+
+  const registeredPath = vueFilesPathMap?.get(tag);
+  const candidateNames = [`${tag}.vue`, `${toKebabCaseTag(tag)}.vue`];
+  const directCandidates = [
+    registeredPath ? path.resolve(process.cwd(), registeredPath) : null,
+    ...candidateNames.flatMap(fileName => ([
+      path.resolve(process.cwd(), "src/components", fileName),
+      path.resolve(process.cwd(), "components", fileName),
+      path.resolve(process.cwd(), "app/components", fileName),
+      path.resolve(process.cwd(), "shared/ui/src/components", fileName),
+      path.resolve(process.cwd(), "..", "shared/ui/src/components", fileName),
+    ])),
+  ].filter((value): value is string => !!value);
+
+  const directMatch = directCandidates.find(candidatePath => fs.existsSync(candidatePath));
+  if (directMatch) {
+    inferredSfcPathByTag.set(tag, directMatch);
+    return directMatch;
+  }
+
+  const index = buildVueSfcPathIndex();
+  const scorePath = (candidatePath: string): number => {
+    let score = candidatePath.length;
+    if (candidatePath.includes(`${path.sep}src${path.sep}components${path.sep}`)) {
+      score -= 50;
+    }
+    if (candidatePath.includes(`${path.sep}shared${path.sep}`)) {
+      score -= 10;
+    }
+    return score;
+  };
+
+  for (const fileName of candidateNames) {
+    const matches = index.get(fileName);
+    if (!matches?.length) {
+      continue;
+    }
+
+    const bestMatch = matches.slice().sort((a, b) => scorePath(a) - scorePath(b))[0] ?? null;
+    inferredSfcPathByTag.set(tag, bestMatch);
+    return bestMatch;
+  }
+
+  inferredSfcPathByTag.set(tag, null);
+  return null;
+}
 
 function trimLeadingSeparators(value: string): string {
   if (!value) {
@@ -219,20 +364,7 @@ function tryInferNativeWrapperRoleFromSfc(
   if (cached)
     return cached.role ? cached as { role: NativeRole } : null;
 
-  // Prefer conventional paths in this repo.
-  const candidates = [
-    path.resolve(process.cwd(), "src/components", `${tag}.vue`),
-    path.resolve(process.cwd(), "components", `${tag}.vue`),
-    path.resolve(process.cwd(), "app/components", `${tag}.vue`),
-  ];
-
-  // If we have a map of all vue files, use it to find the tag's file directly even in subdirs.
-  const registeredPath = vueFilesPathMap?.get(tag);
-  if (registeredPath) {
-    candidates.unshift(path.resolve(process.cwd(), registeredPath));
-  }
-
-  const filePath = candidates.find(p => fs.existsSync(p));
+  const filePath = tryResolveSfcPathForTag(tag, vueFilesPathMap);
   if (!filePath) {
     inferredNativeWrapperConfigByTag.set(tag, { role: "" });
     return null;
