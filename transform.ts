@@ -869,7 +869,7 @@ export function createTestIdTransform(
       if (inferred?.role) {
         // Cache onto the nativeWrappers map so downstream utilities (formatTagName, wrapper transform)
         // see it consistently.
-        (nativeWrappers as NativeWrappersMap)[element.tag] = { role: inferred.role };
+        (nativeWrappers as NativeWrappersMap)[element.tag] = { role: inferred.role, inferred: true };
       } else if (element.tag.endsWith("Button") || element.tag === "AylaButton") {
         // Recognition of conventional naming for button components.
         (nativeWrappers as NativeWrappersMap)[element.tag] = { role: "button" };

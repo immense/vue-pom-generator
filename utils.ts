@@ -104,6 +104,7 @@ export interface NativeWrappersMap {
     role: NativeRole
     valueAttribute?: string
     requiresOptionDataTestIdPrefix?: boolean
+    inferred?: boolean
   }
 }
 
@@ -1044,7 +1045,7 @@ export function getNativeWrapperTransformInfo(
     return { nativeWrappersValue: null, optionDataTestIdPrefixValue: null, semanticNameHint: null };
   }
 
-  const { role, valueAttribute, requiresOptionDataTestIdPrefix } = wrapperConfig;
+  const { role, valueAttribute, requiresOptionDataTestIdPrefix, inferred } = wrapperConfig;
 
   // Some wrappers (notably checkbox/toggle/radio/select) can end up with synthetic click
   // listeners in the compiler output (via v-model expansion). Treat those as implementation
@@ -1082,7 +1083,8 @@ export function getNativeWrapperTransformInfo(
   }
 
   const { vModel, modelValue } = getModelBindingValues(node);
-  if (vModel || modelValue) {
+  const shouldUseModelBinding = !!vModel || (!inferred && !!modelValue);
+  if (shouldUseModelBinding) {
     const vmodelvalue = getDataTestIdFromGroupOption(vModel);
     const nativeWrappersValue = staticAttributeValue(`${componentName}-${modelValue || vmodelvalue}-${role}`);
 

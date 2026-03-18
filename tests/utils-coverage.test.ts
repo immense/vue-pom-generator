@@ -521,6 +521,17 @@ describe("utils.ts coverage", () => {
     expect(getNativeWrapperTransformInfo(computed, "Comp", wrappers).nativeWrappersValue).toBeNull();
   });
 
+  it("does not treat inferred wrappers with only :modelValue as standalone wrapper controls", () => {
+    const wrappers: NativeWrappersMap = { "shared-radio": { role: "radio", inferred: true } };
+
+    const node = firstElement(parseTemplate("<shared-radio :modelValue=\"option.value\" :selected=\"currentFilter\" />"));
+    setBindAst(node, "modelValue", "option.value");
+
+    const info = getNativeWrapperTransformInfo(node, "Comp", wrappers);
+    expect(info.nativeWrappersValue).toBeNull();
+    expect(info.optionDataTestIdPrefixValue).toBeNull();
+  });
+
   it("generates :to data-testid values across primary shapes", () => {
     const wrappers: NativeWrappersMap = {};
 
