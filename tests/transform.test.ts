@@ -373,6 +373,51 @@ describe('createTestIdTransform', () => {
     expect(mergedSecondaries.length).toBe(1)
   })
 
+  it('merges same-role wrapper members across one v-if chain in strict mode', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const nativeWrappers: NativeWrappersMap = {
+      DynamicFormFieldTextInput: { role: 'input' },
+      DynamicFormFieldNumberInput: { role: 'input' },
+    }
+
+    expect(() => {
+      compileAndCaptureAst(
+        `
+          <DynamicFormFieldTextInput
+            v-if="parameterType === 'text'"
+            v-model="fieldValue"
+          />
+          <DynamicFormFieldNumberInput
+            v-else-if="parameterType === 'number'"
+            v-model="fieldValue"
+          />
+        `,
+        {
+          filename: '/src/components/DynamicFormField.vue',
+          nodeTransforms: [createTestIdTransform('DynamicFormField', componentHierarchyMap, nativeWrappers, [], '/src/views', { nameCollisionBehavior: 'error' })],
+        },
+      )
+    }).not.toThrow()
+
+    const deps = componentHierarchyMap.get('DynamicFormField') as IComponentDependencies | undefined
+    expect(deps).toBeTruthy()
+    expect(deps?.generatedMethods?.has('typeFieldValue')).toBe(true)
+    expect(deps?.generatedMethods?.has('typeFieldValue2')).toBe(false)
+
+    const fieldValuePoms = Array.from(deps?.dataTestIdSet ?? [])
+      .map(e => e.pom)
+      .filter((p): p is NonNullable<typeof p> => !!p && p.methodName === 'FieldValue')
+    expect(fieldValuePoms.length).toBe(2)
+
+    const primary = fieldValuePoms.find(p => p.emitPrimary !== false)
+    const mergedSecondary = fieldValuePoms.find(p => p.emitPrimary === false)
+    expect(primary?.formattedDataTestId).toBe('DynamicFormField-FieldValue-input')
+    expect(primary?.mergeKey).toContain('wrapper:ifgroup:')
+    expect(primary?.mergeKey).toContain(':model:FieldValue')
+    expect(primary?.alternateFormattedDataTestIds).toBeUndefined()
+    expect(mergedSecondary?.emitPrimary).toBe(false)
+  })
+
   it('emits per-key click methods when v-for iterates a static literal list', () => {
     const componentHierarchyMap = new Map()
 

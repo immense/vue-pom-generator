@@ -2276,9 +2276,6 @@ export function applyResolvedDataTestId(args: {
 
   const tryMergeWithExistingPrimary = (candidateActionName: string): boolean => {
     const mergeKey = (args.pomMergeKey ?? "").trim();
-    if (!mergeKey) {
-      return false;
-    }
 
     // For keyed selectors we intentionally do NOT merge: the semantics are ambiguous
     // and merged locators would require additional runtime branching.
@@ -2292,7 +2289,18 @@ export function applyResolvedDataTestId(args: {
       return false;
     }
 
-    if ((existingPom.mergeKey ?? "").trim() !== mergeKey) {
+    const existingSelectors = [
+      existingPom.formattedDataTestId,
+      ...(existingPom.alternateFormattedDataTestIds ?? []),
+    ];
+    const sharesSelectorIdentity = existingSelectors.includes(formattedDataTestIdForPom);
+
+    // If both candidates already resolve to the exact same selector, separate generated
+    // names would be fake differentiation. Merge them even without an explicit merge key.
+    if (!mergeKey && !sharesSelectorIdentity) {
+      return false;
+    }
+    if (mergeKey && (existingPom.mergeKey ?? "").trim() !== mergeKey && !sharesSelectorIdentity) {
       return false;
     }
 

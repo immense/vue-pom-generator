@@ -9,6 +9,7 @@ import type {
   CompoundExpressionNode,
   IfNode,
   IfBranchNode,
+  ForNode,
 } from "@vue/compiler-core";
 import type { AttributeValue, HierarchyMap } from "./utils";
 import { NodeTypes, stringifyExpression } from "@vue/compiler-core";
@@ -746,6 +747,7 @@ export function createTestIdTransform(
   // Track the most recent conditional (v-if / v-else-if) hint for a given parent element so
   // adjacent v-else branches can derive a stable semantic hint (e.g. `else personId`).
   const lastConditionalHintByParent = new WeakMap<object, string>();
+  const lastConditionalMergeGroupByParent = new WeakMap<object, string>();
 
   // Track conditional hints per element so descendants can inherit context when they have
   // an existing data-testid but no other naming signals.
@@ -754,6 +756,47 @@ export function createTestIdTransform(
   // Track conditional hints per IF_BRANCH. This is required because Vue's structural transforms
   // may remove v-if/v-else directives from element.props and instead wrap elements in IF/IF_BRANCH.
   const conditionalHintByIfBranch = new WeakMap<IfBranchNode, string>();
+  const conditionalMergeGroupByElement = new WeakMap<ElementNode, string>();
+  const conditionalMergeGroupByElementLoc = new Map<string, string>();
+  const conditionalMergeGroupByIfBranch = new WeakMap<IfBranchNode, string>();
+  let conditionalMergeGroupCounter = 0;
+
+  const getElementLocationKey = (element: ElementNode): string | null => {
+    const startOffset = element.loc?.start.offset;
+    const endOffset = element.loc?.end.offset;
+    if (typeof startOffset !== "number" || typeof endOffset !== "number") {
+      return null;
+    }
+    return `${element.tag}:${startOffset}:${endOffset}`;
+  };
+
+  const markConditionalMergeGroup = (nodes: TemplateChildNode[], mergeGroupKey: string) => {
+    for (const child of nodes) {
+      if (child.type === NodeTypes.ELEMENT) {
+        const element = child as ElementNode;
+        conditionalMergeGroupByElement.set(element, mergeGroupKey);
+        const elementLocationKey = getElementLocationKey(element);
+        if (elementLocationKey) {
+          conditionalMergeGroupByElementLoc.set(elementLocationKey, mergeGroupKey);
+        }
+        markConditionalMergeGroup(element.children as TemplateChildNode[], mergeGroupKey);
+        continue;
+      }
+
+      if (child.type === NodeTypes.IF) {
+        const ifNode = child as IfNode;
+        for (const branch of ifNode.branches ?? []) {
+          markConditionalMergeGroup(branch.children as TemplateChildNode[], mergeGroupKey);
+        }
+        continue;
+      }
+
+      if (child.type === NodeTypes.IF_BRANCH || child.type === NodeTypes.FOR) {
+        const branchLike = child as IfBranchNode | ForNode;
+        markConditionalMergeGroup((branchLike.children ?? []) as TemplateChildNode[], mergeGroupKey);
+      }
+    }
+  };
 
   return (node: RootNode | TemplateChildNode, context) => {
     if (excludedComponents.includes(componentName)) {
@@ -764,9 +807,16 @@ export function createTestIdTransform(
     if (node.type === NodeTypes.IF) {
       const ifNode = node as IfNode;
       const branches = ifNode.branches ?? [];
+      const mergeGroupKey = `if-group:${++conditionalMergeGroupCounter}`;
+      const ifParentKey = context?.parent ? (context.parent as object) : null;
+      if (ifParentKey) {
+        lastConditionalMergeGroupByParent.set(ifParentKey, mergeGroupKey);
+      }
 
       let lastHint: string | null = null;
       for (const branch of branches) {
+        conditionalMergeGroupByIfBranch.set(branch, mergeGroupKey);
+        markConditionalMergeGroup((branch.children ?? []) as TemplateChildNode[], mergeGroupKey);
         const cond = (branch.condition ?? null) as (SimpleExpressionNode | CompoundExpressionNode | null);
 
         if (!cond) {
@@ -901,13 +951,37 @@ export function createTestIdTransform(
     // Derive a stable semantic hint from conditional directives (v-if/v-else-if/v-else) when available.
     // This helps avoid generic Button/clickButton collisions for elements that provide a data-testid
     // but otherwise have no naming signals (and we intentionally avoid innerText-based naming).
-    const parentKey = (!parentIsRoot && context?.parent) ? (context.parent as object) : null;
+    const parentKey = context?.parent ? (context.parent as object) : null;
     const conditional = getConditionalDirectiveInfo(element);
 
     let conditionalHint: string | null = null;
+    const elementLocationKey = getElementLocationKey(element);
+    let conditionalMergeGroupKey: string | null = (elementLocationKey
+      ? conditionalMergeGroupByElementLoc.get(elementLocationKey) ?? null
+      : null)
+      ?? conditionalMergeGroupByElement.get(element)
+      ?? null;
+
+    if (!conditionalMergeGroupKey && context?.parent?.type === NodeTypes.IF_BRANCH) {
+      const branch = context.parent as IfBranchNode;
+      conditionalMergeGroupKey = conditionalMergeGroupByIfBranch.get(branch) ?? null;
+    }
 
     // 1) If the v-if/v-else directive is still present on the element, use that.
     if (conditional && (conditional.kind === "if" || conditional.kind === "else-if")) {
+      if (parentKey) {
+        if (!conditionalMergeGroupKey) {
+          if (conditional.kind === "if") {
+            conditionalMergeGroupKey = `if-group:${++conditionalMergeGroupCounter}`;
+          }
+          else {
+            conditionalMergeGroupKey = lastConditionalMergeGroupByParent.get(parentKey) ?? null;
+          }
+        }
+        if (conditionalMergeGroupKey) {
+          lastConditionalMergeGroupByParent.set(parentKey, conditionalMergeGroupKey);
+        }
+      }
       conditionalHint = tryExtractStableHintFromConditionalExpressionSource(conditional.source);
       if (conditionalHint && parentKey) {
         lastConditionalHintByParent.set(parentKey, conditionalHint);
@@ -917,6 +991,7 @@ export function createTestIdTransform(
       if (parentKey) {
         const previousHint = lastConditionalHintByParent.get(parentKey) ?? null;
         conditionalHint = previousHint ? `else ${previousHint}` : null;
+        conditionalMergeGroupKey = lastConditionalMergeGroupByParent.get(parentKey) ?? null;
       }
     }
 
@@ -1075,12 +1150,16 @@ export function createTestIdTransform(
       const alternates = (nameCollisionBehavior === "error" && semanticNameHint && conditionalHint)
         ? [`${semanticNameHint} ${conditionalHint}`]
         : undefined;
+      const pomMergeKey = semanticNameHint && conditionalMergeGroupKey
+        ? `wrapper:ifgroup:${conditionalMergeGroupKey}:model:${semanticNameHint}`
+        : undefined;
 
       applyResolvedDataTestIdForElement({
         preferredGeneratedValue: nativeWrappersValue,
         nativeRoleOverride: nativeRole,
         semanticNameHint: primarySemanticHint,
         semanticNameHintAlternates: alternates,
+        pomMergeKey,
       });
       return;
     }
