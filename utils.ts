@@ -2636,7 +2636,7 @@ export function applyResolvedDataTestId(args: {
     // De-dupe based on semantic identity (testId+params+keyLiteral), not the emitted method name.
     // This prevents repeated passes over the same element from generating new unique names
     // (e.g. selectFoo -> selectFoo2) and growing the output.
-    const key = JSON.stringify({ kind: spec.kind, testId: spec.formattedDataTestId, keyLiteral: spec.keyLiteral ?? null, params: stableParams });
+    const key = JSON.stringify({ kind: spec.kind, selector: spec.selector, keyLiteral: spec.keyLiteral ?? null, params: stableParams });
     const seen = args.generatedMethodContentByComponent.get(args.parentComponentName) ?? new Set<string>();
     if (!args.generatedMethodContentByComponent.has(args.parentComponentName)) {
       args.generatedMethodContentByComponent.set(args.parentComponentName, seen);
@@ -2798,12 +2798,9 @@ export function applyResolvedDataTestId(args: {
   const canHandleOptions = roleForOptions === "radio" && !!optionsDirective?.exp;
 
   if (canHandleOptions) {
-    // The wrapper data-testid is typically: `${prefix}-radio`.
-    // The option data-testid is typically: `${prefix}_${OptionText}_radio`.
+    // For option-driven radio wrappers, generated POM methods should target the wrapper root
+    // and select options semantically by label instead of relying on injected child test ids.
     const wrapperTestId = formattedDataTestIdForPom;
-    const prefix = wrapperTestId.endsWith("-radio")
-      ? wrapperTestId.slice(0, -"-radio".length)
-      : wrapperTestId;
 
     const optionsAst = optionsDirective ? tryGetDirectiveExpressionAst(optionsDirective) : null;
     const staticLabels = optionsAst ? tryExtractStaticOptionLabelsFromOptionsAst(optionsAst) : null;
@@ -2826,14 +2823,18 @@ export function applyResolvedDataTestId(args: {
           continue;
         }
 
-        const optionTestId = `${prefix}_${optionPart}_radio`;
         const safeOptionSuffix = toPascalCase(label) || optionPart;
         const generatedName = ensureUniqueGeneratedName(`select${baseUpper}${safeOptionSuffix}`);
 
         const added = addExtraClickMethod({
           kind: "click",
           name: generatedName,
-          formattedDataTestId: optionTestId,
+          selector: {
+            kind: "withinTestIdByLabel",
+            rootFormattedDataTestId: wrapperTestId,
+            formattedLabel: label,
+            exact: true,
+          },
           params: { annotationText: `string = ""` },
         });
 
@@ -2846,8 +2847,7 @@ export function applyResolvedDataTestId(args: {
       return;
     }
 
-    // Dynamic options expression: generate a single method that accepts an option string.
-    // We build the option test id using the provided value directly.
+    // Dynamic options expression: generate a single method that accepts an option label string.
     const generatedName = ensureUniqueGeneratedName(`select${upperFirst(methodName || "Radio")}`);
 
     if (dataTestIdEntry.pom) {
@@ -2859,7 +2859,12 @@ export function applyResolvedDataTestId(args: {
     const added = addExtraClickMethod({
       kind: "click",
       name: generatedName,
-      formattedDataTestId: `${prefix}_${"${value}"}_radio`,
+      selector: {
+        kind: "withinTestIdByLabel",
+        rootFormattedDataTestId: wrapperTestId,
+        formattedLabel: "${value}",
+        exact: true,
+      },
       params: { value: "string", annotationText: `string = ""` },
     });
 
@@ -2909,7 +2914,10 @@ export function applyResolvedDataTestId(args: {
       const added = addExtraClickMethod({
         kind: "click",
         name: generatedName,
-        formattedDataTestId: formattedDataTestIdForPom,
+        selector: {
+          kind: "testId",
+          formattedDataTestId: formattedDataTestIdForPom,
+        },
         keyLiteral: rawValue,
         params: { wait: "boolean = true" },
       });
@@ -2986,6 +2994,21 @@ export interface PomPrimarySpec {
   emitPrimary?: boolean;
 }
 
+export type PomSelectorSpec =
+  | {
+    kind: "testId";
+    /** Static or keyed test id; keyed uses `${key}` placeholder. */
+    formattedDataTestId: string;
+  }
+  | {
+    kind: "withinTestIdByLabel";
+    /** Wrapper/root test id to scope the label search under. */
+    rootFormattedDataTestId: string;
+    /** Visible label text; may include `${value}` placeholder for dynamic methods. */
+    formattedLabel: string;
+    exact?: boolean;
+  };
+
 /**
  * Extra generated methods that are not a 1:1 mapping of an element's primary role.
  *
@@ -2996,8 +3019,7 @@ export interface PomPrimarySpec {
 export interface PomExtraClickMethodSpec {
   kind: "click";
   name: string;
-  /** Static or keyed test id; keyed uses `${key}` placeholder. */
-  formattedDataTestId: string;
+  selector: PomSelectorSpec;
   /** Optional fixed key to substitute into `${key}` in the method body. */
   keyLiteral?: string;
   params: Record<string, string>;

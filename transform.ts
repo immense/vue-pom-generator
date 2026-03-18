@@ -200,16 +200,24 @@ function tryExtractStableHintFromConditionalExpressionSource(source: string): st
   }
 }
 
-function tryInferNativeWrapperRoleFromSfc(tag: string, vueFilesPathMap?: Map<string, string>): { role: NativeRole } | null {
+function tryInferNativeWrapperRoleFromSfc(
+  tag: string,
+  vueFilesPathMap?: Map<string, string>,
+  seenTags: Set<string> = new Set(),
+): { role: NativeRole } | null {
   // Only attempt inference for PascalCase component tags.
   const first = tag.charCodeAt(0);
   const isUpper = isAsciiUppercaseLetterCode(first);
   if (!isUpper)
     return null;
 
+  if (seenTags.has(tag)) {
+    return null;
+  }
+
   const cached = inferredNativeWrapperConfigByTag.get(tag);
   if (cached)
-    return cached as { role: "input" | "select" | "button" };
+    return cached.role ? cached as { role: NativeRole } : null;
 
   // Prefer conventional paths in this repo.
   const candidates = [
@@ -239,8 +247,8 @@ function tryInferNativeWrapperRoleFromSfc(tag: string, vueFilesPathMap?: Map<str
     return null;
   }
 
-  // Parse the SFC and then parse the template into an AST to find the first meaningful element.
-  // This avoids brittle string scanning and correctly ignores comments/whitespace.
+  // Parse the SFC and walk the template AST to find the first inferable interactive primitive,
+  // following local wrapper components recursively when needed.
   let template = "";
   try {
     const { descriptor } = parseSfc(source, { filename: filePath });
@@ -256,44 +264,98 @@ function tryInferNativeWrapperRoleFromSfc(tag: string, vueFilesPathMap?: Map<str
     return null;
   }
 
-  let rootTag = "";
   try {
     const ast = parseTemplate(template, { comments: false });
 
-    // Find first Element-like node in root children (skip text/comments).
-    // We intentionally only look at the first meaningful root tag; this is a conservative heuristic.
-    const children = ast.children ?? [];
-    for (const child of children) {
-      if (!child || typeof child !== "object")
-        continue;
-      // NodeTypes.ELEMENT === 1
-      if (child.type === NodeTypes.ELEMENT && typeof child.tag === "string") {
-        rootTag = (child.tag || "").toLowerCase();
-        break;
+    const nextSeen = new Set(seenTags);
+    nextSeen.add(tag);
+
+    const isComponentLikeTag = (value: string) => {
+      if (!value)
+        return false;
+      const code = value.charCodeAt(0);
+      return isAsciiUppercaseLetterCode(code) || value.includes("-");
+    };
+
+    const getStaticTypeAttribute = (element: ElementNode): string => {
+      const typeAttr = element.props.find((prop): prop is AttributeNode => {
+        return prop.type === NodeTypes.ATTRIBUTE && prop.name === "type";
+      });
+      return (typeAttr?.value?.content ?? "").toLowerCase();
+    };
+
+    const inferRoleFromElement = (element: ElementNode): { role: NativeRole } | null => {
+      const elementTag = (element.tag || "").toLowerCase();
+      const inputType = getStaticTypeAttribute(element);
+
+      if (elementTag === "input" || elementTag === "uinput") {
+        if (inputType === "radio")
+          return { role: "radio" };
+        if (inputType === "checkbox")
+          return { role: "checkbox" };
+        return { role: "input" };
       }
+      if (elementTag === "textarea" || elementTag === "utextarea")
+        return { role: "input" };
+      if (elementTag === "select" || elementTag === "uselect")
+        return { role: "select" };
+      if (elementTag === "vselect")
+        return { role: "vselect" };
+      if (elementTag === "button" || elementTag === "ubutton")
+        return { role: "button" };
+
+      if (isComponentLikeTag(element.tag) && element.tag !== tag) {
+        const nested = tryInferNativeWrapperRoleFromSfc(element.tag, vueFilesPathMap, nextSeen);
+        if (nested)
+          return nested;
+      }
+
+      for (const child of element.children ?? []) {
+        const inferred = inferRoleFromNode(child as RootNode | TemplateChildNode);
+        if (inferred)
+          return inferred;
+      }
+
+      return null;
+    };
+
+    const inferRoleFromNode = (node: RootNode | TemplateChildNode): { role: NativeRole } | null => {
+      if (!node || typeof node !== "object")
+        return null;
+
+      if (node.type === NodeTypes.ELEMENT) {
+        return inferRoleFromElement(node as ElementNode);
+      }
+
+      if (node.type === NodeTypes.ROOT || node.type === NodeTypes.IF_BRANCH || node.type === NodeTypes.FOR) {
+        for (const child of node.children ?? []) {
+          const inferred = inferRoleFromNode(child as RootNode | TemplateChildNode);
+          if (inferred)
+            return inferred;
+        }
+        return null;
+      }
+
+      if (node.type === NodeTypes.IF) {
+        for (const branch of node.branches ?? []) {
+          const inferred = inferRoleFromNode(branch as unknown as RootNode | TemplateChildNode);
+          if (inferred)
+            return inferred;
+        }
+      }
+
+      return null;
+    };
+
+    const inferred = inferRoleFromNode(ast);
+    if (inferred) {
+      inferredNativeWrapperConfigByTag.set(tag, inferred);
+      return inferred;
     }
   }
   catch {
     inferredNativeWrapperConfigByTag.set(tag, { role: "" });
     return null;
-  }
-
-  // Only infer for a few safe primitives.
-  if (rootTag === "input" || rootTag === "textarea" || rootTag === "uinput" || rootTag === "utextarea") {
-    inferredNativeWrapperConfigByTag.set(tag, { role: "input" });
-    return { role: "input" };
-  }
-  if (rootTag === "select" || rootTag === "uselect") {
-    inferredNativeWrapperConfigByTag.set(tag, { role: "select" });
-    return { role: "select" };
-  }
-  if (rootTag === "vselect") {
-    inferredNativeWrapperConfigByTag.set(tag, { role: "vselect" });
-    return { role: "vselect" };
-  }
-  if (rootTag === "button" || rootTag === "ubutton") {
-    inferredNativeWrapperConfigByTag.set(tag, { role: "button" });
-    return { role: "button" };
   }
 
   inferredNativeWrapperConfigByTag.set(tag, { role: "" });
@@ -850,6 +912,25 @@ export function createTestIdTransform(
       // Some wrappers (e.g. option-driven selects) require the option prefix even when we have a
       // native wrapper data-testid. Apply the prefix before we return.
       if (optionDataTestIdPrefixValue) {
+        const existing = existingIdBehavior === "preserve"
+          ? tryGetExistingElementDataTestId(element, testIdAttribute)
+          : null;
+
+        if (existing) {
+          const loc = element.loc?.start;
+          const locationHint = loc ? `${loc.line}:${loc.column}` : "unknown";
+          const attrLabel = testIdAttribute || "data-testid";
+
+          throw new Error(
+            `[vue-pom-generator] existingIdBehavior="preserve" cannot safely preserve nested option ids for wrappers that require option-data-testid-prefix.\n`
+            + `Component: ${componentName}\n`
+            + `File: ${context.filename ?? "unknown"}:${locationHint}\n`
+            + `Element: <${element.tag}>\n`
+            + `Existing ${attrLabel}: ${JSON.stringify(existing.value)}\n\n`
+            + `Fix: remove the explicit ${attrLabel}, or change existingIdBehavior to "overwrite" or "error".`,
+          );
+        }
+
         upsertAttribute(element, "option-data-testid-prefix", optionDataTestIdPrefixValue);
       }
 

@@ -99,6 +99,7 @@ describe("generated output", () => {
         "    return `[data-testid=\"${testId}\"]`;",
         "  }",
         "  protected async clickByTestId(_testId: string, _annotationText: string = '', _wait: boolean = true): Promise<void> {}",
+        "  protected async clickWithinTestIdByLabel(_rootTestId: string, _label: string, _annotationText: string = '', _wait: boolean = true, _options?: { exact?: boolean }): Promise<void> {}",
         "  protected async fillInputByTestId(_testId: string, _text: string, _annotationText: string = ''): Promise<void> {}",
         "  protected async selectVSelectByTestId(_testId: string, _value: string, _timeOut = 500, _annotationText: string = ''): Promise<void> {}",
         "  protected async animateCursorToElement(_selector: string, _executeClick = true, _delay = 100, _annotationText: string = '', _waitForInstrumentationEvent = true): Promise<void> {}",
@@ -139,6 +140,19 @@ describe("generated output", () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set([dataTestIdEntry]),
+      pomExtraMethods: [
+        {
+          kind: "click",
+          name: "selectDatabaseTypeCloud",
+          selector: {
+            kind: "withinTestIdByLabel",
+            rootFormattedDataTestId: "TestComponent-databaseType-radio",
+            formattedLabel: "Cloud",
+            exact: true,
+          },
+          params: { annotationText: "string = \"\"" },
+        },
+      ],
       generatedMethods: new Map(),
       isView: false,
     };

@@ -32,3 +32,36 @@ describe("existingIdBehavior: 'error'", () => {
     await expect((metadataPlugin.transform as any).call({}, code, id)).rejects.toThrow(expectedError);
   });
 });
+
+describe("existingIdBehavior: 'preserve'", () => {
+  it("halts compilation when preserving an existing data-testid on wrappers that require option-data-testid-prefix", async () => {
+    const plugins = createVuePomGeneratorPlugins({
+      injection: {
+        existingIdBehavior: "preserve",
+        scanDirs: ["."],
+        nativeWrappers: {
+          ImmyRadioGroup: {
+            role: "radio",
+            requiresOptionDataTestIdPrefix: true,
+          },
+        },
+      },
+      generation: false,
+    });
+
+    const metadataPlugin = plugins.find((p): p is Plugin =>
+      !!(p && typeof p === "object" && "name" in p && p.name === "vue-pom-generator-metadata-collector")
+    );
+
+    if (!metadataPlugin || typeof metadataPlugin.transform !== "function") {
+      throw new Error("Could not find metadata collector plugin");
+    }
+
+    const code = `<template><ImmyRadioGroup data-testid="database-type" v-model="selectedGroup" /></template>`;
+    const id = path.resolve(process.cwd(), "TestComponent.vue");
+
+    const expectedError = "existingIdBehavior=\"preserve\" cannot safely preserve nested option ids";
+
+    await expect((metadataPlugin.transform as any).call({}, code, id)).rejects.toThrow(expectedError);
+  });
+});

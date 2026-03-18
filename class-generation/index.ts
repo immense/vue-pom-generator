@@ -162,11 +162,6 @@ function generateExtraClickMethodContent(spec: PomExtraClickMethodSpec): string 
   const signatureParams = formatMethodParams(params);
   const signature = signatureParams ? `(${signatureParams})` : "()";
 
-  const needsTemplate = spec.formattedDataTestId.includes("${");
-  const testIdExpr = needsTemplate
-    ? `\`${spec.formattedDataTestId}\``
-    : JSON.stringify(spec.formattedDataTestId);
-
   const lines: string[] = [];
   lines.push(
     "",
@@ -177,25 +172,56 @@ function generateExtraClickMethodContent(spec: PomExtraClickMethodSpec): string 
     lines.push(`        const key = ${JSON.stringify(spec.keyLiteral)};`);
   }
 
-  if (needsTemplate) {
-    lines.push(`        const testId = ${testIdExpr};`);
-  }
-
-  // clickByTestId(testId, annotationText = "", wait = true)
   const hasAnnotationText = Object.prototype.hasOwnProperty.call(params, "annotationText");
   const hasWait = Object.prototype.hasOwnProperty.call(params, "wait");
+  const annotationArg = hasAnnotationText ? "annotationText" : "\"\"";
+  const waitArg = hasWait ? "wait" : "true";
 
-  const clickArgs: string[] = [];
-  clickArgs.push(needsTemplate ? "testId" : testIdExpr);
+  if (spec.selector.kind === "testId") {
+    const needsTemplate = spec.selector.formattedDataTestId.includes("${");
+    const testIdExpr = needsTemplate
+      ? `\`${spec.selector.formattedDataTestId}\``
+      : JSON.stringify(spec.selector.formattedDataTestId);
 
-  if (hasAnnotationText || hasWait) {
-    clickArgs.push(hasAnnotationText ? "annotationText" : "\"\"");
+    if (needsTemplate) {
+      lines.push(`        const testId = ${testIdExpr};`);
+    }
+
+    const clickArgs: string[] = [];
+    clickArgs.push(needsTemplate ? "testId" : testIdExpr);
+
+    if (hasAnnotationText || hasWait) {
+      clickArgs.push(annotationArg);
+    }
+    if (hasWait) {
+      clickArgs.push(waitArg);
+    }
+
+    lines.push(`        await this.clickByTestId(${clickArgs.join(", ")});`);
+    lines.push("    }");
+
+    return `${lines.join("\n")}\n`;
   }
-  if (hasWait) {
-    clickArgs.push("wait");
+
+  const rootNeedsTemplate = spec.selector.rootFormattedDataTestId.includes("${");
+  const labelNeedsTemplate = spec.selector.formattedLabel.includes("${");
+  const rootExpr = rootNeedsTemplate
+    ? `\`${spec.selector.rootFormattedDataTestId}\``
+    : JSON.stringify(spec.selector.rootFormattedDataTestId);
+  const labelExpr = labelNeedsTemplate
+    ? `\`${spec.selector.formattedLabel}\``
+    : JSON.stringify(spec.selector.formattedLabel);
+
+  if (rootNeedsTemplate) {
+    lines.push(`        const rootTestId = ${rootExpr};`);
+  }
+  if (labelNeedsTemplate) {
+    lines.push(`        const label = ${labelExpr};`);
   }
 
-  lines.push(`        await this.clickByTestId(${clickArgs.join(", ")});`);
+  const rootArg = rootNeedsTemplate ? "rootTestId" : rootExpr;
+  const labelArg = labelNeedsTemplate ? "label" : labelExpr;
+  lines.push(`        await this.clickWithinTestIdByLabel(${rootArg}, ${labelArg}, ${annotationArg}, ${waitArg});`);
   lines.push("    }");
 
   return `${lines.join("\n")}\n`;
@@ -687,6 +713,11 @@ function generateAggregatedCSharpFiles(
     "    protected BasePage(IPage page) => Page = page;",
     "    protected IPage Page { get; }",
     `    protected ILocator LocatorByTestId(string testId) => Page.Locator($"[${testIdAttribute}=\\"{testId}\\"]");`,
+    "    protected ILocator LocatorWithinTestIdByLabel(string rootTestId, string label, bool exact = true) => LocatorByTestId(rootTestId).GetByLabel(label, new() { Exact = exact });",
+    "    protected async Task ClickWithinTestIdByLabelAsync(string rootTestId, string label, bool exact = true)",
+    "    {",
+    "        await LocatorWithinTestIdByLabel(rootTestId, label, exact).ClickAsync();",
+    "    }",
     "",
     "    // Minimal vue-select helper mirroring the TS BasePage.selectVSelectByTestId behavior.",
     "    // Note: annotationText is currently a no-op in C# output (we don't render a cursor overlay).",
@@ -883,8 +914,6 @@ function generateAggregatedCSharpFiles(
       if (extra.kind !== "click")
         continue;
       const { signature } = formatCSharpParams(extra.params);
-      const needsTemplate = extra.formattedDataTestId.includes("${");
-      const testIdExpr = toCSharpTestIdExpression(extra.formattedDataTestId);
 
       const extraName = upperFirst(extra.name);
 
@@ -893,12 +922,35 @@ function generateAggregatedCSharpFiles(
       if (extra.keyLiteral !== undefined) {
         chunks.push(`        var key = ${JSON.stringify(extra.keyLiteral)};`);
       }
-      if (needsTemplate) {
-        chunks.push(`        var testId = ${testIdExpr};`);
-        chunks.push("        await LocatorByTestId(testId).ClickAsync();");
+
+      if (extra.selector.kind === "testId") {
+        const needsTemplate = extra.selector.formattedDataTestId.includes("${");
+        const testIdExpr = toCSharpTestIdExpression(extra.selector.formattedDataTestId);
+        if (needsTemplate) {
+          chunks.push(`        var testId = ${testIdExpr};`);
+          chunks.push("        await LocatorByTestId(testId).ClickAsync();");
+        }
+        else {
+          chunks.push(`        await LocatorByTestId(${testIdExpr}).ClickAsync();`);
+        }
       }
       else {
-        chunks.push(`        await LocatorByTestId(${testIdExpr}).ClickAsync();`);
+        const rootNeedsTemplate = extra.selector.rootFormattedDataTestId.includes("${");
+        const labelNeedsTemplate = extra.selector.formattedLabel.includes("${");
+        const rootExpr = toCSharpTestIdExpression(extra.selector.rootFormattedDataTestId);
+        const labelExpr = toCSharpTestIdExpression(extra.selector.formattedLabel);
+        const exactArg = extra.selector.exact === false ? "false" : "true";
+
+        if (rootNeedsTemplate) {
+          chunks.push(`        var rootTestId = ${rootExpr};`);
+        }
+        if (labelNeedsTemplate) {
+          chunks.push(`        var label = ${labelExpr};`);
+        }
+
+        const rootArg = rootNeedsTemplate ? "rootTestId" : rootExpr;
+        const labelArg = labelNeedsTemplate ? "label" : labelExpr;
+        chunks.push(`        await ClickWithinTestIdByLabelAsync(${rootArg}, ${labelArg}, ${exactArg});`);
       }
       chunks.push("    }");
       chunks.push("");

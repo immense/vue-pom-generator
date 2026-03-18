@@ -700,7 +700,9 @@ describe("utils.ts coverage", () => {
     expect(extras.length).toBeGreaterThan(0);
     expect(extras.every(e => e.kind === "click")).toBe(true);
     expect(extras.some(e => e.name.startsWith("select"))).toBe(true);
-    expect(extras.some(e => e.formattedDataTestId.includes("_radio"))).toBe(true);
+    expect(extras.every(e => e.selector.kind === "withinTestIdByLabel")).toBe(true);
+    expect(extras.some(e => e.selector.kind === "withinTestIdByLabel" && e.selector.rootFormattedDataTestId === "MyComp-Foo-radio")).toBe(true);
+    expect(extras.some(e => e.selector.kind === "withinTestIdByLabel" && e.selector.formattedLabel === "One")).toBe(true);
 
     const prevCount = extras.length;
 
@@ -787,13 +789,21 @@ describe("utils.ts coverage", () => {
     const extras = deps.pomExtraMethods ?? [];
     const method1 = extras.find(e => e.kind === "click" && e.name === some);
     expect(method1).toBeTruthy();
-    expect(method1?.formattedDataTestId).toContain("${value}");
-    expect(method1?.formattedDataTestId).toContain("_radio");
+    expect(method1?.selector).toEqual({
+      kind: "withinTestIdByLabel",
+      rootFormattedDataTestId: "MyComp-radio",
+      formattedLabel: "${value}",
+      exact: true,
+    });
 
     const method2 = extras.find(e => e.kind === "click" && e.name === "selectRadio2");
     expect(method2).toBeTruthy();
-    expect(method2?.formattedDataTestId).toContain("${value}");
-    expect(method2?.formattedDataTestId).toContain("_radio");
+    expect(method2?.selector).toEqual({
+      kind: "withinTestIdByLabel",
+      rootFormattedDataTestId: "MyComp2-radio",
+      formattedLabel: "${value}",
+      exact: true,
+    });
   });
 
   it("supports configurable primary POM name collision behavior (error/warn/suffix)", () => {

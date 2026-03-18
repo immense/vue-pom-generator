@@ -229,6 +229,10 @@ export class BasePage {
     return this.page.locator(this.selectorForTestId(testId));
   }
 
+  protected locatorWithinTestIdByLabel(rootTestId: string, label: string, options?: { exact?: boolean }): PwLocator {
+    return this.locatorByTestId(rootTestId).getByLabel(label, { exact: options?.exact ?? true });
+  }
+
   /**
    * Animates the cursor to an element.
    */
@@ -484,6 +488,17 @@ export class BasePage {
     });
   }
 
+  protected async clickWithinTestIdByLabel(
+    rootTestId: string,
+    label: string,
+    annotationText: string = "",
+    wait: boolean = true,
+    options?: { exact?: boolean },
+  ): Promise<void> {
+    const locator = this.locatorWithinTestIdByLabel(rootTestId, label, { exact: options?.exact });
+    await this.clickLocator(locator, annotationText, wait);
+  }
+
   protected async fillInputByTestId(testId: string, text: string, annotationText: string = ""): Promise<void> {
     await this.pointer.animateCursorToElementAndClickAndFill(this.selectorForTestId(testId), text, true, 200, annotationText, {
       afterClick: async ({ testId: clickedTestId, instrumented }: AfterPointerClickInfo) => {
@@ -592,4 +607,3 @@ export class BasePage {
     await this.page.selectOption(this.selectorForTestId(testId), value);
   }
 }
-

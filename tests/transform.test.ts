@@ -3,6 +3,7 @@ import type { AttributeNode, DirectiveNode, ElementNode, ForNode, RootNode, Temp
 import type { Node as BabelNode } from '@babel/types'
 
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -399,13 +400,19 @@ describe('createTestIdTransform', () => {
     const one = extras.find(m => m.kind === 'click' && m.name === 'clickOneButton')
     expect(one).toBeTruthy()
     expect(one?.keyLiteral).toBe('One')
-    expect(one?.formattedDataTestId).toBe('MyComp-${key}-Select-button')
+    expect(one?.selector).toEqual({
+      kind: 'testId',
+      formattedDataTestId: 'MyComp-${key}-Select-button',
+    })
     expect(one?.params).toEqual({ wait: 'boolean = true' })
 
     const two = extras.find(m => m.kind === 'click' && m.name === 'clickTwoButton')
     expect(two).toBeTruthy()
     expect(two?.keyLiteral).toBe('Two')
-    expect(two?.formattedDataTestId).toBe('MyComp-${key}-Select-button')
+    expect(two?.selector).toEqual({
+      kind: 'testId',
+      formattedDataTestId: 'MyComp-${key}-Select-button',
+    })
     expect(two?.params).toEqual({ wait: 'boolean = true' })
   })
 
@@ -515,5 +522,61 @@ describe('createTestIdTransform', () => {
       (p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === 'data-testid',
     )
     expect(dataTestIdAttr?.value?.content).toBe('MyComp-SelectedGroup-vselect')
+  })
+
+  it('infers radio wrappers through nested local SFCs without nativeWrappers config', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-transform-'))
+    const radioPath = path.join(tempRoot, 'src', 'components', 'ImmyRadio.vue')
+    const radioGroupPath = path.join(tempRoot, 'src', 'components', 'ImmyRadioGroup.vue')
+    fs.mkdirSync(path.dirname(radioPath), { recursive: true })
+    fs.writeFileSync(radioPath, '<template><div><input type="radio" /></div></template>')
+    fs.writeFileSync(
+      radioGroupPath,
+      '<template><div><ImmyRadio v-for="option in props.options" :key="option.value" :text="option.text" :modelValue="option.value" /></div></template>',
+    )
+
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const vueFilesPathMap = new Map<string, string>([
+      ['ImmyRadio', radioPath],
+      ['ImmyRadioGroup', radioGroupPath],
+    ])
+
+    const ast = compileAndCaptureAst(
+      '<ImmyRadioGroup :options="[\'Cloud\', \'Local\']" v-model="databaseType" />',
+      {
+        filename: path.join(tempRoot, 'src', 'views', 'MyPage.vue'),
+        nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, {}, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],
+      },
+    )
+
+    expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
+    const radioGroupEl = ast.children[0] as ElementNode
+
+    const dataTestIdAttr = radioGroupEl.props.find(
+      (p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === 'data-testid',
+    )
+    expect(dataTestIdAttr?.value?.content).toBe('MyPage-DatabaseType-radio')
+
+    const optionPrefixAttr = radioGroupEl.props.find(
+      (p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === 'option-data-testid-prefix',
+    )
+    expect(optionPrefixAttr).toBeUndefined()
+
+    const deps = componentHierarchyMap.get('MyPage')
+    expect(deps).toBeTruthy()
+
+    const extras = deps?.pomExtraMethods ?? []
+    expect(extras.some(m => m.kind === 'click' && m.name === 'selectDatabaseTypeCloud')).toBe(true)
+    expect(extras).toContainEqual({
+      kind: 'click',
+      name: 'selectDatabaseTypeCloud',
+      selector: {
+        kind: 'withinTestIdByLabel',
+        rootFormattedDataTestId: 'MyPage-DatabaseType-radio',
+        formattedLabel: 'Cloud',
+        exact: true,
+      },
+      params: { annotationText: 'string = ""' },
+    })
   })
 })
