@@ -127,7 +127,11 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
       }
       this.addWatchFile(pointerPath);
     },
-    buildEnd() {
+    buildEnd(error) {
+      if (error) {
+        return;
+      }
+
       const entryCount = componentHierarchyMap.size;
       if (entryCount <= 0) {
         // Skip generation rather than overwriting an existing aggregated file with an empty one.

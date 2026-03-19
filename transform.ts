@@ -30,6 +30,7 @@ import {
   getComposedClickHandlerContent,
   getIdOrName,
   getInnerText,
+  getModelBindingValues,
   getContainedInVForDirectiveKeyValue,
   getContainedInSlotDataKeyValue,
   tryGetContainedInStaticVForSourceLiteralValues,
@@ -45,6 +46,7 @@ import {
   staticAttributeValue,
   templateAttributeValue,
   tryResolveToDirectiveTargetComponentName,
+  toPascalCase,
   IDataTestId,
   IComponentDependencies,
   NativeWrappersMap,
@@ -1075,6 +1077,160 @@ export function createTestIdTransform(
       return `${componentName}-${identifier}${tagSuffix}`;
     };
 
+    const getStaticAttributeValue = (attributeName: string): string | null => {
+      const attr = element.props.find((prop): prop is AttributeNode => {
+        return prop.type === NodeTypes.ATTRIBUTE && prop.name === attributeName;
+      });
+
+      return attr?.value?.content?.trim() || null;
+    };
+
+    const isNativeFormControlTag = (tag: string): boolean => {
+      return tag === "input" || tag === "select" || tag === "textarea";
+    };
+
+    const collectStaticDescendantText = (node: ElementNode): string[] => {
+      const out: string[] = [];
+
+      const visit = (current: TemplateChildNode) => {
+        if (current.type === NodeTypes.TEXT) {
+          const text = current.content.trim();
+          if (text) {
+            out.push(text);
+          }
+          return;
+        }
+
+        if (current.type !== NodeTypes.ELEMENT) {
+          return;
+        }
+
+        const child = current as ElementNode;
+        if (isNativeFormControlTag(child.tag)) {
+          return;
+        }
+
+        for (const grandChild of child.children ?? []) {
+          visit(grandChild);
+        }
+      };
+
+      for (const child of node.children ?? []) {
+        visit(child);
+      }
+
+      return out;
+    };
+
+    const getWrappedLabelTextHint = (): string | null => {
+      let currentParent = hierarchyMap.get(element) || null;
+      while (currentParent) {
+        if (currentParent.tag === "label") {
+          const text = collectStaticDescendantText(currentParent).join(" ").trim();
+          const hint = toPascalCase(text);
+          return hint || null;
+        }
+
+        currentParent = hierarchyMap.get(currentParent) || null;
+      }
+
+      return null;
+    };
+
+    const getNativeFormControlTransformInfo = (): {
+      preferredGeneratedValue: AttributeValue;
+      nativeRole: NativeRole;
+      semanticNameHint: string;
+      semanticNameHintAlternates?: string[];
+    } | null => {
+      let nativeRole: NativeRole | null = null;
+      const staticInputType = (getStaticAttributeValue("type") || "").toLowerCase();
+
+      if (element.tag === "select") {
+        nativeRole = "select";
+      } else if (element.tag === "textarea") {
+        nativeRole = "input";
+      } else if (element.tag === "input") {
+        switch (staticInputType) {
+          case "radio":
+            nativeRole = "radio";
+            break;
+          case "checkbox":
+            nativeRole = "checkbox";
+            break;
+          case "button":
+          case "color":
+          case "file":
+          case "hidden":
+          case "image":
+          case "range":
+          case "reset":
+          case "submit":
+            nativeRole = null;
+            break;
+          default:
+            nativeRole = "input";
+            break;
+        }
+      }
+
+      if (!nativeRole) {
+        return null;
+      }
+
+      const identifierHintRaw = getIdOrName(element);
+      const identifierHint = identifierHintRaw.includes("${") ? null : identifierHintRaw;
+      const labelHint = getWrappedLabelTextHint();
+      const { vModel, modelValue } = getModelBindingValues(element);
+      const modelHint = modelValue || vModel || null;
+
+      const pushDistinctHint = (target: string[], candidate: string | null) => {
+        if (!candidate || target.includes(candidate)) {
+          return;
+        }
+        target.push(candidate);
+      };
+
+      const alternates: string[] = [];
+      let semanticNameHint: string | null = null;
+
+      if (nativeRole === "radio") {
+        const optionHint = toPascalCase(getStaticAttributeValue("value") || "") || labelHint || null;
+        const baseHint = identifierHint || modelHint || conditionalHint || null;
+        semanticNameHint = baseHint && optionHint
+          ? `${baseHint} ${optionHint}`
+          : (baseHint || optionHint || null);
+
+        pushDistinctHint(alternates, baseHint);
+        pushDistinctHint(alternates, optionHint);
+        pushDistinctHint(alternates, labelHint);
+      } else {
+        semanticNameHint = identifierHint || labelHint || modelHint || conditionalHint || null;
+
+        pushDistinctHint(alternates, identifierHint);
+        pushDistinctHint(alternates, labelHint);
+        pushDistinctHint(alternates, modelHint);
+      }
+
+      const semanticSegment = toPascalCase(semanticNameHint || "");
+      if (!semanticSegment) {
+        return null;
+      }
+
+      const primarySemanticHint = semanticNameHint ?? semanticSegment;
+      const roleSuffix = nativeRole;
+      const preferredGeneratedValue = bestKeyPlaceholder
+        ? templateAttributeValue(`${componentName}-${bestKeyPlaceholder}-${semanticSegment}-${roleSuffix}`)
+        : staticAttributeValue(`${componentName}-${semanticSegment}-${roleSuffix}`);
+
+      return {
+        preferredGeneratedValue,
+        nativeRole,
+        semanticNameHint: primarySemanticHint,
+        semanticNameHintAlternates: alternates.filter(candidate => candidate !== primarySemanticHint),
+      };
+    };
+
 
     const applyResolvedDataTestIdForElement = (args: {
       preferredGeneratedValue: AttributeValue;
@@ -1260,6 +1416,19 @@ export function createTestIdTransform(
     }
 
     const existingElementDataTestId = tryGetExistingElementDataTestId(element, testIdAttribute);
+    if (!existingElementDataTestId) {
+      const nativeFormControlInfo = getNativeFormControlTransformInfo();
+      if (nativeFormControlInfo) {
+        applyResolvedDataTestIdForElement({
+          preferredGeneratedValue: nativeFormControlInfo.preferredGeneratedValue,
+          nativeRoleOverride: nativeFormControlInfo.nativeRole,
+          semanticNameHint: nativeFormControlInfo.semanticNameHint,
+          semanticNameHintAlternates: nativeFormControlInfo.semanticNameHintAlternates,
+        });
+        return;
+      }
+    }
+
     if (existingElementDataTestId) {
       // Only generate POM members for existing test ids when the element is something we
       // consider interactive (based on role inferred from tag suffix).

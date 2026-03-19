@@ -22,6 +22,10 @@ describe("remove-existing-test-id-attributes", () => {
 					code: `<template><button class="primary">Save</button></template>`,
 				},
 				{
+					filename: "CommentOnly.vue",
+					code: `<template><!-- <button data-testid="comment-only">Save</button> --></template>`,
+				},
+				{
 					filename: "Component.ts",
 					code: `const attribute = "data-testid";`,
 				},
@@ -51,6 +55,18 @@ describe("remove-existing-test-id-attributes", () => {
 					options: [{ attribute: "data-qa" }],
 					output: `<template><button class="primary">Save</button></template>`,
 					errors: [{ messageId: "removeExistingTestIdAttribute", data: { attribute: "data-qa" } }],
+				},
+				{
+					filename: "NestedObjectProperty.vue",
+					code: `<script setup>const editorOptions = { inputAttr: { 'data-testid': 'save-button', placeholder: 'Firm' } };</script>`,
+					output: `<script setup>const editorOptions = { inputAttr: { placeholder: 'Firm' } };</script>`,
+					errors: [{ messageId: "removeExistingTestIdAttribute" }],
+				},
+				{
+					filename: "InlineObjectProperty.vue",
+					code: `<template><DxSimpleItem :editor-options="{ inputAttr: { 'data-testid': 'save-button', placeholder: 'Firm' } }" /></template>`,
+					output: `<template><DxSimpleItem :editor-options="{ inputAttr: { placeholder: 'Firm' } }" /></template>`,
+					errors: [{ messageId: "removeExistingTestIdAttribute" }],
 				},
 			],
 		});

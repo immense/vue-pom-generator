@@ -244,6 +244,60 @@ function findFirstDataTestId(root: RootNode): string | null {
   return found
 }
 
+function findFirstElement(root: RootNode, predicate: (element: ElementNode) => boolean): ElementNode | null {
+  let found: ElementNode | null = null
+
+  const visit = (node: RootNode | TemplateChildNode) => {
+    if (found) {
+      return
+    }
+
+    if (node.type === NodeTypes.ELEMENT) {
+      const element = node as ElementNode
+      if (predicate(element)) {
+        found = element
+        return
+      }
+
+      for (const child of element.children || []) {
+        visit(child)
+        if (found) {
+          return
+        }
+      }
+      return
+    }
+
+    if (node.type === NodeTypes.IF) {
+      for (const branch of node.branches || []) {
+        visit(branch)
+        if (found) {
+          return
+        }
+      }
+      return
+    }
+
+    if (node.type === NodeTypes.IF_BRANCH || node.type === NodeTypes.FOR || node.type === NodeTypes.ROOT) {
+      for (const child of node.children || []) {
+        visit(child)
+        if (found) {
+          return
+        }
+      }
+    }
+  }
+
+  visit(root)
+  return found
+}
+
+function getStaticAttribute(element: ElementNode, attributeName: string): string | undefined {
+  return element.props.find(
+    (prop): prop is AttributeNode => prop.type === NodeTypes.ATTRIBUTE && prop.name === attributeName,
+  )?.value?.content
+}
+
 describe('createTestIdTransform', () => {
   it('injects html attributes and collects ids', () => {
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
@@ -591,6 +645,88 @@ describe('createTestIdTransform', () => {
       (p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === 'data-testid',
     )
     expect(dataTestIdAttr?.value?.content).toBe('MyComp-SelectedGroup-vselect')
+  })
+
+  it('injects native text inputs using static id/name hints', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+
+    const ast = compileAndCaptureAst(
+      '<div><input id="txbClientName" v-model="state.clientName" type="text" /></div>',
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+      },
+    )
+
+    const inputEl = findFirstElement(ast, element => element.tag === 'input')
+    expect(inputEl).toBeTruthy()
+    expect(getStaticAttribute(inputEl!, 'data-testid')).toBe('MyComp-TxbClientName-input')
+
+    const deps = componentHierarchyMap.get('MyComp')
+    expect(deps?.generatedMethods?.has('typeTxbClientName')).toBe(true)
+  })
+
+  it('injects label-wrapped native inputs and selects without manual ids', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+
+    const ast = compileAndCaptureAst(
+      `
+        <div>
+          <label class="block">
+            <div>File Name*</div>
+            <input v-model="state.createFile.projectName" type="text" />
+          </label>
+          <label class="block">
+            <div>District/Parish (optional)</div>
+            <select v-model="state.createFile.districtParishId">
+              <option value="">None</option>
+            </select>
+          </label>
+        </div>
+      `,
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+      },
+    )
+
+    const inputEl = findFirstElement(ast, element => element.tag === 'input')
+    expect(inputEl).toBeTruthy()
+    expect(getStaticAttribute(inputEl!, 'data-testid')).toBe('MyComp-FileName-input')
+
+    const selectEl = findFirstElement(ast, element => element.tag === 'select')
+    expect(selectEl).toBeTruthy()
+    expect(getStaticAttribute(selectEl!, 'data-testid')).toBe('MyComp-DistrictParishOptional-select')
+
+    const deps = componentHierarchyMap.get('MyComp')
+    expect(deps?.generatedMethods?.has('typeFileName')).toBe(true)
+    expect(deps?.generatedMethods?.has('selectDistrictParishOptional')).toBe(true)
+  })
+
+  it('injects native radio inputs using group + option semantics', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+
+    const ast = compileAndCaptureAst(
+      `
+        <div>
+          <label class="inline-flex items-center gap-2">
+            <input v-model="state.createFile.copyAnswersChoice" type="radio" value="no">
+            No
+          </label>
+        </div>
+      `,
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+      },
+    )
+
+    const radioEl = findFirstElement(ast, element => element.tag === 'input')
+    expect(radioEl).toBeTruthy()
+    expect(getStaticAttribute(radioEl!, 'data-testid')).toBe('MyComp-StateCreateFileCopyAnswersChoiceNo-radio')
+
+    const deps = componentHierarchyMap.get('MyComp')
+    expect(deps?.generatedMethods?.has('selectStateCreateFileCopyAnswersChoiceNo')).toBe(true)
   })
 
   it('infers radio wrappers through nested local SFCs without nativeWrappers config', () => {
