@@ -609,6 +609,18 @@ describe("utils.ts coverage", () => {
     expect(info2?.value).toBe("foo");
   });
 
+  it("covers tryGetExistingElementDataTestId AST-based simple member-expression path", () => {
+    const node = firstElement(parseTemplate("<div :data-testid=\"p.parameter.name\" />"));
+    setBindAst(node, "data-testid", "p.parameter.name");
+    const info = tryGetExistingElementDataTestId(node);
+    expect(info?.isDynamic).toBe(true);
+    expect(info?.isStaticLiteral).toBe(false);
+    expect(info?.value).toBe("p.parameter.name");
+    expect(info?.template).toBe("${p.parameter.name}");
+    expect(info?.templateExpressionCount).toBe(1);
+    expect(info?.rawExpression).toBe("p.parameter.name");
+  });
+
   it("throws when preserving an existing dynamic data-testid expression (unusable selector)", () => {
     const el = firstElement(parseTemplate("<button :data-testid=\"__props.name\" />"));
 
@@ -672,6 +684,42 @@ describe("utils.ts coverage", () => {
     const entries = Array.from(deps.dataTestIdSet);
     expect(entries.length).toBe(1);
     expect(entries[0]?.pom?.formattedDataTestId).toBe("abc-${key}");
+  });
+
+  it("allows preserving an existing simple member-expression data-testid", () => {
+    const el = firstElement(parseTemplate("<button :data-testid=\"p.parameter.name\" />"));
+    setBindAst(el, "data-testid", "p.parameter.name");
+
+    const deps: IComponentDependencies = {
+      filePath: "/src/components/MyComp.vue",
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set<IDataTestId>(),
+      generatedMethods: new Map(),
+      isView: false,
+    };
+
+    const generatedMethodContentByComponent = new Map<string, Set<string>>();
+
+    applyResolvedDataTestId({
+      element: el,
+      componentName: "MyComp",
+      parentComponentName: "MyComp",
+      dependencies: deps,
+      generatedMethodContentByComponent,
+      nativeRole: "button",
+      preferredGeneratedValue: staticAttributeValue("ignored"),
+      bestKeyPlaceholder: "${p.parameter.name}",
+      bestKeyVariable: "p.parameter.name",
+      testIdAttribute: "data-testid",
+      existingIdBehavior: "preserve",
+      addHtmlAttribute: false,
+    });
+
+    const entries = Array.from(deps.dataTestIdSet);
+    expect(entries.length).toBe(1);
+    expect(entries[0]?.value).toBe("${p.parameter.name}");
+    expect(entries[0]?.pom?.formattedDataTestId).toBe("${key}");
   });
 
   it("drives applyResolvedDataTestId through option-driven radio handling and de-duping", () => {

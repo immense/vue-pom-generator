@@ -1563,6 +1563,31 @@ function extractMemberPropertyName(member: MemberExpression | OptionalMemberExpr
   return "";
 }
 
+function isCompilerGeneratedReferenceRoot(name: string): boolean {
+  return name.startsWith("_") || name.startsWith("$");
+}
+
+function tryGetPreservableDynamicReferenceExpression(node: BabelNode | null | false | undefined): string | null {
+  if (!node || typeof node !== "object") {
+    return null;
+  }
+
+  if (isIdentifier(node)) {
+    return isCompilerGeneratedReferenceRoot(node.name) ? null : node.name;
+  }
+
+  if (!isMemberExpression(node) || node.computed) {
+    return null;
+  }
+
+  const objectExpression = tryGetPreservableDynamicReferenceExpression(node.object as BabelNode);
+  if (!objectExpression || !isIdentifier(node.property)) {
+    return null;
+  }
+
+  return `${objectExpression}.${node.property.name}`;
+}
+
 function normalizeHandlerName(name: string): string {
   if (!name) {
     return "";
@@ -1682,7 +1707,7 @@ export interface ExistingElementDataTestIdInfo {
   /** Whether the value is a statically-known literal (safe to join). */
   isStaticLiteral: boolean;
 
-  /** When the binding is a template literal, the unwrapped template text (without backticks). */
+  /** When the binding can be preserved as a one-slot template, the unwrapped template text (without backticks). */
   template?: string;
   /** Number of interpolations in the template literal, if known. */
   templateExpressionCount?: number;
@@ -1697,6 +1722,7 @@ export interface ExistingElementDataTestIdInfo {
  * - data-testid="literal"
  * - :data-testid="`Foo-${bar}`" (TemplateLiteral)
  * - :data-testid="'foo'" (StringLiteral)
+ * - :data-testid="p.parameter.name" (simple Identifier/MemberExpression path)
  *
  * Unknown expressions are treated as dynamic/unknown.
  */
@@ -1767,6 +1793,18 @@ export function tryGetExistingElementDataTestId(node: ElementNode, attributeName
     return { value, isDynamic: false, isStaticLiteral: true };
   }
 
+  const preservableReference = tryGetPreservableDynamicReferenceExpression(ast as BabelNode | null | false | undefined);
+  if (preservableReference) {
+    return {
+      value: preservableReference,
+      isDynamic: true,
+      isStaticLiteral: false,
+      template: `\${${preservableReference}}`,
+      templateExpressionCount: 1,
+      rawExpression: preservableReference,
+    };
+  }
+
   // Fallback: we have no parseable AST shape from Vue compiler.
   // Attempt to parse manually to detect template literals (common for data-testid).
   const raw = (simpleExp.content ?? "").trim();
@@ -1802,6 +1840,18 @@ export function tryGetExistingElementDataTestId(node: ElementNode, attributeName
     if (ast && typeof ast === "object" && "type" in ast && (ast as { type: string }).type === "StringLiteral") {
       const sl = ast as { value?: string };
       return { value: sl.value ?? "", isDynamic: false, isStaticLiteral: true };
+    }
+
+    const preservableReference = tryGetPreservableDynamicReferenceExpression(ast as BabelNode | null | false | undefined);
+    if (preservableReference) {
+      return {
+        value: preservableReference,
+        isDynamic: true,
+        isStaticLiteral: false,
+        template: `\${${preservableReference}}`,
+        templateExpressionCount: 1,
+        rawExpression: preservableReference,
+      };
     }
   } catch {
     // Ignore parse errors; fall through to generic dynamic fallback.

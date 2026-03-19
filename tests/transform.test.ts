@@ -279,6 +279,30 @@ describe('createTestIdTransform', () => {
     expect(testId).toBe('already')
   })
 
+  it('preserves simple member-expression data-testid when existingIdBehavior is preserve', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+
+    expect(() => {
+      compileAndCaptureAst(
+        `
+          <div>
+            <template v-for="p in items">
+              <DynamicFormField
+                v-if="p.showField"
+                :key="p.parameter.name"
+                :data-testid="p.parameter.name"
+              />
+            </template>
+          </div>
+        `,
+        {
+          filename: '/src/components/MyComp.vue',
+          nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, { DynamicFormField: { role: 'input' } }, [], '/src/views', { existingIdBehavior: 'preserve' })],
+        },
+      )
+    }).not.toThrow()
+  })
+
   it('overwrites existing data-testid when existingIdBehavior is overwrite', () => {
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
 
