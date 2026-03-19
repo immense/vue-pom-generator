@@ -2066,7 +2066,8 @@ export function applyResolvedDataTestId(args: {
         + `Component: ${args.componentName}\n`
         + `File: ${file}:${locationHint}\n`
         + `Existing ${attrLabel}: ${JSON.stringify(existing.value)}\n\n`
-        + `Fix: remove the explicit ${attrLabel}, or change existingIdBehavior to "preserve" or "overwrite".`,
+        + `Fix: remove the explicit ${attrLabel}, or change existingIdBehavior to "preserve" or "overwrite".\n`
+        + `Bulk cleanup: run ESLint with the @immense/vue-pom-generator/remove-existing-test-id-attributes rule and --fix to strip explicit ${attrLabel} attributes project-wide before enforcing this mode.`,
       );
     }
 

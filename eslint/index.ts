@@ -1,6 +1,8 @@
 import type { Rule } from "eslint";
 import type { CallExpression, Expression, MemberExpression } from "estree";
 
+import { removeExistingTestIdAttributesRule } from "./remove-existing-test-id-attributes";
+
 /**
  * Playwright locator action methods that should be called via generated POM
  * methods rather than directly on element getters.
@@ -97,5 +99,8 @@ export const noRawLocatorActionRule: Rule.RuleModule = {
 export const plugin = {
 	rules: {
 		"no-raw-locator-action": noRawLocatorActionRule,
+		"remove-existing-test-id-attributes": removeExistingTestIdAttributesRule,
 	},
 } satisfies { rules: Record<string, Rule.RuleModule> };
+
+export { removeExistingTestIdAttributesRule };

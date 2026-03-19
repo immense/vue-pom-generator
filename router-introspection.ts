@@ -159,15 +159,23 @@ function normalizeRouterIntrospectionModuleShims(moduleShims: RouterIntrospectio
   return normalized;
 }
 
+function normalizeModuleResolutionKey(value: string) {
+  let normalized = "";
+  for (const character of value) {
+    normalized += character === "\\" ? "/" : character;
+  }
+  return path.posix.normalize(normalized);
+}
+
 function createRouterIntrospectionVueStubPlugin(options: { routerEntryAbs: string; moduleShims?: Record<string, RouterModuleShimExports> }): VitePlugin {
   const routerEntryAbs = path.resolve(options.routerEntryAbs);
+  const normalizedRouterEntryAbs = normalizeModuleResolutionKey(routerEntryAbs);
   const projectRoot = path.dirname(routerEntryAbs);
   const shimVirtualIdPrefix = "\0vue-testid-router-introspection-shim:";
   const shimVirtualIdsBySource = new Map<string, string>();
   const shimExportsByVirtualId = new Map<string, RouterModuleShimExports>();
   const addShimMatcher = (source: string, virtualId: string) => {
-    shimVirtualIdsBySource.set(source, virtualId);
-    shimVirtualIdsBySource.set(path.posix.normalize(source), virtualId);
+		shimVirtualIdsBySource.set(normalizeModuleResolutionKey(source), virtualId);
   };
 
   for (const [moduleSource, shimExports] of Object.entries(options.moduleShims ?? {})) {
@@ -190,7 +198,7 @@ function createRouterIntrospectionVueStubPlugin(options: { routerEntryAbs: strin
     name: "vue-testid-router-introspection-vue-stub",
     enforce: "pre",
     resolveId(source) {
-      const virtualId = shimVirtualIdsBySource.get(source);
+      const virtualId = shimVirtualIdsBySource.get(normalizeModuleResolutionKey(source));
       if (virtualId)
         return virtualId;
       return null;
@@ -247,10 +255,11 @@ function createRouterIntrospectionVueStubPlugin(options: { routerEntryAbs: strin
 
       // Handle Vite /@fs/ prefix (absolute filesystem path outside root).
       const fsPath = cleanId.startsWith("/@fs/") ? cleanId.slice("/@fs/".length) : cleanId;
+      const normalizedFsPath = path.isAbsolute(fsPath) ? normalizeModuleResolutionKey(path.resolve(fsPath)) : normalizeModuleResolutionKey(fsPath);
 
       // Always allow the router entry itself to be loaded by Vite/Node.
       // Note: Vite may normalize paths with posix separators. We always compare resolved absolute paths.
-      if (path.isAbsolute(fsPath) && path.resolve(fsPath) === routerEntryAbs)
+      if (path.isAbsolute(fsPath) && normalizedFsPath === normalizedRouterEntryAbs)
         return null;
 
       // If this still isn't a filesystem absolute path, it's not something we should stub.

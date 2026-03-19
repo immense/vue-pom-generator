@@ -26,6 +26,7 @@ Exported entrypoints:
 - `createVuePomGeneratorPlugins()`
 - `vuePomGenerator()` (alias)
 - `defineVuePomGeneratorConfig()` (typed config helper)
+- `@immense/vue-pom-generator/eslint` (ESLint rules for cleanup/enforcement)
 
 ## Configuration
 
@@ -194,6 +195,50 @@ When cleaning up a codebase that already has a mix of manually-authored test ids
 - `"preserve"` (default): leave author-provided ids untouched
 - `"overwrite"`: replace existing ids with generated ids
 - `"error"`: throw when an existing id is detected (useful for incremental cleanup)
+
+When you want CI/builds to fail on explicit test ids, pair `existingIdBehavior: "error"` with the ESLint cleanup rule exported from `@immense/vue-pom-generator/eslint`.
+
+### ESLint cleanup rule: remove existing test-id attributes
+
+Use the `remove-existing-test-id-attributes` rule to strip explicit test-id attributes from `.vue` files before or while enforcing `existingIdBehavior: "error"`.
+
+Add this to your ESLint flat-config file, typically `eslint.config.ts` (or `eslint.config.js` / `eslint.config.mjs` at the project root):
+
+```ts
+// eslint.config.ts (project root)
+import vueParser from "vue-eslint-parser";
+import { plugin as vuePomGeneratorEslint } from "@immense/vue-pom-generator/eslint";
+
+export default [
+  {
+    files: ["**/*.vue"],
+    languageOptions: {
+      parser: vueParser,
+      ecmaVersion: 2022,
+      sourceType: "module",
+    },
+    plugins: {
+      "@immense/vue-pom-generator": vuePomGeneratorEslint,
+    },
+    rules: {
+      "@immense/vue-pom-generator/remove-existing-test-id-attributes": "error",
+    },
+  },
+];
+```
+
+Then run ESLint with `--fix` once to remove legacy attributes across the project. After cleanup, keep the rule enabled in CI and set `injection.existingIdBehavior: "error"` so both linting and compilation fail fast when explicit ids sneak back in.
+
+If you use a custom attribute instead of `data-testid`, configure the rule with an option:
+
+In that same `eslint.config.ts` file:
+
+```ts
+// inside eslint.config.ts
+const rules = {
+  "@immense/vue-pom-generator/remove-existing-test-id-attributes": ["error", { attribute: "data-qa" }],
+};
+```
 
 ## Sequence diagram
 

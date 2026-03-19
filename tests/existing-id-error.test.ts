@@ -27,7 +27,7 @@ describe("existingIdBehavior: 'error'", () => {
     const id = path.resolve(process.cwd(), "TestComponent.vue");
 
     // Using string matching instead of RegExp literal to satisfy linting rules.
-    const expectedError = "[vue-pom-generator] Found existing data-testid while existingIdBehavior=\"error\".";
+    const expectedError = "remove-existing-test-id-attributes rule and --fix";
 
     await expect((metadataPlugin.transform as any).call({}, code, id)).rejects.toThrow(expectedError);
   });
