@@ -30,6 +30,7 @@ interface InternalFactoryOptions {
   testIdAttribute: string;
   loggerRef: { current: VuePomGeneratorLogger };
   scanDirs?: string[];
+  getWrapperSearchRoots: () => string[];
   getProjectRoot: () => string;
 }
 
@@ -112,6 +113,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     testIdAttribute,
     loggerRef,
     scanDirs = ["src"],
+    getWrapperSearchRoots,
     getProjectRoot,
   } = options;
 
@@ -202,15 +204,16 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
               nativeWrappers,
               excludedComponents,
               viewsDirAbs,
-              {
-                existingIdBehavior,
-                testIdAttribute,
-                nameCollisionBehavior,
-                warn: (message) => loggerRef.current.warn(message),
-                vueFilesPathMap,
-              },
-            ),
-          );
+                {
+                  existingIdBehavior,
+                  testIdAttribute,
+                  nameCollisionBehavior,
+                  warn: (message) => loggerRef.current.warn(message),
+                  vueFilesPathMap,
+                  wrapperSearchRoots: getWrapperSearchRoots(),
+                },
+              ),
+            );
 
           // Return an exit hook to extract metadata after all other transforms (including our own) have run.
           return () => {
@@ -235,14 +238,15 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
             nativeWrappers,
             excludedComponents,
             viewsDirAbs,
-            {
-              existingIdBehavior,
-              testIdAttribute,
-              nameCollisionBehavior,
-              warn: (message) => loggerRef.current.warn(message),
-              vueFilesPathMap,
-            },
-          );
+              {
+                existingIdBehavior,
+                testIdAttribute,
+                nameCollisionBehavior,
+                warn: (message) => loggerRef.current.warn(message),
+                vueFilesPathMap,
+                wrapperSearchRoots: getWrapperSearchRoots(),
+              },
+            );
           perFileTransform.set(componentName, transform);
         }
 

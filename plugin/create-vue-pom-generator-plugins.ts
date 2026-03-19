@@ -19,6 +19,15 @@ function assertNonEmptyString(value: string | undefined | null, name: string): a
   }
 }
 
+function assertNonEmptyStringArray(value: string[] | undefined, name: string): asserts value is string[] {
+  if (!value)
+    return;
+
+  for (const [index, entry] of value.entries()) {
+    assertNonEmptyString(entry, `${name}[${index}]`);
+  }
+}
+
 function assertRouterModuleShims(
   value: Record<string, RouterModuleShimDefinition> | undefined,
   name: string,
@@ -100,6 +109,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
 
   const viewsDir = injection.viewsDir ?? "src/views";
   const scanDirs = injection.scanDirs ?? ["src"];
+  const wrapperSearchRoots = injection.wrapperSearchRoots ?? [];
   const nativeWrappers = (injection.nativeWrappers ?? {}) as NativeWrappersMap;
   const excludedComponents = injection.excludeComponents ?? [];
   const testIdAttribute = (injection.attribute ?? "data-testid").trim() || "data-testid";
@@ -140,6 +150,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
       // Fail-fast validation.
       assertNonEmptyString(testIdAttribute, "[vue-pom-generator] injection.attribute");
       assertNonEmptyString(viewsDir, "[vue-pom-generator] injection.viewsDir");
+      assertNonEmptyStringArray(wrapperSearchRoots, "[vue-pom-generator] injection.wrapperSearchRoots");
 
       if (generationEnabled) {
         assertNonEmptyString(outDir, "[vue-pom-generator] generation.outDir");
@@ -157,6 +168,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
   };
 
   const getViewsDirAbs = () => resolveFromProjectRoot(projectRootRef.current, viewsDir);
+  const getWrapperSearchRootsAbs = () => wrapperSearchRoots.map(root => resolveFromProjectRoot(projectRootRef.current, root));
 
   const componentTestIds = new Map<string, Set<string>>();
   const elementMetadata = new Map<string, Map<string, ElementMetadata>>();
@@ -178,6 +190,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     testIdAttribute,
     loggerRef,
     scanDirs,
+    getWrapperSearchRoots: getWrapperSearchRootsAbs,
     getProjectRoot: () => projectRootRef.current,
   });
 
@@ -191,6 +204,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     excludedComponents,
     viewsDir,
     scanDirs,
+    getWrapperSearchRoots: getWrapperSearchRootsAbs,
     outDir,
     emitLanguages,
     csharp,

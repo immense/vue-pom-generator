@@ -71,6 +71,10 @@ export default defineConfig(() => {
       // For Nuxt, you might want ["app", "components", "pages", "layouts"]
       scanDirs: ["src"],
 
+      // Optional: extra directories to search when inferring wrapper-component roles for
+      // components that live outside scanDirs (for example a sibling shared UI package)
+      wrapperSearchRoots: ["../shared/ui/src/components"],
+
       // Optional: wrapper semantics for design-system components
       nativeWrappers: {
         MyButton: { role: "button" },

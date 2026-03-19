@@ -649,8 +649,7 @@ describe('createTestIdTransform', () => {
     })
   })
 
-  it('infers radio wrappers from sibling shared-ui components without vueFilesPathMap', () => {
-    const originalCwd = process.cwd()
+  it('does not infer sibling wrapper radios without configured search roots', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-monorepo-'))
     const frontendRoot = path.join(tempRoot, 'frontend')
     const sharedComponentsRoot = path.join(tempRoot, 'shared', 'ui', 'src', 'components')
@@ -664,41 +663,71 @@ describe('createTestIdTransform', () => {
       '<template><div><SharedRadio v-for="option in props.options" :key="option.value" :text="option.text" :modelValue="option.value" /></div></template>',
     )
 
-    try {
-      process.chdir(frontendRoot)
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const ast = compileAndCaptureAst(
+      '<SharedRadioGroup :options="[\'Cloud\', \'Local\']" v-model="databaseType" />',
+      {
+        filename: path.join(frontendRoot, 'src', 'views', 'MyPage.vue'),
+        nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, {}, [], path.join(frontendRoot, 'src', 'views'))],
+      },
+    )
 
-      const componentHierarchyMap = new Map<string, IComponentDependencies>()
-      const ast = compileAndCaptureAst(
-        '<SharedRadioGroup :options="[\'Cloud\', \'Local\']" v-model="databaseType" />',
-        {
-          filename: path.join(frontendRoot, 'src', 'views', 'MyPage.vue'),
-          nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, {}, [], path.join(frontendRoot, 'src', 'views'))],
-        },
-      )
+    expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
+    const radioGroupEl = ast.children[0] as ElementNode
 
-      expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
-      const radioGroupEl = ast.children[0] as ElementNode
+    const dataTestIdAttr = radioGroupEl.props.find(
+      (p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === 'data-testid',
+    )
+    expect(dataTestIdAttr).toBeUndefined()
 
-      const dataTestIdAttr = radioGroupEl.props.find(
-        (p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === 'data-testid',
-      )
-      expect(dataTestIdAttr?.value?.content).toBe('MyPage-DatabaseType-radio')
+    const extras = componentHierarchyMap.get('MyPage')?.pomExtraMethods ?? []
+    expect(extras.some(method => method.kind === 'click' && method.name === 'selectDatabaseTypeCloud')).toBe(false)
+  })
 
-      const deps = componentHierarchyMap.get('MyPage')
-      expect(deps?.pomExtraMethods).toContainEqual({
-        kind: 'click',
-        name: 'selectDatabaseTypeCloud',
-        selector: {
-          kind: 'withinTestIdByLabel',
-          rootFormattedDataTestId: 'MyPage-DatabaseType-radio',
-          formattedLabel: 'Cloud',
-          exact: true,
-        },
-        params: { annotationText: 'string = ""' },
-      })
-    }
-    finally {
-      process.chdir(originalCwd)
-    }
+  it('infers sibling wrapper radios from configured search roots without vueFilesPathMap', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-monorepo-'))
+    const frontendRoot = path.join(tempRoot, 'frontend')
+    const sharedComponentsRoot = path.join(tempRoot, 'shared', 'ui', 'src', 'components')
+    const radioPath = path.join(sharedComponentsRoot, 'SharedRadio.vue')
+    const radioGroupPath = path.join(sharedComponentsRoot, 'SharedRadioGroup.vue')
+    fs.mkdirSync(path.dirname(radioPath), { recursive: true })
+    fs.mkdirSync(path.join(frontendRoot, 'src', 'views'), { recursive: true })
+    fs.writeFileSync(radioPath, '<template><div><input type="radio" /></div></template>')
+    fs.writeFileSync(
+      radioGroupPath,
+      '<template><div><SharedRadio v-for="option in props.options" :key="option.value" :text="option.text" :modelValue="option.value" /></div></template>',
+    )
+
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const ast = compileAndCaptureAst(
+      '<SharedRadioGroup :options="[\'Cloud\', \'Local\']" v-model="databaseType" />',
+      {
+        filename: path.join(frontendRoot, 'src', 'views', 'MyPage.vue'),
+        nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, {}, [], path.join(frontendRoot, 'src', 'views'), {
+          wrapperSearchRoots: [sharedComponentsRoot],
+        })],
+      },
+    )
+
+    expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
+    const radioGroupEl = ast.children[0] as ElementNode
+
+    const dataTestIdAttr = radioGroupEl.props.find(
+      (p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === 'data-testid',
+    )
+    expect(dataTestIdAttr?.value?.content).toBe('MyPage-DatabaseType-radio')
+
+    const deps = componentHierarchyMap.get('MyPage')
+    expect(deps?.pomExtraMethods).toContainEqual({
+      kind: 'click',
+      name: 'selectDatabaseTypeCloud',
+      selector: {
+        kind: 'withinTestIdByLabel',
+        rootFormattedDataTestId: 'MyPage-DatabaseType-radio',
+        formattedLabel: 'Cloud',
+        exact: true,
+      },
+      params: { annotationText: 'string = ""' },
+    })
   })
 })

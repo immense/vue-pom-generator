@@ -17,6 +17,7 @@ interface SupportFactoryOptions {
   excludedComponents: string[];
   viewsDir: string;
   scanDirs: string[];
+  getWrapperSearchRoots: () => string[];
 
   /** Output directory for generated files (POMs + optional fixtures). */
   outDir?: string;
@@ -55,6 +56,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     excludedComponents,
     viewsDir,
     scanDirs,
+    getWrapperSearchRoots,
     outDir,
     emitLanguages,
     csharp,
@@ -129,6 +131,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     excludedComponents,
     viewsDir,
     scanDirs,
+    getWrapperSearchRoots,
     projectRootRef,
     normalizedBasePagePath,
     basePageClassPath,

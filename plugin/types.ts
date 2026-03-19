@@ -71,18 +71,31 @@ export interface VuePomGeneratorPluginOptions {
     excludeComponents?: string[];
 
     /**
-     * Directories to scan for Vue files when building the POM library.
-     *
-     * Defaults to `["src"]`.
-     *
-     * For Nuxt projects, you might want to include `["app", "components", "pages", "layouts"]`.
-     */
+      * Directories to scan for Vue files when building the POM library.
+      *
+      * Defaults to `["src"]`.
+      *
+      * For Nuxt projects, you might want to include `["app", "components", "pages", "layouts"]`.
+      */
     scanDirs?: string[];
 
     /**
-     * What to do when the author already provided a test id attribute.
-     *
-     * - `"preserve"` (default): keep the existing value
+      * Additional directories to search recursively when inferring wrapper-component roles from
+      * SFC templates.
+      *
+      * Use this for shared wrapper libraries that live outside `scanDirs`, such as sibling
+      * packages in a monorepo.
+      *
+      * Behavior:
+      * - Resolved relative to the Vite project root (resolved `config.root`) when not absolute.
+      * - No extra wrapper lookup is performed unless roots are explicitly provided here.
+      */
+    wrapperSearchRoots?: string[];
+
+    /**
+      * What to do when the author already provided a test id attribute.
+      *
+      * - `"preserve"` (default): keep the existing value
      * - `"overwrite"`: replace it with the generated value
      * - `"error"`: throw to force cleanup/migration
      */

@@ -21,6 +21,7 @@ interface DevProcessorOptions {
   excludedComponents: string[];
   viewsDir: string;
   scanDirs: string[];
+  getWrapperSearchRoots: () => string[];
 
   projectRootRef: { current: string };
   normalizedBasePagePath: string;
@@ -52,6 +53,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     excludedComponents,
     viewsDir,
     scanDirs,
+    getWrapperSearchRoots,
     projectRootRef,
     normalizedBasePagePath,
     basePageClassPath,
@@ -236,7 +238,11 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
                 nativeWrappers,
                 excludedComponents,
                 getViewsDirAbs(),
-                { existingIdBehavior: "preserve", testIdAttribute },
+                {
+                  existingIdBehavior: "preserve",
+                  testIdAttribute,
+                  wrapperSearchRoots: getWrapperSearchRoots(),
+                },
               ),
             ],
           });

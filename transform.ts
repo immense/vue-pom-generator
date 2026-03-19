@@ -57,21 +57,71 @@ const CLICK_EVENT_NAME = TESTID_CLICK_EVENT_NAME;
 const ENABLE_CLICK_INSTRUMENTATION = true;
 
 // Cache inferred wrapper configs across transforms/build passes.
-// Keyed by component tag name (e.g. "CustomInput").
-const inferredNativeWrapperConfigByTag = new Map<string, { role: string }>();
-const inferredSfcPathByTag = new Map<string, string | null>();
-let indexedVueSfcPathsByBasename: Map<string, string[]> | null = null;
+const inferredNativeWrapperConfigByLookup = new Map<string, { role: string }>();
+const inferredSfcPathByLookup = new Map<string, string | null>();
+const indexedVueSfcPathsByRoots = new Map<string, Map<string, string[]>>();
 
 function toKebabCaseTag(tag: string): string {
-  return tag
-    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
-    .replace(/[_.\s]+/g, "-")
-    .toLowerCase();
+  let result = "";
+  let previousWasSeparator = false;
+
+  for (let i = 0; i < tag.length; i += 1) {
+    const ch = tag[i];
+    const code = ch.charCodeAt(0);
+
+    if (ch === "_" || ch === "-" || ch === "." || ch === " " || ch === "\t" || ch === "\n" || ch === "\r") {
+      if (result && !previousWasSeparator) {
+        result += "-";
+      }
+      previousWasSeparator = true;
+      continue;
+    }
+
+    const previous = i > 0 ? tag[i - 1] : "";
+    const previousCode = previous ? previous.charCodeAt(0) : 0;
+    const hasPrevious = i > 0;
+    const shouldInsertSeparator = hasPrevious
+      && isAsciiUppercaseLetterCode(code)
+      && (isAsciiLetterCode(previousCode) || isAsciiDigitCode(previousCode))
+      && !previousWasSeparator;
+
+    if (shouldInsertSeparator) {
+      result += "-";
+    }
+
+    result += ch.toLowerCase();
+    previousWasSeparator = false;
+  }
+
+  return result;
 }
 
-function buildVueSfcPathIndex(): Map<string, string[]> {
-  if (indexedVueSfcPathsByBasename) {
-    return indexedVueSfcPathsByBasename;
+function normalizeSearchRoots(wrapperSearchRoots: string[]): string[] {
+  const normalized = new Set<string>();
+  for (const root of wrapperSearchRoots) {
+    const resolved = path.resolve(root);
+    try {
+      if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+        continue;
+      }
+      normalized.add(path.normalize(fs.realpathSync(resolved)));
+    }
+    catch {
+      continue;
+    }
+  }
+  return [...normalized];
+}
+
+function buildSearchRootsKey(searchRoots: string[]): string {
+  return searchRoots.join("\n");
+}
+
+function buildVueSfcPathIndex(searchRoots: string[]): Map<string, string[]> {
+  const indexKey = buildSearchRootsKey(searchRoots);
+  const existingIndex = indexedVueSfcPathsByRoots.get(indexKey);
+  if (existingIndex) {
+    return existingIndex;
   }
 
   const index = new Map<string, string[]>();
@@ -90,26 +140,6 @@ function buildVueSfcPathIndex(): Map<string, string[]> {
     "out",
     "tmp",
   ]);
-
-  const cwd = process.cwd();
-  const parent = path.resolve(cwd, "..");
-  const searchRoots = new Set<string>();
-  const enqueueIfDirectory = (dirPath: string) => {
-    try {
-      if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
-        searchRoots.add(dirPath);
-      }
-    }
-    catch {
-      // Ignore unreadable paths.
-    }
-  };
-
-  for (const root of [cwd, parent]) {
-    for (const rel of ["src", "components", "app", "shared", "packages", "libs"]) {
-      enqueueIfDirectory(path.resolve(root, rel));
-    }
-  }
 
   const stack = [...searchRoots];
   const seenDirs = new Set<string>();
@@ -150,59 +180,70 @@ function buildVueSfcPathIndex(): Map<string, string[]> {
     }
   }
 
-  indexedVueSfcPathsByBasename = index;
+  indexedVueSfcPathsByRoots.set(indexKey, index);
   return index;
 }
 
-function tryResolveSfcPathForTag(tag: string, vueFilesPathMap?: Map<string, string>): string | null {
-  if (inferredSfcPathByTag.has(tag)) {
-    return inferredSfcPathByTag.get(tag) ?? null;
+function tryResolveSfcPathForTag(
+  tag: string,
+  vueFilesPathMap?: Map<string, string>,
+  wrapperSearchRoots: string[] = [],
+): string | null {
+  const registeredPath = vueFilesPathMap?.get(tag);
+  const normalizedSearchRoots = normalizeSearchRoots(wrapperSearchRoots);
+  const lookupKey = `${tag}\n${registeredPath ?? ""}\n${buildSearchRootsKey(normalizedSearchRoots)}`;
+  if (inferredSfcPathByLookup.has(lookupKey)) {
+    return inferredSfcPathByLookup.get(lookupKey) ?? null;
   }
 
-  const registeredPath = vueFilesPathMap?.get(tag);
   const candidateNames = [`${tag}.vue`, `${toKebabCaseTag(tag)}.vue`];
   const directCandidates = [
     registeredPath ? path.resolve(process.cwd(), registeredPath) : null,
-    ...candidateNames.flatMap(fileName => ([
-      path.resolve(process.cwd(), "src/components", fileName),
-      path.resolve(process.cwd(), "components", fileName),
-      path.resolve(process.cwd(), "app/components", fileName),
-      path.resolve(process.cwd(), "shared/ui/src/components", fileName),
-      path.resolve(process.cwd(), "..", "shared/ui/src/components", fileName),
-    ])),
+    ...normalizedSearchRoots.flatMap(root => candidateNames.map(fileName => path.join(root, fileName))),
   ].filter((value): value is string => !!value);
 
   const directMatch = directCandidates.find(candidatePath => fs.existsSync(candidatePath));
   if (directMatch) {
-    inferredSfcPathByTag.set(tag, directMatch);
+    inferredSfcPathByLookup.set(lookupKey, directMatch);
     return directMatch;
   }
 
-  const index = buildVueSfcPathIndex();
-  const scorePath = (candidatePath: string): number => {
-    let score = candidatePath.length;
-    if (candidatePath.includes(`${path.sep}src${path.sep}components${path.sep}`)) {
-      score -= 50;
-    }
-    if (candidatePath.includes(`${path.sep}shared${path.sep}`)) {
-      score -= 10;
-    }
-    return score;
+  if (normalizedSearchRoots.length === 0) {
+    inferredSfcPathByLookup.set(lookupKey, null);
+    return null;
+  }
+
+  const index = buildVueSfcPathIndex(normalizedSearchRoots);
+  const scorePath = (candidatePath: string): [number, number, string] => {
+    const rootIndex = normalizedSearchRoots.findIndex((root) => {
+      return candidatePath === root || candidatePath.startsWith(root + path.sep);
+    });
+    const effectiveRootIndex = rootIndex === -1 ? Number.MAX_SAFE_INTEGER : rootIndex;
+    const relativeLength = rootIndex === -1
+      ? candidatePath.length
+      : path.relative(normalizedSearchRoots[rootIndex], candidatePath).length;
+    return [effectiveRootIndex, relativeLength, candidatePath];
   };
 
+  let bestMatch: string | null = null;
+  let bestScore: [number, number, string] | null = null;
   for (const fileName of candidateNames) {
     const matches = index.get(fileName);
     if (!matches?.length) {
       continue;
     }
 
-    const bestMatch = matches.slice().sort((a, b) => scorePath(a) - scorePath(b))[0] ?? null;
-    inferredSfcPathByTag.set(tag, bestMatch);
-    return bestMatch;
+    for (const match of matches) {
+      const score = scorePath(match);
+      if (!bestScore || score[0] < bestScore[0] || (score[0] === bestScore[0] && score[1] < bestScore[1]) || (score[0] === bestScore[0] && score[1] === bestScore[1] && score[2] < bestScore[2])) {
+        bestScore = score;
+        bestMatch = match;
+      }
+    }
   }
 
-  inferredSfcPathByTag.set(tag, null);
-  return null;
+  inferredSfcPathByLookup.set(lookupKey, bestMatch);
+  return bestMatch;
 }
 
 function trimLeadingSeparators(value: string): string {
@@ -349,6 +390,7 @@ function tryExtractStableHintFromConditionalExpressionSource(source: string): st
 function tryInferNativeWrapperRoleFromSfc(
   tag: string,
   vueFilesPathMap?: Map<string, string>,
+  wrapperSearchRoots: string[] = [],
   seenTags: Set<string> = new Set(),
 ): { role: NativeRole } | null {
   // Only attempt inference for PascalCase component tags.
@@ -361,13 +403,15 @@ function tryInferNativeWrapperRoleFromSfc(
     return null;
   }
 
-  const cached = inferredNativeWrapperConfigByTag.get(tag);
+  const normalizedSearchRoots = normalizeSearchRoots(wrapperSearchRoots);
+  const cacheKey = `${tag}\n${vueFilesPathMap?.get(tag) ?? ""}\n${buildSearchRootsKey(normalizedSearchRoots)}`;
+  const cached = inferredNativeWrapperConfigByLookup.get(cacheKey);
   if (cached)
     return cached.role ? cached as { role: NativeRole } : null;
 
-  const filePath = tryResolveSfcPathForTag(tag, vueFilesPathMap);
+  const filePath = tryResolveSfcPathForTag(tag, vueFilesPathMap, normalizedSearchRoots);
   if (!filePath) {
-    inferredNativeWrapperConfigByTag.set(tag, { role: "" });
+    inferredNativeWrapperConfigByLookup.set(cacheKey, { role: "" });
     return null;
   }
 
@@ -376,7 +420,7 @@ function tryInferNativeWrapperRoleFromSfc(
     source = fs.readFileSync(filePath, "utf8");
   }
   catch {
-    inferredNativeWrapperConfigByTag.set(tag, { role: "" });
+    inferredNativeWrapperConfigByLookup.set(cacheKey, { role: "" });
     return null;
   }
 
@@ -388,12 +432,12 @@ function tryInferNativeWrapperRoleFromSfc(
     template = descriptor.template?.content ?? "";
   }
   catch {
-    inferredNativeWrapperConfigByTag.set(tag, { role: "" });
+    inferredNativeWrapperConfigByLookup.set(cacheKey, { role: "" });
     return null;
   }
 
   if (!template.trim()) {
-    inferredNativeWrapperConfigByTag.set(tag, { role: "" });
+    inferredNativeWrapperConfigByLookup.set(cacheKey, { role: "" });
     return null;
   }
 
@@ -417,6 +461,10 @@ function tryInferNativeWrapperRoleFromSfc(
       return (typeAttr?.value?.content ?? "").toLowerCase();
     };
 
+    type InferableNode = RootNode | TemplateChildNode | IfBranchNode;
+
+    let inferRoleFromNode: (node: InferableNode) => { role: NativeRole } | null;
+
     const inferRoleFromElement = (element: ElementNode): { role: NativeRole } | null => {
       const elementTag = (element.tag || "").toLowerCase();
       const inputType = getStaticTypeAttribute(element);
@@ -438,13 +486,13 @@ function tryInferNativeWrapperRoleFromSfc(
         return { role: "button" };
 
       if (isComponentLikeTag(element.tag) && element.tag !== tag) {
-        const nested = tryInferNativeWrapperRoleFromSfc(element.tag, vueFilesPathMap, nextSeen);
+        const nested = tryInferNativeWrapperRoleFromSfc(element.tag, vueFilesPathMap, normalizedSearchRoots, nextSeen);
         if (nested)
           return nested;
       }
 
       for (const child of element.children ?? []) {
-        const inferred = inferRoleFromNode(child as RootNode | TemplateChildNode);
+        const inferred = inferRoleFromNode(child);
         if (inferred)
           return inferred;
       }
@@ -452,7 +500,7 @@ function tryInferNativeWrapperRoleFromSfc(
       return null;
     };
 
-    const inferRoleFromNode = (node: RootNode | TemplateChildNode): { role: NativeRole } | null => {
+    inferRoleFromNode = (node: InferableNode): { role: NativeRole } | null => {
       if (!node || typeof node !== "object")
         return null;
 
@@ -462,7 +510,7 @@ function tryInferNativeWrapperRoleFromSfc(
 
       if (node.type === NodeTypes.ROOT || node.type === NodeTypes.IF_BRANCH || node.type === NodeTypes.FOR) {
         for (const child of node.children ?? []) {
-          const inferred = inferRoleFromNode(child as RootNode | TemplateChildNode);
+          const inferred = inferRoleFromNode(child);
           if (inferred)
             return inferred;
         }
@@ -471,7 +519,7 @@ function tryInferNativeWrapperRoleFromSfc(
 
       if (node.type === NodeTypes.IF) {
         for (const branch of node.branches ?? []) {
-          const inferred = inferRoleFromNode(branch as unknown as RootNode | TemplateChildNode);
+          const inferred = inferRoleFromNode(branch);
           if (inferred)
             return inferred;
         }
@@ -482,16 +530,16 @@ function tryInferNativeWrapperRoleFromSfc(
 
     const inferred = inferRoleFromNode(ast);
     if (inferred) {
-      inferredNativeWrapperConfigByTag.set(tag, inferred);
+      inferredNativeWrapperConfigByLookup.set(cacheKey, inferred);
       return inferred;
     }
   }
   catch {
-    inferredNativeWrapperConfigByTag.set(tag, { role: "" });
+    inferredNativeWrapperConfigByLookup.set(cacheKey, { role: "" });
     return null;
   }
 
-  inferredNativeWrapperConfigByTag.set(tag, { role: "" });
+  inferredNativeWrapperConfigByLookup.set(cacheKey, { role: "" });
   return null;
 }
 
@@ -718,6 +766,7 @@ export function createTestIdTransform(
     nameCollisionBehavior?: "error" | "warn" | "suffix";
     warn?: (message: string) => void;
     vueFilesPathMap?: Map<string, string>;
+    wrapperSearchRoots?: string[];
   } = {},
 ): NodeTransform {
   const existingIdBehavior = options.existingIdBehavior ?? "preserve";
@@ -725,6 +774,7 @@ export function createTestIdTransform(
   const nameCollisionBehavior = options.nameCollisionBehavior ?? "suffix";
   const warn = options.warn;
   const vueFilesPathMap = options.vueFilesPathMap;
+  const wrapperSearchRoots = options.wrapperSearchRoots ?? [];
 
   // Some projects (and dev environments) use symlinks. We want viewsDir containment checks
   // to behave like the filesystem does (real paths), but we must not crash for virtual
@@ -915,7 +965,7 @@ export function createTestIdTransform(
     // (e.g. CustomInput/CustomTextArea) so they behave like real inputs without requiring
     // explicit configuration in vite.config.ts.
     if (!nativeWrappers[element.tag]) {
-      const inferred = tryInferNativeWrapperRoleFromSfc(element.tag, vueFilesPathMap);
+      const inferred = tryInferNativeWrapperRoleFromSfc(element.tag, vueFilesPathMap, wrapperSearchRoots);
       if (inferred?.role) {
         // Cache onto the nativeWrappers map so downstream utilities (formatTagName, wrapper transform)
         // see it consistently.
