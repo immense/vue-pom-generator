@@ -42,6 +42,20 @@ interface SupportFactoryOptions {
   customPomImportAliases?: Record<string, string>;
   customPomImportNameCollisionBehavior?: "error" | "alias";
   testIdAttribute: string;
+  buildGenerationMetricsRef?: {
+    current: {
+      entryCount: number;
+      interactiveComponentCount: number;
+      dataTestIdCount: number;
+    };
+  };
+  devGenerationMetricsRef?: {
+    current: {
+      entryCount: number;
+      interactiveComponentCount: number;
+      dataTestIdCount: number;
+    };
+  };
 
   loggerRef: { current: VuePomGeneratorLogger };
 }
@@ -70,6 +84,8 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     customPomImportAliases,
     customPomImportNameCollisionBehavior,
     testIdAttribute,
+    buildGenerationMetricsRef,
+    devGenerationMetricsRef,
     loggerRef,
   } = options;
 
@@ -117,6 +133,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     customPomImportAliases,
     customPomImportNameCollisionBehavior,
     testIdAttribute,
+    buildGenerationMetricsRef,
     routerAwarePoms,
     routerType,
     resolvedRouterEntry,
@@ -134,12 +151,14 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     basePageClassPath,
     outDir,
     emitLanguages,
+    csharp,
     generateFixtures,
     customPomAttachments,
     customPomDir,
     customPomImportAliases,
     customPomImportNameCollisionBehavior,
     testIdAttribute,
+    devGenerationMetricsRef,
     routerAwarePoms,
     routerType,
     resolvedRouterEntry,

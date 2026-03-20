@@ -61,6 +61,7 @@ function makeDeps(options: Partial<IComponentDependencies> & { filePath: string 
     dataTestIdSet: options.dataTestIdSet ?? new Set(),
     methodsContent: options.methodsContent ?? "\n",
     generatedMethods: options.generatedMethods,
+    pomExtraMethods: options.pomExtraMethods,
     isView: options.isView,
   };
 }
@@ -458,6 +459,86 @@ describe("class-generation coverage", () => {
       // The method must compile: key must not be an undeclared reference.
       // (If key appears only in the template but not in the signature, C# throws CS0103.)
       expect(cs).toMatch(/ItemsCheckByKeyInput\(string key/);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("emits extra click methods for structured selector specs", async () => {
+    const tempRoot = makeTempRoot("vue-pom-extra-click-selectors-");
+
+    try {
+      const basePagePath = path.join(tempRoot, "BasePage.ts");
+      writeMinimalBasePage(basePagePath);
+
+      const componentHierarchyMap = new Map<string, IComponentDependencies>([
+        [
+          "InterviewPage",
+          makeDeps({
+            filePath: path.join(tempRoot, "src", "views", "InterviewPage.vue"),
+            isView: true,
+            pomExtraMethods: [
+              {
+                kind: "click",
+                name: "selectDatabaseTypeCloud",
+                selector: {
+                  kind: "withinTestIdByLabel",
+                  rootFormattedDataTestId: "InterviewPage-DatabaseType-radio",
+                  formattedLabel: "Cloud",
+                  exact: true,
+                },
+                params: { annotationText: "string = \"\"" },
+              },
+              {
+                kind: "click",
+                name: "selectDatabaseTypeByValue",
+                selector: {
+                  kind: "withinTestIdByLabel",
+                  rootFormattedDataTestId: "InterviewPage-DatabaseType-radio",
+                  formattedLabel: "${value}",
+                  exact: false,
+                },
+                params: { value: "string", annotationText: "string = \"\"", wait: "boolean = true" },
+              },
+              {
+                kind: "click",
+                name: "clickOneButton",
+                selector: {
+                  kind: "testId",
+                  formattedDataTestId: "InterviewPage-${key}-button",
+                },
+                keyLiteral: "One",
+                params: { wait: "boolean = true" },
+              },
+            ],
+          }),
+        ],
+      ]);
+
+      const outDir = path.join(tempRoot, "pom");
+      await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
+        outDir,
+        emitLanguages: ["ts", "csharp"],
+        csharp: { namespace: "Test.Generated" },
+      });
+
+      const ts = readFile(path.join(outDir, "page-object-models.g.ts"));
+      expect(ts).toContain("await this.clickWithinTestIdByLabel(\"InterviewPage-DatabaseType-radio\", \"Cloud\", annotationText);");
+      expect(ts).toContain("const resolvedLabel = `${value}`;");
+      expect(ts).toContain("await this.clickWithinTestIdByLabel(\"InterviewPage-DatabaseType-radio\", resolvedLabel, annotationText, wait, { exact: false });");
+      expect(ts).toContain("const key = \"One\";");
+      expect(ts).toContain("const resolvedTestId = `InterviewPage-${key}-button`;");
+      expect(ts).toContain("await this.clickByTestId(resolvedTestId, \"\", wait);");
+
+      const cs = readFile(path.join(outDir, "page-object-models.g.cs"));
+      expect(cs).toContain("protected ILocator LocatorWithinTestIdByLabel(string rootTestId, string label, bool exact = true)");
+      expect(cs).toContain("protected async Task ClickWithinTestIdByLabelAsync(string rootTestId, string label, bool exact = true)");
+      expect(cs).toContain("await ClickWithinTestIdByLabelAsync(\"InterviewPage-DatabaseType-radio\", \"Cloud\");");
+      expect(cs).toContain("var resolvedLabel = $\"{value}\";");
+      expect(cs).toContain("await ClickWithinTestIdByLabelAsync(\"InterviewPage-DatabaseType-radio\", resolvedLabel, exact: false);");
+      expect(cs).toContain("var key = \"One\";");
+      expect(cs).toContain("var resolvedTestId = $\"InterviewPage-{key}-button\";");
+      expect(cs).toContain("await LocatorByTestId(resolvedTestId).ClickAsync();");
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

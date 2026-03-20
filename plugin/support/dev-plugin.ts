@@ -37,6 +37,13 @@ interface DevProcessorOptions {
   customPomImportAliases?: Record<string, string>;
   customPomImportNameCollisionBehavior?: "error" | "alias";
   testIdAttribute: string;
+  devGenerationMetricsRef?: {
+    current: {
+      entryCount: number;
+      interactiveComponentCount: number;
+      dataTestIdCount: number;
+    };
+  };
 
   routerAwarePoms: boolean;
   resolvedRouterEntry?: string;
@@ -44,6 +51,43 @@ interface DevProcessorOptions {
   routerModuleShims?: Record<string, RouterModuleShimDefinition>;
 
   loggerRef: { current: VuePomGeneratorLogger };
+}
+
+interface HierarchyGenerationMetrics {
+  entryCount: number;
+  interactiveComponentCount: number;
+  dataTestIdCount: number;
+}
+
+function summarizeHierarchyMap(componentHierarchyMap: Map<string, IComponentDependencies>): HierarchyGenerationMetrics {
+  let interactiveComponentCount = 0;
+  let dataTestIdCount = 0;
+
+  for (const dependencies of componentHierarchyMap.values()) {
+    const selectorCount = dependencies.dataTestIdSet?.size ?? 0;
+    if (selectorCount > 0) {
+      interactiveComponentCount += 1;
+      dataTestIdCount += selectorCount;
+    }
+  }
+
+  return {
+    entryCount: componentHierarchyMap.size,
+    interactiveComponentCount,
+    dataTestIdCount,
+  };
+}
+
+function isLessRich(candidate: HierarchyGenerationMetrics, previous: HierarchyGenerationMetrics): boolean {
+  if (candidate.dataTestIdCount !== previous.dataTestIdCount) {
+    return candidate.dataTestIdCount < previous.dataTestIdCount;
+  }
+
+  if (candidate.interactiveComponentCount !== previous.interactiveComponentCount) {
+    return candidate.interactiveComponentCount < previous.interactiveComponentCount;
+  }
+
+  return candidate.entryCount < previous.entryCount;
 }
 
 export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOption {
@@ -64,12 +108,21 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     customPomImportAliases,
     customPomImportNameCollisionBehavior,
     testIdAttribute,
+    devGenerationMetricsRef,
     routerAwarePoms,
     resolvedRouterEntry,
     routerType,
     routerModuleShims,
     loggerRef,
   } = options;
+
+  const lastGeneratedMetricsRef = devGenerationMetricsRef ?? {
+    current: {
+      entryCount: 0,
+      interactiveComponentCount: 0,
+      dataTestIdCount: 0,
+    },
+  };
 
   // Bridge between configureServer (where we have timers/logger) and handleHotUpdate.
   let scheduleVueFileRegen: ((filePath: string, source: "hmr" | "fs") => void) | null = null;
@@ -278,9 +331,19 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         logInfo(`initial compile: ${compiledCount}/${totalVueFiles} files in ${formatMs(t1 - t0)} (components=${snapshotHierarchy.size})`);
       };
 
-      const generateAggregatedFromSnapshot = (reason: string) => {
+      const generateAggregatedFromSnapshot = async (reason: string) => {
         const t0 = performance.now();
-        generateFiles(snapshotHierarchy, snapshotVuePathMap, normalizedBasePagePath, {
+        const metrics = summarizeHierarchyMap(snapshotHierarchy);
+        if (metrics.dataTestIdCount <= 0) {
+          logInfo(`generate(${reason}) skipped: no selectors collected (components=${metrics.entryCount})`);
+          return;
+        }
+
+        if (isLessRich(metrics, lastGeneratedMetricsRef.current)) {
+          return;
+        }
+
+        await generateFiles(snapshotHierarchy, snapshotVuePathMap, normalizedBasePagePath, {
           outDir,
           emitLanguages,
           csharp,
@@ -295,15 +358,18 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
           routerEntry: resolvedRouterEntry,
           routerType,
         });
+        lastGeneratedMetricsRef.current = metrics;
         const t1 = performance.now();
-        logInfo(`generate(${reason}): components=${snapshotHierarchy.size} in ${formatMs(t1 - t0)}`);
+        logInfo(
+          `generate(${reason}): components=${metrics.entryCount} interactive=${metrics.interactiveComponentCount} selectors=${metrics.dataTestIdCount} in ${formatMs(t1 - t0)}`,
+        );
       };
 
       const initialBuildPromise = (async () => {
         const t0 = performance.now();
         await routerInitPromise;
         fullRebuildSnapshotFromFilesystem();
-        generateAggregatedFromSnapshot("startup");
+        await generateAggregatedFromSnapshot("startup");
         const t1 = performance.now();
         logInfo(`startup total: ${formatMs(t1 - t0)}`);
       })();
@@ -357,7 +423,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
               }
 
               const t1 = performance.now();
-              generateAggregatedFromSnapshot("max-wait");
+              await generateAggregatedFromSnapshot("max-wait");
               const t2 = performance.now();
 
               logInfo(
@@ -404,7 +470,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
             }
 
             const t1 = performance.now();
-            generateAggregatedFromSnapshot(files.length || deletedCount ? "batched" : "noop");
+            await generateAggregatedFromSnapshot(files.length || deletedCount ? "batched" : "noop");
             const t2 = performance.now();
 
             if (files.length || deletedCount) {

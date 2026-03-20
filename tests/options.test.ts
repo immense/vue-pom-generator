@@ -12,7 +12,7 @@ describe("createVuePomGeneratorPlugins options", () => {
 
   interface ConfigPlugin {
     name?: string;
-    configResolved?: (config: { root: string; logger: TestViteLogger }) => void;
+    configResolved?: (config: { root: string; logger: TestViteLogger; plugins?: Array<{ name?: string; api?: { options?: unknown } }> }) => void;
   }
 
   const runConfigResolved = (plugins: unknown[], root: string = "/project") => {
@@ -140,5 +140,55 @@ describe("createVuePomGeneratorPlugins options", () => {
     const plugins = vuePomGenerator(config);
     expect(Array.isArray(plugins)).toBe(true);
     expect(plugins.length).toBeGreaterThan(0);
+  });
+
+  it("patches the resolved vite:vue plugin for Nuxt projects", () => {
+    const plugins = createVuePomGeneratorPlugins({
+      generation: {
+        outDir: "tests/playwright/generated",
+        router: { type: "nuxt" },
+      },
+    });
+
+    const configPlugin = plugins
+      .map((p) => {
+        if (typeof p !== "object" || !p || !("name" in p))
+          return null;
+        return p as ConfigPlugin;
+      })
+      .find(p => p?.name === "vue-pom-generator-config");
+
+    if (!configPlugin?.configResolved)
+      throw new Error("config plugin not found");
+
+    const viteVuePlugin = {
+      name: "vite:vue",
+      api: {
+        options: {
+          template: {
+            compilerOptions: {
+              expressionPlugins: ["typescript"],
+            },
+          },
+        },
+      },
+    };
+
+    configPlugin.configResolved({
+      root: "/project",
+      logger: {
+        info() {},
+        warn() {},
+        error() {},
+      },
+      plugins: [viteVuePlugin],
+    });
+
+    const compilerOptions = (viteVuePlugin.api.options as { template?: { compilerOptions?: { nodeTransforms?: unknown[]; expressionPlugins?: string[]; prefixIdentifiers?: boolean } } })
+      .template?.compilerOptions;
+
+    expect(compilerOptions?.nodeTransforms?.length).toBeGreaterThan(0);
+    expect(compilerOptions?.expressionPlugins).toContain("typescript");
+    expect(compilerOptions?.prefixIdentifiers).toBe(true);
   });
 });

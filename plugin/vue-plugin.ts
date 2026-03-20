@@ -97,6 +97,7 @@ function extractMetadataAfterTransform(
 export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
   metadataCollectorPlugin: PluginOption;
   internalVuePlugin: PluginOption;
+  templateCompilerOptions: Record<string, unknown>;
 } {
   const {
     vueOptions,
@@ -172,6 +173,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
   const userTemplate = vueOptions?.template ?? {};
   const userCompilerOptions = userTemplate.compilerOptions ?? {};
   const userNodeTransforms = userCompilerOptions.nodeTransforms ?? [];
+  const processedCollectorFiles = new Set<string>();
 
   // Vue compiler runs nodeTransforms for every node in a template.
   // We need a per-file transform instance so state accumulates across nodes.
@@ -281,29 +283,35 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
         return null;
       }
 
-      // If we've already processed this file in this build pass, skip the duplicates
-      // caused by Vite query parameters (?macro=true, ?vue&type=template, etc).
-      if (id !== cleanPath) {
-          return null;
-      }
-
       const componentName = getComponentNameFromPath(cleanPath);
-      loggerRef.current.debug(`Collecting metadata for ${cleanPath} (component: ${componentName})`);
 
       const { parse } = await import("@vue/compiler-sfc");
       const compilerDom = await import("@vue/compiler-dom");
       const compile = compilerDom.compile as (template: string, options: object) => object;
       const { descriptor } = parse(code, { filename: cleanPath });
-      if (descriptor.template) {
-        // Run the template compiler with our transforms.
-        // We don't care about the result, only the side effects on our shared maps.
-        compile(descriptor.template.content, {
-          ...userCompilerOptions,
-          filename: cleanPath,
-          nodeTransforms: getNodeTransforms(cleanPath, componentName),
-        });
-        loggerRef.current.debug(`Metadata collected for ${cleanPath}`);
+
+      if (!descriptor.template) {
+        return null;
       }
+
+      // Nuxt frequently routes SFCs through query-suffixed ids like ?macro=true.
+      // Process the first transform for a clean .vue path, regardless of query suffix,
+      // then skip subsequent variants to avoid duplicate accumulation.
+      if (processedCollectorFiles.has(cleanPath)) {
+        return null;
+      }
+      processedCollectorFiles.add(cleanPath);
+
+      loggerRef.current.debug(`Collecting metadata for ${cleanPath} (component: ${componentName})`);
+
+      // Run the template compiler with our transforms.
+      // We don't care about the result, only the side effects on our shared maps.
+      compile(descriptor.template.content, {
+        ...userCompilerOptions,
+        filename: cleanPath,
+        nodeTransforms: getNodeTransforms(cleanPath, componentName),
+      });
+      loggerRef.current.debug(`Metadata collected for ${cleanPath}`);
 
       return null;
     },
@@ -319,5 +327,5 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     template,
   } as VuePluginOptions);
 
-  return { metadataCollectorPlugin, internalVuePlugin };
+  return { metadataCollectorPlugin, internalVuePlugin, templateCompilerOptions };
 }

@@ -29,6 +29,13 @@ interface BuildProcessorOptions {
   customPomImportAliases?: Record<string, string>;
   customPomImportNameCollisionBehavior?: "error" | "alias";
   testIdAttribute: string;
+  buildGenerationMetricsRef?: {
+    current: {
+      entryCount: number;
+      interactiveComponentCount: number;
+      dataTestIdCount: number;
+    };
+  };
 
   routerAwarePoms: boolean;
   resolvedRouterEntry?: string;
@@ -36,6 +43,43 @@ interface BuildProcessorOptions {
   routerModuleShims?: Record<string, RouterModuleShimDefinition>;
 
   loggerRef: { current: VuePomGeneratorLogger };
+}
+
+interface HierarchyGenerationMetrics {
+  entryCount: number;
+  interactiveComponentCount: number;
+  dataTestIdCount: number;
+}
+
+function summarizeHierarchyMap(componentHierarchyMap: Map<string, IComponentDependencies>): HierarchyGenerationMetrics {
+  let interactiveComponentCount = 0;
+  let dataTestIdCount = 0;
+
+  for (const dependencies of componentHierarchyMap.values()) {
+    const selectorCount = dependencies.dataTestIdSet?.size ?? 0;
+    if (selectorCount > 0) {
+      interactiveComponentCount += 1;
+      dataTestIdCount += selectorCount;
+    }
+  }
+
+  return {
+    entryCount: componentHierarchyMap.size,
+    interactiveComponentCount,
+    dataTestIdCount,
+  };
+}
+
+function isLessRich(candidate: HierarchyGenerationMetrics, previous: HierarchyGenerationMetrics): boolean {
+  if (candidate.dataTestIdCount !== previous.dataTestIdCount) {
+    return candidate.dataTestIdCount < previous.dataTestIdCount;
+  }
+
+  if (candidate.interactiveComponentCount !== previous.interactiveComponentCount) {
+    return candidate.interactiveComponentCount < previous.interactiveComponentCount;
+  }
+
+  return candidate.entryCount < previous.entryCount;
 }
 
 export function createBuildProcessorPlugin(options: BuildProcessorOptions): PluginOption {
@@ -54,6 +98,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     customPomImportAliases,
     customPomImportNameCollisionBehavior,
     testIdAttribute,
+    buildGenerationMetricsRef,
     routerAwarePoms,
     resolvedRouterEntry,
     routerType,
@@ -67,7 +112,13 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
   // correct aggregated output (e.g. `tests/playwright/generated/page-object-models.g.ts`) with an incomplete file.
   //
   // Guard generation so we only write when we have meaningful data, and prefer the "largest" pass.
-  let lastGeneratedEntryCount = 0;
+  const lastGeneratedMetricsRef = buildGenerationMetricsRef ?? {
+    current: {
+      entryCount: 0,
+      interactiveComponentCount: 0,
+      dataTestIdCount: 0,
+    },
+  };
 
   return {
     name: "vue-pom-generator-build",
@@ -127,23 +178,23 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
       }
       this.addWatchFile(pointerPath);
     },
-    buildEnd(error) {
+    async buildEnd(error) {
       if (error) {
         return;
       }
 
-      const entryCount = componentHierarchyMap.size;
-      if (entryCount <= 0) {
-        // Skip generation rather than overwriting an existing aggregated file with an empty one.
+      const metrics = summarizeHierarchyMap(componentHierarchyMap);
+      if (metrics.dataTestIdCount <= 0) {
+        // Skip generation rather than overwriting an existing aggregated file with selector-less output.
         return;
       }
 
-      if (entryCount < lastGeneratedEntryCount) {
+      if (isLessRich(metrics, lastGeneratedMetricsRef.current)) {
         // If we already generated from a richer pass, do not clobber it with a smaller/partial pass.
         return;
       }
 
-      generateFiles(componentHierarchyMap, vueFilesPathMap, normalizedBasePagePath, {
+      await generateFiles(componentHierarchyMap, vueFilesPathMap, normalizedBasePagePath, {
         outDir,
         emitLanguages,
         csharp,
@@ -158,8 +209,8 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
         routerEntry: resolvedRouterEntry,
         routerType,
       });
-      lastGeneratedEntryCount = entryCount;
-      loggerRef.current.info(`generated POMs (${entryCount} entries)`);
+      lastGeneratedMetricsRef.current = metrics;
+      loggerRef.current.info(`generated POMs (${metrics.entryCount} entries, ${metrics.interactiveComponentCount} interactive components, ${metrics.dataTestIdCount} selectors)`);
     },
     closeBundle() {
       loggerRef.current.info("build complete");
