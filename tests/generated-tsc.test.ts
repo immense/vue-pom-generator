@@ -228,6 +228,7 @@ describe("generated output", () => {
     writeFile(
       basePagePath,
       [
+        "export type Fluent<T extends object> = T & PromiseLike<T>;",
         "export class BasePage {",
         "  constructor(public page?: any, _options?: { testIdAttribute?: string }) {}",
         "}",
@@ -274,6 +275,79 @@ describe("generated output", () => {
     expect(generatedContent).toContain("import { PersonListPage as PersonListPageCustom }");
     expect(generatedContent).toContain("personListHelper: PersonListPageCustom;");
     expect(generatedContent).toContain("this.personListHelper = new PersonListPageCustom(page, this);");
+  });
+
+  it("skips missing custom helper attachments and widget instances when no helper files exist", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-"));
+
+    writePlaywrightTypeStub(tempRoot);
+
+    const basePagePath = path.join(tempRoot, "BasePage.ts");
+    writeFile(
+      basePagePath,
+      [
+        "export type Fluent<T extends object> = T & PromiseLike<T>;",
+        "export class BasePage {",
+        "  constructor(public page?: any, _options?: { testIdAttribute?: string }) {}",
+        "}",
+      ].join("\n"),
+    );
+    writeFile(
+      path.join(tempRoot, "Pointer.ts"),
+      "export type PlaywrightAnimationOptions = any; export function setPlaywrightAnimationOptions(_: PlaywrightAnimationOptions): void {} export class Pointer { constructor(_: any, __: string) {} }",
+    );
+
+    const deps: IComponentDependencies = {
+      filePath: path.join(tempRoot, "src", "views", "UsersView.vue"),
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(["Page", "ImmyDxDataGrid"]),
+      dataTestIdSet: new Set([
+        {
+          value: "UsersView-EnableSessionEmails-toggle",
+        },
+      ]),
+      generatedMethods: new Map(),
+      isView: true,
+    };
+
+    const componentHierarchyMap = new Map<string, IComponentDependencies>([["UsersView", deps]]);
+    const vueFilesPathMap = new Map<string, string>();
+    const outDir = path.join(tempRoot, "out");
+
+    await generateFiles(componentHierarchyMap, vueFilesPathMap, basePagePath, {
+      outDir,
+      projectRoot: tempRoot,
+      customPomDir: "tests/playwright/pom/custom",
+      customPomAttachments: [
+        {
+          className: "Grid",
+          propertyName: "grid",
+          attachWhenUsesComponents: ["ImmyDxDataGrid"],
+          attachTo: "both",
+        },
+        {
+          className: "ConfirmationModal",
+          propertyName: "confirmationModal",
+          attachWhenUsesComponents: ["Page"],
+        },
+      ],
+    });
+
+    const generatedFile = path.join(outDir, "page-object-models.g.ts");
+    const generatedContent = fs.readFileSync(generatedFile, "utf8");
+
+    expect(generatedContent).not.toContain("ToggleWidget");
+    expect(generatedContent).not.toContain("CheckboxWidget");
+    expect(generatedContent).not.toContain("new Grid(");
+    expect(generatedContent).not.toContain("new ConfirmationModal(");
+
+    const result = runTscNoEmit([generatedFile, basePagePath], { cwd: tempRoot });
+
+    if (result.status !== 0) {
+      const stdout = (result.stdout || "").toString();
+      const stderr = (result.stderr || "").toString();
+      throw new Error(`tsc failed (exit ${result.status})\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`);
+    }
   });
 
   it("only emits view passthrough methods when the view has a single child component POM", async () => {

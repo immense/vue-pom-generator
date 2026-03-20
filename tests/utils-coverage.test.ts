@@ -686,6 +686,41 @@ describe("utils.ts coverage", () => {
     expect(entries[0]?.pom?.formattedDataTestId).toBe("abc-${key}");
   });
 
+  it("allows preserving an existing key-based template literal that uses a fallback branch access", () => {
+    const el = firstElement(parseTemplate("<button :data-testid=\"`abc-${data.id}`\" />"));
+    setBindAst(el, "data-testid", "`abc-${data.id}`");
+
+    const deps: IComponentDependencies = {
+      filePath: "/src/components/MyComp.vue",
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set<IDataTestId>(),
+      generatedMethods: new Map(),
+      isView: false,
+    };
+
+    const generatedMethodContentByComponent = new Map<string, Set<string>>();
+
+    applyResolvedDataTestId({
+      element: el,
+      componentName: "MyComp",
+      parentComponentName: "MyComp",
+      dependencies: deps,
+      generatedMethodContentByComponent,
+      nativeRole: "button",
+      preferredGeneratedValue: staticAttributeValue("ignored"),
+      bestKeyPlaceholder: "${data.key ?? data.data?.id ?? data.id ?? data.value ?? data}",
+      bestKeyVariable: "data.key ?? data.data?.id ?? data.id ?? data.value ?? data",
+      testIdAttribute: "data-testid",
+      existingIdBehavior: "preserve",
+      addHtmlAttribute: false,
+    });
+
+    const entries = Array.from(deps.dataTestIdSet);
+    expect(entries.length).toBe(1);
+    expect(entries[0]?.pom?.formattedDataTestId).toBe("abc-${key}");
+  });
+
   it("allows preserving an existing simple member-expression data-testid", () => {
     const el = firstElement(parseTemplate("<button :data-testid=\"p.parameter.name\" />"));
     setBindAst(el, "data-testid", "p.parameter.name");

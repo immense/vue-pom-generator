@@ -407,6 +407,7 @@ interface GenerateContentOptions {
   customPomDir?: string;
   customPomImportAliases?: Record<string, string>;
   customPomClassIdentifierMap?: Record<string, string>;
+  customPomAvailableClassIdentifiers?: Set<string>;
 
   /** Attribute name to treat as the test id. Defaults to `data-testid`. */
   testIdAttribute?: string;
@@ -1153,8 +1154,14 @@ function generateViewObjectModelContent(
     return false;
   };
 
+  const customPomClassIdentifierMap = options.customPomClassIdentifierMap ?? {};
+  const customPomAvailableClassIdentifiers = options.customPomAvailableClassIdentifiers ?? new Set<string>();
+
   const attachmentsForThisClass = customPomAttachments
     .filter((a) => {
+      if (!Object.prototype.hasOwnProperty.call(customPomClassIdentifierMap, a.className))
+        return false;
+
       const scope = a.attachTo ?? "views";
       const scopeOk = isView
         ? (scope === "views" || scope === "both")
@@ -1164,7 +1171,7 @@ function generateViewObjectModelContent(
       return a.attachWhenUsesComponents.some(c => hasChildComponent(c));
     })
     .map(a => ({
-      className: options.customPomClassIdentifierMap?.[a.className] ?? a.className,
+      className: customPomClassIdentifierMap[a.className]!,
       propertyName: a.propertyName,
     }));
 
@@ -1218,7 +1225,7 @@ function generateViewObjectModelContent(
   content += `\nexport class ${className} extends BasePage {\n`;
 
   const widgetInstances = isView
-    ? getWidgetInstancesForView(componentName, dependencies.dataTestIdSet)
+    ? getWidgetInstancesForView(componentName, dependencies.dataTestIdSet, customPomAvailableClassIdentifiers)
     : [];
 
   // For views, `childrenComponentSet` only includes component tags on which we applied a data-testid.
@@ -1489,6 +1496,7 @@ async function generateAggregatedFiles(
     };
 
     const customPomClassIdentifierMap = addCustomPomImports();
+    const customPomAvailableClassIdentifiers = new Set(Object.values(customPomClassIdentifierMap ?? {}));
 
     // Collect any navigation return types referenced by generated methods so we can emit
     // stub classes when the destination view has no generated test ids (and therefore no
@@ -1690,6 +1698,7 @@ async function generateAggregatedFiles(
 
         customPomAttachments: options.customPomAttachments ?? [],
         customPomClassIdentifierMap,
+        customPomAvailableClassIdentifiers,
         testIdAttribute: options.testIdAttribute,
         vueRouterFluentChaining: options.vueRouterFluentChaining,
         routeMetaByComponent: options.routeMetaByComponent,
@@ -1817,7 +1826,11 @@ interface WidgetInstance {
   testId: string;
 }
 
-function getWidgetInstancesForView(componentName: string, dataTestIdSet: Set<IDataTestId>): WidgetInstance[] {
+function getWidgetInstancesForView(
+  componentName: string,
+  dataTestIdSet: Set<IDataTestId>,
+  availableClassIdentifiers: Set<string>,
+): WidgetInstance[] {
   const out: WidgetInstance[] = [];
   const usedPropNames = new Set<string>();
 
@@ -1857,6 +1870,9 @@ function getWidgetInstancesForView(componentName: string, dataTestIdSet: Set<IDa
     else {
       continue;
     }
+
+    if (!availableClassIdentifiers.has(className))
+      continue;
 
     // Prefer stripping the view prefix (e.g. PreferencesPage-) for cleaner member names.
     const viewPrefix = `${componentName}-`;

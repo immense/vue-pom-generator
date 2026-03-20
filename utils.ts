@@ -2270,6 +2270,17 @@ export function applyResolvedDataTestId(args: {
   const nameCollisionBehavior = args.nameCollisionBehavior ?? "suffix";
   const warn = args.warn;
 
+  const getBestKeyAccessCandidates = (expr: string | null | undefined) => {
+    if (!expr) {
+      return [];
+    }
+
+    return expr
+      .split("??")
+      .map(part => part.trim())
+      .filter(Boolean);
+  };
+
   // 1) Resolve effective data-testid (respecting any existing attribute).
   let dataTestId = args.preferredGeneratedValue;
   let fromExisting = false;
@@ -2301,6 +2312,8 @@ export function applyResolvedDataTestId(args: {
 
       if (existing.isDynamic) {
         if (existing.template) {
+          const existingTemplate = existing.template;
+
           if ((existing.templateExpressionCount ?? 0) !== 1) {
             throw new Error(
               `[vue-pom-generator] Existing ${attrLabel} is a template literal with multiple interpolations and cannot be preserved safely.\n`
@@ -2311,8 +2324,9 @@ export function applyResolvedDataTestId(args: {
             );
           }
 
-          const hasExact = args.bestKeyPlaceholder && existing.template.includes(args.bestKeyPlaceholder);
-          const hasVarAccess = args.bestKeyVariable && existing.template.includes(args.bestKeyVariable);
+          const hasExact = args.bestKeyPlaceholder && existingTemplate.includes(args.bestKeyPlaceholder);
+          const hasVarAccess = getBestKeyAccessCandidates(args.bestKeyVariable)
+            .some(candidate => existingTemplate.includes(candidate));
 
           if (!hasExact && !hasVarAccess && args.bestKeyPlaceholder) {
             throw new Error(
