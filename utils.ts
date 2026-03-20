@@ -27,8 +27,10 @@ import type {
 import {
   VISITOR_KEYS,
   isArrayExpression,
+  isAssignmentPattern,
   isArrowFunctionExpression,
   isAssignmentExpression,
+  isBooleanLiteral,
   isBlockStatement,
   isCallExpression,
   isConditionalExpression,
@@ -37,11 +39,15 @@ import {
   isIdentifier,
   isLogicalExpression,
   isMemberExpression,
+  isNullLiteral,
   isObjectExpression,
   isObjectProperty,
+  isNumericLiteral,
   isOptionalCallExpression,
   isOptionalMemberExpression,
+  isObjectPattern,
   isProgram,
+  isRestElement,
   isSequenceExpression,
   isStringLiteral,
   isTemplateLiteral,
@@ -273,6 +279,163 @@ function isTemplateWithData(node: ElementNode): boolean {
   return getTemplateSlotScope(node) !== null;
 }
 
+function isSimpleScopeIdentifier(value: string): boolean {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value);
+}
+
+function buildSlotScopeFallbackKeyExpression(identifier: string): string {
+  return `${identifier}.key ?? ${identifier}.data?.id ?? ${identifier}.id ?? ${identifier}.value ?? ${identifier}`;
+}
+
+function tryGetBindingIdentifierName(node: BabelNode | null | undefined): string | null {
+  if (!node) {
+    return null;
+  }
+
+  if (isIdentifier(node)) {
+    return node.name;
+  }
+
+  if (isAssignmentPattern(node)) {
+    return tryGetBindingIdentifierName(node.left);
+  }
+
+  if (isRestElement(node)) {
+    return tryGetBindingIdentifierName(node.argument);
+  }
+
+  return null;
+}
+
+type SlotScopeKeyCandidate = {
+  priority: number;
+  expression: string;
+};
+
+function getSlotScopeObjectPropertyKeyName(node: BabelNode): string | null {
+  if (isIdentifier(node)) {
+    return node.name;
+  }
+
+  if (isStringLiteral(node)) {
+    return node.value;
+  }
+
+  return null;
+}
+
+function tryGetSlotScopeKeyCandidate(node: BabelNode | null | undefined): SlotScopeKeyCandidate | null {
+  if (!node) {
+    return null;
+  }
+
+  if (isIdentifier(node)) {
+    return {
+      priority: 2,
+      expression: buildSlotScopeFallbackKeyExpression(node.name),
+    };
+  }
+
+  if (isAssignmentPattern(node)) {
+    return tryGetSlotScopeKeyCandidate(node.left);
+  }
+
+  if (isRestElement(node)) {
+    return tryGetSlotScopeKeyCandidate(node.argument);
+  }
+
+  if (!isObjectPattern(node)) {
+    return null;
+  }
+
+  let best: SlotScopeKeyCandidate | null = null;
+
+  for (const property of node.properties) {
+    let candidate: SlotScopeKeyCandidate | null = null;
+
+    if (isRestElement(property)) {
+      candidate = tryGetSlotScopeKeyCandidate(property.argument);
+      if (candidate) {
+        candidate = { ...candidate, priority: Math.max(candidate.priority, 2) };
+      }
+    }
+    else if (isObjectProperty(property)) {
+      const keyName = getSlotScopeObjectPropertyKeyName(property.key as BabelNode);
+      const bindingName = tryGetBindingIdentifierName(property.value as BabelNode)
+        ?? tryGetBindingIdentifierName(property.key as BabelNode);
+
+      if (bindingName) {
+        if (keyName === "key" || bindingName === "key") {
+          candidate = {
+            priority: 0,
+            expression: bindingName,
+          };
+        }
+        else {
+          candidate = {
+            priority: keyName === "data" ? 1 : 2,
+            expression: buildSlotScopeFallbackKeyExpression(bindingName),
+          };
+        }
+      }
+    }
+
+    if (candidate && (!best || candidate.priority < best.priority)) {
+      best = candidate;
+    }
+  }
+
+  return best;
+}
+
+function tryGetTemplateSlotScopeKeyExpression(scope: string): string | null {
+  const trimmed = scope.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (isSimpleScopeIdentifier(trimmed)) {
+    return buildSlotScopeFallbackKeyExpression(trimmed);
+  }
+
+  try {
+    const parsed = parse(`(${trimmed}) => {}`, {
+      sourceType: "module",
+      plugins: ["typescript"],
+    });
+    const statement = parsed.program.body[0];
+    if (statement && isExpressionStatement(statement) && isArrowFunctionExpression(statement.expression)) {
+      return tryGetSlotScopeKeyCandidate(statement.expression.params[0])?.expression ?? null;
+    }
+  }
+  catch {
+    // Fall back to the prior best-effort string parsing below.
+  }
+
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    const inner = trimmed.slice(1, -1).trim();
+    let cutIdx = -1;
+    const commaIdx = inner.indexOf(",");
+    const colonIdx = inner.indexOf(":");
+    if (commaIdx !== -1 && colonIdx !== -1) {
+      cutIdx = Math.min(commaIdx, colonIdx);
+    }
+    else if (commaIdx !== -1) {
+      cutIdx = commaIdx;
+    }
+    else if (colonIdx !== -1) {
+      cutIdx = colonIdx;
+    }
+
+    const first = (cutIdx === -1 ? inner : inner.slice(0, cutIdx)).trim();
+    if (first && isSimpleScopeIdentifier(first)) {
+      return buildSlotScopeFallbackKeyExpression(first);
+    }
+  }
+
+  return trimmed;
+}
+
 /**
  * Checks if node has a :to directive (for router links)
  *
@@ -456,30 +619,7 @@ export function getContainedInSlotDataKeyValue(node: ElementNode, hierarchyMap: 
     if (parent.type === NodeTypes.ELEMENT && parent.tag === "template") {
       const scope = getTemplateSlotScope(parent);
       if (scope) {
-        // If it's a destructuring like { data }, try to extract the first identifier.
-        // Otherwise use the whole scope expression.
-        let key = scope.trim();
-        if (key.startsWith("{") && key.endsWith("}")) {
-          const inner = key.slice(1, -1).trim();
-          let cutIdx = -1;
-          const commaIdx = inner.indexOf(",");
-          const colonIdx = inner.indexOf(":");
-          if (commaIdx !== -1 && colonIdx !== -1) {
-            cutIdx = Math.min(commaIdx, colonIdx);
-          }
-          else if (commaIdx !== -1) {
-            cutIdx = commaIdx;
-          }
-          else if (colonIdx !== -1) {
-            cutIdx = colonIdx;
-          }
-
-          const first = (cutIdx === -1 ? inner : inner.slice(0, cutIdx)).trim();
-          if (first) {
-            key = first;
-          }
-        }
-        return key;
+        return tryGetTemplateSlotScopeKeyExpression(scope);
       }
     }
     parent = getParent(hierarchyMap, parent);
@@ -1453,12 +1593,11 @@ function getStableClickHandlerNameFromExpression(exp: BabelNode | null | undefin
   }
 
   if (isAssignmentExpression(exp)) {
-    // Best-effort: stable semantic name from the LHS.
-    const left = exp.left;
-    if (isIdentifier(left))
-      return left.name;
-    if (isMemberExpression(left) || isOptionalMemberExpression(left))
-      return extractMemberPropertyName(left);
+    const left = getAssignmentTargetNameFromBabel(exp.left as BabelNode);
+    if (left) {
+      const right = getStableAssignmentValueSuffixFromBabel(exp.right as BabelNode);
+      return `Set${toPascalCase(left)}${right}`;
+    }
     return "";
   }
 
@@ -1506,9 +1645,7 @@ function getClickHandlerNameFromAst(ast: BabelNode | undefined): { name: string;
 
   if (isAssignmentExpression(ast)) {
     // Best-effort: treat simple assignment as a stable semantic name derived from the LHS.
-    // Examples:
-    // - showAdvanced = !showAdvanced      -> showAdvanced
-    // - model.semanticVersion = suggested -> semanticVersion
+    // Keep this narrower helper behavior for non-click paths like :modelValue / valueAttribute.
     const left = ast.left;
     if (isIdentifier(left)) {
       return { name: left.name, isAssignment: true };
@@ -1558,6 +1695,90 @@ function extractMemberPropertyName(member: MemberExpression | OptionalMemberExpr
   const prop = member.property;
   if (isIdentifier(prop)) {
     return prop.name;
+  }
+
+  return "";
+}
+
+function getLastIdentifierFromMemberChainBabel(node: BabelNode | null | undefined): string {
+  if (!node) {
+    return "";
+  }
+
+  if (isIdentifier(node)) {
+    return node.name;
+  }
+
+  if (isMemberExpression(node) || isOptionalMemberExpression(node)) {
+    if (!node.computed) {
+      if (isIdentifier(node.property)) {
+        return node.property.name;
+      }
+    }
+    else if (isStringLiteral(node.property)) {
+      return node.property.value;
+    }
+  }
+
+  return "";
+}
+
+function getAssignmentTargetNameFromBabel(node: BabelNode | null | undefined): string {
+  if (!node) {
+    return "";
+  }
+
+  if (isIdentifier(node)) {
+    return node.name;
+  }
+
+  if (isMemberExpression(node) || isOptionalMemberExpression(node)) {
+    if (!node.computed && isIdentifier(node.property) && node.property.name === "value") {
+      return getLastIdentifierFromMemberChainBabel(node.object as BabelNode);
+    }
+
+    return getLastIdentifierFromMemberChainBabel(node);
+  }
+
+  return "";
+}
+
+function getStableAssignmentValueSuffixFromBabel(node: BabelNode | null | undefined): string {
+  if (!node) {
+    return "";
+  }
+
+  if (isBooleanLiteral(node)) {
+    return node.value ? "True" : "False";
+  }
+
+  if (isNumericLiteral(node)) {
+    return `Value${String(node.value)}`;
+  }
+
+  if (isNullLiteral(node)) {
+    return "Null";
+  }
+
+  if (isStringLiteral(node)) {
+    const cleaned = (node.value ?? "").trim();
+    return cleaned ? toPascalCase(cleaned.slice(0, 24)) : "";
+  }
+
+  if (isTemplateLiteral(node) && node.expressions.length === 0) {
+    const value = node.quasis.map(q => q.value?.cooked ?? "").join("").trim();
+    return value ? toPascalCase(value.slice(0, 24)) : "";
+  }
+
+  if (isMemberExpression(node) || isOptionalMemberExpression(node)) {
+    const name = getLastIdentifierFromMemberChainBabel(node);
+    return name ? toPascalCase(name.slice(0, 24)) : "";
+  }
+
+  if (isIdentifier(node)) {
+    const firstChar = node.name.charAt(0);
+    const isUpperAlpha = firstChar !== "" && firstChar === firstChar.toUpperCase() && firstChar !== firstChar.toLowerCase();
+    return isUpperAlpha ? toPascalCase(node.name.slice(0, 24)) : "";
   }
 
   return "";

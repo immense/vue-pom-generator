@@ -115,7 +115,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
   const testIdAttribute = (injection.attribute ?? "data-testid").trim() || "data-testid";
   const existingIdBehavior: ExistingIdBehavior = injection.existingIdBehavior ?? "preserve";
 
-  const outDir = (generationOptions?.outDir ?? "tests/playwright/generated").trim();
+  const outDir = (generationOptions?.outDir ?? "tests/playwright/__generated__").trim();
   const emitLanguages: Array<"ts" | "csharp"> = (generationOptions?.emit && generationOptions.emit.length)
     ? generationOptions.emit
     : ["ts"];

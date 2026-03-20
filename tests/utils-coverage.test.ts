@@ -1112,4 +1112,14 @@ describe("utils.ts coverage", () => {
     const btn = firstElement(ast);
     expect(getComposedClickHandlerContent(btn, { scopes: { vFor: 0 }} as TransformContext, null)).toBe("-AppPrefEmailBccRemoved");
   });
+
+  it("extracts composed click handler content for assignment expressions", () => {
+    const ast = parseTemplate("<button @click=\"showUnlinkConfirmationModal = true\">Unlink</button>");
+    const btn = firstElement(ast);
+    expect(getComposedClickHandlerContent(btn, { scopes: { vFor: 0 }} as TransformContext, null)).toBe("-SetShowUnlinkConfirmationModalTrue");
+
+    const refAst = parseTemplate("<button @click=\"showModal.value = true\">Show</button>");
+    const refBtn = firstElement(refAst);
+    expect(getComposedClickHandlerContent(refBtn, { scopes: { vFor: 0 }} as TransformContext, null)).toBe("-SetShowModalTrue");
+  });
 });

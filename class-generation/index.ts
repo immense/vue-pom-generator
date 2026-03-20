@@ -524,6 +524,11 @@ function escapeGitAttributesPattern(value: string): string {
   return output;
 }
 
+function pathUsesGeneratedHeuristic(filePath: string): boolean {
+  const normalized = path.normalize(filePath);
+  return normalized.split(path.sep).includes("__generated__");
+}
+
 function buildManagedGitAttributesBlock(entries: string[]): string {
   return [
     GENERATED_GITATTRIBUTES_BLOCK_START,
@@ -578,6 +583,10 @@ function buildGeneratedGitAttributesFiles(generatedFilePaths: string[]): Generat
   for (const generatedFilePath of generatedFilePaths) {
     const resolvedFilePath = path.resolve(generatedFilePath);
     if (path.basename(resolvedFilePath) === ".gitattributes") {
+      continue;
+    }
+
+    if (pathUsesGeneratedHeuristic(resolvedFilePath)) {
       continue;
     }
 

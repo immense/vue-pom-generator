@@ -175,6 +175,40 @@ describe("class-generation coverage", () => {
     }
   });
 
+  it("skips managed .gitattributes when outputs live under __generated__", async () => {
+    const tempRoot = makeTempRoot("vue-pom-generated-path-");
+
+    try {
+      const basePagePath = path.join(tempRoot, "BasePage.ts");
+      writeMinimalBasePage(basePagePath);
+
+      const componentHierarchyMap = new Map<string, IComponentDependencies>([
+        [
+          "UsersPage",
+          makeDeps({
+            filePath: path.join(tempRoot, "src", "views", "UsersPage.vue"),
+            isView: true,
+          }),
+        ],
+      ]);
+
+      const outDir = path.join(tempRoot, "tests", "playwright", "__generated__");
+      await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
+        outDir,
+        projectRoot: tempRoot,
+        generateFixtures: true,
+      });
+
+      expect(fs.existsSync(path.join(outDir, "page-object-models.g.ts"))).toBe(true);
+      expect(fs.existsSync(path.join(outDir, "fixtures.g.ts"))).toBe(true);
+      expect(fs.existsSync(path.join(outDir, ".gitattributes"))).toBe(false);
+      expect(fs.existsSync(path.join(outDir, "_pom-runtime", ".gitattributes"))).toBe(false);
+      expect(fs.existsSync(path.join(outDir, "_pom-runtime", "class-generation", ".gitattributes"))).toBe(false);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("emits stub POM classes for navigation targets, composing child POMs by scanning the SFC template", async () => {
     const tempRoot = makeTempRoot("vue-pom-stubs-");
 

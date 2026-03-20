@@ -111,12 +111,12 @@ export interface VuePomGeneratorPluginOptions {
     /**
      * Output directory for generated files.
      *
-      * Defaults to `tests/playwright/generated` (relative to the Vite project root).
+      * Defaults to `tests/playwright/__generated__` (relative to the Vite project root).
       *
       * Generated outputs (by default):
       * - `<outDir>/page-object-models.g.ts`
       * - `<outDir>/index.ts` (stable barrel that re-exports from `page-object-models.g`)
-      * - managed `.gitattributes` entries so GitHub Linguist recognizes generated outputs by default
+      * - managed `.gitattributes` entries when using a custom outDir outside `__generated__`
       */
     outDir?: string;
 
@@ -226,8 +226,8 @@ export interface VuePomGeneratorPluginOptions {
        * Generate Playwright fixture helpers alongside generated POMs.
        *
        * Default output (when `true`):
-        * - `<projectRoot>/tests/playwright/generated/fixtures.g.ts`
-        * - managed `.gitattributes` entries in the generated fixture directory
+        * - `<projectRoot>/tests/playwright/__generated__/fixtures.g.ts`
+        * - managed `.gitattributes` entries when the generated fixture directory is outside `__generated__`
        */
       fixtures?: boolean | string | { outDir?: string };
 
