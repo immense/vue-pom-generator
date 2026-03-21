@@ -103,6 +103,10 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     },
 
     configureServer(server: ViteDevServer) {
+      const getViewsDirAbs = () => (path.isAbsolute(viewsDir)
+        ? viewsDir
+        : path.resolve(projectRootRef.current, viewsDir));
+
       // Router introspection (dev-server): mirror the buildStart behavior.
       const routerInitPromise = (async () => {
         if (!routerAwarePoms) {
@@ -119,7 +123,15 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         else {
           if (!resolvedRouterEntry)
             throw new Error("[vue-pom-generator] router.entry is required when router introspection is enabled.");
-          result = await parseRouterFileFromCwd(resolvedRouterEntry, { moduleShims: routerModuleShims });
+          result = await parseRouterFileFromCwd(resolvedRouterEntry, {
+            moduleShims: routerModuleShims,
+            componentNaming: {
+              projectRoot: projectRootRef.current,
+              viewsDirAbs: getViewsDirAbs(),
+              scanDirs,
+              extraRoots: [process.cwd()],
+            },
+          });
         }
 
         const { routeNameMap, routePathMap } = result;
@@ -147,10 +159,6 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
       let scheduleVueFileRegenLocal: ((filePath: string, source: "hmr" | "fs") => void) | null = null;
 
       const formatMs = (ms: number) => `${ms.toFixed(1)}ms`;
-
-      const getViewsDirAbs = () => (path.isAbsolute(viewsDir)
-        ? viewsDir
-        : path.resolve(projectRootRef.current, viewsDir));
 
       const extractTemplateFromSfc = (source: string, filename?: string): string => {
         const { descriptor } = parseSfc(source, {
@@ -321,6 +329,8 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
           vueRouterFluentChaining: routerAwarePoms,
           routerEntry: resolvedRouterEntry,
           routerType,
+          viewsDir,
+          scanDirs,
         });
         if (reason === "startup") {
           devStartupMetricsByOutputKey.set(generationMetricsKey, metrics);

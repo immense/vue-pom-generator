@@ -12,6 +12,15 @@ function toPosixSlashes(value: string): string {
   return out;
 }
 
+function safeRealpath(value: string): string {
+  try {
+    return fs.existsSync(value) ? fs.realpathSync(value) : value;
+  }
+  catch {
+    return value;
+  }
+}
+
 export function isPathWithinDir(filePathAbs: string, dirPathAbs: string): boolean {
   const fileAbs = path.resolve(filePathAbs);
   const dirAbs = path.resolve(dirPathAbs);
@@ -66,6 +75,7 @@ export function resolveComponentNameFromPath(options: ResolveComponentNameOption
   const absFilename = path.isAbsolute(cleanFilename)
     ? cleanFilename
     : path.resolve(projectRoot, cleanFilename);
+  const normalizedAbsFilename = path.normalize(safeRealpath(absFilename));
 
   // Build candidate roots from both projectRoot and any extraRoots (e.g. process.cwd() for
   // Nuxt 4 where Vite sets config.root to the app/ subdirectory).
@@ -93,12 +103,12 @@ export function resolveComponentNameFromPath(options: ResolveComponentNameOption
     }
   }
 
-  const potentialRoots = Array.from(new Set(roots.map(r => path.normalize(r))))
+  const potentialRoots = Array.from(new Set(roots.map(r => path.normalize(safeRealpath(r)))))
     .sort((a, b) => b.length - a.length); // longest match first
 
   for (const root of potentialRoots) {
-    if (absFilename.startsWith(root + path.sep) || absFilename === root) {
-      const rel = path.relative(root, absFilename);
+    if (normalizedAbsFilename.startsWith(root + path.sep) || normalizedAbsFilename === root) {
+      const rel = path.relative(root, normalizedAbsFilename);
       const parsed = path.parse(rel);
       const segments = path.join(parsed.dir, parsed.name);
       return toPascalCase(segments);
@@ -106,7 +116,7 @@ export function resolveComponentNameFromPath(options: ResolveComponentNameOption
   }
 
   // Fallback: use just the filename without extension.
-  return toPascalCase(path.parse(absFilename).name);
+  return toPascalCase(path.parse(normalizedAbsFilename).name);
 }
 
 export function toPosixRelativeImport(fromDirAbs: string, toPathAbs: string): string {

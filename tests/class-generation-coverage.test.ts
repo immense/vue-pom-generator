@@ -369,6 +369,76 @@ describe("class-generation coverage", () => {
     }
   }, 120_000);
 
+  it("supports lazy route components when route naming depends on scanDirs", async () => {
+    const tempRoot = makeTempRoot("vue-pom-router-lazy-generated-");
+
+    try {
+      const thisDir = path.dirname(fileURLToPath(import.meta.url));
+      const frontendNodeModules = path.resolve(thisDir, "..", "node_modules");
+      const tempNodeModules = path.join(tempRoot, "node_modules");
+      if (!fs.existsSync(tempNodeModules)) {
+        fs.symlinkSync(frontendNodeModules, tempNodeModules, "dir");
+      }
+
+      const basePagePath = path.join(tempRoot, "BasePage.ts");
+      writeMinimalBasePage(basePagePath);
+
+      writeFile(path.join(tempRoot, "src", "views", "msp-instances", "List.vue"), "<template><div /></template>\n");
+      writeFile(
+        path.join(tempRoot, "src", "router.ts"),
+        [
+          "import { createMemoryHistory, createRouter } from 'vue-router';",
+          "",
+          "export default function makeRouter() {",
+          "  return createRouter({",
+          "    history: createMemoryHistory(),",
+          "    routes: [",
+          "      {",
+          "        path: '/msp-instances',",
+          "        name: 'msp-instances',",
+          "        component: () => import('@/views/msp-instances/List.vue'),",
+          "      },",
+          "    ],",
+          "  });",
+          "}",
+          "",
+        ].join("\n"),
+      );
+
+      const viewPath = path.join(tempRoot, "src", "views", "msp-instances", "List.vue");
+      const componentHierarchyMap = new Map<string, IComponentDependencies>([
+        [
+          "List",
+          makeDeps({
+            filePath: viewPath,
+            isView: true,
+            dataTestIdSet: new Set<IDataTestId>([{ value: "List-FetchData-button" }]),
+          }),
+        ],
+      ]);
+      const vueFilesPathMap = new Map<string, string>([["List", viewPath]]);
+      const outDir = path.join(tempRoot, "pom");
+
+      await generateFiles(componentHierarchyMap, vueFilesPathMap, basePagePath, {
+        outDir,
+        projectRoot: tempRoot,
+        vueRouterFluentChaining: true,
+        routerEntry: "./src/router.ts",
+        viewsDir: "src/views",
+        scanDirs: ["src/views/msp-instances"],
+      });
+
+      const aggregatedFile = path.join(outDir, "page-object-models.g.ts");
+      const content = readFile(aggregatedFile);
+
+      expect(content).toContain("export class List extends BasePage");
+      expect(content).toContain("template: \"/msp-instances\"");
+      expect(content).not.toContain("static readonly route: { template: string } | null = null;");
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   it("generates valid PascalCase class names for kebab-case and dot-separated component names", async () => {
     // Regression test: class-generation/index.ts used the raw componentName in the class
     // declaration instead of converting it to PascalCase first.  Names like "error-test" and

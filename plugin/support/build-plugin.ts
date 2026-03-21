@@ -14,6 +14,8 @@ import type { RouterModuleShimDefinition } from "../types";
 interface BuildProcessorOptions {
   componentHierarchyMap: Map<string, IComponentDependencies>;
   vueFilesPathMap: Map<string, string>;
+  viewsDir: string;
+  scanDirs: string[];
 
   basePageClassPath: string;
   normalizedBasePagePath: string;
@@ -45,6 +47,8 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
   const {
     componentHierarchyMap,
     vueFilesPathMap,
+    viewsDir,
+    scanDirs,
     basePageClassPath,
     normalizedBasePagePath,
     outDir,
@@ -86,7 +90,14 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
       else {
         if (!resolvedRouterEntry)
           throw new Error("[vue-pom-generator] router.entry is required when router introspection is enabled.");
-        result = await parseRouterFileFromCwd(resolvedRouterEntry, { moduleShims: routerModuleShims });
+        result = await parseRouterFileFromCwd(resolvedRouterEntry, {
+          moduleShims: routerModuleShims,
+          componentNaming: {
+            projectRoot: projectRootRef.current,
+            viewsDirAbs: path.isAbsolute(viewsDir) ? viewsDir : path.resolve(projectRootRef.current, viewsDir),
+            scanDirs,
+          },
+        });
       }
 
       const { routeNameMap, routePathMap } = result;
@@ -150,6 +161,8 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
         vueRouterFluentChaining: routerAwarePoms,
         routerEntry: resolvedRouterEntry,
         routerType,
+        viewsDir,
+        scanDirs,
       });
       buildGenerationMetricsByOutputKey.set(generationMetricsKey, metrics);
       loggerRef.current.info(`generated POMs (${metrics.entryCount} entries, ${metrics.selectorCount} selectors)`);

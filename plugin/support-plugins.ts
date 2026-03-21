@@ -107,6 +107,8 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
   const tsProcessor = createBuildProcessorPlugin({
     componentHierarchyMap,
     vueFilesPathMap,
+    viewsDir,
+    scanDirs,
     basePageClassPath,
     normalizedBasePagePath,
     outDir,

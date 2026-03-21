@@ -32,6 +32,14 @@ function ensureTempNodeModules(tempRoot: string) {
   }
 }
 
+function getComponentNamingOptions(tempRoot: string, scanDirs: string[]) {
+  return {
+    projectRoot: tempRoot,
+    viewsDirAbs: path.join(tempRoot, "src", "views"),
+    scanDirs,
+  };
+}
+
 describe("parseRouterFileFromCwd", () => {
   it("extracts route name/path maps and route meta (params/query)", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-router-"));
@@ -145,6 +153,62 @@ describe("parseRouterFileFromCwd", () => {
 
       expect(result.routeNameMap.get("Users")).toBe("UsersView");
       expect(result.routePathMap.get("/users")).toBe("UsersView");
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("resolves lazy route components using canonical names derived from file paths", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-router-lazy-"));
+
+    try {
+      ensureTempNodeModules(tempRoot);
+
+      const stubViewContent = readFixture("StubView.vue");
+      writeFile(path.join(tempRoot, "src", "views", "msp-instances", "List.vue"), stubViewContent);
+      writeFile(path.join(tempRoot, "src", "views", "denied-domains", "List.vue"), stubViewContent);
+
+      const routerEntry = path.join(tempRoot, "src", "router.ts");
+      writeFile(
+        routerEntry,
+        [
+          "import { createMemoryHistory, createRouter } from 'vue-router';",
+          "",
+          "export default function makeRouter() {",
+          "  return createRouter({",
+          "    history: createMemoryHistory(),",
+          "    routes: [",
+          "      {",
+          "        path: '/msp-instances',",
+          "        name: 'msp-instances',",
+          "        component: () => import('@/views/msp-instances/List.vue'),",
+          "      },",
+          "      {",
+          "        path: '/denied-domains',",
+          "        name: 'denied-domains',",
+          "        component: () => import('@/views/denied-domains/List.vue'),",
+          "      },",
+          "    ],",
+          "  });",
+          "}",
+          "",
+        ].join("\n"),
+      );
+
+      const result = await parseRouterFileFromCwd(routerEntry, {
+        componentNaming: getComponentNamingOptions(tempRoot, ["src/views/msp-instances"]),
+      });
+
+      expect(result.routeNameMap.get("MspInstances")).toBe("List");
+      expect(result.routeNameMap.get("DeniedDomains")).toBe("DeniedDomainsList");
+      expect(result.routePathMap.get("/msp-instances")).toBe("List");
+      expect(result.routePathMap.get("/denied-domains")).toBe("DeniedDomainsList");
+
+      const listMeta = result.routeMetaEntries.find(e => e.componentName === "List");
+      const deniedDomainsMeta = result.routeMetaEntries.find(e => e.componentName === "DeniedDomainsList");
+
+      expect(listMeta?.pathTemplate).toBe("/msp-instances");
+      expect(deniedDomainsMeta?.pathTemplate).toBe("/denied-domains");
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

@@ -66,12 +66,27 @@ async function getRouteMetaByComponent(
   projectRoot?: string,
   routerEntry?: string,
   routerType?: "vue-router" | "nuxt",
+  options: {
+    viewsDir?: string;
+    scanDirs?: string[];
+  } = {},
 ): Promise<Record<string, RouteMeta>> {
   const root = projectRoot ?? process.cwd();
+  const viewsDir = options.viewsDir ?? "src/views";
+  const viewsDirAbs = path.isAbsolute(viewsDir) ? viewsDir : path.resolve(root, viewsDir);
+  const scanDirs = options.scanDirs?.length ? options.scanDirs : ["src"];
+  const extraRoots = process.cwd() !== root ? [process.cwd()] : [];
 
   const { routeMetaEntries } = routerType === "nuxt"
     ? await introspectNuxtPages(root)
-    : await parseRouterFileFromCwd(resolveRouterEntry(root, routerEntry));
+    : await parseRouterFileFromCwd(resolveRouterEntry(root, routerEntry), {
+      componentNaming: {
+        projectRoot: root,
+        viewsDirAbs,
+        scanDirs,
+        extraRoots,
+      },
+    });
 
   const map = new Map<string, RouteMeta[]>();
   for (const entry of routeMetaEntries) {
@@ -382,6 +397,9 @@ export interface GenerateFilesOptions {
   /** The type of router introspection to perform. */
   routerType?: "vue-router" | "nuxt";
 
+  viewsDir?: string;
+  scanDirs?: string[];
+
   routeMetaByComponent?: Record<string, RouteMeta>;
 }
 
@@ -443,6 +461,9 @@ export async function generateFiles(
     vueRouterFluentChaining,
     routerEntry,
     routerType,
+    viewsDir,
+    scanDirs,
+    routeMetaByComponent: routeMetaByComponentOverride,
   } = options;
 
   const emitLanguages: Array<"ts" | "csharp"> = emitLanguagesOverride?.length
@@ -451,9 +472,13 @@ export async function generateFiles(
 
   const outDir = outDirOverride ?? "./pom";
 
-  const routeMetaByComponent = vueRouterFluentChaining
-    ? await getRouteMetaByComponent(projectRoot, routerEntry, routerType)
-    : undefined;
+  const routeMetaByComponent = routeMetaByComponentOverride
+    ?? (vueRouterFluentChaining
+      ? await getRouteMetaByComponent(projectRoot, routerEntry, routerType, {
+        viewsDir,
+        scanDirs,
+      })
+      : undefined);
   const generatedFilePaths: string[] = [];
   const writeGeneratedFile = (file: GeneratedFileOutput) => {
     const resolvedFilePath = path.resolve(file.filePath);

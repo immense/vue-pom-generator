@@ -5,6 +5,7 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 import type { Plugin as VitePlugin } from "vite";
 import type { RouteLocationNormalizedLoaded, Router, RouteRecordNormalized } from "vue-router";
+import { resolveComponentNameFromPath } from "./plugin/path-utils";
 import { isAsciiDigitCode, isAsciiLetterCode, toPascalCase } from "./utils";
 
 // Router introspection spins up a short-lived Vite SSR server and installs a global DOM shim.
@@ -41,6 +42,16 @@ export interface RouterIntrospectionOptions {
    * This allows consumers to stub browser-only or heavy modules during route enumeration.
    */
   moduleShims?: Record<string, RouterModuleShimDefinition>;
+  /**
+   * Optional naming configuration used to translate routed Vue file paths into the same
+   * canonical component names that the generator uses for emitted POM classes.
+   */
+  componentNaming?: {
+    projectRoot: string;
+    viewsDirAbs: string;
+    scanDirs: string[];
+    extraRoots?: string[];
+  };
 }
 
 type RouterModuleShimPrimitive = string | number | boolean | null | undefined;
@@ -339,6 +350,11 @@ interface VueComponentLike {
   name?: string;
 }
 
+interface RouteComponentInfo {
+  componentName: string | null;
+  filePath: string | null;
+}
+
 type RoutePropPrimitive = string | number | boolean | null | undefined;
 type RoutePropsFunction = (route: RouteLocationNormalizedLoaded) => Record<string, RoutePropPrimitive> | void;
 type RoutePropsValue = boolean | Record<string, RoutePropPrimitive> | RoutePropsFunction;
@@ -450,25 +466,126 @@ function getRouteParamMeta(router: Router, record: RouteRecordNormalized, paramN
   });
 }
 
-function getComponentNameFromRouteRecord(record: RouteRecordNormalized): string | null {
-  // Vue Router's normalized record has `components` (plural) where `default` is the main view component.
-  const comp = record.components?.default as VueComponentLike | undefined;
-  if (!comp)
-    return null;
+function normalizeRouteComponentFilePath(
+  filePath: string,
+  options: {
+    rootDir?: string;
+  } = {},
+): string | null {
+  const queryIndex = filePath.indexOf("?");
+  const cleanPath = queryIndex === -1 ? filePath : filePath.slice(0, queryIndex);
+  if (cleanPath.startsWith("/@fs/")) {
+    return path.normalize(cleanPath.slice("/@fs/".length));
+  }
 
+  if (path.isAbsolute(cleanPath)) {
+    if (fs.existsSync(cleanPath) || !options.rootDir)
+      return path.normalize(cleanPath);
+    return path.normalize(path.resolve(options.rootDir, `.${cleanPath}`));
+  }
+
+  if (!options.rootDir)
+    return null;
+  return path.normalize(path.resolve(options.rootDir, cleanPath));
+}
+
+function getComponentInfoFromVueComponent(
+  comp: VueComponentLike | undefined,
+  options: { allowFunctionNameFallback?: boolean; rootDir?: string } = {},
+): RouteComponentInfo {
+  if (!comp) {
+    return {
+      componentName: null,
+      filePath: null,
+    };
+  }
+
+  let componentName: string | null = null;
+  let filePath: string | null = null;
+
+  // Vue Router's normalized record has `components` (plural) where `default` is the main view component.
   // When compiled by Vite, SFCs usually have an `__file` pointing at the source file.
   if (typeof comp.__file === "string" && comp.__file.length) {
+    filePath = normalizeRouteComponentFilePath(comp.__file, { rootDir: options.rootDir });
     const base = path.posix.basename(path.posix.normalize(comp.__file));
     if (base.toLowerCase().endsWith(".vue"))
-      return base.slice(0, -".vue".length);
+      componentName = base.slice(0, -".vue".length);
   }
 
   // Fallbacks (less stable / may be minified):
-  if (typeof comp.__name === "string" && comp.__name.length)
-    return comp.__name;
-  if (typeof comp.name === "string" && comp.name.length)
-    return comp.name;
-  return null;
+  if (!componentName && typeof comp.__name === "string" && comp.__name.length)
+    componentName = comp.__name;
+  if (
+    !componentName
+    && options.allowFunctionNameFallback !== false
+    && typeof comp.name === "string"
+    && comp.name.length
+  ) {
+    componentName = comp.name;
+  }
+
+  return {
+    componentName,
+    filePath,
+  };
+}
+
+async function getComponentInfoFromRouteRecord(
+  record: RouteRecordNormalized,
+  options: {
+    rootDir?: string;
+  } = {},
+): Promise<RouteComponentInfo> {
+  const comp = record.components?.default as VueComponentLike | (() => Promise<unknown>) | undefined;
+  if (!comp) {
+    return {
+      componentName: null,
+      filePath: null,
+    };
+  }
+
+  if (typeof comp !== "function") {
+    return getComponentInfoFromVueComponent(comp as VueComponentLike, options);
+  }
+
+  const directInfo = getComponentInfoFromVueComponent(comp as VueComponentLike, {
+    allowFunctionNameFallback: false,
+    rootDir: options.rootDir,
+  });
+  if (directInfo.componentName || directInfo.filePath)
+    return directInfo;
+
+  try {
+    const loaded = await comp();
+    const resolved = (loaded && typeof loaded === "object" && "default" in loaded)
+      ? (loaded as { default?: VueComponentLike }).default
+      : (loaded as VueComponentLike | undefined);
+    const loadedInfo = getComponentInfoFromVueComponent(resolved, options);
+    if (loadedInfo.componentName || loadedInfo.filePath)
+      return loadedInfo;
+  }
+  catch {
+    // Fall back to the function object's own metadata below.
+  }
+
+  return getComponentInfoFromVueComponent(comp as VueComponentLike, options);
+}
+
+function resolveIntrospectedComponentName(
+  componentInfo: RouteComponentInfo,
+  componentNaming?: RouterIntrospectionOptions["componentNaming"],
+): string | null {
+  if (componentInfo.filePath && componentNaming) {
+    return resolveComponentNameFromPath({
+      filename: componentInfo.filePath,
+      projectRoot: componentNaming.projectRoot,
+      viewsDirAbs: componentNaming.viewsDirAbs,
+      scanDirs: componentNaming.scanDirs,
+      extraRoots: componentNaming.extraRoots,
+    });
+  }
+
+  return componentInfo.componentName;
 }
 
 async function ensureDomShim() {
@@ -759,7 +876,8 @@ export async function parseRouterFileFromCwd(
       const routeMetaEntries: RouterIntrospectionResult["routeMetaEntries"] = [];
 
       for (const r of router.getRoutes()) {
-        const componentName = getComponentNameFromRouteRecord(r);
+        const componentInfo = await getComponentInfoFromRouteRecord(r, { rootDir: cwd });
+        const componentName = resolveIntrospectedComponentName(componentInfo, options.componentNaming);
         if (!componentName)
           continue;
 
