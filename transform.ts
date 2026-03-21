@@ -30,16 +30,15 @@ import {
   getComposedClickHandlerContent,
   getIdOrName,
   getInnerText,
-  getContainedInVForDirectiveKeyValue,
-  getContainedInSlotDataKeyValue,
-  tryGetContainedInStaticVForSourceLiteralValues,
-  getKeyDirectiveValue,
-  getModelBindingValues,
-  getNativeWrapperTransformInfo,
-  getSelfClosingForDirectiveKeyAttrValue,
-  nodeHandlerAttributeValue,
-  nodeHandlerAttributeInfo,
-  tryGetClickDirective,
+   getContainedInVForDirectiveKeyValue,
+   getContainedInSlotDataKeyValue,
+   tryGetContainedInStaticVForSourceLiteralValues,
+   getKeyDirectiveValue,
+   getModelBindingValues,
+   getNativeWrapperTransformInfo,
+   nodeHandlerAttributeValue,
+   nodeHandlerAttributeInfo,
+   tryGetClickDirective,
   nodeHasToDirective,
   generateToDirectiveDataTestId,
   toDirectiveObjectFieldNameValue,
@@ -1090,8 +1089,10 @@ export function createTestIdTransform(
     }
 
     const getBestAvailableKeyValue = () => {
-      const vForKey = getKeyDirectiveValue(element, context)
-        || getSelfClosingForDirectiveKeyAttrValue(element)
+      const parentNode = (context.parent && typeof context.parent === "object") ? context.parent as { type?: number } : null;
+      const isDirectVForChild = parentNode?.type === NodeTypes.FOR;
+
+      const vForKey = (isDirectVForChild ? getKeyDirectiveValue(element, context) : null)
         || getContainedInVForDirectiveKeyValue(context, element, hierarchyMap);
       if (vForKey) return vForKey;
 

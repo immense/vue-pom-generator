@@ -363,6 +363,36 @@ describe('createTestIdTransform', () => {
     expect(testId).toBe('`MyComp-${item.id}-Select-button`')
   })
 
+  it('ignores singleton :key values when generating click test ids', () => {
+    const componentHierarchyMap = new Map()
+
+    const ast = compileAndCaptureAst(
+      '<button :key="activeTab" @click="select">Select</button>',
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+      },
+    )
+
+    const testId = findFirstDataTestId(ast)
+    expect(testId).toBe('MyComp-Select-button')
+  })
+
+  it('preserves static data-testid values on singleton keyed elements', () => {
+    const componentHierarchyMap = new Map()
+
+    const ast = compileAndCaptureAst(
+      '<button :key="activeTab" data-testid="target-visibility-selector" @click="select">Select</button>',
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+      },
+    )
+
+    const testId = findFirstDataTestId(ast)
+    expect(testId).toBe('target-visibility-selector')
+  })
+
   it('injects a stable keyed test id for scoped slot data objects', () => {
     const componentHierarchyMap = new Map()
 
