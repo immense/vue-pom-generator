@@ -176,7 +176,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
   const componentHierarchyMap = new Map<string, IComponentDependencies>();
   const vueFilesPathMap = new Map<string, string>();
 
-  const { metadataCollectorPlugin, internalVuePlugin } = createVuePluginWithTestIds({
+  const { metadataCollectorPlugin, internalVuePlugin, nuxtVueBridgePlugin } = createVuePluginWithTestIds({
     vueOptions,
     existingIdBehavior,
     nameCollisionBehavior,
@@ -232,7 +232,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
   const resultPlugins = [
     configPlugin,
     metadataCollectorPlugin,
-    ...(isNuxt ? [] : [internalVuePlugin]),
+    ...(isNuxt ? [nuxtVueBridgePlugin] : [internalVuePlugin]),
     ...supportPlugins,
   ];
 
@@ -241,7 +241,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     return [
       configPlugin,
       metadataCollectorPlugin,
-      ...(isNuxt ? [] : [internalVuePlugin]),
+      ...(isNuxt ? [nuxtVueBridgePlugin] : [internalVuePlugin]),
       virtualModules,
     ];
   }

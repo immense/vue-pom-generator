@@ -8,6 +8,7 @@ import { introspectNuxtPages, parseRouterFileFromCwd } from "../../router-intros
 import type { IComponentDependencies, RouterIntrospectionResult } from "../../utils";
 import { setResolveToComponentNameFn, setRouteNameToComponentNameMap, toPascalCase } from "../../utils";
 import type { VuePomGeneratorLogger } from "../logger";
+import { getGenerationMetrics, getGenerationMetricsKey, isLessRich } from "./generation-metrics";
 import type { RouterModuleShimDefinition } from "../types";
 
 interface BuildProcessorOptions {
@@ -38,6 +39,8 @@ interface BuildProcessorOptions {
   loggerRef: { current: VuePomGeneratorLogger };
 }
 
+const buildGenerationMetricsByOutputKey = new Map<string, ReturnType<typeof getGenerationMetrics>>();
+
 export function createBuildProcessorPlugin(options: BuildProcessorOptions): PluginOption {
   const {
     componentHierarchyMap,
@@ -60,14 +63,6 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     routerModuleShims,
     loggerRef,
   } = options;
-
-  // Vite (v6/v7) may run multiple build environments/passes (e.g. SSR + client) in a single invocation.
-  // Some passes can execute without compiling any Vue SFC templates that reach our transform, leaving
-  // `componentHierarchyMap` empty. If we blindly generate on that pass, we can overwrite a previously
-  // correct aggregated output (e.g. `tests/playwright/generated/page-object-models.g.ts`) with an incomplete file.
-  //
-  // Guard generation so we only write when we have meaningful data, and prefer the "largest" pass.
-  let lastGeneratedEntryCount = 0;
 
   return {
     name: "vue-pom-generator-build",
@@ -128,13 +123,15 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
       this.addWatchFile(pointerPath);
     },
     buildEnd() {
-      const entryCount = componentHierarchyMap.size;
-      if (entryCount <= 0) {
+      const metrics = getGenerationMetrics(componentHierarchyMap);
+      if (metrics.entryCount <= 0 || metrics.selectorCount <= 0) {
         // Skip generation rather than overwriting an existing aggregated file with an empty one.
         return;
       }
 
-      if (entryCount < lastGeneratedEntryCount) {
+      const generationMetricsKey = getGenerationMetricsKey(projectRootRef.current, outDir);
+      const previousMetrics = buildGenerationMetricsByOutputKey.get(generationMetricsKey);
+      if (previousMetrics && isLessRich(metrics, previousMetrics)) {
         // If we already generated from a richer pass, do not clobber it with a smaller/partial pass.
         return;
       }
@@ -154,8 +151,8 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
         routerEntry: resolvedRouterEntry,
         routerType,
       });
-      lastGeneratedEntryCount = entryCount;
-      loggerRef.current.info(`generated POMs (${entryCount} entries)`);
+      buildGenerationMetricsByOutputKey.set(generationMetricsKey, metrics);
+      loggerRef.current.info(`generated POMs (${metrics.entryCount} entries, ${metrics.selectorCount} selectors)`);
     },
     closeBundle() {
       loggerRef.current.info("build complete");

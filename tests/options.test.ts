@@ -12,7 +12,23 @@ describe("createVuePomGeneratorPlugins options", () => {
 
   interface ConfigPlugin {
     name?: string;
-    configResolved?: (config: { root: string; logger: TestViteLogger }) => void;
+    configResolved?: (config: { root: string; logger: TestViteLogger; plugins: Array<{ name: string }> }) => void;
+  }
+
+  interface VueCompilerOptionsLike {
+    nodeTransforms?: unknown[];
+    prefixIdentifiers?: boolean;
+  }
+
+  interface ViteVuePluginLike {
+    name: string;
+    api: {
+      options?: {
+        template?: {
+          compilerOptions?: VueCompilerOptionsLike;
+        };
+      };
+    };
   }
 
   const runConfigResolved = (plugins: unknown[], root: string = "/project") => {
@@ -36,6 +52,7 @@ describe("createVuePomGeneratorPlugins options", () => {
     configPlugin.configResolved({
       root,
       logger,
+      plugins: [],
     });
   };
 
@@ -68,6 +85,59 @@ describe("createVuePomGeneratorPlugins options", () => {
 
     expect(names).toContain("vue-pom-generator-build");
     expect(names).toContain("vue-pom-generator-dev");
+  });
+
+  it("patches Nuxt's existing vite:vue compiler options instead of adding a second vue plugin", () => {
+    const plugins = createVuePomGeneratorPlugins({
+      generation: {
+        outDir: "./tests/playwright/generated",
+        router: { type: "nuxt" },
+      },
+    });
+
+    const names = plugins
+      .map(p => (typeof p === "object" && p && "name" in p ? (p as { name?: string }).name : undefined))
+      .filter((v): v is string => typeof v === "string");
+
+    expect(names).toContain("vue-pom-generator-nuxt-vue-bridge");
+    expect(names).not.toContain("vite:vue");
+
+    runConfigResolved(plugins);
+
+    const existingNodeTransform = () => null;
+    const viteVuePlugin: ViteVuePluginLike = {
+      name: "vite:vue",
+      api: {
+        options: {
+          template: {
+            compilerOptions: {
+              nodeTransforms: [existingNodeTransform],
+            },
+          },
+        },
+      },
+    };
+
+    const bridgePlugin = plugins
+      .map((p) => {
+        if (typeof p !== "object" || !p || !("name" in p))
+          return null;
+        return p as { name?: string; configResolved?: (config: { plugins: ViteVuePluginLike[] }) => void };
+      })
+      .find(p => p?.name === "vue-pom-generator-nuxt-vue-bridge");
+
+    if (!bridgePlugin?.configResolved)
+      throw new Error("nuxt bridge plugin not found");
+
+    bridgePlugin.configResolved({
+      plugins: [viteVuePlugin],
+    });
+
+    const patchedNodeTransforms = viteVuePlugin.api.options?.template?.compilerOptions?.nodeTransforms ?? [];
+    expect(patchedNodeTransforms).toHaveLength(2);
+    expect(patchedNodeTransforms[0]).toBe(existingNodeTransform);
+    expect(typeof patchedNodeTransforms[1]).toBe("function");
+    expect(viteVuePlugin.api.options?.template?.compilerOptions?.prefixIdentifiers).toBe(true);
   });
 
   it("fails fast for invalid injection.viewsDir", () => {

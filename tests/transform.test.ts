@@ -363,6 +363,107 @@ describe('createTestIdTransform', () => {
     expect(testId).toBe('`MyComp-${item.id}-Select-button`')
   })
 
+  it('injects a stable keyed test id for scoped slot data objects', () => {
+    const componentHierarchyMap = new Map()
+
+    const ast = compileAndCaptureAst(
+      `
+        <DxDataGrid :data-source="items" key-expr="id">
+          <DxColumn cell-template="selectCell" />
+          <template #selectCell="{ data }">
+            <AylaButton @click="openProject(data.data)">Select</AylaButton>
+          </template>
+        </DxDataGrid>
+      `,
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+      },
+    )
+
+    const testId = findFirstDataTestId(ast)
+    expect(testId).toBe('`MyComp-${data.key ?? data.data?.id ?? data.id ?? data.value ?? data}-OpenProject-button`')
+  })
+
+  it('injects native input test ids from static ids before falling back to v-model', () => {
+    const componentHierarchyMap = new Map()
+
+    const ast = compileAndCaptureAst(
+      `
+        <div>
+          <label for="txbClientName">Client Name</label>
+          <input id="txbClientName" v-model="state.clientName" type="text" />
+        </div>
+      `,
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+      },
+    )
+
+    expect(findFirstDataTestId(ast)).toBe('MyComp-txbClientName-input')
+  })
+
+  it('injects native select test ids from static ids', () => {
+    const componentHierarchyMap = new Map()
+
+    const ast = compileAndCaptureAst(
+      `
+        <div>
+          <label for="modal-kind">Search Type</label>
+          <select id="modal-kind" v-model="state.kind">
+            <option>Folder Search</option>
+            <option>Tag Search</option>
+          </select>
+        </div>
+      `,
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+      },
+    )
+
+    expect(findFirstDataTestId(ast)).toBe('MyComp-modal-kind-select')
+  })
+
+  it('injects native input test ids from wrapping label text when no id exists', () => {
+    const componentHierarchyMap = new Map()
+
+    const ast = compileAndCaptureAst(
+      `
+        <label>
+          <span>File Name*</span>
+          <input v-model="state.createFile.projectName" type="text" />
+        </label>
+      `,
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+      },
+    )
+
+    expect(findFirstDataTestId(ast)).toBe('MyComp-FileName-input')
+  })
+
+  it('injects native radio test ids using v-model context plus the option label', () => {
+    const componentHierarchyMap = new Map()
+
+    const ast = compileAndCaptureAst(
+      `
+        <label>
+          <input v-model="state.createFile.copyAnswersChoice" type="radio" value="no" />
+          No
+        </label>
+      `,
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+      },
+    )
+
+    expect(findFirstDataTestId(ast)).toBe('MyComp-StateCreateFileCopyAnswersChoiceNo-radio')
+  })
+
   it('merges @click POM members by click handler identity when nameCollisionBehavior is error', () => {
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
 

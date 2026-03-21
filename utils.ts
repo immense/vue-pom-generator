@@ -503,7 +503,7 @@ export function getKeyDirectiveValue(node: ElementNode, context: TransformContex
  *
  * @internal
  */
-function getModelBindingValues(node: ElementNode): { vModel: string; modelValue: string | null } {
+export function getModelBindingValues(node: ElementNode): { vModel: string; modelValue: string | null } {
   let vModel = "";
   const vModelDirective = findDirectiveByName(node, "model");
 

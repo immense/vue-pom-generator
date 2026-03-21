@@ -98,6 +98,7 @@ function extractMetadataAfterTransform(
 export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
   metadataCollectorPlugin: PluginOption;
   internalVuePlugin: PluginOption;
+  nuxtVueBridgePlugin: PluginOption;
 } {
   const {
     vueOptions,
@@ -255,24 +256,26 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     ];
   };
 
+  const runtimeNodeTransform: NodeTransform = (node: RootNode | TemplateChildNode, context: TransformContext) => {
+    // This transform is intended for the main @vitejs/plugin-vue instance.
+    // It delegates to the same per-file transform logic used by the metadata collector,
+    // using the filename provided by the compiler context.
+    const filename = context.filename;
+    if (!filename || !filename.endsWith(".vue") || !isFileInScope(filename)) {
+      return;
+    }
+
+    const transforms = getNodeTransforms(filename);
+    const ourTransform = transforms[transforms.length - 1] as NodeTransform;
+    return ourTransform(node, context);
+  };
+
   const templateCompilerOptions = {
     ...userCompilerOptions,
     prefixIdentifiers: true,
     nodeTransforms: [
       ...userNodeTransforms,
-      (node: RootNode | TemplateChildNode, context: TransformContext) => {
-        // This transform is intended for the main @vitejs/plugin-vue instance.
-        // It delegates to the same per-file transform logic used by the metadata collector,
-        // using the filename provided by the compiler context.
-        const filename = context.filename;
-        if (!filename || !filename.endsWith(".vue") || !isFileInScope(filename)) {
-          return;
-        }
-
-        const transforms = getNodeTransforms(filename);
-        const ourTransform = transforms[transforms.length - 1] as NodeTransform;
-        return ourTransform(node, context);
-      },
+      runtimeNodeTransform,
     ],
   };
 
@@ -323,5 +326,59 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     template,
   } as VuePluginOptions);
 
-  return { metadataCollectorPlugin, internalVuePlugin };
+  const nuxtVueBridgePlugin: PluginOption = {
+    name: "vue-pom-generator-nuxt-vue-bridge",
+    apply: "serve",
+    configResolved(config) {
+      const viteVuePlugin = config.plugins.find((plugin): plugin is PluginOption & {
+        name: string;
+        api?: {
+          options?: {
+            template?: {
+              compilerOptions?: {
+                nodeTransforms?: NodeTransform[];
+              };
+            };
+          };
+        };
+      } => {
+        return typeof plugin === "object"
+          && plugin !== null
+          && "name" in plugin
+          && plugin.name === "vite:vue"
+          && "api" in plugin;
+      });
+
+      const api = viteVuePlugin?.api;
+      if (!api) {
+        loggerRef.current.warn("[vue-pom-generator] Nuxt bridge could not find vite:vue plugin to patch.");
+        return;
+      }
+
+      const currentOptions = api.options ?? {};
+      const currentTemplate = currentOptions.template ?? {};
+      const currentCompilerOptions = currentTemplate.compilerOptions ?? {};
+      const currentNodeTransforms = currentCompilerOptions.nodeTransforms ?? [];
+      if (currentNodeTransforms.includes(runtimeNodeTransform)) {
+        return;
+      }
+
+      api.options = {
+        ...currentOptions,
+        template: {
+          ...currentTemplate,
+          compilerOptions: {
+            ...currentCompilerOptions,
+            prefixIdentifiers: true,
+            nodeTransforms: [
+              ...currentNodeTransforms,
+              runtimeNodeTransform,
+            ],
+          },
+        },
+      };
+    },
+  };
+
+  return { metadataCollectorPlugin, internalVuePlugin, nuxtVueBridgePlugin };
 }

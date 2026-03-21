@@ -34,6 +34,7 @@ import {
   getContainedInSlotDataKeyValue,
   tryGetContainedInStaticVForSourceLiteralValues,
   getKeyDirectiveValue,
+  getModelBindingValues,
   getNativeWrapperTransformInfo,
   getSelfClosingForDirectiveKeyAttrValue,
   nodeHandlerAttributeValue,
@@ -44,6 +45,7 @@ import {
   toDirectiveObjectFieldNameValue,
   staticAttributeValue,
   templateAttributeValue,
+  toPascalCase,
   tryResolveToDirectiveTargetComponentName,
   IDataTestId,
   IComponentDependencies,
@@ -94,6 +96,115 @@ function toKebabCaseTag(tag: string): string {
   }
 
   return result;
+}
+
+function getStaticAttributeContent(element: ElementNode, name: string): string | null {
+  const attr = element.props.find((prop): prop is AttributeNode => {
+    return prop.type === NodeTypes.ATTRIBUTE && prop.name === name;
+  });
+
+  return attr?.value?.content?.trim() || null;
+}
+
+function getNativeHtmlControlRole(element: ElementNode): NativeRole | null {
+  const tag = (element.tag || "").toLowerCase();
+  const type = (getStaticAttributeContent(element, "type") || "").toLowerCase();
+
+  if (tag === "textarea") {
+    return "input";
+  }
+
+  if (tag === "select") {
+    return "select";
+  }
+
+  if (tag !== "input") {
+    return null;
+  }
+
+  if (type === "radio") {
+    return "radio";
+  }
+
+  if (type === "checkbox") {
+    return "checkbox";
+  }
+
+  return "input";
+}
+
+function normalizeControlLabelText(value: string | null): string | null {
+  const normalized = (value ?? "")
+    .replace(/\*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return normalized || null;
+}
+
+function getLabelNodeText(labelNode: ElementNode): string | null {
+  for (const child of labelNode.children || []) {
+    if (child.type === NodeTypes.TEXT) {
+      const normalized = normalizeControlLabelText(child.content);
+      if (normalized) {
+        return normalized;
+      }
+      continue;
+    }
+
+    if (child.type !== NodeTypes.ELEMENT) {
+      continue;
+    }
+
+    if (getNativeHtmlControlRole(child)) {
+      continue;
+    }
+
+    const normalized = normalizeControlLabelText(getInnerText(child));
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return normalizeControlLabelText(getInnerText(labelNode));
+}
+
+function getAssociatedLabelText(element: ElementNode, hierarchyMap: HierarchyMap): string | null {
+  let parent = hierarchyMap.get(element) || null;
+  while (parent) {
+    if (parent.tag === "label") {
+      return getLabelNodeText(parent);
+    }
+
+    parent = hierarchyMap.get(parent) || null;
+  }
+
+  const id = getStaticAttributeContent(element, "id");
+  if (!id) {
+    return null;
+  }
+
+  const candidates = new Set<ElementNode>();
+  for (const child of hierarchyMap.keys()) {
+    candidates.add(child);
+  }
+  for (const maybeParent of hierarchyMap.values()) {
+    if (maybeParent) {
+      candidates.add(maybeParent);
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (candidate.tag !== "label") {
+      continue;
+    }
+
+    if (getStaticAttributeContent(candidate, "for") === id) {
+      return getLabelNodeText(candidate);
+    }
+  }
+
+  return null;
 }
 
 function normalizeSearchRoots(wrapperSearchRoots: string[]): string[] {
@@ -1212,6 +1323,64 @@ export function createTestIdTransform(
         pomMergeKey,
       });
       return;
+    }
+
+    const nativeHtmlRole = getNativeHtmlControlRole(element);
+    if (nativeHtmlRole) {
+      const rawIdentifier = getStaticAttributeContent(element, "id")
+        || getStaticAttributeContent(element, "name");
+      const labelText = getAssociatedLabelText(element, hierarchyMap);
+      const { vModel, modelValue } = getModelBindingValues(element);
+      const bindingHint = modelValue || vModel || null;
+      const labelToken = labelText ? toPascalCase(labelText) : "";
+      const bindingToken = bindingHint ? toPascalCase(bindingHint) : "";
+
+      let identifierToken: string | null = null;
+      let semanticNameHint: string | undefined;
+
+      if (nativeHtmlRole === "radio" || nativeHtmlRole === "checkbox") {
+        if (rawIdentifier) {
+          identifierToken = rawIdentifier;
+          semanticNameHint = rawIdentifier;
+        }
+        else if (bindingToken && labelToken) {
+          identifierToken = `${bindingToken}${labelToken}`;
+          semanticNameHint = `${bindingHint || bindingToken} ${labelText || labelToken}`;
+        }
+        else if (labelToken) {
+          identifierToken = labelToken;
+          semanticNameHint = labelText || labelToken;
+        }
+        else if (bindingToken) {
+          identifierToken = bindingToken;
+          semanticNameHint = bindingHint || bindingToken;
+        }
+      }
+      else if (rawIdentifier) {
+        identifierToken = rawIdentifier;
+        semanticNameHint = rawIdentifier;
+      }
+      else if (labelToken) {
+        identifierToken = labelToken;
+        semanticNameHint = labelText || labelToken;
+      }
+      else if (bindingToken) {
+        identifierToken = bindingToken;
+        semanticNameHint = bindingHint || bindingToken;
+      }
+
+      if (identifierToken) {
+        const preferredGeneratedValue = bestKeyPlaceholder
+          ? templateAttributeValue(`${componentName}-${bestKeyPlaceholder}-${identifierToken}-${nativeHtmlRole}`)
+          : staticAttributeValue(`${componentName}-${identifierToken}-${nativeHtmlRole}`);
+
+        applyResolvedDataTestIdForElement({
+          preferredGeneratedValue,
+          nativeRoleOverride: nativeHtmlRole,
+          semanticNameHint: semanticNameHint || conditionalHint || undefined,
+        });
+        return;
+      }
     }
 
     const innerText = getInnerText(element) || null;
