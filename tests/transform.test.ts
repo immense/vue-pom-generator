@@ -573,6 +573,43 @@ describe('createTestIdTransform', () => {
     expect(mergedSecondary?.emitPrimary).toBe(false)
   })
 
+  it('falls back to click label hints when strict mode sees a click-name collision', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    componentHierarchyMap.set('MediaSelector', {
+      filePath: '/src/components/MediaSelector.vue',
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set(),
+      generatedMethods: new Map([['clickShowMediaLibrary', { params: 'wait: boolean = true', argNames: ['wait'] }]]),
+      reservedPomMemberNames: new Set(['ShowMediaLibraryButton', 'clickShowMediaLibrary']),
+      isView: false,
+    })
+
+    expect(() => {
+      compileAndCaptureAst(
+        `
+          <button @click="onShowMediaLibrary">
+            Media Library
+          </button>
+        `,
+        {
+          filename: '/src/components/MediaSelector.vue',
+          nodeTransforms: [createTestIdTransform('MediaSelector', componentHierarchyMap, {}, [], '/src/views', { nameCollisionBehavior: 'error' })],
+        },
+      )
+    }).not.toThrow()
+
+    const deps = componentHierarchyMap.get('MediaSelector') as IComponentDependencies | undefined
+    expect(deps).toBeTruthy()
+    expect(deps?.generatedMethods?.has('clickShowMediaLibrary')).toBe(true)
+    expect(deps?.generatedMethods?.has('clickMediaLibrary')).toBe(true)
+
+    const methodNames = Array.from(deps?.dataTestIdSet ?? [])
+      .map(e => e.pom?.methodName)
+      .filter((name): name is string => !!name)
+    expect(methodNames).toContain('MediaLibrary')
+  })
+
   it('emits per-key click methods when v-for iterates a static literal list', () => {
     const componentHierarchyMap = new Map()
 

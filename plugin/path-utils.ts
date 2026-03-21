@@ -14,11 +14,23 @@ function toPosixSlashes(value: string): string {
 
 function safeRealpath(value: string): string {
   try {
-    return fs.existsSync(value) ? fs.realpathSync(value) : value;
+    if (fs.existsSync(value)) {
+      return fs.realpathSync(value);
+    }
   }
   catch {
     return value;
   }
+
+  const parent = path.dirname(value);
+  if (!parent || parent === value) {
+    return value;
+  }
+
+  const resolvedParent = safeRealpath(parent);
+  return resolvedParent === parent
+    ? value
+    : path.join(resolvedParent, path.basename(value));
 }
 
 export function isPathWithinDir(filePathAbs: string, dirPathAbs: string): boolean {

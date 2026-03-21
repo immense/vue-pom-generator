@@ -1455,9 +1455,14 @@ export function createTestIdTransform(
       const clickHint = trimLeadingSeparators(clickSuffix) || undefined;
       const idOrName = getIdOrName(element) || undefined;
 
-      // Prefer semantic signal from the handler or explicit id/name.
-      // Fall back to inner text (computed above) for naming when handler is generic.
-      const semanticNameHint = clickHint || idOrName || innerText || conditionalHint || undefined;
+      const semanticHintCandidates = [clickHint, idOrName, innerText, conditionalHint]
+        .map(value => (value ?? "").trim())
+        .filter(Boolean)
+        .filter((value, index, values) => values.indexOf(value) === index);
+
+      // Prefer semantic signal from the handler or explicit id/name, but keep the lower-priority
+      // hints available so strict name-collision mode can fall back to a stable human-facing label.
+      const [semanticNameHint, ...semanticNameHintAlternates] = semanticHintCandidates;
 
       // Use the same AST-derived click hint as the merge key so wrapper expressions like
       // `() => doThing()` and `doThing()` can still merge.
@@ -1468,6 +1473,7 @@ export function createTestIdTransform(
       applyResolvedDataTestIdForElement({
         preferredGeneratedValue: testId,
         semanticNameHint,
+        semanticNameHintAlternates,
         pomMergeKey,
       });
 
