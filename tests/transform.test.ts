@@ -610,6 +610,47 @@ describe('createTestIdTransform', () => {
     expect(methodNames).toContain('MediaLibrary')
   })
 
+  it('falls back to wrapper title hints when strict mode sees a wrapper-name collision', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    componentHierarchyMap.set('MediaSelector', {
+      filePath: '/src/components/MediaSelector.vue',
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set(),
+      generatedMethods: new Map([['clickShowMediaLibrary', { params: 'wait: boolean = true', argNames: ['wait'] }]]),
+      reservedPomMemberNames: new Set(['ShowMediaLibraryButton', 'clickShowMediaLibrary']),
+      isView: false,
+    })
+
+    const nativeWrappers: NativeWrappersMap = {
+      MyModal: { role: 'button' },
+    }
+
+    expect(() => {
+      compileAndCaptureAst(
+        `
+          <MyModal
+            v-model="showMediaLibrary"
+            title="Media Library"
+          />
+        `,
+        {
+          filename: '/src/components/MediaSelector.vue',
+          nodeTransforms: [createTestIdTransform('MediaSelector', componentHierarchyMap, nativeWrappers, [], '/src/views', { nameCollisionBehavior: 'error' })],
+        },
+      )
+    }).not.toThrow()
+
+    const deps = componentHierarchyMap.get('MediaSelector') as IComponentDependencies | undefined
+    expect(deps).toBeTruthy()
+    expect(deps?.generatedMethods?.has('clickMediaLibrary')).toBe(true)
+
+    const methodNames = Array.from(deps?.dataTestIdSet ?? [])
+      .map(e => e.pom?.methodName)
+      .filter((name): name is string => !!name)
+    expect(methodNames).toContain('MediaLibrary')
+  })
+
   it('emits per-key click methods when v-for iterates a static literal list', () => {
     const componentHierarchyMap = new Map()
 

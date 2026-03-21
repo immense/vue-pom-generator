@@ -1305,13 +1305,26 @@ export function createTestIdTransform(
 
       const nativeRole = nativeWrappers[element.tag]?.role ?? element.tag;
 
+      const wrapperHintCandidates = [
+        semanticNameHint,
+        getStaticAttributeContent(element, "title"),
+        getStaticAttributeContent(element, "label"),
+        getStaticAttributeContent(element, "okTitle"),
+        getStaticAttributeContent(element, "cancelTitle"),
+        getStaticAttributeContent(element, "id") || getStaticAttributeContent(element, "name"),
+        getInnerText(element) || null,
+        (nameCollisionBehavior === "error" && semanticNameHint && conditionalHint)
+          ? `${semanticNameHint} ${conditionalHint}`
+          : conditionalHint,
+      ]
+        .map(value => (value ?? "").trim())
+        .filter(Boolean)
+        .filter((value, index, values) => values.indexOf(value) === index);
+
       // Wrapper-derived hints are often shared (e.g. many branches bind the same v-model path).
-      // In strict collision mode, keep the primary hint stable, but provide conditional context
-      // as an alternate hint so applyResolvedDataTestId can fall back to it only when needed.
-      const primarySemanticHint = semanticNameHint || conditionalHint || undefined;
-      const alternates = (nameCollisionBehavior === "error" && semanticNameHint && conditionalHint)
-        ? [`${semanticNameHint} ${conditionalHint}`]
-        : undefined;
+      // Keep the wrapper binding as the preferred name, but make stable author-facing props
+      // available as fallbacks when strict collision mode needs to disambiguate.
+      const [primarySemanticHint, ...alternates] = wrapperHintCandidates;
       const pomMergeKey = semanticNameHint && conditionalMergeGroupKey
         ? `wrapper:ifgroup:${conditionalMergeGroupKey}:model:${semanticNameHint}`
         : undefined;
@@ -1320,7 +1333,7 @@ export function createTestIdTransform(
         preferredGeneratedValue: nativeWrappersValue,
         nativeRoleOverride: nativeRole,
         semanticNameHint: primarySemanticHint,
-        semanticNameHintAlternates: alternates,
+        semanticNameHintAlternates: alternates.length ? alternates : undefined,
         pomMergeKey,
       });
       return;
