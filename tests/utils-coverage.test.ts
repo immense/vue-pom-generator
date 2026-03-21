@@ -326,6 +326,19 @@ describe("utils.ts coverage", () => {
     expect(info2?.semanticNameHint).toBe("ResolveConflictWithDecisionGenerateNewDeviceId");
   });
 
+  it("derives :handler semanticNameHint from later stable call arguments when leading args are dynamic", () => {
+    const root = parseTemplate(`
+      <LoadButton :handler="() => runDeploymentAction(rowData, 'Assign', RebootPreference.Suppress)">
+        Assign
+      </LoadButton>
+    `);
+    const el = firstElement(root);
+
+    const info = nodeHandlerAttributeInfo(el);
+    expect(info).toBeTruthy();
+    expect(info?.semanticNameHint).toBe("RunDeploymentActionAssignSuppress");
+  });
+
   it("derives :handler semanticNameHint from assignment-bodied arrow functions", () => {
     const root = parseTemplate(`
       <LoadButton :handler="() => showResetLocalDatabaseModal = true">Reset</LoadButton>

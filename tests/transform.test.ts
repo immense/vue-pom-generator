@@ -651,6 +651,37 @@ describe('createTestIdTransform', () => {
     expect(methodNames).toContain('MediaLibrary')
   })
 
+  it('derives handler-based suffixes from later stable args to avoid strict-mode collisions', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    componentHierarchyMap.set('UnifiedSoftwareDetailsDataRow', {
+      filePath: '/src/components/UnifiedSoftwareDetailsDataRow.vue',
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set(),
+      generatedMethods: new Map([['clickRunDeploymentAction', { params: 'wait: boolean = true', argNames: ['wait'] }]]),
+      reservedPomMemberNames: new Set(['RunDeploymentActionButton', 'clickRunDeploymentAction']),
+      isView: false,
+    })
+
+    expect(() => {
+      compileAndCaptureAst(
+        `
+          <LoadButton :handler="() => runDeploymentAction(rowData, 'Assign', RebootPreference.Suppress)">
+            Assign
+          </LoadButton>
+        `,
+        {
+          filename: '/src/components/UnifiedSoftwareDetailsDataRow.vue',
+          nodeTransforms: [createTestIdTransform('UnifiedSoftwareDetailsDataRow', componentHierarchyMap, {}, [], '/src/views', { nameCollisionBehavior: 'error' })],
+        },
+      )
+    }).not.toThrow()
+
+    const deps = componentHierarchyMap.get('UnifiedSoftwareDetailsDataRow') as IComponentDependencies | undefined
+    expect(deps).toBeTruthy()
+    expect(deps?.generatedMethods?.has('clickRunDeploymentActionAssign')).toBe(true)
+  })
+
   it('emits per-key click methods when v-for iterates a static literal list', () => {
     const componentHierarchyMap = new Map()
 

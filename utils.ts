@@ -922,6 +922,19 @@ export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInf
     return null;
   };
 
+  const getRootIdentifierFromMemberChain = (node: object | null): string | null => {
+    if (!node) {
+      return null;
+    }
+    if (isIdentifierNode(node)) {
+      return node.name;
+    }
+    if (isMemberExpressionNode(node)) {
+      return getRootIdentifierFromMemberChain(node.object);
+    }
+    return null;
+  };
+
   const getAssignmentTargetName = (lhs: object | null): string | null => {
     if (!lhs) {
       return null;
@@ -993,7 +1006,12 @@ export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInf
     // that would explode API surface and reduce stability.
     if (isMemberExpressionNode(arg)) {
       const stableName = getLastIdentifierFromMemberChain(arg);
-      if (stableName) {
+      const rootName = getRootIdentifierFromMemberChain(arg);
+      const firstChar = (rootName ?? "").charAt(0);
+      const isConstantLikeRoot = firstChar !== ""
+        && firstChar === firstChar.toUpperCase()
+        && firstChar !== firstChar.toLowerCase();
+      if (stableName && isConstantLikeRoot) {
         return toPascalCase(stableName.slice(0, 24));
       }
     }
@@ -1016,14 +1034,18 @@ export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInf
 
     // Preferred pattern: fn({ option: true/false, ... }) => OptionTrue...
     if (!isObjectExpressionNode(first)) {
-      // Secondary pattern: fn('all') / fn(true) / fn(3) etc. Derive from first 1-2 literal args.
+      // Secondary pattern: fn(rowData, 'assign', RebootPreference.Suppress), fn('all'), fn(true), etc.
+      // Skip unstable leading args and keep the first stable literal/constant-like values we can find.
       const parts: string[] = [];
-      for (const arg of args.slice(0, 2)) {
+      for (const arg of args.slice(0, 4)) {
         const w = stableWordFromValue(arg ?? null);
         if (!w) {
-          return null;
+          continue;
         }
         parts.push(w);
+        if (parts.length >= 2) {
+          break;
+        }
       }
 
       if (parts.length === 0) {
