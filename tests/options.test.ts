@@ -54,6 +54,71 @@ describe("createVuePomGeneratorPlugins options", () => {
     expect(names).toContain("vue-pom-generator-config");
   });
 
+  it("patches the resolved vite:vue plugin when vuePluginOwnership is external", () => {
+    const plugins = createVuePomGeneratorPlugins({
+      vuePluginOwnership: "external",
+      generation: false,
+    });
+
+    expect(plugins).toHaveLength(3);
+
+    const names = plugins
+      .map(p => (typeof p === "object" && p && "name" in p ? (p as { name?: string }).name : undefined))
+      .filter((v): v is string => typeof v === "string");
+
+    expect(names).not.toContain("vite:vue");
+
+    const configPlugin = plugins
+      .map((p) => {
+        if (typeof p !== "object" || !p || !("name" in p))
+          return null;
+        return p as ConfigPlugin;
+      })
+      .find(p => p?.name === "vue-pom-generator-config");
+
+    if (!configPlugin?.configResolved)
+      throw new Error("config plugin not found");
+
+    const viteVuePlugin = {
+      name: "vite:vue",
+      api: {
+        options: {
+          template: {
+            compilerOptions: {
+              expressionPlugins: ["typescript"],
+            },
+          },
+        },
+      },
+    };
+
+    configPlugin.configResolved({
+      root: "/project",
+      logger: {
+        info() {},
+        warn() {},
+        error() {},
+      },
+      plugins: [viteVuePlugin],
+    });
+
+    const compilerOptions = (viteVuePlugin.api.options as { template?: { compilerOptions?: { nodeTransforms?: unknown[]; expressionPlugins?: string[]; prefixIdentifiers?: boolean } } })
+      .template?.compilerOptions;
+
+    expect(compilerOptions?.nodeTransforms?.length).toBeGreaterThan(0);
+    expect(compilerOptions?.expressionPlugins).toContain("typescript");
+    expect(compilerOptions?.prefixIdentifiers).toBe(true);
+  });
+
+  it("fails fast when vuePluginOwnership is external but no resolved vite:vue plugin exists", () => {
+    const plugins = createVuePomGeneratorPlugins({
+      vuePluginOwnership: "external",
+      generation: false,
+    });
+
+    expect(() => runConfigResolved(plugins)).toThrow("vuePluginOwnership=\"external\"");
+  });
+
   it("includes build/serve support plugins when generation is enabled", () => {
     const plugins = createVuePomGeneratorPlugins({
       generation: {

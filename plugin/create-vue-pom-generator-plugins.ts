@@ -7,7 +7,7 @@ import type { VuePomGeneratorLogger, VuePomGeneratorVerbosity } from "./logger";
 import { createLogger } from "./logger";
 import { createSupportPlugins } from "./support-plugins";
 import { createTestIdsVirtualModulesPlugin } from "./support/virtual-modules";
-import type { ExistingIdBehavior, PomNameCollisionBehavior, RouterModuleShimDefinition, VuePomGeneratorPluginOptions } from "./types";
+import type { ExistingIdBehavior, PomNameCollisionBehavior, RouterModuleShimDefinition, VuePluginOwnership, VuePomGeneratorPluginOptions } from "./types";
 import { createVuePluginWithTestIds } from "./vue-plugin";
 
 import type { ElementMetadata } from "../metadata-collector";
@@ -114,12 +114,20 @@ function getSharedGeneratorState(key: string): SharedGeneratorState {
   return state;
 }
 
-function applyTemplateCompilerOptionsToNuxtVuePlugin(
+function applyTemplateCompilerOptionsToResolvedVuePlugin(
   config: ResolvedConfig,
   templateCompilerOptions: Record<string, unknown>,
+  mode: "nuxt" | VuePluginOwnership,
 ): void {
-  const viteVuePlugin = config.plugins.find((plugin): plugin is ViteVuePluginLike => plugin.name === "vite:vue");
+  const viteVuePlugin = (config.plugins ?? []).find((plugin): plugin is ViteVuePluginLike => plugin.name === "vite:vue");
   if (!viteVuePlugin?.api) {
+    if (mode === "external") {
+      throw new Error(
+        "[vue-pom-generator] vuePluginOwnership=\"external\" requires the resolved Vite Vue plugin, but none was found. "
+        + "Add vue() to your Vite plugins before spreading createVuePomGeneratorPlugins(...)."
+      );
+    }
+
     throw new Error("[vue-pom-generator] Nuxt mode requires the resolved Vite Vue plugin, but none was found.");
   }
 
@@ -173,7 +181,7 @@ function assertNotVitePluginInstance(options: VuePomGeneratorPluginOptions): voi
   throw new TypeError(
     `[vue-pom-generator] Invalid options: received an object that looks like a Vite plugin (found key: "${pluginLikeKey}"). `
     + `Do not pass vue() into createVuePomGeneratorPlugins(...). `
-    + `Pass Vue plugin options via { vueOptions: { ... } } instead.`
+    + `Pass Vue plugin options via { vueOptions: { ... } } instead, or add vue() separately in Vite and use { vuePluginOwnership: "external" }.`
   );
 }
 
@@ -208,6 +216,11 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
   const routerType = generationOptions?.router?.type ?? "vue-router";
   const routerModuleShims = generationOptions?.router?.moduleShims;
   const isNuxt = routerType === "nuxt";
+  if (isNuxt && options.vuePluginOwnership === "internal") {
+    throw new Error("[vue-pom-generator] Nuxt projects must use the resolved app-owned vite:vue plugin. Omit vuePluginOwnership or set it to \"external\".");
+  }
+  const vuePluginOwnership: VuePluginOwnership = isNuxt ? "external" : (options.vuePluginOwnership ?? "internal");
+  const usesExternalVuePlugin = vuePluginOwnership === "external";
   const csharp = generationOptions?.csharp;
   const generateFixtures = generationOptions?.playwright?.fixtures;
   const customPoms = generationOptions?.playwright?.customPoms;
@@ -226,6 +239,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     outDir,
     testIdAttribute,
     routerType,
+    vuePluginOwnership,
   });
   const sharedState = getSharedGeneratorState(sharedStateKey);
 
@@ -256,8 +270,8 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
         }
       }
 
-      if (isNuxt) {
-        applyTemplateCompilerOptionsToNuxtVuePlugin(config, templateCompilerOptions);
+      if (usesExternalVuePlugin) {
+        applyTemplateCompilerOptionsToResolvedVuePlugin(config, templateCompilerOptions, isNuxt ? "nuxt" : vuePluginOwnership);
       }
 
       // Small but helpful diagnostics.
@@ -321,11 +335,14 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
   if (isNuxt) {
     loggerRef.current.info("Nuxt environment detected. Skipping internal @vitejs/plugin-vue to avoid conflicts.");
   }
+  else if (usesExternalVuePlugin) {
+    loggerRef.current.info("vuePluginOwnership=\"external\" enabled. Patching the resolved vite:vue plugin instead of creating an internal one.");
+  }
 
   const resultPlugins = [
     configPlugin,
     metadataCollectorPlugin,
-    ...(isNuxt ? [] : [internalVuePlugin]),
+    ...(usesExternalVuePlugin ? [] : [internalVuePlugin]),
     ...supportPlugins,
   ];
 
@@ -334,7 +351,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     return [
       configPlugin,
       metadataCollectorPlugin,
-      ...(isNuxt ? [] : [internalVuePlugin]),
+      ...(usesExternalVuePlugin ? [] : [internalVuePlugin]),
       virtualModules,
     ];
   }

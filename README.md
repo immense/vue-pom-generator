@@ -147,12 +147,34 @@ export default defineConfig(() => {
 
 Notes:
 
-- `vuePomGenerator(...)` already wires `@vitejs/plugin-vue` internally for non-Nuxt apps.
-- Do not pass `vue()` into `createVuePomGeneratorPlugins(...)`; pass Vue options via `vueOptions`.
+- `vuePomGenerator(...)` wires `@vitejs/plugin-vue` internally by default for standard Vue apps.
+- Do not pass `vue()` into `createVuePomGeneratorPlugins(...)`; pass Vue plugin options via `vueOptions`.
+- When the app should own `vue()` explicitly, set `vuePluginOwnership: "external"` and add `vue()` separately in your Vite config.
 
 - **Injection is enabled by plugin inclusion** (there is no longer an `injection.enabled` flag).
 - **Generation is enabled by default** and can be disabled via `generation: false`.
 - **Router-aware POM helpers are enabled** when `generation.router.entry` is provided (the generator will introspect your router).
+
+### External Vue plugin ownership
+
+If your app should own the core Vue Vite plugin explicitly, add `vue()` yourself and let this package patch the resolved plugin:
+
+```ts
+import vue from "@vitejs/plugin-vue";
+import { defineConfig } from "vite";
+import { defineVuePomGeneratorConfig, vuePomGenerator } from "@immense/vue-pom-generator";
+
+const pomConfig = defineVuePomGeneratorConfig({
+  vuePluginOwnership: "external",
+});
+
+export default defineConfig({
+  plugins: [
+    vue(),
+    ...vuePomGenerator(pomConfig),
+  ],
+});
+```
 
 ### `generation.router`
 

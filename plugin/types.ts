@@ -2,6 +2,7 @@ import type { Options as VuePluginOptions } from "@vitejs/plugin-vue";
 import type { NativeWrappersMap } from "../utils";
 
 export type ExistingIdBehavior = "preserve" | "overwrite" | "error";
+export type VuePluginOwnership = "internal" | "external";
 
 /**
  * Controls what happens when the generator would emit duplicate POM member names within a single class.
@@ -18,6 +19,18 @@ export type RouterModuleShimDefinition = string[] | Record<string, RouterModuleS
 export interface VuePomGeneratorPluginOptions {
   /** Options forwarded to @vitejs/plugin-vue */
   vueOptions?: VuePluginOptions;
+
+  /**
+   * Controls whether this package creates its own `@vitejs/plugin-vue` instance or patches an
+   * app-owned one that already exists in the resolved Vite config.
+   *
+   * - `"internal"` (default for standard Vue apps): this package creates and returns its own Vue plugin
+   * - `"external"`: you must add `vue()` to your app's Vite `plugins` array yourself, and this package
+   *   will patch that resolved plugin to add its template transforms
+   *
+   * Nuxt projects always use the resolved app-owned Vue plugin.
+   */
+  vuePluginOwnership?: VuePluginOwnership;
 
   /**
    * Logging configuration for the generator plugins.
