@@ -93,9 +93,9 @@ export interface VuePomGeneratorPluginOptions {
     wrapperSearchRoots?: string[];
 
     /**
-      * What to do when the author already provided a test id attribute.
-      *
-      * - `"preserve"` (default): keep the existing value
+     * What to do when the author already provided a test id attribute.
+     *
+     * - `"preserve"` (default): keep the existing value
      * - `"overwrite"`: replace it with the generated value
      * - `"error"`: throw to force cleanup/migration
      */
@@ -226,8 +226,8 @@ export interface VuePomGeneratorPluginOptions {
        * Generate Playwright fixture helpers alongside generated POMs.
        *
        * Default output (when `true`):
-        * - `<projectRoot>/tests/playwright/__generated__/fixtures.g.ts`
-        * - managed `.gitattributes` entries when the generated fixture directory is outside `__generated__`
+        * - `<projectRoot>/tests/playwright/generated/fixtures.g.ts`
+        * - managed `.gitattributes` entries in the generated fixture directory
        */
       fixtures?: boolean | string | { outDir?: string };
 

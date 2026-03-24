@@ -139,6 +139,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     basePageClassPath,
     outDir,
     emitLanguages,
+    csharp,
     generateFixtures,
     customPomAttachments,
     customPomDir,

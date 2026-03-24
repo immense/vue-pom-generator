@@ -13,7 +13,6 @@ import { createTestIdTransform } from "../../transform";
 import type { IComponentDependencies, NativeWrappersMap, RouterIntrospectionResult } from "../../utils";
 import { setResolveToComponentNameFn, setRouteNameToComponentNameMap, toPascalCase } from "../../utils";
 import type { VuePomGeneratorLogger } from "../logger";
-import { getGenerationMetrics, getGenerationMetricsKey, isLessRich } from "./generation-metrics";
 import { resolveComponentNameFromPath } from "../path-utils";
 import type { RouterModuleShimDefinition } from "../types";
 
@@ -47,8 +46,6 @@ interface DevProcessorOptions {
 
   loggerRef: { current: VuePomGeneratorLogger };
 }
-
-const devStartupMetricsByOutputKey = new Map<string, ReturnType<typeof getGenerationMetrics>>();
 
 export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOption {
   const {
@@ -249,11 +246,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
                 nativeWrappers,
                 excludedComponents,
                 getViewsDirAbs(),
-                {
-                  existingIdBehavior: "preserve",
-                  testIdAttribute,
-                  wrapperSearchRoots: getWrapperSearchRoots(),
-                },
+                { existingIdBehavior: "preserve", testIdAttribute, wrapperSearchRoots: getWrapperSearchRoots() },
               ),
             ],
           });
@@ -296,24 +289,6 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
       };
 
       const generateAggregatedFromSnapshot = (reason: string) => {
-        const metrics = getGenerationMetrics(snapshotHierarchy);
-        if (metrics.entryCount <= 0 || metrics.selectorCount <= 0) {
-          logInfo(`generate(${reason}): skipped empty snapshot (components=${metrics.entryCount}, selectors=${metrics.selectorCount})`);
-          return;
-        }
-
-        const generationMetricsKey = getGenerationMetricsKey(projectRootRef.current, outDir);
-        if (reason === "startup") {
-          const previousMetrics = devStartupMetricsByOutputKey.get(generationMetricsKey);
-          if (previousMetrics && isLessRich(metrics, previousMetrics)) {
-            logInfo(
-              `generate(${reason}): skipped smaller snapshot `
-              + `(components=${metrics.entryCount}, selectors=${metrics.selectorCount})`,
-            );
-            return;
-          }
-        }
-
         const t0 = performance.now();
         generateFiles(snapshotHierarchy, snapshotVuePathMap, normalizedBasePagePath, {
           outDir,
@@ -329,14 +304,9 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
           vueRouterFluentChaining: routerAwarePoms,
           routerEntry: resolvedRouterEntry,
           routerType,
-          viewsDir,
-          scanDirs,
         });
-        if (reason === "startup") {
-          devStartupMetricsByOutputKey.set(generationMetricsKey, metrics);
-        }
         const t1 = performance.now();
-        logInfo(`generate(${reason}): components=${metrics.entryCount} selectors=${metrics.selectorCount} in ${formatMs(t1 - t0)}`);
+        logInfo(`generate(${reason}): components=${snapshotHierarchy.size} in ${formatMs(t1 - t0)}`);
       };
 
       const initialBuildPromise = (async () => {

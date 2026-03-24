@@ -8,7 +8,6 @@ import { introspectNuxtPages, parseRouterFileFromCwd } from "../../router-intros
 import type { IComponentDependencies, RouterIntrospectionResult } from "../../utils";
 import { setResolveToComponentNameFn, setRouteNameToComponentNameMap, toPascalCase } from "../../utils";
 import type { VuePomGeneratorLogger } from "../logger";
-import { getGenerationMetrics, getGenerationMetricsKey, isLessRich } from "./generation-metrics";
 import type { RouterModuleShimDefinition } from "../types";
 
 interface BuildProcessorOptions {
@@ -41,7 +40,42 @@ interface BuildProcessorOptions {
   loggerRef: { current: VuePomGeneratorLogger };
 }
 
-const buildGenerationMetricsByOutputKey = new Map<string, ReturnType<typeof getGenerationMetrics>>();
+interface HierarchyGenerationMetrics {
+  entryCount: number;
+  interactiveComponentCount: number;
+  dataTestIdCount: number;
+}
+
+function summarizeHierarchyMap(componentHierarchyMap: Map<string, IComponentDependencies>): HierarchyGenerationMetrics {
+  let interactiveComponentCount = 0;
+  let dataTestIdCount = 0;
+
+  for (const dependencies of componentHierarchyMap.values()) {
+    const selectorCount = dependencies.dataTestIdSet?.size ?? 0;
+    if (selectorCount > 0) {
+      interactiveComponentCount += 1;
+      dataTestIdCount += selectorCount;
+    }
+  }
+
+  return {
+    entryCount: componentHierarchyMap.size,
+    interactiveComponentCount,
+    dataTestIdCount,
+  };
+}
+
+function isLessRich(candidate: HierarchyGenerationMetrics, previous: HierarchyGenerationMetrics): boolean {
+  if (candidate.dataTestIdCount !== previous.dataTestIdCount) {
+    return candidate.dataTestIdCount < previous.dataTestIdCount;
+  }
+
+  if (candidate.interactiveComponentCount !== previous.interactiveComponentCount) {
+    return candidate.interactiveComponentCount < previous.interactiveComponentCount;
+  }
+
+  return candidate.entryCount < previous.entryCount;
+}
 
 export function createBuildProcessorPlugin(options: BuildProcessorOptions): PluginOption {
   const {
@@ -67,6 +101,18 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     routerModuleShims,
     loggerRef,
   } = options;
+
+  // Vite (v6/v7) may run multiple build environments/passes (e.g. SSR + client) in a single invocation.
+  // Some passes can execute without compiling any Vue SFC templates that reach our transform, leaving
+  // `componentHierarchyMap` empty. If we blindly generate on that pass, we can overwrite a previously
+  // correct aggregated output (e.g. `tests/playwright/generated/page-object-models.g.ts`) with an incomplete file.
+  //
+  // Guard generation so we only write when we have meaningful data, and prefer the "largest" pass.
+  let lastGeneratedMetrics: HierarchyGenerationMetrics = {
+    entryCount: 0,
+    interactiveComponentCount: 0,
+    dataTestIdCount: 0,
+  };
 
   return {
     name: "vue-pom-generator-build",
@@ -133,21 +179,23 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
       }
       this.addWatchFile(pointerPath);
     },
-    buildEnd() {
-      const metrics = getGenerationMetrics(componentHierarchyMap);
-      if (metrics.entryCount <= 0 || metrics.selectorCount <= 0) {
-        // Skip generation rather than overwriting an existing aggregated file with an empty one.
+    async buildEnd(error) {
+      if (error) {
         return;
       }
 
-      const generationMetricsKey = getGenerationMetricsKey(projectRootRef.current, outDir);
-      const previousMetrics = buildGenerationMetricsByOutputKey.get(generationMetricsKey);
-      if (previousMetrics && isLessRich(metrics, previousMetrics)) {
+      const metrics = summarizeHierarchyMap(componentHierarchyMap);
+      if (metrics.dataTestIdCount <= 0) {
+        // Skip generation rather than overwriting an existing aggregated file with selector-less output.
+        return;
+      }
+
+      if (isLessRich(metrics, lastGeneratedMetrics)) {
         // If we already generated from a richer pass, do not clobber it with a smaller/partial pass.
         return;
       }
 
-      generateFiles(componentHierarchyMap, vueFilesPathMap, normalizedBasePagePath, {
+      await generateFiles(componentHierarchyMap, vueFilesPathMap, normalizedBasePagePath, {
         outDir,
         emitLanguages,
         csharp,
@@ -164,8 +212,8 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
         viewsDir,
         scanDirs,
       });
-      buildGenerationMetricsByOutputKey.set(generationMetricsKey, metrics);
-      loggerRef.current.info(`generated POMs (${metrics.entryCount} entries, ${metrics.selectorCount} selectors)`);
+      lastGeneratedMetrics = metrics;
+      loggerRef.current.info(`generated POMs (${metrics.entryCount} entries, ${metrics.interactiveComponentCount} interactive components, ${metrics.dataTestIdCount} selectors)`);
     },
     closeBundle() {
       loggerRef.current.info("build complete");

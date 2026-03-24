@@ -67,6 +67,90 @@ function resolveFromProjectRoot(projectRoot: string, maybePath: string): string 
   return path.isAbsolute(maybePath) ? maybePath : path.resolve(projectRoot, maybePath);
 }
 
+interface ViteVueCompilerOptions extends Record<string, unknown> {
+  nodeTransforms?: unknown[];
+  expressionPlugins?: string[];
+}
+
+interface ViteVuePluginApi {
+  options?: {
+    template?: {
+      compilerOptions?: ViteVueCompilerOptions;
+    };
+  } & Record<string, unknown>;
+}
+
+interface ViteVuePluginLike {
+  name: string;
+  api?: ViteVuePluginApi;
+}
+
+interface SharedGeneratorState {
+  componentTestIds: Map<string, Set<string>>;
+  elementMetadata: Map<string, Map<string, ElementMetadata>>;
+  semanticNameMap: Map<string, string>;
+  componentHierarchyMap: Map<string, IComponentDependencies>;
+  vueFilesPathMap: Map<string, string>;
+}
+
+const sharedGeneratorStateRegistry = new Map<string, SharedGeneratorState>();
+
+function toArray<T>(value: T[] | undefined): T[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function getSharedGeneratorState(key: string): SharedGeneratorState {
+  let state = sharedGeneratorStateRegistry.get(key);
+  if (!state) {
+    state = {
+      componentTestIds: new Map<string, Set<string>>(),
+      elementMetadata: new Map<string, Map<string, ElementMetadata>>(),
+      semanticNameMap: new Map<string, string>(),
+      componentHierarchyMap: new Map<string, IComponentDependencies>(),
+      vueFilesPathMap: new Map<string, string>(),
+    };
+    sharedGeneratorStateRegistry.set(key, state);
+  }
+  return state;
+}
+
+function applyTemplateCompilerOptionsToNuxtVuePlugin(
+  config: ResolvedConfig,
+  templateCompilerOptions: Record<string, unknown>,
+): void {
+  const viteVuePlugin = config.plugins.find((plugin): plugin is ViteVuePluginLike => plugin.name === "vite:vue");
+  if (!viteVuePlugin?.api) {
+    throw new Error("[vue-pom-generator] Nuxt mode requires the resolved Vite Vue plugin, but none was found.");
+  }
+
+  const currentOptions = viteVuePlugin.api.options ?? {};
+  const currentTemplate = currentOptions.template ?? {};
+  const currentCompilerOptions = currentTemplate.compilerOptions ?? {};
+
+  const mergedNodeTransforms = [
+    ...toArray(currentCompilerOptions.nodeTransforms),
+    ...toArray(templateCompilerOptions.nodeTransforms as unknown[] | undefined),
+  ];
+
+  const mergedExpressionPlugins = Array.from(new Set([
+    ...toArray(currentCompilerOptions.expressionPlugins),
+    ...toArray(templateCompilerOptions.expressionPlugins as string[] | undefined),
+  ]));
+
+  viteVuePlugin.api.options = {
+    ...currentOptions,
+    template: {
+      ...currentTemplate,
+      compilerOptions: {
+        ...currentCompilerOptions,
+        ...templateCompilerOptions,
+        ...(mergedExpressionPlugins.length > 0 ? { expressionPlugins: mergedExpressionPlugins } : {}),
+        nodeTransforms: mergedNodeTransforms,
+      },
+    },
+  };
+}
+
 function assertNotVitePluginInstance(options: VuePomGeneratorPluginOptions): void {
   const candidate = options as Record<string, unknown>;
   const pluginLikeKeys = [
@@ -123,6 +207,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
   const routerEntry = generationOptions?.router?.entry;
   const routerType = generationOptions?.router?.type ?? "vue-router";
   const routerModuleShims = generationOptions?.router?.moduleShims;
+  const isNuxt = routerType === "nuxt";
   const csharp = generationOptions?.csharp;
   const generateFixtures = generationOptions?.playwright?.fixtures;
   const customPoms = generationOptions?.playwright?.customPoms;
@@ -133,6 +218,16 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
   const resolvedCustomPomImportCollisionBehavior = customPoms?.importNameCollisionBehavior ?? "error";
 
   const basePageClassPathOverride = generationOptions?.basePageClassPath;
+  const sharedStateKey = JSON.stringify({
+    cwd: process.cwd(),
+    viewsDir,
+    scanDirs,
+    wrapperSearchRoots,
+    outDir,
+    testIdAttribute,
+    routerType,
+  });
+  const sharedState = getSharedGeneratorState(sharedStateKey);
 
   // Shared state: initialized with process.cwd(), then updated in configResolved.
   const projectRootRef = { current: process.cwd() };
@@ -161,6 +256,10 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
         }
       }
 
+      if (isNuxt) {
+        applyTemplateCompilerOptionsToNuxtVuePlugin(config, templateCompilerOptions);
+      }
+
       // Small but helpful diagnostics.
       loggerRef.current.info(`projectRoot=${projectRootRef.current}`);
       loggerRef.current.info(`Active plugins: ${config.plugins.map(p => p.name).filter(n => n.includes('vue-pom')).join(', ')}`);
@@ -170,13 +269,9 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
   const getViewsDirAbs = () => resolveFromProjectRoot(projectRootRef.current, viewsDir);
   const getWrapperSearchRootsAbs = () => wrapperSearchRoots.map(root => resolveFromProjectRoot(projectRootRef.current, root));
 
-  const componentTestIds = new Map<string, Set<string>>();
-  const elementMetadata = new Map<string, Map<string, ElementMetadata>>();
-  const semanticNameMap = new Map<string, string>();
-  const componentHierarchyMap = new Map<string, IComponentDependencies>();
-  const vueFilesPathMap = new Map<string, string>();
+  const { componentTestIds, elementMetadata, semanticNameMap, componentHierarchyMap, vueFilesPathMap } = sharedState;
 
-  const { metadataCollectorPlugin, internalVuePlugin, nuxtVueBridgePlugin } = createVuePluginWithTestIds({
+  const { metadataCollectorPlugin, internalVuePlugin, templateCompilerOptions } = createVuePluginWithTestIds({
     vueOptions,
     existingIdBehavior,
     nameCollisionBehavior,
@@ -223,8 +318,6 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     routerModuleShims,
   });
 
-  const isNuxt = routerType === "nuxt";
-
   if (isNuxt) {
     loggerRef.current.info("Nuxt environment detected. Skipping internal @vitejs/plugin-vue to avoid conflicts.");
   }
@@ -232,7 +325,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
   const resultPlugins = [
     configPlugin,
     metadataCollectorPlugin,
-    ...(isNuxt ? [nuxtVueBridgePlugin] : [internalVuePlugin]),
+    ...(isNuxt ? [] : [internalVuePlugin]),
     ...supportPlugins,
   ];
 
@@ -241,7 +334,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     return [
       configPlugin,
       metadataCollectorPlugin,
-      ...(isNuxt ? [nuxtVueBridgePlugin] : [internalVuePlugin]),
+      ...(isNuxt ? [] : [internalVuePlugin]),
       virtualModules,
     ];
   }

@@ -204,7 +204,9 @@ When you want CI/builds to fail on explicit test ids, pair `existingIdBehavior: 
 
 ### ESLint cleanup rule: remove existing test-id attributes
 
-Use the `remove-existing-test-id-attributes` rule to strip explicit test-id attributes from `.vue` files before or while enforcing `existingIdBehavior: "error"`.
+Use the `remove-existing-test-id-attributes` rule to strip explicit test-id usage from `.vue` files before or while enforcing `existingIdBehavior: "error"`.
+
+The fixer handles both template attributes like `data-testid="save-button"` and object-literal keys such as `inputAttr: { 'data-testid': 'save-button' }` inside Vue SFC expressions/scripts.
 
 Add this to your ESLint flat-config file, typically `eslint.config.ts` (or `eslint.config.js` / `eslint.config.mjs` at the project root):
 

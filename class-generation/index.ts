@@ -233,7 +233,6 @@ function generateExtraClickMethodContent(spec: PomExtraClickMethodSpec): string 
   if (labelNeedsTemplate) {
     lines.push(`        const label = ${labelExpr};`);
   }
-
   const rootArg = rootNeedsTemplate ? "rootTestId" : rootExpr;
   const labelArg = labelNeedsTemplate ? "label" : labelExpr;
   lines.push(`        await this.clickWithinTestIdByLabel(${rootArg}, ${labelArg}, ${annotationArg}, ${waitArg});`);
@@ -1896,8 +1895,9 @@ function getWidgetInstancesForView(
       continue;
     }
 
-    if (!availableClassIdentifiers.has(className))
+    if (!availableClassIdentifiers.has(className)) {
       continue;
+    }
 
     // Prefer stripping the view prefix (e.g. PreferencesPage-) for cleaner member names.
     const viewPrefix = `${componentName}-`;

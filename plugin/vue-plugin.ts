@@ -99,6 +99,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
   metadataCollectorPlugin: PluginOption;
   internalVuePlugin: PluginOption;
   nuxtVueBridgePlugin: PluginOption;
+  templateCompilerOptions: Record<string, unknown>;
 } {
   const {
     vueOptions,
@@ -380,5 +381,5 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     },
   };
 
-  return { metadataCollectorPlugin, internalVuePlugin, nuxtVueBridgePlugin };
+  return { metadataCollectorPlugin, internalVuePlugin, nuxtVueBridgePlugin, templateCompilerOptions };
 }
