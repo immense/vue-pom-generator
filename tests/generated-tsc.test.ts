@@ -35,7 +35,7 @@ function writePlaywrightTypeStub(rootDir: string) {
     [
       "export type Page = any;",
       "export type Locator = any;",
-      "export const test: any;",
+      "export const test: { extend<T>(_fixtures: any): any };",
       "export const expect: any;",
       "",
     ].join("\n"),
@@ -175,6 +175,79 @@ describe("generated output", () => {
     expect(generatedContent).toContain("get SaveButton()");
 
     const result = runTscNoEmit([generatedFilePath, basePagePath], { cwd: tempRoot });
+
+    if (result.status !== 0) {
+      const stdout = (result.stdout || "").toString();
+      const stderr = (result.stderr || "").toString();
+      throw new Error(`tsc failed (exit ${result.status})\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`);
+    }
+  });
+
+  it("typechecks generated fixtures that prefer matching override classes", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-"));
+
+    writePlaywrightTypeStub(tempRoot);
+
+    const basePagePath = path.join(tempRoot, "BasePage.ts");
+    writeFile(
+      basePagePath,
+      [
+        "export type Fluent<T extends object> = T & PromiseLike<T>;",
+        "export class BasePage {",
+        "  public page: any;",
+        "  public constructor(page?: any, _options?: { testIdAttribute?: string }) {",
+        "    this.page = page;",
+        "  }",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    writeFile(
+      path.join(tempRoot, "Pointer.ts"),
+      [
+        "export type PlaywrightAnimationOptions = any;",
+        "export function setPlaywrightAnimationOptions(_animation: PlaywrightAnimationOptions): void {}",
+        "export class Pointer {",
+        "  public constructor(_page: any, _testIdAttribute: string) {}",
+        "}",
+        "",
+      ].join("\n"),
+    );
+
+    writeFile(
+      path.join(tempRoot, "tests", "playwright", "pom", "overrides", "PersonListPage.ts"),
+      [
+        "import { PersonListPage as GeneratedPersonListPage } from \"../../__generated__/page-object-models.g\";",
+        "export class PersonListPage extends GeneratedPersonListPage {}",
+        "",
+      ].join("\n"),
+    );
+
+    const deps: IComponentDependencies = {
+      filePath: path.join(tempRoot, "src", "views", "PersonListPage.vue"),
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set(),
+      generatedMethods: new Map(),
+      isView: true,
+    };
+
+    const componentHierarchyMap = new Map<string, IComponentDependencies>([["PersonListPage", deps]]);
+    const vueFilesPathMap = new Map<string, string>();
+    const outDir = path.join(tempRoot, "tests", "playwright", "__generated__");
+
+    await generateFiles(componentHierarchyMap, vueFilesPathMap, basePagePath, {
+      outDir,
+      projectRoot: tempRoot,
+      generateFixtures: true,
+    });
+
+    const fixtureFile = path.join(outDir, "fixtures.g.ts");
+    const fixtureContent = fs.readFileSync(fixtureFile, "utf8");
+    expect(fixtureContent).toContain("import { PersonListPage as PersonListPageOverride }");
+    expect(fixtureContent).toContain("personListPage: PersonListPageOverride");
+
+    const result = runTscNoEmit([fixtureFile, basePagePath], { cwd: tempRoot });
 
     if (result.status !== 0) {
       const stdout = (result.stdout || "").toString();

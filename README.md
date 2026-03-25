@@ -45,6 +45,10 @@ If `generation.playwright.fixtures` is enabled, it also emits:
 
 - `tests/playwright/__generated__/fixtures.g.ts` (generated; do not edit)
 
+Generated fixtures automatically prefer matching handwritten override classes from
+`tests/playwright/pom/overrides/<ClassName>.ts` (or the sibling `overrides/` directory next to
+your configured `generation.playwright.customPoms.dir`).
+
 ### Vite config example
 
 ```ts
@@ -201,6 +205,13 @@ Forms:
 Defaults:
 
 - when `true`: writes `fixtures.g.ts` alongside generated POMs (under `generation.outDir`)
+
+Convention:
+
+- if `tests/playwright/pom/overrides/<ClassName>.ts` exists, the generated fixture for that page/component
+  instantiates the override class instead of the raw generated `Pom.<ClassName>`
+- the override directory is inferred as the sibling `overrides/` directory next to
+  `generation.playwright.customPoms.dir`
 
 ### Vite config example
 

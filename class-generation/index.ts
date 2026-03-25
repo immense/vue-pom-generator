@@ -321,6 +321,10 @@ export interface GenerateFilesOptions {
    * Default output (when `true`):
    * - `<projectRoot>/<outDir>/fixtures.g.ts`
    *
+   * Convention:
+   * - fixtures automatically prefer matching handwritten override classes from
+   *   `<dirname(customPomDir)>/overrides/<ClassName>.ts` when present
+   *
    * Accepted values:
    * - `true`: enable with defaults
    * - `"path"`: enable and write the fixture file under this directory (resolved relative to projectRoot),
@@ -505,6 +509,7 @@ export async function generateFiles(
       generateFixtures,
       pomOutDir: outDir,
       projectRoot,
+      customPomDir,
     });
     if (fixtureRegistryFile) {
       writeGeneratedFile(fixtureRegistryFile);
@@ -1004,6 +1009,7 @@ function maybeGenerateFixtureRegistry(
     generateFixtures: GenerateFilesOptions["generateFixtures"];
     pomOutDir: string;
     projectRoot?: string;
+    customPomDir?: string;
   },
 ): GeneratedFileOutput | null {
   const { generateFixtures, pomOutDir } = options;
@@ -1029,6 +1035,12 @@ function maybeGenerateFixtureRegistry(
   const fixtureOutDirAbs = path.isAbsolute(fixtureOutDirRel)
     ? fixtureOutDirRel
     : path.resolve(root, fixtureOutDirRel);
+
+  const customPomDirRel = options.customPomDir ?? "tests/playwright/pom/custom";
+  const customPomDirAbs = path.isAbsolute(customPomDirRel)
+    ? customPomDirRel
+    : path.resolve(root, customPomDirRel);
+  const overridePomDirAbs = path.resolve(path.dirname(customPomDirAbs), "overrides");
 
   // Resolve the directory that contains the POM barrel export (e.g. <root>/pom).
   const pomDirAbs = path.isAbsolute(pomOutDir) ? pomOutDir : path.resolve(root, pomOutDir);
@@ -1066,6 +1078,29 @@ function maybeGenerateFixtureRegistry(
     })
     .sort((a, b) => a.localeCompare(b));
 
+  const fixtureClassNames = [...viewClassNames, ...componentClassNames];
+  const overrideCtorEntries = fixtureClassNames
+    .map((name) => {
+      const overrideFilePath = path.join(overridePomDirAbs, `${name}.ts`);
+      if (!fs.existsSync(overrideFilePath))
+        return null;
+
+      return {
+        className: name,
+        localIdentifier: `${name}Override`,
+        importSpecifier: stripExtension(toPosixRelativePath(fixtureOutDirAbs, overrideFilePath)),
+      };
+    })
+    .filter((entry): entry is { className: string; localIdentifier: string; importSpecifier: string } => !!entry);
+  const overrideCtorByClassName = new Map(overrideCtorEntries.map(entry => [entry.className, entry.localIdentifier]));
+  const overrideImports = overrideCtorEntries.length
+    ? `${overrideCtorEntries
+        .map(entry => `import { ${entry.className} as ${entry.localIdentifier} } from "${entry.importSpecifier}";`)
+        .join("\n")}\n\n`
+    : "";
+
+  const fixtureCtorExpression = (name: string) => overrideCtorByClassName.get(name) ?? `Pom.${name}`;
+
   const header = `${eslintSuppressionHeader}/**\n`
     + ` * DO NOT MODIFY BY HAND\n`
     + ` *\n`
@@ -1079,11 +1114,11 @@ function maybeGenerateFixtureRegistry(
   // View POMs implement goTo() directly, so fixtures can be strongly typed without
   // casting/augmenting at runtime.
   const fixturesTypeEntries = viewClassNames
-    .map(name => `  ${lowerFirst(name)}: Pom.${name},`)
+    .map(name => `  ${lowerFirst(name)}: ${fixtureCtorExpression(name)},`)
     .join("\n");
 
   const componentFixturesTypeEntries = componentClassNames
-    .map(name => `  ${lowerFirst(name)}: Pom.${name},`)
+    .map(name => `  ${lowerFirst(name)}: ${fixtureCtorExpression(name)},`)
     .join("\n");
 
   const pomFactoryType = `export type PomConstructor<T> = new (page: PwPage) => T;\n\n`
@@ -1100,7 +1135,8 @@ function maybeGenerateFixtureRegistry(
   }/** Generated Playwright fixtures (typed page objects). */\n\n`
   + `import { expect, test as base } from "@playwright/test";\n`
   + `import type { Page as PwPage } from "@playwright/test";\n`
-  + `import * as Pom from "${pomImport}";\n\n`
+  + `import * as Pom from "${pomImport}";\n`
+  + `${overrideImports}`
   + `export interface PlaywrightOptions {\n`
   + `  animation: Pom.PlaywrightAnimationOptions;\n`
   + `}\n\n`

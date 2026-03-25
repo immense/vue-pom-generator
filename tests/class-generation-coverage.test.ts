@@ -100,6 +100,15 @@ describe("class-generation coverage", () => {
 
       const outDir = path.join(tempRoot, "pom");
       writeFile(
+        path.join(tempRoot, "tests", "playwright", "pom", "overrides", "UsersPage.ts"),
+        [
+          "export class UsersPage {",
+          "  public constructor(_page?: any) {}",
+          "}",
+          "",
+        ].join("\n"),
+      );
+      writeFile(
         path.join(outDir, ".gitattributes"),
         [
           "# existing user-owned entry",
@@ -120,7 +129,8 @@ describe("class-generation coverage", () => {
 
       const defaultFixtureContent = readFile(defaultFixturePath);
       expect(defaultFixtureContent).toContain("Generated Playwright fixtures");
-      expect(defaultFixtureContent).toContain("usersPage: Pom.UsersPage");
+      expect(defaultFixtureContent).toContain("import { UsersPage as UsersPageOverride } from \"../tests/playwright/pom/overrides/UsersPage\";");
+      expect(defaultFixtureContent).toContain("usersPage: UsersPageOverride");
       expect(defaultFixtureContent).toContain("thingWidget: Pom.ThingWidget");
       // Reserved fixture name should not appear as a generated component fixture.
       expect(defaultFixtureContent).not.toContain("page: Pom.Page");
@@ -154,6 +164,9 @@ describe("class-generation coverage", () => {
 
       const explicitFixturePath = path.join(tempRoot, "tests", "playwright", "fixture", "CustomFixtures.ts");
       expect(fs.existsSync(explicitFixturePath)).toBe(true);
+      const explicitFixtureContent = readFile(explicitFixturePath);
+      expect(explicitFixtureContent).toContain("import { UsersPage as UsersPageOverride } from \"../pom/overrides/UsersPage\";");
+      expect(explicitFixtureContent).toContain("usersPage: UsersPageOverride");
       const explicitGitAttributesPath = path.join(tempRoot, "tests", "playwright", "fixture", ".gitattributes");
       expect(fs.existsSync(explicitGitAttributesPath)).toBe(true);
       expect(readFile(explicitGitAttributesPath)).toContain("CustomFixtures.ts linguist-generated");

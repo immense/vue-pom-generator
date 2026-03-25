@@ -241,7 +241,11 @@ export interface VuePomGeneratorPluginOptions {
        * Default output (when `true`):
         * - `<projectRoot>/tests/playwright/generated/fixtures.g.ts`
         * - managed `.gitattributes` entries in the generated fixture directory
-       */
+        *
+        * Convention:
+        * - fixtures automatically prefer matching handwritten override classes from
+        *   `<dirname(customPoms.dir)>/overrides/<ClassName>.ts` when present
+        */
       fixtures?: boolean | string | { outDir?: string };
 
       /** Handwritten Page Object Model helpers and attachments. */
