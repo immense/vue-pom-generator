@@ -36,7 +36,7 @@ interface SupportFactoryOptions {
 
   /** Generate Playwright fixtures alongside generated POMs. */
   generateFixtures?: boolean | string | { outDir?: string };
-  customPomAttachments?: Array<{ className: string; propertyName: string; attachWhenUsesComponents: string[]; attachTo?: "views" | "components" | "both" }>;
+  customPomAttachments?: Array<{ className: string; propertyName: string; attachWhenUsesComponents: string[]; attachTo?: "views" | "components" | "both"; flatten?: boolean }>;
   projectRootRef: { current: string };
   basePageClassPath?: string;
   customPomDir?: string;

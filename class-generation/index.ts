@@ -1,3 +1,5 @@
+import { parse } from "@babel/parser";
+import type { ClassMethod } from "@babel/types";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -60,6 +62,28 @@ function resolveRouterEntry(projectRoot?: string, routerEntry?: string) {
 
 interface RouteMeta {
   template: string;
+}
+
+interface CustomPomMethodSignature {
+  params: string;
+  argNames: string[];
+}
+
+type CustomPomMethodSignatureMap = Map<string, CustomPomMethodSignature>;
+
+interface CustomPomAttachment {
+  className: string;
+  propertyName: string;
+  attachWhenUsesComponents: string[];
+  attachTo?: "views" | "components" | "both";
+  flatten?: boolean;
+}
+
+interface ResolvedCustomPomAttachment {
+  className: string;
+  propertyName: string;
+  flatten: boolean;
+  methodSignatures: CustomPomMethodSignatureMap;
 }
 
 async function getRouteMetaByComponent(
@@ -368,17 +392,7 @@ export interface GenerateFilesOptions {
    * aggregated output (e.g. via `tests/playwright/pom/custom/*.ts` inlining), but we only attach them to
    * view classes that actually use certain components.
    */
-  customPomAttachments?: Array<{
-    className: string;
-    propertyName: string;
-    attachWhenUsesComponents: string[];
-
-    /**
-     * Controls whether this attachment is applied to views, components, or both.
-     * Defaults to "views" for backwards compatibility.
-     */
-    attachTo?: "views" | "components" | "both";
-  }>;
+  customPomAttachments?: CustomPomAttachment[];
 
   /** Attribute name to treat as the test id. Defaults to `data-testid`. */
   testIdAttribute?: string;
@@ -412,23 +426,14 @@ interface GenerateContentOptions {
   /** When true, omit file headers/import blocks that should be shared in an aggregated file. */
   aggregated?: boolean;
 
-  customPomAttachments?: Array<{
-    className: string;
-    propertyName: string;
-    attachWhenUsesComponents: string[];
-
-    /**
-     * Controls whether this attachment is applied to views, components, or both.
-     * Defaults to "views" for backwards compatibility.
-     */
-    attachTo?: "views" | "components" | "both";
-  }>;
+  customPomAttachments?: CustomPomAttachment[];
 
   projectRoot?: string;
   customPomDir?: string;
   customPomImportAliases?: Record<string, string>;
   customPomClassIdentifierMap?: Record<string, string>;
   customPomAvailableClassIdentifiers?: Set<string>;
+  customPomMethodSignaturesByClass?: Map<string, CustomPomMethodSignatureMap>;
 
   /** Attribute name to treat as the test id. Defaults to `data-testid`. */
   testIdAttribute?: string;
@@ -1216,6 +1221,7 @@ function generateViewObjectModelContent(
 
   const customPomClassIdentifierMap = options.customPomClassIdentifierMap ?? {};
   const customPomAvailableClassIdentifiers = options.customPomAvailableClassIdentifiers ?? new Set<string>();
+  const customPomMethodSignaturesByClass = options.customPomMethodSignaturesByClass ?? new Map<string, CustomPomMethodSignatureMap>();
 
   const attachmentsForThisClass = customPomAttachments
     .filter((a) => {
@@ -1233,6 +1239,10 @@ function generateViewObjectModelContent(
     .map(a => ({
       className: customPomClassIdentifierMap[a.className]!,
       propertyName: a.propertyName,
+      flatten: a.flatten ?? false,
+      methodSignatures: a.flatten
+        ? (customPomMethodSignaturesByClass.get(a.className) ?? new Map<string, CustomPomMethodSignature>())
+        : new Map<string, CustomPomMethodSignature>(),
     }));
 
   let content: string = "";
@@ -1295,6 +1305,19 @@ function generateViewObjectModelContent(
   const componentRefsForInstances = isView
     ? (usedComponentSet?.size ? usedComponentSet : childrenComponentSet)
     : childrenComponentSet;
+  const childInstancePropertyNames = Array.from(componentRefsForInstances)
+    .filter(child => componentHierarchyMap.has(child) && componentHierarchyMap.get(child)?.dataTestIdSet.size)
+    .map(child => child.split(".vue")[0]);
+  const blockedViewPassthroughMethodNames = new Set(
+    attachmentsForThisClass
+      .filter(a => a.flatten)
+      .flatMap(a => Array.from(a.methodSignatures.keys())),
+  );
+  const reservedAttachmentPassthroughNames = new Set<string>([
+    ...attachmentsForThisClass.map(a => a.propertyName),
+    ...widgetInstances.map(w => w.propertyName),
+    ...childInstancePropertyNames,
+  ]);
 
   // Only views get child component instance fields by default.
   // Components will only get a constructor/fields when they have explicit custom attachments
@@ -1307,6 +1330,7 @@ function generateViewObjectModelContent(
     content += getComponentInstances(new Set(), componentHierarchyMap, attachmentsForThisClass);
     content += getConstructor(new Set(), componentHierarchyMap, attachmentsForThisClass, [], { testIdAttribute });
   }
+  content += getAttachmentPassthroughMethods(componentName, dependencies, attachmentsForThisClass, reservedAttachmentPassthroughNames);
 
   // Ergonomics: when a view is primarily composed of a single component POM (e.g. a form),
   // allow calling that component's methods directly on the page class.
@@ -1322,7 +1346,7 @@ function generateViewObjectModelContent(
   // around a single child component POM. This prevents "layout" components (Page, PageHeader,
   // etc.) from injecting lots of noisy passthrough APIs into every view.
   if (isView && componentRefsForInstances.size === 1) {
-    content += getViewPassthroughMethods(componentName, dependencies, componentRefsForInstances, componentHierarchyMap);
+    content += getViewPassthroughMethods(componentName, dependencies, componentRefsForInstances, componentHierarchyMap, blockedViewPassthroughMethodNames);
   }
 
   if (isView && options.vueRouterFluentChaining) {
@@ -1343,6 +1367,7 @@ function getViewPassthroughMethods(
   viewDependencies: IComponentDependencies,
   childrenComponentSet: Set<string>,
   componentHierarchyMap: Map<string, IComponentDependencies>,
+  blockedMethodNames: Set<string> = new Set(),
 ) {
   const existingOnView = viewDependencies.generatedMethods ?? new Map<string, { params: string; argNames: string[] } | null>();
 
@@ -1366,7 +1391,7 @@ function getViewPassthroughMethods(
         continue; // ambiguous on the child itself
 
       // If the view already has this method name, never generate a pass-through.
-      if (existingOnView.has(name))
+      if (existingOnView.has(name) || blockedMethodNames.has(name))
         continue;
 
       const list = methodToChildren.get(name) ?? [];
@@ -1404,6 +1429,169 @@ function getViewPassthroughMethods(
     ...lines,
     "",
   ].join("\n");
+}
+
+function getAttachmentPassthroughMethods(
+  ownerName: string,
+  ownerDependencies: IComponentDependencies,
+  attachmentsForThisClass: ResolvedCustomPomAttachment[],
+  reservedMemberNames: Set<string>,
+) {
+  if (!attachmentsForThisClass.some(a => a.flatten && a.methodSignatures.size > 0)) {
+    return "";
+  }
+
+  const existingOnClass = ownerDependencies.generatedMethods ?? new Map<string, { params: string; argNames: string[] } | null>();
+  const methodToAttachments = new Map<string, Array<{ propertyName: string; params: string; argNames: string[] }>>();
+
+  for (const attachment of attachmentsForThisClass) {
+    if (!attachment.flatten) {
+      continue;
+    }
+
+    for (const [methodName, signature] of attachment.methodSignatures.entries()) {
+      if (methodName === "constructor" || existingOnClass.has(methodName) || reservedMemberNames.has(methodName)) {
+        continue;
+      }
+
+      const list = methodToAttachments.get(methodName) ?? [];
+      list.push({
+        propertyName: attachment.propertyName,
+        params: signature.params,
+        argNames: signature.argNames,
+      });
+      methodToAttachments.set(methodName, list);
+    }
+  }
+
+  const sorted = Array.from(methodToAttachments.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  const lines: string[] = [];
+
+  for (const [methodName, candidates] of sorted) {
+    if (candidates.length !== 1) {
+      continue;
+    }
+
+    const { propertyName, params, argNames } = candidates[0];
+    const callArgs = argNames.join(", ");
+    const invocation = callArgs
+      ? `this.${propertyName}.${methodName}(${callArgs})`
+      : `this.${propertyName}.${methodName}()`;
+
+    lines.push(
+      "",
+      `    ${methodName}(${params}) {`,
+      `        return ${invocation};`,
+      "    }",
+    );
+  }
+
+  if (!lines.length) {
+    return "";
+  }
+
+  return [
+    "",
+    `    // Passthrough methods composed from custom helper attachments of ${ownerName}.`,
+    ...lines,
+    "",
+  ].join("\n");
+}
+
+function sliceNodeSource(source: string, node: { start?: number | null; end?: number | null }): string | null {
+  if (node.start == null || node.end == null) {
+    return null;
+  }
+
+  const snippet = source.slice(node.start, node.end).trim();
+  return snippet.length ? snippet : null;
+}
+
+function getCustomPomCallArgumentName(param: ClassMethod["params"][number]): string | null {
+  if (param.type === "Identifier") {
+    return param.name;
+  }
+
+  if (param.type === "AssignmentPattern") {
+    return param.left.type === "Identifier" ? param.left.name : null;
+  }
+
+  if (param.type === "RestElement") {
+    return param.argument.type === "Identifier" ? `...${param.argument.name}` : null;
+  }
+
+  return null;
+}
+
+function extractCustomPomMethodSignatures(source: string, exportName: string): CustomPomMethodSignatureMap {
+  const signatures: CustomPomMethodSignatureMap = new Map();
+
+  let ast: ReturnType<typeof parse>;
+  try {
+    ast = parse(source, {
+      sourceType: "module",
+      plugins: ["typescript", "jsx"],
+    });
+  }
+  catch {
+    return signatures;
+  }
+
+  for (const statement of ast.program.body) {
+    if (statement.type !== "ExportNamedDeclaration" || !statement.declaration || statement.declaration.type !== "ClassDeclaration") {
+      continue;
+    }
+
+    const declaration = statement.declaration;
+    if (declaration.id?.name !== exportName) {
+      continue;
+    }
+
+    for (const member of declaration.body.body) {
+      if (member.type !== "ClassMethod" || member.kind !== "method" || member.static || member.computed) {
+        continue;
+      }
+
+      if (member.accessibility === "private" || member.accessibility === "protected") {
+        continue;
+      }
+
+      if (member.key.type !== "Identifier") {
+        continue;
+      }
+
+      const params: string[] = [];
+      const argNames: string[] = [];
+      let supported = true;
+
+      member.params.forEach((param) => {
+        if (!supported) {
+          return;
+        }
+
+        const paramSource = sliceNodeSource(source, param);
+        const argName = getCustomPomCallArgumentName(param);
+        if (!paramSource || !argName) {
+          supported = false;
+          return;
+        }
+
+        params.push(paramSource);
+        argNames.push(argName);
+      });
+
+      if (!supported) {
+        continue;
+      }
+
+      signatures.set(member.key.name, {
+        params: params.join(", "),
+        argNames,
+      });
+    }
+  }
+
+  return signatures;
 }
 
 function ensureDir(dir: string) {
@@ -1489,6 +1677,7 @@ async function generateAggregatedFiles(
       ]);
       const usedImportIdentifiers = new Set<string>();
       const customPomClassIdentifierMap: Record<string, string> = {};
+      const customPomMethodSignaturesByClass = new Map<string, CustomPomMethodSignatureMap>();
 
       const ensureUniqueIdentifier = (base: string) => {
         let candidate = base;
@@ -1507,7 +1696,10 @@ async function generateAggregatedFiles(
         : path.resolve(projectRoot, customDirRelOrAbs);
 
       if (!fs.existsSync(customDirAbs)) {
-        return;
+        return {
+          classIdentifierMap: customPomClassIdentifierMap,
+          methodSignaturesByClass: customPomMethodSignaturesByClass,
+        };
       }
 
       const files = fs.readdirSync(customDirAbs)
@@ -1540,8 +1732,13 @@ async function generateAggregatedFiles(
           localIdentifier = ensureUniqueIdentifier(requested);
         }
 
-        customPomClassIdentifierMap[exportName] = localIdentifier;
         const customFileAbs = path.join(customDirAbs, file);
+        customPomClassIdentifierMap[exportName] = localIdentifier;
+        const customPomMethodSignatures = extractCustomPomMethodSignatures(fs.readFileSync(customFileAbs, "utf8"), exportName);
+        if (customPomMethodSignatures.size > 0) {
+          customPomMethodSignaturesByClass.set(exportName, customPomMethodSignatures);
+        }
+
         const fromOutputDir = outputDir;
         const importPath = stripExtension(toPosixRelativePath(fromOutputDir, customFileAbs));
         if (localIdentifier !== exportName) {
@@ -1552,11 +1749,16 @@ async function generateAggregatedFiles(
         }
       }
 
-      return customPomClassIdentifierMap;
+      return {
+        classIdentifierMap: customPomClassIdentifierMap,
+        methodSignaturesByClass: customPomMethodSignaturesByClass,
+      };
     };
 
-    const customPomClassIdentifierMap = addCustomPomImports();
-    const customPomAvailableClassIdentifiers = new Set(Object.values(customPomClassIdentifierMap ?? {}));
+    const customPomImportResolution = addCustomPomImports();
+    const customPomClassIdentifierMap = customPomImportResolution?.classIdentifierMap ?? {};
+    const customPomMethodSignaturesByClass = customPomImportResolution?.methodSignaturesByClass ?? new Map<string, CustomPomMethodSignatureMap>();
+    const customPomAvailableClassIdentifiers = new Set(Object.values(customPomClassIdentifierMap));
 
     // Collect any navigation return types referenced by generated methods so we can emit
     // stub classes when the destination view has no generated test ids (and therefore no
@@ -1759,6 +1961,7 @@ async function generateAggregatedFiles(
         customPomAttachments: options.customPomAttachments ?? [],
         customPomClassIdentifierMap,
         customPomAvailableClassIdentifiers,
+        customPomMethodSignaturesByClass,
         testIdAttribute: options.testIdAttribute,
         vueRouterFluentChaining: options.vueRouterFluentChaining,
         routeMetaByComponent: options.routeMetaByComponent,

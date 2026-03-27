@@ -239,7 +239,7 @@ export interface VuePomGeneratorPluginOptions {
        * Generate Playwright fixture helpers alongside generated POMs.
        *
        * Default output (when `true`):
-        * - `<projectRoot>/tests/playwright/generated/fixtures.g.ts`
+        * - `<projectRoot>/tests/playwright/__generated__/fixtures.g.ts`
         * - managed `.gitattributes` entries in the generated fixture directory
         *
         * Convention:
@@ -274,6 +274,8 @@ export interface VuePomGeneratorPluginOptions {
           propertyName: string;
           attachWhenUsesComponents: string[];
           attachTo?: "views" | "components" | "both";
+          /** When true, generate passthrough methods on the generated class for this helper's public methods. */
+          flatten?: boolean;
         }>;
       };
     };

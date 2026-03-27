@@ -289,7 +289,7 @@ describe("generated output", () => {
       outDir: path.join(tempRoot, "out"),
       projectRoot: tempRoot,
       customPomDir: "tests/playwright/pom/custom",
-    })).rejects.toThrow(/Custom POM import name collision detected/);
+    })).rejects.toThrow("Custom POM import name collision detected");
   });
 
   it("can auto-alias colliding custom POM imports when configured", async () => {
@@ -350,6 +350,89 @@ describe("generated output", () => {
     expect(generatedContent).toContain("this.personListHelper = new PersonListPageCustom(page, this);");
   });
 
+  it("flattens configured custom attachment methods onto generated classes", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-"));
+
+    writePlaywrightTypeStub(tempRoot);
+
+    const basePagePath = path.join(tempRoot, "BasePage.ts");
+    writeFile(
+      basePagePath,
+      [
+        "export type Fluent<T extends object> = T & PromiseLike<T>;",
+        "export class BasePage {",
+        "  constructor(public page?: any, _options?: { testIdAttribute?: string }) {}",
+        "}",
+      ].join("\n"),
+    );
+    writeFile(
+      path.join(tempRoot, "Pointer.ts"),
+      "export type PlaywrightAnimationOptions = any; export function setPlaywrightAnimationOptions(_: PlaywrightAnimationOptions): void {} export class Pointer { constructor(_: any, __: string) {} }",
+    );
+    writeFile(
+      path.join(tempRoot, "tests", "playwright", "pom", "custom", "Grid.ts"),
+      [
+        "export class Grid {",
+        "  constructor(_page: any, _owner: any) {}",
+        "  Search(text: string, options?: { timeoutMs?: number }) {",
+        "    return { text, options };",
+        "  }",
+        "  searchHighlight(text: string) {",
+        "    return text;",
+        "  }",
+        "}",
+      ].join("\n"),
+    );
+
+    const deps: IComponentDependencies = {
+      filePath: path.join(tempRoot, "src", "components", "UsersTable.vue"),
+      childrenComponentSet: new Set(["ImmyDxDataGrid"]),
+      usedComponentSet: new Set(["ImmyDxDataGrid"]),
+      dataTestIdSet: new Set([
+        {
+          value: "UsersTable-Refresh-button",
+        },
+      ]),
+      generatedMethods: new Map(),
+      isView: false,
+    };
+
+    const componentHierarchyMap = new Map<string, IComponentDependencies>([["UsersTable", deps]]);
+    const vueFilesPathMap = new Map<string, string>();
+    const outDir = path.join(tempRoot, "out");
+
+    await generateFiles(componentHierarchyMap, vueFilesPathMap, basePagePath, {
+      outDir,
+      projectRoot: tempRoot,
+      customPomDir: "tests/playwright/pom/custom",
+      customPomAttachments: [{
+        className: "Grid",
+        propertyName: "grid",
+        attachWhenUsesComponents: ["ImmyDxDataGrid"],
+        attachTo: "both",
+        flatten: true,
+      }],
+    });
+
+    const generatedFile = path.join(outDir, "page-object-models.g.ts");
+    const generatedContent = fs.readFileSync(generatedFile, "utf8");
+    const classBlock = extractClassBlock(generatedContent, "UsersTable");
+
+    expect(classBlock).toContain("grid: Grid;");
+    expect(classBlock).toContain("Search(text: string, options?: { timeoutMs?: number }) {");
+    expect(classBlock).toContain("return this.grid.Search(text, options);");
+    expect(classBlock).toContain("searchHighlight(text: string) {");
+    expect(classBlock).toContain("return this.grid.searchHighlight(text);");
+
+    const result = runTscNoEmit([generatedFile, basePagePath], { cwd: tempRoot });
+
+    if (result.status !== 0) {
+      const stdout = (result.stdout || "").toString();
+      const stderr = (result.stderr || "").toString();
+      throw new Error(`tsc failed (exit ${result.status})\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`);
+    }
+  });
+
   it("skips missing custom helper attachments and widget instances when no helper files exist", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-"));
 
@@ -397,11 +480,13 @@ describe("generated output", () => {
           propertyName: "grid",
           attachWhenUsesComponents: ["ImmyDxDataGrid"],
           attachTo: "both",
+          flatten: true,
         },
         {
           className: "ConfirmationModal",
           propertyName: "confirmationModal",
           attachWhenUsesComponents: ["Page"],
+          flatten: true,
         },
       ],
     });
@@ -413,6 +498,8 @@ describe("generated output", () => {
     expect(generatedContent).not.toContain("CheckboxWidget");
     expect(generatedContent).not.toContain("new Grid(");
     expect(generatedContent).not.toContain("new ConfirmationModal(");
+    expect(generatedContent).not.toContain("return this.grid.");
+    expect(generatedContent).not.toContain("return this.confirmationModal.");
 
     const result = runTscNoEmit([generatedFile, basePagePath], { cwd: tempRoot });
 

@@ -25,7 +25,7 @@ interface BuildProcessorOptions {
     namespace?: string;
   };
   generateFixtures?: boolean | string | { outDir?: string };
-  customPomAttachments?: Array<{ className: string; propertyName: string; attachWhenUsesComponents: string[]; attachTo?: "views" | "components" | "both" }>;
+  customPomAttachments?: Array<{ className: string; propertyName: string; attachWhenUsesComponents: string[]; attachTo?: "views" | "components" | "both"; flatten?: boolean }>;
   projectRootRef: { current: string };
   customPomDir?: string;
   customPomImportAliases?: Record<string, string>;
