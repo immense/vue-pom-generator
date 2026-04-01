@@ -855,6 +855,7 @@ function generateAggregatedCSharpFiles(
         chunks.push("    {");
         if (pom.formattedDataTestId.includes("${") || allTestIds.length <= 1) {
           chunks.push(`        await ${locatorName}${pom.formattedDataTestId.includes("${") ? `(${args})` : ""}.ClickAsync();`);
+          chunks.push(`        return new ${target}(Page);`);
         }
         else {
           chunks.push("        Exception? lastError = null;");
@@ -876,7 +877,6 @@ function generateAggregatedCSharpFiles(
           chunks.push("        }");
           chunks.push("        throw lastError ?? new System.Exception(\"[pom] Failed to navigate using any candidate test id.\");");
         }
-        chunks.push(`        return new ${target}(Page);`);
         chunks.push("    }");
         chunks.push("");
         continue;

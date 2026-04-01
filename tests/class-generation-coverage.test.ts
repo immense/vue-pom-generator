@@ -579,4 +579,64 @@ describe("class-generation coverage", () => {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
   });
+
+  it("c#: navigation methods return on success without leaving unreachable code after terminal throws", async () => {
+    const tempRoot = makeTempRoot("vue-pom-csharp-nav-return-");
+
+    try {
+      const keyedNav: IDataTestId = {
+        value: "NavHost-${value}-immynavitem",
+        pom: {
+          nativeRole: "button",
+          methodName: "ValueByKey",
+          formattedDataTestId: "NavHost-${key}-immynavitem",
+          params: { key: "string" },
+        },
+        targetPageObjectModelClass: "UsersPage",
+      };
+
+      const alternateNav: IDataTestId = {
+        value: "NavHost-SystemUpdate-routerlink",
+        pom: {
+          nativeRole: "button",
+          methodName: "SystemUpdate",
+          formattedDataTestId: "NavHost-SystemUpdate-routerlink",
+          alternateFormattedDataTestIds: ["NavHost-Update-routerlink"],
+          params: {},
+        },
+        targetPageObjectModelClass: "SystemUpdatePage",
+      };
+
+      const componentHierarchyMap = new Map<string, IComponentDependencies>([
+        [
+          "NavHost",
+          makeDeps({
+            filePath: path.join(tempRoot, "src", "components", "NavHost.vue"),
+            isView: false,
+            dataTestIdSet: new Set([keyedNav, alternateNav]),
+          }),
+        ],
+      ]);
+
+      const outDir = path.join(tempRoot, "pom");
+      const basePagePath = path.join(tempRoot, "BasePage.ts");
+      writeMinimalBasePage(basePagePath);
+      await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
+        outDir,
+        emitLanguages: ["csharp"],
+        csharp: { namespace: "Test.Generated" },
+      });
+
+      const csFile = path.join(outDir, "page-object-models.g.cs");
+      const cs = readFile(csFile);
+
+      expect(cs).toContain("await ValueByKeyButton(key).ClickAsync();\n        return new UsersPage(Page);");
+      expect(cs).not.toContain(
+        "throw lastError ?? new System.Exception(\"[pom] Failed to navigate using any candidate test id.\");\n"
+        + "        return new SystemUpdatePage(Page);",
+      );
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
 });

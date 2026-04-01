@@ -1056,6 +1056,56 @@ describe("utils.ts coverage", () => {
     }
   });
 
+  it("merges keyed primaries with identical selectors before strict role suffixing invents duplicates", () => {
+    const root = parseTemplate("<ImmyNavItem /><ImmyNavItem />");
+    const els = (root.children ?? []).filter((c) => c?.type === NodeTypes.ELEMENT) as ElementNode[];
+    expect(els.length).toBe(2);
+
+    const deps: IComponentDependencies = {
+      filePath: "/src/components/MyComp.vue",
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set<IDataTestId>(),
+      generatedMethods: new Map(),
+      isView: false,
+    };
+
+    const generatedMethodContentByComponent = new Map<string, Set<string>>();
+
+    const applyKeyedPrimary = (element: ElementNode) => {
+      applyResolvedDataTestId({
+        element,
+        componentName: "MyComp",
+        parentComponentName: "MyComp",
+        dependencies: deps,
+        generatedMethodContentByComponent,
+        nativeRole: "button",
+        preferredGeneratedValue: templateAttributeValue("MyComp-${value}-immynavitem"),
+        bestKeyPlaceholder: null,
+        testIdAttribute: "data-testid",
+        existingIdBehavior: "overwrite",
+        addHtmlAttribute: false,
+        nameCollisionBehavior: "error",
+        semanticNameHint: "Value",
+      });
+    };
+
+    applyKeyedPrimary(els[0]!);
+    applyKeyedPrimary(els[1]!);
+
+    const poms = Array.from(deps.dataTestIdSet)
+      .map(entry => entry.pom)
+      .filter((pom): pom is NonNullable<IDataTestId["pom"]> => !!pom);
+    const primaryPoms = poms.filter(pom => pom.emitPrimary !== false);
+    const mergedPoms = poms.filter(pom => pom.emitPrimary === false);
+
+    expect(primaryPoms.map(pom => pom.methodName)).toEqual(["ValueByKey"]);
+    expect(mergedPoms.map(pom => pom.methodName)).toEqual(["ValueByKey"]);
+    expect(poms.some(pom => pom.methodName === "ValueButtonByKey")).toBe(false);
+    expect(Array.from(deps.generatedMethods?.keys() ?? [])).toContain("clickValueByKey");
+    expect(Array.from(deps.generatedMethods?.keys() ?? [])).not.toContain("clickValueButtonByKey");
+  });
+
   it("avoids select/radio action-name collisions by role-suffixing in strict mode", () => {
     const root = parseTemplate("<MySelect /><MyRadioGroup />");
     const els = (root.children ?? []).filter((c) => c?.type === NodeTypes.ELEMENT) as ElementNode[];

@@ -2585,12 +2585,6 @@ export function applyResolvedDataTestId(args: {
   const tryMergeWithExistingPrimary = (candidateActionName: string): boolean => {
     const mergeKey = (args.pomMergeKey ?? "").trim();
 
-    // For keyed selectors we intentionally do NOT merge: the semantics are ambiguous
-    // and merged locators would require additional runtime branching.
-    if (isKeyed) {
-      return false;
-    }
-
     const existingEntry = primaryByActionName.get(candidateActionName);
     const existingPom = existingEntry?.pom;
     if (!existingEntry || !existingPom) {
@@ -2602,6 +2596,13 @@ export function applyResolvedDataTestId(args: {
       ...(existingPom.alternateFormattedDataTestIds ?? []),
     ];
     const sharesSelectorIdentity = existingSelectors.includes(formattedDataTestIdForPom);
+
+    // Keyed selectors are only safe to merge when both entries already resolve to the exact
+    // same keyed selector pattern. Distinct keyed lists should still force authors to
+    // disambiguate their semantic hints instead of collapsing to one API.
+    if (isKeyed && !sharesSelectorIdentity) {
+      return false;
+    }
 
     // If both candidates already resolve to the exact same selector, separate generated
     // names would be fake differentiation. Merge them even without an explicit merge key.
@@ -2672,10 +2673,21 @@ export function applyResolvedDataTestId(args: {
         }
       }
 
-      // In strict mode (error), prefer trying role-suffixed candidates over hint alternates.
-      // This prevents common collisions where different roles share the same semantic hint
-      // (e.g. a select + radio bound to the same v-model path), causing actionName clashes
-      // like `selectFoo` vs `selectFoo` with different signatures.
+      // If this candidate already resolves to the same semantic action/selector as an
+      // existing primary, merge it before we try to synthesize a role-suffixed variant.
+      // Otherwise keyed/template selectors that collapse to one real selector identity can
+      // spuriously manufacture fake APIs like `ValueButtonByKey`.
+      if (conflicts && nameCollisionBehavior === "error" && tryMergeWithExistingPrimary(actionName)) {
+        methodName = candidate;
+        mergedIntoExisting = true;
+        break;
+      }
+
+      // In strict mode (error), prefer trying role-suffixed candidates over hint alternates
+      // when we cannot safely merge with an existing primary. This prevents common
+      // collisions where different roles share the same semantic hint (e.g. a select +
+      // radio bound to the same v-model path), causing actionName clashes like
+      // `selectFoo` vs `selectFoo` with different signatures.
       if (conflicts && nameCollisionBehavior === "error") {
         const roleSuffix = upperFirst(normalizedRole || "Element");
         const baseNameUpper = upperFirst(baseWithSuffix);
@@ -2736,16 +2748,6 @@ export function applyResolvedDataTestId(args: {
 
         reservedMembers.add(chosenGetterName);
         reservedMembers.add(actionName);
-        break;
-      }
-
-      // Merge-by-handler/target: when we would otherwise throw in error mode, allow
-      // multiple elements that share the same semantic action to converge on a single
-      // POM member (getter/action). The primary spec is mutated to include alternate
-      // test id candidates.
-      if (nameCollisionBehavior === "error" && tryMergeWithExistingPrimary(actionName)) {
-        methodName = candidate;
-        mergedIntoExisting = true;
         break;
       }
 
