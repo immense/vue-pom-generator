@@ -485,15 +485,23 @@ function getKeyDirective(node: ElementNode): DirectiveNode | null {
  *
  * @internal
  */
-export function getKeyDirectiveValue(node: ElementNode, context: TransformContext | null = null): string | null {
+export function getKeyDirectiveValue(node: ElementNode, _context: TransformContext | null = null): string | null {
   const keyDirective = getKeyDirective(node);
-  let value = (keyDirective?.exp?.loc.source);
-  if (value) {
-    if (context) {
-      value = stringifyExpression(keyDirective!.exp!);
-    }
-    return `\${${value}}`;
+  const rawSource = keyDirective?.exp?.loc.source?.trim();
+  if (rawSource) {
+    // Preserve author-facing key source instead of compiler-prefixed `_ctx.*` output.
+    // Generated keyed test ids are later embedded into other transformed expressions
+    // (for example, click instrumentation wrappers), and reusing a stringified `_ctx.*`
+    // expression there can produce invalid double-prefixing like `_ctx._ctx.item.id`.
+    return `\${${rawSource}}`;
   }
+
+  if (keyDirective?.exp) {
+    const value = stringifyExpression(keyDirective.exp);
+    if (value)
+      return `\${${value}}`;
+  }
+
   return null;
 }
 

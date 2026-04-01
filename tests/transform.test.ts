@@ -63,6 +63,18 @@ function compileAndCaptureAst(source: string, options: CompilerOptions & { filen
   return captured
 }
 
+function compileAndCaptureCode(source: string, options: CompilerOptions & { filename: string }): string {
+  const result = baseCompile(
+    source,
+    extend({}, parserOptions, options, {
+      prefixIdentifiers: true,
+      mode: 'module',
+    }),
+  )
+
+  return result.code
+}
+
 function findFirstDataTestIdDirectiveExpAst(root: RootNode): BabelNode | null | false | undefined {
   let found: BabelNode | null | false | undefined
 
@@ -361,6 +373,32 @@ describe('createTestIdTransform', () => {
     // For dynamic bindings, Vue stores directive exp as a string. We expect the exact backticked template string.
     const testId = findFirstDataTestId(ast)
     expect(testId).toBe('`MyComp-${item.id}-Select-button`')
+  })
+
+  it('does not double-prefix keyed click test ids inside click instrumentation wrappers', () => {
+    const componentHierarchyMap = new Map()
+    const nestedVForTemplate = [
+      '<ul>',
+      '  <li',
+      '    v-for="matches in lineMatches"',
+      '    :key="`${item.id}-line-${matches.lineNumber}`"',
+      '    @click.stop.prevent="lineSelected(item, matches)"',
+      '  >',
+      '    {{ matches.line }}',
+      '  </li>',
+      '</ul>',
+    ].join('\n')
+
+    const code = compileAndCaptureCode(
+      nestedVForTemplate,
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+      },
+    )
+
+    expect(code).toContain('MyComp-${`${_ctx.item.id}-line-${matches.lineNumber}`}-LineSelected-li')
+    expect(code).not.toContain('_ctx._ctx.item.id')
   })
 
   it('ignores singleton :key values when generating click test ids', () => {
