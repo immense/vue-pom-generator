@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDevProcessorPlugin } from "../plugin/support/dev-plugin";
 import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 
@@ -76,6 +76,13 @@ async function waitForCallCount(predicate: () => boolean, timeoutMs = 2000): Pro
 }
 
 describe("dev processor option plumbing", () => {
+  beforeEach(() => {
+    mocks.createTestIdTransform.mockReset();
+    mocks.createTestIdTransform.mockImplementation((..._args: CreateTestIdTransformCall) => () => {});
+    mocks.generateFiles.mockReset();
+    mocks.generateFiles.mockImplementation(async (..._args: GenerateFilesCall) => undefined);
+  });
+
   it("passes collision and route context options into snapshot generation", async () => {
     const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-dev-"));
 
@@ -152,6 +159,59 @@ describe("dev processor option plumbing", () => {
         viewsDir: "src/views",
         scanDirs: ["src"],
       });
+    }
+    finally {
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fails startup generation when snapshot compilation hits a strict collision", async () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-dev-collision-"));
+
+    try {
+      fs.mkdirSync(path.join(projectRoot, "src", "views"), { recursive: true });
+      fs.writeFileSync(
+        path.join(projectRoot, "src", "views", "MyPage.vue"),
+        "<template><button>Save</button></template>",
+        "utf8",
+      );
+
+      mocks.createTestIdTransform.mockImplementationOnce((..._args: CreateTestIdTransformCall) => {
+        return () => {
+          throw new Error("POM member-name collision");
+        };
+      });
+
+      const plugin = createDevProcessorPlugin({
+        nativeWrappers: {},
+        excludedComponents: [],
+        viewsDir: "src/views",
+        scanDirs: ["src"],
+        getWrapperSearchRoots: () => [],
+        projectRootRef: { current: projectRoot },
+        normalizedBasePagePath: path.posix.normalize(path.join(projectRoot, "BasePage.ts")),
+        basePageClassPath: path.join(projectRoot, "BasePage.ts"),
+        customPomAttachments: [],
+        nameCollisionBehavior: "error",
+        testIdAttribute: "data-testid",
+        routerAwarePoms: false,
+        loggerRef: {
+          current: {
+            info() {},
+            debug() {},
+            warn() {},
+          },
+        },
+      });
+
+      const devPlugin = plugin as { configureServer?: (server: DevServerStub) => void | Promise<void> };
+      const configureServer = devPlugin.configureServer;
+      if (!configureServer) {
+        throw new Error("Expected configureServer to exist");
+      }
+
+      await expect(configureServer(createDevServerStub())).rejects.toThrow("POM member-name collision");
+      expect(mocks.generateFiles).not.toHaveBeenCalled();
     }
     finally {
       fs.rmSync(projectRoot, { recursive: true, force: true });
