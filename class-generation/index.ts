@@ -75,7 +75,7 @@ interface CustomPomAttachment {
   className: string;
   propertyName: string;
   attachWhenUsesComponents: string[];
-  attachTo?: "views" | "components" | "both";
+  attachTo?: "views" | "components" | "both" | "pagesAndComponents";
   flatten?: boolean;
 }
 
