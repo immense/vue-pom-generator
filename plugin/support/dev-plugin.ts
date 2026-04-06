@@ -101,7 +101,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
       scheduleVueFileRegen(ctx.file, "hmr");
     },
 
-    configureServer(server: ViteDevServer) {
+    async configureServer(server: ViteDevServer) {
       const getViewsDirAbs = () => (path.isAbsolute(viewsDir)
         ? viewsDir
         : path.resolve(projectRootRef.current, viewsDir));
@@ -196,8 +196,8 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
       };
 
       // Build a complete snapshot once, then incrementally update on each changed .vue.
-      const snapshotHierarchy = new Map<string, IComponentDependencies>();
-      const snapshotVuePathMap = new Map<string, string>();
+      let snapshotHierarchy = new Map<string, IComponentDependencies>();
+      let snapshotVuePathMap = new Map<string, string>();
       const filePathToComponentName = new Map<string, string>();
 
       const getComponentNameForFile = (filePath: string) => {
@@ -216,14 +216,18 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         return name;
       };
 
-      const compileVueFileIntoSnapshot = (filePath: string) => {
+      const compileVueFileIntoSnapshot = (
+        filePath: string,
+        targetHierarchy: Map<string, IComponentDependencies> = snapshotHierarchy,
+        targetVuePathMap: Map<string, string> = snapshotVuePathMap,
+      ) => {
         const started = performance.now();
         const absolutePath = path.resolve(filePath);
         const componentName = getComponentNameForFile(absolutePath);
-        snapshotVuePathMap.set(componentName, absolutePath);
+        targetVuePathMap.set(componentName, absolutePath);
 
         // Ensure a clean rebuild for this component to avoid stale accumulation.
-        snapshotHierarchy.delete(componentName);
+        targetHierarchy.delete(componentName);
 
         let sfc = "";
         try {
@@ -237,41 +241,35 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         if (!template.trim())
           return { componentName, ms: performance.now() - started, compiled: true };
 
-        try {
-          compilerDom.compile(template, {
-            filename: absolutePath,
-            prefixIdentifiers: true,
-            nodeTransforms: [
-              createTestIdTransform(
-                componentName,
-                snapshotHierarchy,
-                nativeWrappers,
-                excludedComponents,
-                getViewsDirAbs(),
-                {
-                  existingIdBehavior: "preserve",
-                  nameCollisionBehavior,
-                  testIdAttribute,
-                  warn: message => loggerRef.current.warn(message),
-                  vueFilesPathMap: snapshotVuePathMap,
-                  wrapperSearchRoots: getWrapperSearchRoots(),
-                },
-              ),
-            ],
-          });
-        }
-        catch {
-          // If a template fails to compile, Vite will surface errors during normal dev.
-          // We keep the last-known good snapshot entry deleted so the regen reflects current state.
-        }
+        compilerDom.compile(template, {
+          filename: absolutePath,
+          prefixIdentifiers: true,
+          nodeTransforms: [
+            createTestIdTransform(
+              componentName,
+              targetHierarchy,
+              nativeWrappers,
+              excludedComponents,
+              getViewsDirAbs(),
+              {
+                existingIdBehavior: "preserve",
+                nameCollisionBehavior,
+                testIdAttribute,
+                warn: message => loggerRef.current.warn(message),
+                vueFilesPathMap: targetVuePathMap,
+                wrapperSearchRoots: getWrapperSearchRoots(),
+              },
+            ),
+          ],
+        });
 
         return { componentName, ms: performance.now() - started, compiled: true };
       };
 
       const fullRebuildSnapshotFromFilesystem = () => {
         const t0 = performance.now();
-        snapshotHierarchy.clear();
-        snapshotVuePathMap.clear();
+        const nextHierarchy = new Map<string, IComponentDependencies>();
+        const nextVuePathMap = new Map<string, string>();
         filePathToComponentName.clear();
 
         let totalVueFiles = 0;
@@ -286,11 +284,14 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
           totalVueFiles += vueFiles.length;
 
           for (const file of vueFiles) {
-            const res = compileVueFileIntoSnapshot(file);
+            const res = compileVueFileIntoSnapshot(file, nextHierarchy, nextVuePathMap);
             if (res.compiled)
               compiledCount++;
           }
         }
+
+        snapshotHierarchy = nextHierarchy;
+        snapshotVuePathMap = nextVuePathMap;
 
         const t1 = performance.now();
         logInfo(`initial scan: found ${totalVueFiles} .vue files in ${scanDirs.join(", ")}`);
@@ -320,6 +321,11 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         logInfo(`generate(${reason}): components=${snapshotHierarchy.size} in ${formatMs(t1 - t0)}`);
       };
 
+      let timer: NodeJS.Timeout | null = null;
+      let maxWaitTimer: NodeJS.Timeout | null = null;
+      const pendingChangedVueFiles = new Set<string>();
+      const pendingDeletedComponents = new Set<string>();
+
       const initialBuildPromise = (async () => {
         const t0 = performance.now();
         await routerInitPromise;
@@ -329,14 +335,53 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         logInfo(`startup total: ${formatMs(t1 - t0)}`);
       })();
 
+      const logGenerationError = (reason: string, message: string) => {
+        server.config.logger.error(`[vue-pom-generator] dev generation failed during ${reason}: ${message}`);
+      };
+
+      const regenerateFromPending = async (reason: string) => {
+        const t0 = performance.now();
+        await initialBuildPromise;
+
+        const nextHierarchy = new Map(snapshotHierarchy);
+        const nextVuePathMap = new Map(snapshotVuePathMap);
+
+        for (const componentName of pendingDeletedComponents) {
+          nextHierarchy.delete(componentName);
+          nextVuePathMap.delete(componentName);
+        }
+
+        const files = Array.from(pendingChangedVueFiles);
+        const deletedCount = pendingDeletedComponents.size;
+        pendingChangedVueFiles.clear();
+        pendingDeletedComponents.clear();
+
+        let compileMs = 0;
+        for (const f of files) {
+          const res = compileVueFileIntoSnapshot(f, nextHierarchy, nextVuePathMap);
+          compileMs += res.ms;
+        }
+
+        snapshotHierarchy = nextHierarchy;
+        snapshotVuePathMap = nextVuePathMap;
+
+        const t1 = performance.now();
+        generateAggregatedFromSnapshot(reason);
+        const t2 = performance.now();
+
+        return {
+          files,
+          deletedCount,
+          compileMs,
+          preGenerateMs: t1 - t0,
+          generateMs: t2 - t1,
+          totalMs: t2 - t0,
+        };
+      };
+
       const watchedVueGlobs = scanDirs.map(dir => path.resolve(projectRootRef.current, dir, "**", "*.vue"));
       const watchedPluginGlob = path.resolve(projectRootRef.current, "vite-plugins", "vue-pom-generator", "**", "*.ts");
       server.watcher.add([...watchedVueGlobs, watchedPluginGlob, basePageClassPath]);
-
-      let timer: NodeJS.Timeout | null = null;
-      let maxWaitTimer: NodeJS.Timeout | null = null;
-      const pendingChangedVueFiles = new Set<string>();
-      const pendingDeletedComponents = new Set<string>();
 
       scheduleVueFileRegenLocal = (filePath: string, source: "hmr" | "fs") => {
         pendingChangedVueFiles.add(filePath);
@@ -357,35 +402,17 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
               timer = null;
             }
             maxWaitTimer = null;
-            void (async () => {
-              const t0 = performance.now();
-              await initialBuildPromise;
-
-              for (const componentName of pendingDeletedComponents) {
-                snapshotHierarchy.delete(componentName);
-                snapshotVuePathMap.delete(componentName);
-              }
-
-              const files = Array.from(pendingChangedVueFiles);
-              const deletedCount = pendingDeletedComponents.size;
-              pendingChangedVueFiles.clear();
-              pendingDeletedComponents.clear();
-
-              let compileMs = 0;
-              for (const f of files) {
-                const res = compileVueFileIntoSnapshot(f);
-                compileMs += res.ms;
-              }
-
-              const t1 = performance.now();
-              generateAggregatedFromSnapshot("max-wait");
-              const t2 = performance.now();
-
-              logInfo(
-                `max-wait: files=${files.length} deleted=${deletedCount} `
-                + `compile=${formatMs(compileMs)} wall=${formatMs(t1 - t0)} gen=${formatMs(t2 - t1)} total=${formatMs(t2 - t0)}`,
-              );
-            })();
+            void regenerateFromPending("max-wait")
+              .then(({ files, deletedCount, compileMs, preGenerateMs, generateMs, totalMs }) => {
+                logInfo(
+                  `max-wait: files=${files.length} deleted=${deletedCount} `
+                  + `compile=${formatMs(compileMs)} wall=${formatMs(preGenerateMs)} gen=${formatMs(generateMs)} total=${formatMs(totalMs)}`,
+                );
+              })
+              .catch((error) => {
+                const message = error instanceof Error ? error.message : String(error);
+                logGenerationError("max-wait", message);
+              });
           }, MAX_WAIT_MS);
         }
 
@@ -404,37 +431,20 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
             maxWaitTimer = null;
           }
 
-          void (async () => {
-            const t0 = performance.now();
-            await initialBuildPromise;
-
-            for (const componentName of pendingDeletedComponents) {
-              snapshotHierarchy.delete(componentName);
-              snapshotVuePathMap.delete(componentName);
-            }
-
-            const files = Array.from(pendingChangedVueFiles);
-            const deletedCount = pendingDeletedComponents.size;
-            pendingChangedVueFiles.clear();
-            pendingDeletedComponents.clear();
-
-            let compileMs = 0;
-            for (const f of files) {
-              const res = compileVueFileIntoSnapshot(f);
-              compileMs += res.ms;
-            }
-
-            const t1 = performance.now();
-            generateAggregatedFromSnapshot(files.length || deletedCount ? "batched" : "noop");
-            const t2 = performance.now();
-
-            if (files.length || deletedCount) {
-              logInfo(
-                `batched: files=${files.length} deleted=${deletedCount} `
-                + `compile=${formatMs(compileMs)} wall=${formatMs(t1 - t0)} gen=${formatMs(t2 - t1)} total=${formatMs(t2 - t0)}`,
-              );
-            }
-          })();
+          const reason = pendingChangedVueFiles.size || pendingDeletedComponents.size ? "batched" : "noop";
+          void regenerateFromPending(reason)
+            .then(({ files, deletedCount, compileMs, preGenerateMs, generateMs, totalMs }) => {
+              if (files.length || deletedCount) {
+                logInfo(
+                  `batched: files=${files.length} deleted=${deletedCount} `
+                  + `compile=${formatMs(compileMs)} wall=${formatMs(preGenerateMs)} gen=${formatMs(generateMs)} total=${formatMs(totalMs)}`,
+                );
+              }
+            })
+            .catch((error) => {
+              const message = error instanceof Error ? error.message : String(error);
+              logGenerationError(reason, message);
+            });
         }, 75);
       }
 
@@ -503,6 +513,8 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
       setTimeout(() => {
         // The initial snapshot build/generate is started immediately above.
       }, 250);
+
+      await initialBuildPromise;
     },
   } satisfies PluginOption;
 }
