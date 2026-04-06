@@ -4,7 +4,7 @@ import type { PluginOption } from "vite";
 
 import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 import type { VuePomGeneratorLogger } from "./logger";
-import type { RouterModuleShimDefinition } from "./types";
+import type { PomNameCollisionBehavior, RouterModuleShimDefinition } from "./types";
 import { createBuildProcessorPlugin } from "./support/build-plugin";
 import { createDevProcessorPlugin } from "./support/dev-plugin";
 import { createTestIdsVirtualModulesPlugin } from "./support/virtual-modules";
@@ -18,6 +18,7 @@ interface SupportFactoryOptions {
   viewsDir: string;
   scanDirs: string[];
   getWrapperSearchRoots: () => string[];
+  nameCollisionBehavior?: PomNameCollisionBehavior;
 
   /** Output directory for generated files (POMs + optional fixtures). */
   outDir?: string;
@@ -36,7 +37,7 @@ interface SupportFactoryOptions {
 
   /** Generate Playwright fixtures alongside generated POMs. */
   generateFixtures?: boolean | string | { outDir?: string };
-  customPomAttachments?: Array<{ className: string; propertyName: string; attachWhenUsesComponents: string[]; attachTo?: "views" | "components" | "both"; flatten?: boolean }>;
+  customPomAttachments?: Array<{ className: string; propertyName: string; attachWhenUsesComponents: string[]; attachTo?: "views" | "components" | "both" | "pagesAndComponents"; flatten?: boolean }>;
   projectRootRef: { current: string };
   basePageClassPath?: string;
   customPomDir?: string;
@@ -57,6 +58,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     viewsDir,
     scanDirs,
     getWrapperSearchRoots,
+    nameCollisionBehavior = "suffix",
     outDir,
     emitLanguages,
     csharp,
@@ -145,6 +147,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     customPomDir,
     customPomImportAliases,
     customPomImportNameCollisionBehavior,
+    nameCollisionBehavior,
     testIdAttribute,
     routerAwarePoms,
     routerType,

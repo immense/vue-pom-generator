@@ -314,6 +314,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     viewsDir,
     scanDirs,
     getWrapperSearchRoots: getWrapperSearchRootsAbs,
+    nameCollisionBehavior,
     outDir,
     emitLanguages,
     csharp,

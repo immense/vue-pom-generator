@@ -14,7 +14,7 @@ import type { IComponentDependencies, NativeWrappersMap, RouterIntrospectionResu
 import { setResolveToComponentNameFn, setRouteNameToComponentNameMap, toPascalCase } from "../../utils";
 import type { VuePomGeneratorLogger } from "../logger";
 import { resolveComponentNameFromPath } from "../path-utils";
-import type { RouterModuleShimDefinition } from "../types";
+import type { PomNameCollisionBehavior, RouterModuleShimDefinition } from "../types";
 
 interface DevProcessorOptions {
   nativeWrappers: NativeWrappersMap;
@@ -33,10 +33,11 @@ interface DevProcessorOptions {
     namespace?: string;
   };
   generateFixtures?: boolean | string | { outDir?: string };
-  customPomAttachments?: Array<{ className: string; propertyName: string; attachWhenUsesComponents: string[]; attachTo?: "views" | "components" | "both"; flatten?: boolean }>;
+  customPomAttachments?: Array<{ className: string; propertyName: string; attachWhenUsesComponents: string[]; attachTo?: "views" | "components" | "both" | "pagesAndComponents"; flatten?: boolean }>;
   customPomDir?: string;
   customPomImportAliases?: Record<string, string>;
   customPomImportNameCollisionBehavior?: "error" | "alias";
+  nameCollisionBehavior?: PomNameCollisionBehavior;
   testIdAttribute: string;
 
   routerAwarePoms: boolean;
@@ -65,6 +66,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     customPomDir,
     customPomImportAliases,
     customPomImportNameCollisionBehavior,
+    nameCollisionBehavior = "suffix",
     testIdAttribute,
     routerAwarePoms,
     resolvedRouterEntry,
@@ -246,7 +248,14 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
                 nativeWrappers,
                 excludedComponents,
                 getViewsDirAbs(),
-                { existingIdBehavior: "preserve", testIdAttribute, wrapperSearchRoots: getWrapperSearchRoots() },
+                {
+                  existingIdBehavior: "preserve",
+                  nameCollisionBehavior,
+                  testIdAttribute,
+                  warn: message => loggerRef.current.warn(message),
+                  vueFilesPathMap: snapshotVuePathMap,
+                  wrapperSearchRoots: getWrapperSearchRoots(),
+                },
               ),
             ],
           });
@@ -300,6 +309,8 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
           customPomDir,
           customPomImportAliases,
           customPomImportNameCollisionBehavior,
+          viewsDir,
+          scanDirs,
           testIdAttribute,
           vueRouterFluentChaining: routerAwarePoms,
           routerEntry: resolvedRouterEntry,
