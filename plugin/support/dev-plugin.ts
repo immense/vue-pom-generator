@@ -3,8 +3,9 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import process from "node:process";
 
+import type { BindingMetadata } from "@vue/compiler-core";
 import * as compilerDom from "@vue/compiler-dom";
-import { parse as parseSfc } from "@vue/compiler-sfc";
+import { compileScript, parse as parseSfc } from "@vue/compiler-sfc";
 import type { PluginOption, ViteDevServer } from "vite";
 
 import { generateFiles } from "../../class-generation";
@@ -38,6 +39,8 @@ interface DevProcessorOptions {
   customPomImportAliases?: Record<string, string>;
   customPomImportNameCollisionBehavior?: "error" | "alias";
   nameCollisionBehavior?: PomNameCollisionBehavior;
+  /** How to handle existing data-testid attributes in the source. */
+  existingIdBehavior?: "preserve" | "overwrite" | "error";
   testIdAttribute: string;
 
   routerAwarePoms: boolean;
@@ -67,6 +70,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     customPomImportAliases,
     customPomImportNameCollisionBehavior,
     nameCollisionBehavior = "suffix",
+    existingIdBehavior,
     testIdAttribute,
     routerAwarePoms,
     resolvedRouterEntry,
@@ -166,6 +170,19 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         return descriptor.template?.content ?? "";
       };
 
+      const getScriptInfo = (source: string, filename: string): { bindings?: BindingMetadata; isScriptSetup: boolean } => {
+        try {
+          const { descriptor } = parseSfc(source, { filename });
+          if (!descriptor.script && !descriptor.scriptSetup)
+            return { bindings: undefined, isScriptSetup: false };
+          const scriptBlock = compileScript(descriptor, { id: filename });
+          return { bindings: scriptBlock.bindings, isScriptSetup: !!descriptor.scriptSetup };
+        }
+        catch {
+          return { bindings: undefined, isScriptSetup: false };
+        }
+      };
+
       const walkFilesRecursive = (rootDir: string): string[] => {
         const out: string[] = [];
         const stack: string[] = [rootDir];
@@ -241,9 +258,19 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         if (!template.trim())
           return { componentName, ms: performance.now() - started, compiled: true };
 
+        // Compile <script>/<script setup> to get binding metadata so the
+        // template compiler resolves identifiers the same way the Vue
+        // plugin does during a full build (with prefixIdentifiers).
+        // For <script setup> components, the Vue plugin compiles templates
+        // in inline mode, which keeps identifiers as-is instead of adding
+        // a $setup. prefix. We mirror that here.
+        const { bindings: bindingMetadata, isScriptSetup } = getScriptInfo(sfc, absolutePath);
+
         compilerDom.compile(template, {
           filename: absolutePath,
           prefixIdentifiers: true,
+          inline: isScriptSetup,
+          bindingMetadata,
           nodeTransforms: [
             createTestIdTransform(
               componentName,
@@ -252,7 +279,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
               excludedComponents,
               getViewsDirAbs(),
               {
-                existingIdBehavior: "preserve",
+                existingIdBehavior: existingIdBehavior ?? "preserve",
                 nameCollisionBehavior,
                 testIdAttribute,
                 warn: message => loggerRef.current.warn(message),
