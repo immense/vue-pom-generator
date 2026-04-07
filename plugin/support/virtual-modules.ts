@@ -1,14 +1,20 @@
-import type { PluginOption } from "vite";
-import virtualImport from "vite-plugin-virtual";
+import type { Plugin } from "vite";
 
 import { generateTestIdsModule } from "../../manifest-generator";
 
-export function createTestIdsVirtualModulesPlugin(componentTestIds: Map<string, Set<string>>): PluginOption {
-  // vite-plugin-virtual has different interop shapes across bundlers; support both.
-  const maybeModule = virtualImport as { default?: typeof virtualImport };
-  const virtual = maybeModule.default ?? virtualImport;
+const VIRTUAL_ID = "virtual:testids";
+const RESOLVED_ID = `\0${VIRTUAL_ID}`;
 
-  return virtual({
-    "virtual:testids": () => generateTestIdsModule(componentTestIds),
-  });
+export function createTestIdsVirtualModulesPlugin(componentTestIds: Map<string, Set<string>>): Plugin {
+  return {
+    name: "vue-pom-generator:virtual-testids",
+    resolveId(id) {
+      if (id === VIRTUAL_ID)
+        return RESOLVED_ID;
+    },
+    load(id) {
+      if (id === RESOLVED_ID)
+        return generateTestIdsModule(componentTestIds);
+    },
+  };
 }
