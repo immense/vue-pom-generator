@@ -13,7 +13,7 @@ import type {
 import { ConstantTypes, NodeTypes } from "@vue/compiler-core";
 import type { CompilerOptions } from "@vue/compiler-dom";
 import { baseCompile, parse, parserOptions } from "@vue/compiler-dom";
-import { extend } from "@vue/shared";
+
 
 import { parseExpression } from "@babel/parser";
 
@@ -55,7 +55,7 @@ import {
 import type { IComponentDependencies, IDataTestId, HierarchyMap, NativeWrappersMap } from "../utils";
 
 function parseTemplate(template: string, filename = "/src/components/Test.vue"): RootNode {
-  return parse(template, extend({}, parserOptions, { filename }));
+  return parse(template, Object.assign({}, parserOptions, { filename }));
 }
 
 function compileAndCaptureAst(source: string, options: CompilerOptions & { filename: string }): RootNode {
@@ -63,7 +63,7 @@ function compileAndCaptureAst(source: string, options: CompilerOptions & { filen
 
   baseCompile(
     source,
-    extend({}, parserOptions, options, {
+    Object.assign({}, parserOptions, options, {
       prefixIdentifiers: true,
       nodeTransforms: [
         ...(options.nodeTransforms || []),

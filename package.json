@@ -58,11 +58,8 @@
     "@vue/compiler-core": ">=3.5",
     "@vue/compiler-dom": ">=3.5",
     "@vue/compiler-sfc": ">=3.5",
-    "@vue/shared": ">=3.5",
     "eslint": ">=9",
-    "vite": ">=7",
-    "vitest": "^4",
-    "vue": ">=3"
+    "vite": ">=7"
   },
   "peerDependenciesMeta": {
     "eslint": {
