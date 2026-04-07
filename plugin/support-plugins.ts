@@ -19,6 +19,8 @@ interface SupportFactoryOptions {
   scanDirs: string[];
   getWrapperSearchRoots: () => string[];
   nameCollisionBehavior?: PomNameCollisionBehavior;
+  /** How to handle existing data-testid attributes in the source. */
+  existingIdBehavior?: "preserve" | "overwrite" | "error";
 
   /** Output directory for generated files (POMs + optional fixtures). */
   outDir?: string;
@@ -59,6 +61,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     scanDirs,
     getWrapperSearchRoots,
     nameCollisionBehavior = "suffix",
+    existingIdBehavior,
     outDir,
     emitLanguages,
     csharp,
@@ -123,6 +126,11 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     customPomImportAliases,
     customPomImportNameCollisionBehavior,
     testIdAttribute,
+    nameCollisionBehavior,
+    existingIdBehavior,
+    nativeWrappers,
+    excludedComponents,
+    getWrapperSearchRoots,
     routerAwarePoms,
     routerType,
     resolvedRouterEntry,
@@ -148,6 +156,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     customPomImportAliases,
     customPomImportNameCollisionBehavior,
     nameCollisionBehavior,
+    existingIdBehavior,
     testIdAttribute,
     routerAwarePoms,
     routerType,
