@@ -20,9 +20,7 @@ export default defineConfig({
           "@vue/compiler-core",
           "@vue/compiler-dom",
           "@vue/compiler-sfc",
-          "@vue/shared",
           "vite",
-          "vue",
         ]);
 
         return (id: string) => id.startsWith("node:") || externals.has(id);

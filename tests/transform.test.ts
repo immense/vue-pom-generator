@@ -12,7 +12,7 @@ import type { IComponentDependencies, NativeWrappersMap } from '../utils'
 import { ConstantTypes, NodeTypes } from '@vue/compiler-core'
 import { baseCompile, parserOptions } from '@vue/compiler-dom'
 import { parse as parseSfc } from '@vue/compiler-sfc'
-import { extend } from '@vue/shared'
+
 
 import { describe, expect, it } from 'vitest'
 import { __internal, createTestIdTransform } from '../transform'
@@ -38,7 +38,7 @@ function compileAndCaptureAst(source: string, options: CompilerOptions & { filen
 
   baseCompile(
     source,
-    extend({}, parserOptions, options, {
+    Object.assign({}, parserOptions, options, {
       // When enabled, compiler-core runs `transformExpression` which parses directive expressions
       // (via @babel/parser) and populates `exp.ast` for later consumers.
       prefixIdentifiers: true,
@@ -66,7 +66,7 @@ function compileAndCaptureAst(source: string, options: CompilerOptions & { filen
 function compileAndCaptureCode(source: string, options: CompilerOptions & { filename: string }): string {
   const result = baseCompile(
     source,
-    extend({}, parserOptions, options, {
+    Object.assign({}, parserOptions, options, {
       prefixIdentifiers: true,
       mode: 'module',
     }),
