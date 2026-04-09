@@ -92,11 +92,11 @@ jobs:
             core.setOutput('version', nextVersion);
             core.setOutput('previous_tag', prevTagRaw);
 
-      - name: Sync package.json version to release tag (no commit)
+      - name: Sync package manifests to release tag (no commit)
         env:
           TAG_VERSION: ${{ steps.next.outputs.version }}
         run: |
-          node -e "const fs=require('fs'); const tag=process.env.TAG_VERSION; const pkg=JSON.parse(fs.readFileSync('package.json','utf8')); if(pkg.version!==tag){ pkg.version=tag; fs.writeFileSync('package.json', JSON.stringify(pkg,null,2)+'\n'); console.log('Synced package.json version to tag', tag); } else { console.log('package.json version already matches tag', tag); }"
+          npm version "${TAG_VERSION}" --no-git-tag-version --allow-same-version
 
       - name: Generate release notes (agentic Copilot CLI)
         env:
