@@ -5,6 +5,8 @@ import type { PwLocator, PwPage } from "./playwright-types";
 // ---------------------------------------------------------------------------
 
 const __PW_CURSOR_ID__ = "__pw_cursor__";
+const __PW_EDITABLE_DESCENDANT_SELECTOR__
+	= "input, textarea, select, [contenteditable=''], [contenteditable='true'], [contenteditable]:not([contenteditable='false'])";
 
 // A minimal 16×24 arrow cursor encoded as a base64 PNG.
 const __PW_CURSOR_PNG__ =
@@ -165,6 +167,44 @@ export class Pointer {
 		return trimmed || undefined;
 	}
 
+	private async isEditableElement(locator: PwLocator): Promise<boolean> {
+		try {
+			return await locator.first().evaluate((element) => {
+				if (!(element instanceof HTMLElement)) {
+					return false;
+				}
+
+				const tagName = element.tagName.toLowerCase();
+				return tagName === "input"
+					|| tagName === "textarea"
+					|| tagName === "select"
+					|| element.isContentEditable;
+			});
+		}
+		catch {
+			return false;
+		}
+	}
+
+	private async resolveEditableLocator(locator: PwLocator): Promise<PwLocator> {
+		const first = locator.first();
+		if (await this.isEditableElement(first)) {
+			return first;
+		}
+
+		const descendant = first.locator(__PW_EDITABLE_DESCENDANT_SELECTOR__).first();
+		try {
+			if (await descendant.count() > 0) {
+				return descendant;
+			}
+		}
+		catch {
+			// Fall back to the original target if descendant lookup fails.
+		}
+
+		return first;
+	}
+
 	public async animateCursorToElement(
 		target: ElementTarget,
 		executeClick: boolean = true,
@@ -305,15 +345,16 @@ export class Pointer {
 		await this.animateCursorToElement(target, executeClick, delayMs, annotationText, options);
 
 		const locator = this.toLocator(target);
+		const editableLocator = await this.resolveEditableLocator(locator);
 		const typeDelayMs = animationOptions.keyboard?.typeDelayMilliseconds ?? 100;
 
 		if (animationOptions.enabled !== false && typeDelayMs > 0) {
 			// Clear existing content, then type character-by-character so keystrokes are visible.
-			await locator.first().clear();
+			await editableLocator.clear();
 			await this.page.keyboard.type(text, { delay: typeDelayMs });
 		}
 		else {
-			await locator.first().fill(text);
+			await editableLocator.fill(text);
 		}
 	}
 }

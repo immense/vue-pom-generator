@@ -758,6 +758,26 @@ function generateAggregatedCSharpFiles(
     "    protected IPage Page { get; }",
     `    protected ILocator LocatorByTestId(string testId) => Page.Locator($"[${testIdAttribute}=\\"{testId}\\"]");`,
     "    protected ILocator LocatorWithinTestIdByLabel(string rootTestId, string label, bool exact = true) => LocatorByTestId(rootTestId).GetByLabel(label, new() { Exact = exact });",
+    "    protected async Task<ILocator> ResolveEditableLocatorAsync(ILocator locator)",
+    "    {",
+    "        var isEditable = await locator.EvaluateAsync<bool>(@\"el => {",
+    "            if (!el || !(el instanceof HTMLElement)) return false;",
+    "            const tagName = el.tagName.toLowerCase();",
+    "            return tagName === 'input' || tagName === 'textarea' || tagName === 'select' || el.isContentEditable;",
+    "        }\");",
+    "        if (isEditable)",
+    "        {",
+    "            return locator;",
+    "        }",
+    "",
+    "        var descendant = locator.Locator(\"input, textarea, select, [contenteditable=''], [contenteditable='true'], [contenteditable]:not([contenteditable='false'])\").First;",
+    "        if (await descendant.CountAsync() > 0)",
+    "        {",
+    "            return descendant;",
+    "        }",
+    "",
+    "        return locator;",
+    "    }",
     "    protected async Task ClickWithinTestIdByLabelAsync(string rootTestId, string label, bool exact = true)",
     "    {",
     "        await LocatorWithinTestIdByLabel(rootTestId, label, exact).ClickAsync();",
@@ -889,7 +909,8 @@ function generateAggregatedCSharpFiles(
 
       const emitActionCall = (locatorAccess: string) => {
         if (pom.nativeRole === "input") {
-          chunks.push(`        await ${locatorAccess}.FillAsync(text);`);
+          chunks.push(`        var editableLocator = await ResolveEditableLocatorAsync(${locatorAccess});`);
+          chunks.push("        await editableLocator.FillAsync(text);");
         }
         else if (pom.nativeRole === "select") {
           chunks.push(`        await ${locatorAccess}.SelectOptionAsync(value);`);
@@ -923,7 +944,8 @@ function generateAggregatedCSharpFiles(
           chunks.push("                if (await locator.CountAsync() > 0)");
           chunks.push("                {");
           if (pom.nativeRole === "input") {
-            chunks.push("                    await locator.FillAsync(text);");
+            chunks.push("                    var editableLocator = await ResolveEditableLocatorAsync(locator);");
+            chunks.push("                    await editableLocator.FillAsync(text);");
           }
           else if (pom.nativeRole === "select") {
             chunks.push("                    await locator.SelectOptionAsync(value);");
@@ -1229,9 +1251,10 @@ function generateViewObjectModelContent(
         return false;
 
       const scope = a.attachTo ?? "views";
+      const scopeMatchesBoth = scope === "both" || scope === "pagesAndComponents";
       const scopeOk = isView
-        ? (scope === "views" || scope === "both")
-        : (scope === "components" || scope === "both");
+        ? (scope === "views" || scopeMatchesBoth)
+        : (scope === "components" || scopeMatchesBoth);
       if (!scopeOk)
         return false;
       return a.attachWhenUsesComponents.some(c => hasChildComponent(c));

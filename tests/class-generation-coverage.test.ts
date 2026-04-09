@@ -580,6 +580,49 @@ describe("class-generation coverage", () => {
     }
   });
 
+  it("C#: input actions resolve editable descendants before filling text", async () => {
+    const tempRoot = makeTempRoot("vue-pom-csharp-editable-locator-");
+
+    try {
+      const dt: IDataTestId = {
+        value: "TenantSelectBox-StateSelectedTenant-input",
+        pom: {
+          nativeRole: "input",
+          methodName: "StateSelectedTenant",
+          formattedDataTestId: "TenantSelectBox-StateSelectedTenant-input",
+          params: { text: "string", annotationText: "string = \"\"" },
+        },
+      };
+
+      const componentHierarchyMap = new Map<string, IComponentDependencies>([
+        [
+          "TenantSelectBox",
+          makeDeps({
+            filePath: path.join(tempRoot, "src", "components", "TenantSelectBox.vue"),
+            dataTestIdSet: new Set([dt]),
+          }),
+        ],
+      ]);
+
+      const outDir = path.join(tempRoot, "pom");
+      const basePagePath = path.join(tempRoot, "BasePage.ts");
+      writeMinimalBasePage(basePagePath);
+      await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
+        outDir,
+        emitLanguages: ["csharp"],
+        csharp: { namespace: "Test.Generated" },
+      });
+
+      const cs = readFile(path.join(outDir, "page-object-models.g.cs"));
+
+      expect(cs).toContain("protected async Task<ILocator> ResolveEditableLocatorAsync(ILocator locator)");
+      expect(cs).toContain("var editableLocator = await ResolveEditableLocatorAsync(StateSelectedTenantInput);");
+      expect(cs).toContain("await editableLocator.FillAsync(text);");
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("c#: navigation methods return on success without leaving unreachable code after terminal throws", async () => {
     const tempRoot = makeTempRoot("vue-pom-csharp-nav-return-");
 

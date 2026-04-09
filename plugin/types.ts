@@ -273,7 +273,7 @@ export interface VuePomGeneratorPluginOptions {
           className: string;
           propertyName: string;
           attachWhenUsesComponents: string[];
-          attachTo?: "views" | "components" | "both";
+          attachTo?: "views" | "components" | "both" | "pagesAndComponents";
           /** When true, generate passthrough methods on the generated class for this helper's public methods. */
           flatten?: boolean;
         }>;
