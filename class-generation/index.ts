@@ -1,6 +1,7 @@
 import { parse } from "@babel/parser";
 import type { ClassMethod } from "@babel/types";
 import type { ElementNode, ForNode, IfBranchNode, IfNode, RootNode, TemplateChildNode } from "@vue/compiler-core";
+import { ElementTypes } from "@vue/compiler-core";
 import { NodeTypes, parse as parseTemplate } from "@vue/compiler-dom";
 import { parse as parseSfc } from "@vue/compiler-sfc";
 import fs from "node:fs";
@@ -14,8 +15,7 @@ import {
   IDataTestId,
   PomExtraClickMethodSpec,
   PomPrimarySpec,
-  isAsciiAlphaNumericCode,
-  isAsciiUppercaseLetterCode,
+  toPascalCase,
   upperFirst,
 } from "../utils";
 
@@ -125,48 +125,36 @@ function createCustomPomImportCollisionError(exportName: string, requested: stri
   );
 }
 
-function isPascalCaseComponentTag(tag: string): boolean {
-  if (!tag) {
-    return false;
-  }
-
-  const first = tag.charCodeAt(0);
-  if (!isAsciiUppercaseLetterCode(first)) {
-    return false;
-  }
-
-  for (let i = 1; i < tag.length; i += 1) {
-    const code = tag.charCodeAt(i);
-    if (isAsciiAlphaNumericCode(code) || tag[i] === "_") {
-      continue;
-    }
-    return false;
-  }
-
-  return true;
+function normalizeComponentTagToClassName(tag: string): string | undefined {
+  // Vue templates may reference the same component as <MyWidget /> or <my-widget />.
+  const className = toPascalCase(tag);
+  return className || undefined;
 }
 
-function collectPascalCaseComponentTags(nodes: readonly TemplateChildNode[], names: Set<string>): void {
+function collectReferencedComponentClassNames(nodes: readonly TemplateChildNode[], names: Set<string>): void {
   for (const node of nodes) {
     switch (node.type) {
       case NodeTypes.ELEMENT: {
         const element = node as ElementNode;
-        if (isPascalCaseComponentTag(element.tag)) {
-          names.add(element.tag);
+        if (element.tagType === ElementTypes.COMPONENT) {
+          const className = normalizeComponentTagToClassName(element.tag);
+          if (className) {
+            names.add(className);
+          }
         }
-        collectPascalCaseComponentTags(element.children, names);
+        collectReferencedComponentClassNames(element.children, names);
         break;
       }
       case NodeTypes.IF: {
         const ifNode = node as IfNode;
         for (const branch of ifNode.branches) {
-          collectPascalCaseComponentTags((branch as IfBranchNode).children, names);
+          collectReferencedComponentClassNames((branch as IfBranchNode).children, names);
         }
         break;
       }
       case NodeTypes.FOR: {
         const forNode = node as ForNode;
-        collectPascalCaseComponentTags(forNode.children, names);
+        collectReferencedComponentClassNames(forNode.children, names);
         break;
       }
       default:
@@ -175,7 +163,7 @@ function collectPascalCaseComponentTags(nodes: readonly TemplateChildNode[], nam
   }
 }
 
-function getPascalCaseComponentTagsFromVueSource(source: string): string[] {
+function getComponentClassNamesFromVueSource(source: string): string[] {
   try {
     const { descriptor } = parseSfc(source);
     const template = descriptor.template?.content?.trim();
@@ -185,7 +173,7 @@ function getPascalCaseComponentTagsFromVueSource(source: string): string[] {
 
     const root = parseTemplate(template) as RootNode;
     const names = new Set<string>();
-    collectPascalCaseComponentTags(root.children, names);
+    collectReferencedComponentClassNames(root.children, names);
     return [...names];
   }
   catch {
@@ -802,15 +790,13 @@ async function generateSplitTypeScriptFiles(
     files.push({ filePath, content });
   }
 
-  const runtimeFiles = buildRuntimeGeneratedFiles(base, basePageClassPath);
+  const runtimeAssetSpecs = getRuntimeGeneratedAssetSpecs(base, basePageClassPath);
+  const runtimeFiles = buildRuntimeGeneratedFilesFromSpecs(runtimeAssetSpecs);
   const indexContent = [
     `${eslintSuppressionHeader}/**`,
     " * POM exports",
     AUTO_GENERATED_COMMENT,
-    'export * from "./_pom-runtime/click-instrumentation";',
-    'export * from "./_pom-runtime/class-generation/playwright-types";',
-    'export * from "./_pom-runtime/class-generation/Pointer";',
-    'export * from "./_pom-runtime/class-generation/BasePage";',
+    ...buildRuntimeGeneratedBarrelExports(base, runtimeAssetSpecs),
     "",
     ...Array.from(generatedTsFilePathByComponent.entries())
       .sort((a, b) => a[0].localeCompare(b[0]))
@@ -2059,10 +2045,18 @@ function getRuntimeGeneratedAssetSpecs(baseDir: string, basePageClassPath: strin
 }
 
 function buildRuntimeGeneratedFiles(baseDir: string, basePageClassPath: string): GeneratedFileOutput[] {
-  return getRuntimeGeneratedAssetSpecs(baseDir, basePageClassPath).map(spec => ({
+  return buildRuntimeGeneratedFilesFromSpecs(getRuntimeGeneratedAssetSpecs(baseDir, basePageClassPath));
+}
+
+function buildRuntimeGeneratedFilesFromSpecs(assetSpecs: RuntimeGeneratedAssetSpec[]): GeneratedFileOutput[] {
+  return assetSpecs.map(spec => ({
     filePath: spec.outputPath,
     content: readTextAsset(spec.absolutePath, spec.description),
   }));
+}
+
+function buildRuntimeGeneratedBarrelExports(outputDir: string, assetSpecs: RuntimeGeneratedAssetSpec[]): string[] {
+  return assetSpecs.map(spec => `export * from "${stripExtension(toPosixRelativePath(outputDir, spec.outputPath))}";`);
 }
 
 function resolveCustomPomImportResolution(
@@ -2182,7 +2176,7 @@ function getComposedStubBody(
     return undefined;
   }
 
-  const tags = getPascalCaseComponentTagsFromVueSource(source);
+  const tags = getComponentClassNamesFromVueSource(source);
   const childClassNames = Array.from(
     new Set(
       tags

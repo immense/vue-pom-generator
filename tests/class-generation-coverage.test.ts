@@ -235,7 +235,7 @@ describe("class-generation coverage", () => {
         path.join(tempRoot, "src", "views", "NewTenantPage.vue"),
         [
           "<template>",
-          "  <TenantDetailsEditForm />",
+          "  <tenant-details-edit-form />",
           "</template>",
           "",
         ].join("\n"),
@@ -300,7 +300,7 @@ describe("class-generation coverage", () => {
         path.join(tempRoot, "src", "views", "NewTenantPage.vue"),
         [
           "<template>",
-          "  <TenantDetailsEditForm />",
+          "  <tenant-details-edit-form />",
           "</template>",
           "",
         ].join("\n"),
@@ -342,9 +342,24 @@ describe("class-generation coverage", () => {
       expect(fs.existsSync(path.join(outDir, "page-object-models.g.ts"))).toBe(false);
 
       const indexContent = readFile(path.join(outDir, "index.ts"));
+      const runtimeBarrelExports = indexContent
+        .split("\n")
+        .filter(line => line.startsWith('export * from "./_pom-runtime/'))
+        .sort((a, b) => a.localeCompare(b));
+      const expectedRuntimeBarrelExports = [
+        ...fs.readdirSync(path.join(outDir, "_pom-runtime"))
+          .filter(file => file.endsWith(".ts"))
+          .sort((a, b) => a.localeCompare(b))
+          .map(file => `export * from "./_pom-runtime/${path.basename(file, ".ts")}";`),
+        ...fs.readdirSync(path.join(outDir, "_pom-runtime", "class-generation"))
+          .filter(file => file.endsWith(".ts"))
+          .sort((a, b) => a.localeCompare(b))
+          .map(file => `export * from "./_pom-runtime/class-generation/${path.basename(file, ".ts")}";`),
+      ].sort((a, b) => a.localeCompare(b));
       expect(indexContent).toContain('export * from "./TenantDetailsEditForm.g";');
       expect(indexContent).toContain('export * from "./TenantListPage.g";');
       expect(indexContent).toContain('export * from "./NewTenantPage.g";');
+      expect(runtimeBarrelExports).toEqual(expectedRuntimeBarrelExports);
 
       const tenantListPageContent = readFile(path.join(outDir, "TenantListPage.g.ts"));
       expect(tenantListPageContent).toContain('import { NewTenantPage }');
