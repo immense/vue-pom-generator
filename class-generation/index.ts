@@ -163,7 +163,10 @@ function generateGoToSelfMethod(componentName: string): string {
     "        if (!route) {",
     `            throw new Error("[pom] No router path found for component/page-object '${componentName}'.");`,
     "        }",
-    "        await this.page.goto(route.template);",
+    "        const runtimeEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;",
+    "        const runtimeBaseUrl = runtimeEnv?.PLAYWRIGHT_RUNTIME_BASE_URL ?? runtimeEnv?.PLAYWRIGHT_TEST_BASE_URL ?? runtimeEnv?.VITE_PLAYWRIGHT_BASE_URL;",
+    "        const targetUrl = runtimeBaseUrl ? new URL(route.template, runtimeBaseUrl).toString() : route.template;",
+    "        await this.page.goto(targetUrl);",
     "    }",
     "",
   ].join("\n");

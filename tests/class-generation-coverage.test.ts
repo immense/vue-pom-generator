@@ -361,7 +361,8 @@ describe("class-generation coverage", () => {
       // Route metadata + goToSelf helpers
       expect(content).toContain("static readonly route");
       expect(content).toContain("async goToSelf()");
-      expect(content).toContain("await this.page.goto(route.template)");
+      expect(content).toContain("const runtimeBaseUrl = runtimeEnv?.PLAYWRIGHT_RUNTIME_BASE_URL ?? runtimeEnv?.PLAYWRIGHT_TEST_BASE_URL ?? runtimeEnv?.VITE_PLAYWRIGHT_BASE_URL;");
+      expect(content).toContain("await this.page.goto(targetUrl)");
 
       // Trim + propagate testIdAttribute into BasePage super call.
       expect(content).toContain("super(page, { testIdAttribute: \"data-qa\" });");

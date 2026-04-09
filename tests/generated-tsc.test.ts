@@ -409,7 +409,7 @@ describe("generated output", () => {
         className: "Grid",
         propertyName: "grid",
         attachWhenUsesComponents: ["ImmyDxDataGrid"],
-        attachTo: "both",
+        attachTo: "pagesAndComponents",
         flatten: true,
       }],
     });

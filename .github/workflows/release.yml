@@ -67,20 +67,36 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Read version from package.json
+      - name: Determine next version
         id: next
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const latestRelease = await github.rest.repos.getLatestRelease({ owner: context.repo.owner, repo: context.repo.repo }).catch(()=>null);
+            let nextVersion;
+            let prevTagRaw = '';
+            if (latestRelease) {
+              prevTagRaw = latestRelease.data.tag_name || '';
+              const prev = prevTagRaw.replace(/^v/, '');
+              const parts = prev.split('.');
+              if (parts.length !== 3 || parts.some(p => isNaN(Number(p)))) {
+                core.setFailed(`Latest release tag '${prevTagRaw}' is not semver x.y.z`);
+                return;
+              }
+              parts[2] = String(Number(parts[2]) + 1);
+              nextVersion = parts.join('.');
+            } else {
+              nextVersion = '0.0.1';
+            }
+            core.info(`Computed next version: ${nextVersion}`);
+            core.setOutput('version', nextVersion);
+            core.setOutput('previous_tag', prevTagRaw);
+
+      - name: Sync package.json version to release tag (no commit)
+        env:
+          TAG_VERSION: ${{ steps.next.outputs.version }}
         run: |
-          node -e "const { execSync } = require('child_process'); const fs=require('fs');
-          const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));
-          const version = String(pkg.version || '').trim();
-          if(!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error('Invalid package.json version: ' + version);
-          const currentTag = 'v' + version;
-          const tagsRaw=execSync(\"git tag --list 'v*' --sort=-v:refname\", { stdio: ['ignore','pipe','ignore'] }).toString().trim();
-          const tags=tagsRaw.split(/\r?\n/).filter(Boolean);
-          const previousTag = tags.find(t => t !== currentTag) || '';
-          try { execSync('git rev-parse --verify ' + currentTag, { stdio: ['ignore','ignore','ignore'] }); throw new Error('Tag already exists: ' + currentTag); } catch (e) { /* ok */ }
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, 'version=' + version + '\\n');
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, 'previous_tag=' + previousTag + '\\n');"
+          node -e "const fs=require('fs'); const tag=process.env.TAG_VERSION; const pkg=JSON.parse(fs.readFileSync('package.json','utf8')); if(pkg.version!==tag){ pkg.version=tag; fs.writeFileSync('package.json', JSON.stringify(pkg,null,2)+'\n'); console.log('Synced package.json version to tag', tag); } else { console.log('package.json version already matches tag', tag); }"
 
       - name: Generate release notes (agentic Copilot CLI)
         env:

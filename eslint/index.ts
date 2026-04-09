@@ -1,6 +1,7 @@
 import type { Rule } from "eslint";
 import type { CallExpression, Expression, MemberExpression } from "estree";
 
+import { noPageFixtureInSpecsRule } from "./no-page-fixture-in-specs";
 import { removeExistingTestIdAttributesRule } from "./remove-existing-test-id-attributes";
 
 /**
@@ -31,6 +32,11 @@ const LOCATOR_ACTIONS = new Set([
  */
 const CHAIN_METHODS = new Set(["last", "first", "nth", "filter"]);
 
+function startsWithUppercaseLetter(value: string): boolean {
+	const first = value.charCodeAt(0);
+	return first >= 65 && first <= 90;
+}
+
 /**
  * Returns the PascalCase getter name if `node` is (or chains from) a direct
  * PascalCase member-expression access.  Returns null otherwise.
@@ -43,7 +49,7 @@ const CHAIN_METHODS = new Set(["last", "first", "nth", "filter"]);
 function getPomGetterName(node: Expression): string | null {
 	if (node.type === "MemberExpression" && !node.computed && node.property.type === "Identifier") {
 		const name = node.property.name;
-		if (/^[A-Z]/.test(name)) return name;
+		if (startsWithUppercaseLetter(name)) return name;
 	}
 
 	if (
@@ -98,9 +104,11 @@ export const noRawLocatorActionRule: Rule.RuleModule = {
 
 export const plugin = {
 	rules: {
+		"no-page-fixture-in-specs": noPageFixtureInSpecsRule,
 		"no-raw-locator-action": noRawLocatorActionRule,
 		"remove-existing-test-id-attributes": removeExistingTestIdAttributesRule,
 	},
 } satisfies { rules: Record<string, Rule.RuleModule> };
 
+export { noPageFixtureInSpecsRule };
 export { removeExistingTestIdAttributesRule };

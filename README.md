@@ -15,7 +15,7 @@ If you already use Playwright with `getByTestId`, the point is simple: this pack
 - **Can generate Playwright fixtures** so tests can request `userListPage` instead of constructing `new UserListPage(page)` manually.
 - **Can emit a single C# POM file** for Playwright .NET consumers.
 - **Exposes `virtual:testids`** so your app can import the current collected test-id manifest at runtime.
-- **Ships ESLint rules** to remove legacy manually-authored test ids and to discourage raw locator actions on generated getters.
+- **Ships ESLint rules** to remove legacy manually-authored test ids, ban raw `page` fixture usage in spec callbacks, and discourage raw locator actions on generated getters.
 
 ## What this does not do
 
@@ -241,7 +241,7 @@ const pomConfig = defineVuePomGeneratorConfig({
             className: "Grid",
             propertyName: "grid",
             attachWhenUsesComponents: ["DataGrid"],
-            attachTo: "both",
+            attachTo: "pagesAndComponents",
             flatten: true,
           },
         ],
@@ -351,7 +351,7 @@ When `generation.router` is enabled, each view POM gets:
 
 Important caveats:
 
-- `goToSelf()` literally does `page.goto(route.template)`
+- `goToSelf()` calls `page.goto(...)`, resolving the route template against `PLAYWRIGHT_RUNTIME_BASE_URL`, `PLAYWRIGHT_TEST_BASE_URL`, or `VITE_PLAYWRIGHT_BASE_URL` when those runtime env vars are present
 - a dynamic route template like `/users/:id` stays `/users/:id`
 - if a component is matched by multiple routes, the generator currently picks one route template (the shortest one)
 
@@ -509,7 +509,7 @@ attachments: [
     className: "Grid",
     propertyName: "grid",
     attachWhenUsesComponents: ["DataGrid"],
-    attachTo: "both",
+    attachTo: "pagesAndComponents",
     flatten: true,
   },
 ]
@@ -522,6 +522,7 @@ Actual semantics:
 - matching is based on the component usage collected from the Vue template, not runtime inspection
 - the generated constructor instantiates the helper as `new Helper(page, this)`
 - `attachTo` defaults to `"views"`
+- `"pagesAndComponents"` is the clearer alias for `"both"`; both spellings are accepted for backward compatibility
 
 Why it exists:
 
@@ -716,6 +717,48 @@ rules: {
 ### `no-raw-locator-action`
 
 This rule exists too. It flags direct raw Playwright actions on generated PascalCase getters (for example calling `.click()` directly on a generated getter) so teams use the generated action methods instead.
+
+### `no-page-fixture-in-specs`
+
+This rule flags Playwright's default `page` fixture when it is destructured directly in `*.spec.*` test and hook callbacks.
+
+What it does:
+
+- flags `test("...", async ({ page }) => { ... })`
+- flags hooks like `test.beforeEach(async ({ page }) => { ... })`
+- ignores non-spec files such as custom fixtures/helpers
+- ignores POM usage like `dashboardPage.page` because the rule is specifically about the raw fixture entry point
+
+Why it exists:
+
+- fixture-based POM tests are easier to refactor than raw `page`-driven tests
+- it catches regressions where tests quietly slide back to `page.goto(...)` / `page.getBy...(...)`
+- it makes the generator's Playwright-fixture story enforceable during refactors
+
+Recommended usage:
+
+1. enable generated fixtures in the generator
+2. migrate specs from `({ page })` to generated fixtures like `({ dashboardPage })`
+3. turn this rule on for `tests/playwright/**/*.spec.ts`
+
+Example flat config:
+
+```ts
+import { plugin as vuePomGeneratorEslint } from "@immense/vue-pom-generator/eslint";
+
+export default [
+  {
+    files: ["tests/playwright/**/*.spec.ts"],
+    plugins: {
+      "@immense/vue-pom-generator": vuePomGeneratorEslint,
+    },
+    rules: {
+      "@immense/vue-pom-generator/no-page-fixture-in-specs": "error",
+      "@immense/vue-pom-generator/no-raw-locator-action": "error",
+    },
+  },
+];
+```
 
 ## Configuration reference
 
@@ -1049,7 +1092,8 @@ This object holds Playwright-specific additions on top of the generated TypeScri
 - **Current options:**
   - `"views"`
   - `"components"`
-  - `"both"`
+  - `"pagesAndComponents"`
+  - `"both"` (backward-compatible alias)
 
 #### `attachments[].flatten`
 
