@@ -713,6 +713,64 @@ rules: {
 }
 ```
 
+### `require-explicit-static-testid`
+
+This rule is for teams that intentionally want stable, explicitly-authored selectors on specific button-like components instead of the generator synthesizing them.
+
+What it does:
+
+- flags targeted Vue components that are missing a `data-testid`
+- flags bound forms like `:data-testid="buttonId"` and `v-bind:data-testid="buttonId"`
+- defaults to `ImmyButton` and `LoadButton`
+- supports custom attribute names and custom component lists
+
+Why it exists:
+
+- some teams want page-level actions to keep explicit, reviewable selector names
+- generated POMs are easier to adopt when critical controls have a stable selector contract
+- bound test ids on those controls are still effectively dynamic, which makes generated selectors harder to reason about
+
+Recommended usage:
+
+1. scope the rule to the Vue files where you want explicit selectors (for example `src/views/**/*.vue`)
+2. keep the default component list or provide your own
+3. use a literal attribute value instead of `:data-testid`
+
+Example flat config:
+
+```ts
+import vueParser from "vue-eslint-parser";
+import { plugin as vuePomGeneratorEslint } from "@immense/vue-pom-generator/eslint";
+
+export default [
+  {
+    files: ["src/views/**/*.vue"],
+    languageOptions: {
+      parser: vueParser,
+      ecmaVersion: 2022,
+      sourceType: "module",
+    },
+    plugins: {
+      "@immense/vue-pom-generator": vuePomGeneratorEslint,
+    },
+    rules: {
+      "@immense/vue-pom-generator/require-explicit-static-testid": "error",
+    },
+  },
+];
+```
+
+If you use different button components or a different attribute:
+
+```ts
+rules: {
+  "@immense/vue-pom-generator/require-explicit-static-testid": [
+    "error",
+    { components: ["AppButton"], attribute: "data-qa" },
+  ],
+}
+```
+
 ### `no-raw-locator-action`
 
 This rule exists too. It flags direct raw Playwright actions on generated PascalCase getters (for example calling `.click()` directly on a generated getter) so teams use the generated action methods instead.

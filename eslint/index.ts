@@ -1,6 +1,7 @@
 import type { Rule } from "eslint";
 import type { CallExpression, Expression, MemberExpression } from "estree";
 
+import { requireExplicitStaticTestIdRule } from "./require-explicit-static-testid";
 import { removeExistingTestIdAttributesRule } from "./remove-existing-test-id-attributes";
 
 /**
@@ -31,6 +32,15 @@ const LOCATOR_ACTIONS = new Set([
  */
 const CHAIN_METHODS = new Set(["last", "first", "nth", "filter"]);
 
+function startsWithUppercaseAscii(name: string): boolean {
+	const firstCharacter = name[0];
+	if (!firstCharacter) {
+		return false;
+	}
+
+	return firstCharacter >= "A" && firstCharacter <= "Z";
+}
+
 /**
  * Returns the PascalCase getter name if `node` is (or chains from) a direct
  * PascalCase member-expression access.  Returns null otherwise.
@@ -43,7 +53,7 @@ const CHAIN_METHODS = new Set(["last", "first", "nth", "filter"]);
 function getPomGetterName(node: Expression): string | null {
 	if (node.type === "MemberExpression" && !node.computed && node.property.type === "Identifier") {
 		const name = node.property.name;
-		if (/^[A-Z]/.test(name)) return name;
+		if (startsWithUppercaseAscii(name)) return name;
 	}
 
 	if (
@@ -99,8 +109,10 @@ export const noRawLocatorActionRule: Rule.RuleModule = {
 export const plugin = {
 	rules: {
 		"no-raw-locator-action": noRawLocatorActionRule,
+		"require-explicit-static-testid": requireExplicitStaticTestIdRule,
 		"remove-existing-test-id-attributes": removeExistingTestIdAttributesRule,
 	},
 } satisfies { rules: Record<string, Rule.RuleModule> };
 
+export { requireExplicitStaticTestIdRule };
 export { removeExistingTestIdAttributesRule };

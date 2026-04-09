@@ -1,17 +1,6 @@
 import type { Rule } from "eslint";
-import type { AST as VueAST } from "vue-eslint-parser";
-
-type VAttribute = VueAST.VAttribute;
-type VDirective = VueAST.VDirective;
-type VElement = VueAST.VElement;
-type VueAttribute = VAttribute | VDirective;
-type VueTemplateVisitor = {
-	VElement: (node: VElement) => void;
-};
-
-function isVueTemplateFile(filename: string): boolean {
-	return filename.endsWith(".vue");
-}
+import type { VueAttribute } from "./vue-template-rule-utils";
+import { defineVueTemplateVisitor, findExistingTestIdAttribute, isVueTemplateFile } from "./vue-template-rule-utils";
 
 function isWhitespaceCharacter(character: string): boolean {
 	return character === " "
@@ -35,51 +24,6 @@ function removeAttributeWithWhitespace(
 	}
 
 	return fixer.removeRange([adjustedStart, end]);
-}
-
-function isTargetAttribute(attribute: VueAttribute, attributeName: string): boolean {
-	if (!attribute.directive) {
-		return attribute.key.type === "VIdentifier" && attribute.key.name === attributeName;
-	}
-
-	if (attribute.key.type !== "VDirectiveKey") {
-		return false;
-	}
-
-	const directiveName = attribute.key.name;
-	const argument = attribute.key.argument;
-
-	return directiveName.type === "VIdentifier"
-		&& directiveName.name === "bind"
-		&& argument?.type === "VIdentifier"
-		&& argument.name === attributeName;
-}
-
-function findExistingTestIdAttribute(node: VElement, attributeName: string): VueAttribute | undefined {
-	return node.startTag.attributes.find(attribute => isTargetAttribute(attribute, attributeName));
-}
-
-function defineVueTemplateVisitor(
-	context: Rule.RuleContext,
-	templateVisitor: VueTemplateVisitor,
-): Rule.RuleListener {
-	const parserServices = context.sourceCode.parserServices as {
-		defineTemplateBodyVisitor?: (
-			templateBodyVisitor: VueTemplateVisitor,
-			scriptVisitor: Rule.RuleListener,
-			options: { templateBodyTriggerSelector: "Program" },
-		) => Rule.RuleListener;
-	};
-
-	if (!parserServices.defineTemplateBodyVisitor) {
-		return {};
-	}
-
-	return parserServices.defineTemplateBodyVisitor(
-		templateVisitor,
-		{},
-		{ templateBodyTriggerSelector: "Program" },
-	);
 }
 
 export const removeExistingTestIdAttributesRule: Rule.RuleModule = {
@@ -116,7 +60,7 @@ export const removeExistingTestIdAttributesRule: Rule.RuleModule = {
 		const attributeName = (options.attribute ?? "data-testid").trim() || "data-testid";
 
 		return defineVueTemplateVisitor(context, {
-			VElement(node: VElement) {
+			VElement(node) {
 				const existingAttribute = findExistingTestIdAttribute(node, attributeName);
 				if (!existingAttribute) {
 					return;
