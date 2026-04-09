@@ -3,7 +3,7 @@
 `@immense/vue-pom-generator` is a Vite plugin for Vue 3 that does two compile-time jobs:
 
 1. it injects a test-id attribute into interactive elements in `.vue` templates
-2. it turns the collected ids into an aggregated Page Object Model library for Playwright, with optional Playwright fixtures and optional C# output
+2. it turns the collected ids into a Page Object Model library for Playwright, with aggregated or split TypeScript output, optional Playwright fixtures, and optional C# output
 
 If you already use Playwright with `getByTestId`, the point is simple: this package removes the repetitive work of keeping test ids in sync with Vue templates and then hand-writing page objects around those ids.
 
@@ -11,7 +11,7 @@ If you already use Playwright with `getByTestId`, the point is simple: this pack
 
 - **Injects test ids during Vue compilation, not at runtime.** It hooks into the Vue template compiler and rewrites the compiled template output.
 - **Uses real template signals to name ids and methods.** Click handlers, `v-model`, `id`/`name`, `:to`, wrapper configuration, and a few targeted fallbacks all feed the generated API.
-- **Generates one aggregated TypeScript POM file** plus a stable `index.ts` barrel.
+- **Generates TypeScript POM output as either one aggregate or split per class, always with a stable `index.ts` barrel.**
 - **Can generate Playwright fixtures** so tests can request `userListPage` instead of constructing `new UserListPage(page)` manually.
 - **Can fail fast on unnameable wrapper-button actions** so complex inline handlers do not silently degrade into low-signal generated APIs.
 - **Can emit a single C# POM file** for Playwright .NET consumers.
@@ -234,6 +234,7 @@ const pomConfig = defineVuePomGeneratorConfig({
     },
     playwright: {
       fixtures: true,
+      outputStructure: "split",
       customPoms: {
         dir: "tests/playwright/pom/custom",
         importAliases: {
@@ -294,9 +295,13 @@ By default, generation writes to `tests/playwright/__generated__`.
 
 TypeScript output:
 
-- `page-object-models.g.ts` — aggregated generated classes
-- `index.ts` — stable barrel re-exporting `page-object-models.g`
-- `_pom-runtime/` — copied runtime support files used by the aggregated output
+- default (`generation.playwright.outputStructure: "aggregated"`):
+  - `page-object-models.g.ts` — aggregated generated classes
+  - `index.ts` — stable barrel re-exporting `page-object-models.g`
+- split mode (`generation.playwright.outputStructure: "split"`):
+  - one `*.g.ts` file per generated class
+  - `index.ts` — stable barrel re-exporting the split files
+- `_pom-runtime/` — copied runtime support files used by the generated TypeScript output in either mode
 
 Optional Playwright fixture output:
 
@@ -313,7 +318,7 @@ If you emit outside a `__generated__` path, the generator also manages `.gitattr
 
 This is important if you are deciding whether the tool will fit into a real codebase.
 
-- **Dev server:** on startup, it scans the configured `scanDirs`, compiles each `.vue` file into a snapshot, writes the aggregated outputs once, then batches add/change/delete events and regenerates incrementally.
+- **Dev server:** on startup, it scans the configured `scanDirs`, compiles each `.vue` file into a snapshot, writes the configured TypeScript outputs once, then batches add/change/delete events and regenerates incrementally.
 - **Build:** it generates from the richest build pass it sees, which matters because Vite can run multiple passes (for example SSR plus client). The generator avoids letting a thinner pass clobber a richer one.
 - **Always-on virtual module:** `virtual:testids` is registered whether generation is enabled or disabled.
 - **Generation can be disabled:** `generation: false` still keeps compile-time test-id injection and the virtual module, but skips emitted POM files.
@@ -383,7 +388,7 @@ These two directories solve different problems.
 
 Default: `tests/playwright/pom/custom`
 
-This directory is for handwritten helper classes that the aggregated TypeScript output can import.
+This directory is for handwritten helper classes that the generated TypeScript output can import.
 
 It is the default helper directory even if you omit `generation.playwright.customPoms` entirely.
 
@@ -392,7 +397,7 @@ Actual current behavior:
 - the generator scans the directory **non-recursively**
 - it imports top-level `.ts` files only
 - it expects the file basename to match the exported class name (`Grid.ts` → `export class Grid {}`)
-- the helper files are imported into the generated aggregate; they are **not** automatically attached everywhere
+- the helper files are available to generated output; they are **not** automatically attached everywhere
 
 What it is for:
 
@@ -434,7 +439,7 @@ A typical override looks like this:
 
 ```ts
 // tests/playwright/pom/overrides/UserListPage.ts
-import { UserListPage as GeneratedUserListPage } from "../../__generated__/page-object-models.g";
+import { UserListPage as GeneratedUserListPage } from "../../__generated__";
 
 export class UserListPage extends GeneratedUserListPage {
   async openFirstUser() {
@@ -449,7 +454,10 @@ This is where most people need precision.
 
 ### Helper imports
 
-Every `.ts` file in `customPoms.dir` becomes an import in the aggregated TypeScript output.
+Every `.ts` file in `customPoms.dir` is available for import from the generated TypeScript output.
+
+- in aggregated mode, helper files become imports in the shared aggregate
+- in split mode, each generated file imports only the helpers it actually needs
 
 Benefits:
 
@@ -1037,6 +1045,17 @@ This object holds Playwright-specific additions on top of the generated TypeScri
   - `"path"` — if the string ends in `.ts` / `.tsx` / `.mts` / `.cts`, it is treated as a file path; otherwise as an output directory
   - `{ outDir }` — emit to a custom directory
 
+#### `generation.playwright.outputStructure`
+
+- **What it does:** Chooses whether generated TypeScript POMs are emitted as one aggregate or split per class.
+- **Why it exists:** very large generated files are harder to browse, inspect, and discover in editors.
+- **Benefit:** `"split"` keeps the same stable barrel and fixtures surface while making individual classes and methods easier to find.
+- **Without it:** the default is `"aggregated"`.
+- **Accepted values:**
+  - `"aggregated"` — emit `page-object-models.g.ts` plus `index.ts`
+  - `"split"` — emit one `*.g.ts` file per class plus `index.ts`
+- **Current limit:** this setting only affects the generated TypeScript Playwright output; C# output remains a single aggregated file.
+
 #### `generation.playwright.customPoms`
 
 - **What it does:** Configures handwritten helper imports and attachments.
@@ -1063,7 +1082,7 @@ This object holds Playwright-specific additions on top of the generated TypeScri
 #### `customPoms.importNameCollisionBehavior`
 
 - **What it does:** Controls how helper import names behave when they collide with generated class names.
-- **Why it exists:** aggregated output shares one import namespace.
+- **Why it exists:** generated files still need a conflict-free local import namespace.
 - **Benefit:** lets you fail hard or auto-alias based on team preference.
 - **Without it:** the default is `"error"`.
 

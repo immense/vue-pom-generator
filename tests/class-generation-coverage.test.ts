@@ -8,10 +8,14 @@ import { describe, expect, it } from "vitest";
 
 import type { IComponentDependencies, IDataTestId } from "../utils";
 import { generateFiles } from "../class-generation";
+import { renderTypeScriptLines } from "../typescript-codegen";
 
 function writeFile(filePath: string, content: string) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, content, "utf8");
+  const normalizedContent = filePath.endsWith(".ts") || filePath.endsWith(".tsx") || filePath.endsWith(".mts") || filePath.endsWith(".cts") || filePath.endsWith(".d.ts")
+    ? renderTypeScriptLines(content.replace(/\r\n/g, "\n").split("\n"))
+    : content;
+  fs.writeFileSync(filePath, normalizedContent, "utf8");
 }
 
 function readFile(filePath: string) {
@@ -235,7 +239,7 @@ describe("class-generation coverage", () => {
         path.join(tempRoot, "src", "views", "NewTenantPage.vue"),
         [
           "<template>",
-          "  <TenantDetailsEditForm />",
+          "  <tenant-details-edit-form />",
           "</template>",
           "",
         ].join("\n"),
@@ -285,6 +289,98 @@ describe("class-generation coverage", () => {
       expect(content).toContain("async typeTenantName(name: string)");
       expect(content).toContain("return await this.TenantDetailsEditForm.typeTenantName(name)");
     } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("emits split TypeScript POM files with a stable barrel and stub targets", async () => {
+    const tempRoot = makeTempRoot("vue-pom-split-");
+
+    try {
+      const basePagePath = path.join(tempRoot, "BasePage.ts");
+      writeMinimalBasePage(basePagePath);
+
+      writeFile(
+        path.join(tempRoot, "src", "views", "NewTenantPage.vue"),
+        [
+          "<template>",
+          "  <tenant-details-edit-form />",
+          "</template>",
+          "",
+        ].join("\n"),
+      );
+
+      const navigationEntry: IDataTestId = {
+        value: "TenantListPage-NewTenant-routerlink",
+        targetPageObjectModelClass: "NewTenantPage",
+      };
+
+      const depsTenantListPage = makeDeps({
+        filePath: path.join(tempRoot, "src", "views", "TenantListPage.vue"),
+        isView: true,
+        usedComponentSet: new Set(["TenantDetailsEditForm"]),
+        dataTestIdSet: new Set([navigationEntry]),
+      });
+
+      const depsForm = makeDeps({
+        filePath: path.join(tempRoot, "src", "components", "TenantDetailsEditForm.vue"),
+        isView: false,
+        dataTestIdSet: new Set([{ value: "TenantDetailsEditForm-Name-input" }]),
+        generatedMethods: new Map([
+          ["typeTenantName", { params: "name: string", argNames: ["name"] }],
+        ]),
+      });
+
+      const componentHierarchyMap = new Map<string, IComponentDependencies>([
+        ["TenantListPage", depsTenantListPage],
+        ["TenantDetailsEditForm", depsForm],
+      ]);
+
+      const outDir = path.join(tempRoot, "pom");
+      await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
+        outDir,
+        projectRoot: tempRoot,
+        typescriptOutputStructure: "split",
+      });
+
+      expect(fs.existsSync(path.join(outDir, "page-object-models.g.ts"))).toBe(false);
+
+      const indexContent = readFile(path.join(outDir, "index.ts"));
+      const runtimeBarrelExports = indexContent
+        .split("\n")
+        .filter(line => line.startsWith('export * from "./_pom-runtime/'))
+        .sort((a, b) => a.localeCompare(b));
+      const expectedRuntimeBarrelExports = [
+        ...fs.readdirSync(path.join(outDir, "_pom-runtime"))
+          .filter(file => file.endsWith(".ts"))
+          .sort((a, b) => a.localeCompare(b))
+          .map(file => `export * from "./_pom-runtime/${path.basename(file, ".ts")}";`),
+        ...fs.readdirSync(path.join(outDir, "_pom-runtime", "class-generation"))
+          .filter(file => file.endsWith(".ts"))
+          .sort((a, b) => a.localeCompare(b))
+          .map(file => `export * from "./_pom-runtime/class-generation/${path.basename(file, ".ts")}";`),
+      ].sort((a, b) => a.localeCompare(b));
+      expect(indexContent).toContain('export * from "./TenantDetailsEditForm.g";');
+      expect(indexContent).toContain('export * from "./TenantListPage.g";');
+      expect(indexContent).toContain('export * from "./NewTenantPage.g";');
+      expect(runtimeBarrelExports).toEqual(expectedRuntimeBarrelExports);
+
+      const tenantListPageContent = readFile(path.join(outDir, "TenantListPage.g.ts"));
+      expect(tenantListPageContent).toContain('import { NewTenantPage }');
+      expect(tenantListPageContent).toContain('import { TenantDetailsEditForm }');
+
+      const newTenantPageContent = readFile(path.join(outDir, "NewTenantPage.g.ts"));
+      expect(newTenantPageContent).toContain("export class NewTenantPage extends BasePage");
+      expect(newTenantPageContent).toContain("TenantDetailsEditForm: TenantDetailsEditForm;");
+      expect(newTenantPageContent).toContain("async typeTenantName(name: string)");
+
+      const gitAttributesContent = readFile(path.join(outDir, ".gitattributes"));
+      expect(gitAttributesContent).toContain("TenantDetailsEditForm.g.ts linguist-generated");
+      expect(gitAttributesContent).toContain("TenantListPage.g.ts linguist-generated");
+      expect(gitAttributesContent).toContain("NewTenantPage.g.ts linguist-generated");
+      expect(gitAttributesContent).toContain("index.ts linguist-generated");
+    }
+    finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
   });

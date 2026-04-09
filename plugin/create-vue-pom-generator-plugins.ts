@@ -7,7 +7,7 @@ import type { VuePomGeneratorLogger, VuePomGeneratorVerbosity } from "./logger";
 import { createLogger } from "./logger";
 import { createSupportPlugins } from "./support-plugins";
 import { createTestIdsVirtualModulesPlugin } from "./support/virtual-modules";
-import type { ErrorBehavior, ErrorBehaviorOptions, ExistingIdBehavior, MissingSemanticNameBehavior, PomNameCollisionBehavior, RouterModuleShimDefinition, VuePluginOwnership, VuePomGeneratorPluginOptions } from "./types";
+import type { ErrorBehavior, ErrorBehaviorOptions, ExistingIdBehavior, MissingSemanticNameBehavior, PlaywrightOutputStructure, PomNameCollisionBehavior, RouterModuleShimDefinition, VuePluginOwnership, VuePomGeneratorPluginOptions } from "./types";
 import { createVuePluginWithTestIds } from "./vue-plugin";
 
 import type { ElementMetadata } from "../metadata-collector";
@@ -76,7 +76,6 @@ function resolveMissingSemanticNameBehavior(
 
   return value.missingSemanticNameBehavior ?? "ignore";
 }
-
 function assertRouterModuleShims(
   value: Record<string, RouterModuleShimDefinition> | undefined,
   name: string,
@@ -273,6 +272,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
   const csharp = generationOptions?.csharp;
   const errorBehavior = options.errorBehavior;
   const missingSemanticNameBehavior = resolveMissingSemanticNameBehavior(errorBehavior);
+  const typescriptOutputStructure: PlaywrightOutputStructure = generationOptions?.playwright?.outputStructure ?? "aggregated";
   const generateFixtures = generationOptions?.playwright?.fixtures;
   const customPoms = generationOptions?.playwright?.customPoms;
 
@@ -315,6 +315,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
 
       if (generationEnabled) {
         assertNonEmptyString(outDir, "[vue-pom-generator] generation.outDir");
+        assertOneOf(typescriptOutputStructure, ["aggregated", "split"], "[vue-pom-generator] generation.playwright.outputStructure");
         assertRouterModuleShims(routerModuleShims, "[vue-pom-generator] generation.router.moduleShims");
 
         if (generationOptions?.router && routerType === "vue-router") {
@@ -371,6 +372,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     existingIdBehavior,
     outDir,
     emitLanguages,
+    typescriptOutputStructure,
     csharp,
     routerAwarePoms,
     routerEntry,

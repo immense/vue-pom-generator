@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDevProcessorPlugin } from "../plugin/support/dev-plugin";
+import type { PlaywrightOutputStructure } from "../plugin/types";
 import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 
 interface CreateTestIdTransformOptions {
@@ -30,7 +31,7 @@ type GenerateFilesCall = [
   Map<string, IComponentDependencies>,
   Map<string, string>,
   string,
-  { viewsDir?: string; scanDirs?: string[] },
+  { viewsDir?: string; scanDirs?: string[]; typescriptOutputStructure?: PlaywrightOutputStructure },
 ];
 
 interface DevServerStub {
@@ -111,6 +112,7 @@ describe("dev processor option plumbing", () => {
         customPomAttachments: [],
         nameCollisionBehavior: "error",
         missingSemanticNameBehavior: "error",
+        typescriptOutputStructure: "split",
         testIdAttribute: "data-testid",
         routerAwarePoms: false,
         loggerRef: {
@@ -161,6 +163,7 @@ describe("dev processor option plumbing", () => {
       expect(generateOptions).toMatchObject({
         viewsDir: "src/views",
         scanDirs: ["src"],
+        typescriptOutputStructure: "split",
       });
     }
     finally {

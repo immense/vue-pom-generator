@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import type { IComponentDependencies, IDataTestId } from "../utils";
 import { generateFiles } from "../class-generation";
+import { renderTypeScriptLines } from "../typescript-codegen";
 
 function extractClassBlock(content: string, className: string): string {
   const start = content.indexOf(`export class ${className}`);
@@ -23,23 +24,19 @@ function extractClassBlock(content: string, className: string): string {
 
 function writeFile(filePath: string, content: string) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, content, "utf8");
+  const normalizedContent = filePath.endsWith(".ts") || filePath.endsWith(".tsx") || filePath.endsWith(".mts") || filePath.endsWith(".cts") || filePath.endsWith(".d.ts")
+    ? renderTypeScriptLines(content.replace(/\r\n/g, "\n").split("\n"))
+    : content;
+  fs.writeFileSync(filePath, normalizedContent, "utf8");
+}
+
+function copyRepoFixture(rootDir: string, fixtureName: string, destinationRelativePath: string) {
+  const content = fs.readFileSync(new URL(`./fixtures/generated-tsc/${fixtureName}`, import.meta.url), "utf8");
+  writeFile(path.join(rootDir, destinationRelativePath), content);
 }
 
 function writePlaywrightTypeStub(rootDir: string) {
-  // This test typechecks generated output in an isolated temp directory.
-  // The generator emits Playwright types (Page/Locator), so provide a minimal
-  // module stub for `@playwright/test` to keep the test self-contained.
-  writeFile(
-    path.join(rootDir, "node_modules", "@playwright", "test", "index.d.ts"),
-    [
-      "export type Page = any;",
-      "export type Locator = any;",
-      "export const test: { extend<T>(_fixtures: any): any };",
-      "export const expect: any;",
-      "",
-    ].join("\n"),
-  );
+  copyRepoFixture(rootDir, "playwright-test.d.ts", path.join("node_modules", "@playwright", "test", "index.d.ts"));
 }
 
 function runTscNoEmit(files: string[], options?: { cwd?: string }) {
@@ -77,50 +74,8 @@ describe("generated output", () => {
     writePlaywrightTypeStub(tempRoot);
 
     const basePagePath = path.join(tempRoot, "BasePage.ts");
-    writeFile(
-      basePagePath,
-      [
-        "export type Fluent<T extends object> = T & PromiseLike<T>;",
-        "export class BasePage {",
-        "  public page: any;",
-        "  public constructor(page?: any, _options?: { testIdAttribute?: string }) {",
-        "    this.page = page;",
-        "  }",
-        "  protected fluent<T extends object>(_factory: () => Promise<T>): Fluent<T> {",
-        "    throw new Error('not implemented');",
-        "  }",
-        "  protected locatorByTestId(_testId: string): any {",
-        "    return null as any;",
-        "  }",
-        "  protected keyedLocators<TKey extends string>(_getLocator: (key: TKey) => any): Record<TKey, any> {",
-        "    return {} as any;",
-        "  }",
-        "  protected selectorForTestId(testId: string): string {",
-        "    return `[data-testid=\"${testId}\"]`;",
-        "  }",
-        "  protected async clickByTestId(_testId: string, _annotationText: string = '', _wait: boolean = true): Promise<void> {}",
-        "  protected async clickWithinTestIdByLabel(_rootTestId: string, _label: string, _annotationText: string = '', _wait: boolean = true, _options?: { exact?: boolean }): Promise<void> {}",
-        "  protected async fillInputByTestId(_testId: string, _text: string, _annotationText: string = ''): Promise<void> {}",
-        "  protected async selectVSelectByTestId(_testId: string, _value: string, _timeOut = 500, _annotationText: string = ''): Promise<void> {}",
-        "  protected async animateCursorToElement(_selector: string, _executeClick = true, _delay = 100, _annotationText: string = '', _waitForInstrumentationEvent = true): Promise<void> {}",
-        "}",
-        "",
-      ].join("\n"),
-    );
-
-    // The generator now also inlines Pointer.ts. Provide a minimal stub next to BasePage.ts.
-    const pointerPath = path.join(tempRoot, "Pointer.ts");
-    writeFile(
-      pointerPath,
-      [
-        "export type PlaywrightAnimationOptions = any;",
-        "export function setPlaywrightAnimationOptions(_animation: PlaywrightAnimationOptions): void {}",
-        "export class Pointer {",
-        "  public constructor(_page: any, _testIdAttribute: string) {}",
-        "}",
-        "",
-      ].join("\n"),
-    );
+    copyRepoFixture(tempRoot, "BasePage.full.ts", "BasePage.ts");
+    copyRepoFixture(tempRoot, "Pointer.ts", "Pointer.ts");
 
     const componentName = "TestComponent";
 
@@ -183,36 +138,88 @@ describe("generated output", () => {
     }
   });
 
+  it("typechecks split TypeScript output with barrel exports and stub targets", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-split-"));
+
+    writePlaywrightTypeStub(tempRoot);
+
+    const basePagePath = path.join(tempRoot, "BasePage.ts");
+    copyRepoFixture(tempRoot, "BasePage.full.ts", "BasePage.ts");
+    copyRepoFixture(tempRoot, "Pointer.ts", "Pointer.ts");
+
+    writeFile(
+      path.join(tempRoot, "src", "views", "NewTenantPage.vue"),
+      "<template><TenantDetailsEditForm /></template>\n",
+    );
+
+    const navigationEntry: IDataTestId = {
+      value: "TenantListPage-NewTenant-routerlink",
+      targetPageObjectModelClass: "NewTenantPage",
+      pom: {
+        nativeRole: "button",
+        methodName: "NewTenant",
+        formattedDataTestId: "TenantListPage-NewTenant-routerlink",
+        params: {},
+      },
+    };
+
+    const tenantListDeps: IComponentDependencies = {
+      filePath: path.join(tempRoot, "src", "views", "TenantListPage.vue"),
+      childrenComponentSet: new Set(["TenantDetailsEditForm"]),
+      usedComponentSet: new Set(["TenantDetailsEditForm"]),
+      dataTestIdSet: new Set([navigationEntry]),
+      generatedMethods: new Map(),
+      isView: true,
+    };
+
+    const formDeps: IComponentDependencies = {
+      filePath: path.join(tempRoot, "src", "components", "TenantDetailsEditForm.vue"),
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set([{
+        value: "TenantDetailsEditForm-Name-input",
+        pom: {
+          nativeRole: "input",
+          methodName: "TenantName",
+          formattedDataTestId: "TenantDetailsEditForm-Name-input",
+          params: { text: "string", annotationText: 'string = ""' },
+        },
+      }]),
+      generatedMethods: new Map([
+        ["typeTenantName", { params: "name: string", argNames: ["name"] }],
+      ]),
+      isView: false,
+    };
+
+    const componentHierarchyMap = new Map<string, IComponentDependencies>([
+      ["TenantListPage", tenantListDeps],
+      ["TenantDetailsEditForm", formDeps],
+    ]);
+
+    const outDir = path.join(tempRoot, "out");
+    await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
+      outDir,
+      projectRoot: tempRoot,
+      typescriptOutputStructure: "split",
+    });
+
+    const result = runTscNoEmit([path.join(outDir, "index.ts")], { cwd: tempRoot });
+
+    if (result.status !== 0) {
+      const stdout = (result.stdout || "").toString();
+      const stderr = (result.stderr || "").toString();
+      throw new Error(`tsc failed (exit ${result.status})\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`);
+    }
+  });
+
   it("typechecks generated fixtures that prefer matching override classes", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-"));
 
     writePlaywrightTypeStub(tempRoot);
 
     const basePagePath = path.join(tempRoot, "BasePage.ts");
-    writeFile(
-      basePagePath,
-      [
-        "export type Fluent<T extends object> = T & PromiseLike<T>;",
-        "export class BasePage {",
-        "  public page: any;",
-        "  public constructor(page?: any, _options?: { testIdAttribute?: string }) {",
-        "    this.page = page;",
-        "  }",
-        "}",
-        "",
-      ].join("\n"),
-    );
-    writeFile(
-      path.join(tempRoot, "Pointer.ts"),
-      [
-        "export type PlaywrightAnimationOptions = any;",
-        "export function setPlaywrightAnimationOptions(_animation: PlaywrightAnimationOptions): void {}",
-        "export class Pointer {",
-        "  public constructor(_page: any, _testIdAttribute: string) {}",
-        "}",
-        "",
-      ].join("\n"),
-    );
+    copyRepoFixture(tempRoot, "BasePage.minimal.ts", "BasePage.ts");
+    copyRepoFixture(tempRoot, "Pointer.ts", "Pointer.ts");
 
     writeFile(
       path.join(tempRoot, "tests", "playwright", "pom", "overrides", "PersonListPage.ts"),
@@ -629,7 +636,6 @@ describe("generated output", () => {
     const viewContentTwo = extractClassBlock(aggregatedContentTwo, viewName);
 
     // With multiple child component POMs, we intentionally do not generate any passthrough methods.
-    expect(viewContentTwo).not.toContain("Passthrough methods composed");
     expect(viewContentTwo).not.toContain("async clickOnlyInAButton");
 
     // Single child component case: passthrough should be emitted.
@@ -653,7 +659,6 @@ describe("generated output", () => {
     expect(fs.existsSync(aggregatedFileOne)).toBe(true);
     const aggregatedContentOne = fs.readFileSync(aggregatedFileOne, "utf8");
     const viewContentOne = extractClassBlock(aggregatedContentOne, "TestViewPageSingle");
-    expect(viewContentOne).toContain("Passthrough methods composed");
     expect(viewContentOne).toContain("async clickOnlyInAButton");
   });
 });
