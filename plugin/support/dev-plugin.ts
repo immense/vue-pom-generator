@@ -39,6 +39,7 @@ interface DevProcessorOptions {
   customPomImportAliases?: Record<string, string>;
   customPomImportNameCollisionBehavior?: "error" | "alias";
   nameCollisionBehavior?: PomNameCollisionBehavior;
+  missingSemanticNameBehavior?: "ignore" | "error";
   /** How to handle existing data-testid attributes in the source. */
   existingIdBehavior?: "preserve" | "overwrite" | "error";
   testIdAttribute: string;
@@ -70,6 +71,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     customPomImportAliases,
     customPomImportNameCollisionBehavior,
     nameCollisionBehavior = "suffix",
+    missingSemanticNameBehavior,
     existingIdBehavior,
     testIdAttribute,
     routerAwarePoms,
@@ -281,6 +283,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
               {
                 existingIdBehavior: existingIdBehavior ?? "preserve",
                 nameCollisionBehavior,
+                missingSemanticNameBehavior,
                 testIdAttribute,
                 warn: message => loggerRef.current.warn(message),
                 vueFilesPathMap: targetVuePathMap,

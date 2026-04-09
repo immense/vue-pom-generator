@@ -874,6 +874,7 @@ export function createTestIdTransform(
     existingIdBehavior?: "preserve" | "overwrite" | "error";
     testIdAttribute?: string;
     nameCollisionBehavior?: "error" | "warn" | "suffix";
+    missingSemanticNameBehavior?: "ignore" | "error";
     warn?: (message: string) => void;
     vueFilesPathMap?: Map<string, string>;
     wrapperSearchRoots?: string[];
@@ -882,6 +883,7 @@ export function createTestIdTransform(
   const existingIdBehavior = options.existingIdBehavior ?? "preserve";
   const testIdAttribute = (options.testIdAttribute || "data-testid").trim() || "data-testid";
   const nameCollisionBehavior = options.nameCollisionBehavior ?? "suffix";
+  const missingSemanticNameBehavior = options.missingSemanticNameBehavior ?? "ignore";
   const warn = options.warn;
   const vueFilesPathMap = options.vueFilesPathMap;
   const wrapperSearchRoots = options.wrapperSearchRoots ?? [];
@@ -1276,6 +1278,34 @@ export function createTestIdTransform(
     // Inline the old nodeShouldBeIgnored gating logic, but compute signals incrementally.
     // Native wrapper detection + option-prefix needs are computed in one place to avoid duplicate checks.
     const { nativeWrappersValue, optionDataTestIdPrefixValue, semanticNameHint } = getNativeWrapperTransformInfo(element, componentName, nativeWrappers);
+    const handlerDirective = element.props.find((p): p is DirectiveNode => {
+      return p.type === NodeTypes.DIRECTIVE
+        && p.name === "bind"
+        && p.arg?.type === NodeTypes.SIMPLE_EXPRESSION
+        && p.arg.content === "handler"
+        && !!p.exp;
+    }) ?? null;
+    const handlerInfo = handlerDirective ? nodeHandlerAttributeInfo(element) : null;
+
+    if (
+      missingSemanticNameBehavior === "error"
+      && nativeWrappers[element.tag]?.role === "button"
+      && handlerDirective
+      && !handlerInfo
+    ) {
+      const loc = element.loc?.start;
+      const locationHint = loc ? `${loc.line}:${loc.column}` : "unknown";
+      const handlerSource = (handlerDirective.exp?.loc?.source ?? "").trim() || "<unknown>";
+
+      throw new Error(
+        `[vue-pom-generator] Could not derive a semantic POM action name for button-like wrapper in ${componentName} (${context.filename ?? "unknown"}:${locationHint}).\n`
+        + `Element: <${element.tag}>\n`
+        + `Handler: ${handlerSource}\n\n`
+        + `Fix: move complex inline logic into a named function (for example, const onAction = () => ...; then bind :handler="onAction"), `
+        + `or simplify the handler to a direct identifier/call the generator can name. `
+        + `You can also set generation.playwright.missingSemanticNameBehavior = "ignore" to keep generic fallback behavior.`,
+      );
+    }
 
     if (nativeWrappersValue) {
       // Some wrappers (e.g. option-driven selects) require the option prefix even when we have a
@@ -1440,7 +1470,6 @@ export function createTestIdTransform(
       return;
     }
 
-    const handlerInfo = nodeHandlerAttributeInfo(element);
     if (handlerInfo) {
       const testId = getHandlerAttributeValueDataTestId(handlerInfo.semanticNameHint);
 

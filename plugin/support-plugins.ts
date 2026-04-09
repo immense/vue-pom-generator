@@ -19,6 +19,7 @@ interface SupportFactoryOptions {
   scanDirs: string[];
   getWrapperSearchRoots: () => string[];
   nameCollisionBehavior?: PomNameCollisionBehavior;
+  missingSemanticNameBehavior?: "ignore" | "error";
   /** How to handle existing data-testid attributes in the source. */
   existingIdBehavior?: "preserve" | "overwrite" | "error";
 
@@ -61,6 +62,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     scanDirs,
     getWrapperSearchRoots,
     nameCollisionBehavior = "suffix",
+    missingSemanticNameBehavior,
     existingIdBehavior,
     outDir,
     emitLanguages,
@@ -127,6 +129,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     customPomImportNameCollisionBehavior,
     testIdAttribute,
     nameCollisionBehavior,
+    missingSemanticNameBehavior,
     existingIdBehavior,
     nativeWrappers,
     excludedComponents,
@@ -156,6 +159,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     customPomImportAliases,
     customPomImportNameCollisionBehavior,
     nameCollisionBehavior,
+    missingSemanticNameBehavior,
     existingIdBehavior,
     testIdAttribute,
     routerAwarePoms,
