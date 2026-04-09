@@ -1057,7 +1057,7 @@ describe("utils.ts coverage", () => {
   });
 
   it("merges keyed primaries with identical selectors before strict role suffixing invents duplicates", () => {
-    const root = parseTemplate("<ImmyNavItem /><ImmyNavItem />");
+    const root = parseTemplate("<NavItem /><NavItem />");
     const els = (root.children ?? []).filter((c) => c?.type === NodeTypes.ELEMENT) as ElementNode[];
     expect(els.length).toBe(2);
 
@@ -1080,7 +1080,7 @@ describe("utils.ts coverage", () => {
         dependencies: deps,
         generatedMethodContentByComponent,
         nativeRole: "button",
-        preferredGeneratedValue: templateAttributeValue("MyComp-${value}-immynavitem"),
+        preferredGeneratedValue: templateAttributeValue("MyComp-${value}-navitem"),
         bestKeyPlaceholder: null,
         testIdAttribute: "data-testid",
         existingIdBehavior: "overwrite",

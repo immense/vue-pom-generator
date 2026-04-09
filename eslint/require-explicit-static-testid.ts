@@ -7,7 +7,7 @@ interface RequireExplicitStaticTestIdOptions {
 	components?: string[];
 }
 
-const DEFAULT_COMPONENTS_REQUIRING_STATIC_TEST_IDS = ["ImmyButton", "LoadButton"];
+const DEFAULT_COMPONENTS_REQUIRING_STATIC_TEST_IDS = ["AppButton", "LoadButton"];
 
 function normalizeRuleStringArrayOption(option: string[] | undefined, fallback: readonly string[]): string[] {
 	if (!Array.isArray(option)) {

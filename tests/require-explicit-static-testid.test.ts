@@ -19,7 +19,7 @@ describe("require-explicit-static-testid", () => {
 			valid: [
 				{
 					filename: "StaticButton.vue",
-					code: `<template><ImmyButton data-testid="SaveButton" /></template>`,
+					code: `<template><AppButton data-testid="SaveButton" /></template>`,
 				},
 				{
 					filename: "StaticLoadButton.vue",
@@ -41,8 +41,8 @@ describe("require-explicit-static-testid", () => {
 			],
 			invalid: [
 				{
-					filename: "MissingImmyButton.vue",
-					code: `<template><ImmyButton /></template>`,
+					filename: "MissingAppButton.vue",
+					code: `<template><AppButton /></template>`,
 					errors: [{ messageId: "missingExplicitStaticTestId" }],
 				},
 				{
@@ -57,7 +57,7 @@ describe("require-explicit-static-testid", () => {
 				},
 				{
 					filename: "DirectiveTestId.vue",
-					code: `<template><ImmyButton v-bind:data-testid="buttonId" /></template>`,
+					code: `<template><AppButton v-bind:data-testid="buttonId" /></template>`,
 					errors: [{ messageId: "dynamicTestId" }],
 				},
 				{

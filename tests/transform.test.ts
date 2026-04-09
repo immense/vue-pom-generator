@@ -784,18 +784,25 @@ describe('createTestIdTransform', () => {
     //
     // We still assert dynamic-ness via Vue's const analysis by ensuring the compound contains
     // at least one SimpleExpressionNode with constType NOT_CONSTANT.
-    const collectSimpleExpressions = (node: any): Array<{ constType?: number }> => {
-      if (!node || typeof node !== 'object' || !('type' in node)) {
+    interface TestExpressionNode {
+      type?: number
+      constType?: number
+      children?: Array<TestExpressionNode | string>
+    }
+
+    const collectSimpleExpressions = (node: TestExpressionNode | null | undefined): Array<{ constType?: number }> => {
+      if (!node) {
         return []
       }
+      const expressionNode = node
 
-      if (node.type === NodeTypes.SIMPLE_EXPRESSION) {
-        return [node]
+      if (expressionNode.type === NodeTypes.SIMPLE_EXPRESSION) {
+        return [expressionNode]
       }
 
-      if (node.type === NodeTypes.COMPOUND_EXPRESSION) {
+      if (expressionNode.type === NodeTypes.COMPOUND_EXPRESSION) {
         const out: Array<{ constType?: number }> = []
-        for (const child of node.children || []) {
+        for (const child of expressionNode.children || []) {
           if (child && typeof child === 'object') {
             out.push(...collectSimpleExpressions(child))
           }
@@ -873,23 +880,23 @@ describe('createTestIdTransform', () => {
 
   it('infers radio wrappers through nested local SFCs without nativeWrappers config', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-transform-'))
-    const radioPath = path.join(tempRoot, 'src', 'components', 'ImmyRadio.vue')
-    const radioGroupPath = path.join(tempRoot, 'src', 'components', 'ImmyRadioGroup.vue')
+    const radioPath = path.join(tempRoot, 'src', 'components', 'Radio.vue')
+    const radioGroupPath = path.join(tempRoot, 'src', 'components', 'RadioGroup.vue')
     fs.mkdirSync(path.dirname(radioPath), { recursive: true })
     fs.writeFileSync(radioPath, '<template><div><input type="radio" /></div></template>')
     fs.writeFileSync(
       radioGroupPath,
-      '<template><div><ImmyRadio v-for="option in props.options" :key="option.value" :text="option.text" :modelValue="option.value" /></div></template>',
+      '<template><div><Radio v-for="option in props.options" :key="option.value" :text="option.text" :modelValue="option.value" /></div></template>',
     )
 
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
     const vueFilesPathMap = new Map<string, string>([
-      ['ImmyRadio', radioPath],
-      ['ImmyRadioGroup', radioGroupPath],
+      ['Radio', radioPath],
+      ['RadioGroup', radioGroupPath],
     ])
 
     const ast = compileAndCaptureAst(
-      '<ImmyRadioGroup :options="[\'Cloud\', \'Local\']" v-model="databaseType" />',
+      '<RadioGroup :options="[\'Cloud\', \'Local\']" v-model="databaseType" />',
       {
         filename: path.join(tempRoot, 'src', 'views', 'MyPage.vue'),
         nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, {}, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],

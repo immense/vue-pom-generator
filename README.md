@@ -721,7 +721,7 @@ What it does:
 
 - flags targeted Vue components that are missing a `data-testid`
 - flags bound forms like `:data-testid="buttonId"` and `v-bind:data-testid="buttonId"`
-- defaults to `ImmyButton` and `LoadButton`
+- defaults to `AppButton` and `LoadButton`
 - supports custom attribute names and custom component lists
 
 Why it exists:

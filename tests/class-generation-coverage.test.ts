@@ -513,16 +513,16 @@ describe("class-generation coverage", () => {
       expect(content).toContain("export class TemplateLibrary extends BasePage");
 
       // The raw (illegal) names must NOT appear as class declarations.
-      expect(content).not.toMatch(/export class error-test/);
-      expect(content).not.toMatch(/export class FirmsGrid\.client/);
-      expect(content).not.toMatch(/export class forgot-password/);
-      expect(content).not.toMatch(/export class template-library/);
+      expect(content).not.toContain("export class error-test");
+      expect(content).not.toContain("export class FirmsGrid.client");
+      expect(content).not.toContain("export class forgot-password");
+      expect(content).not.toContain("export class template-library");
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
   });
 
-  it("C#: dynamic-test-id input element generates key+text params so the locator compiles", async () => {
+  it("c#: dynamic-test-id input element generates key+text params so the locator compiles", async () => {
     // Regression: when an <input> has :data-testid="`...-${key}`", the C# generator was
     // emitting `(string text, string annotationText = "")` but the locator body referenced
     // `{key}` — causing a CS0103 compile error.  Both params must appear together.
@@ -556,7 +556,7 @@ describe("class-generation coverage", () => {
       ]);
 
       const outDir = path.join(tempRoot, "pom");
-      await generateFiles(componentHierarchyMap, new Map(), null as any, {
+      await generateFiles(componentHierarchyMap, new Map(), "", {
         outDir,
         emitLanguages: ["csharp"],
         csharp: { namespace: "Test.Generated" },
@@ -574,7 +574,7 @@ describe("class-generation coverage", () => {
       expect(cs).toContain("items-check-{key}");
       // The method must compile: key must not be an undeclared reference.
       // (If key appears only in the template but not in the signature, C# throws CS0103.)
-      expect(cs).toMatch(/ItemsCheckByKeyInput\(string key/);
+      expect(cs).toContain("ItemsCheckByKeyInput(string key");
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -585,11 +585,11 @@ describe("class-generation coverage", () => {
 
     try {
       const keyedNav: IDataTestId = {
-        value: "NavHost-${value}-immynavitem",
+        value: "NavHost-${value}-navitem",
         pom: {
           nativeRole: "button",
           methodName: "ValueByKey",
-          formattedDataTestId: "NavHost-${key}-immynavitem",
+          formattedDataTestId: "NavHost-${key}-navitem",
           params: { key: "string" },
         },
         targetPageObjectModelClass: "UsersPage",

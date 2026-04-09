@@ -4,6 +4,8 @@ import path from "node:path";
 import process from "node:process";
 import type { Plugin } from "vite";
 
+type PluginTransform = (code: string, id: string) => Promise<unknown> | unknown;
+
 describe("existingIdBehavior: 'error'", () => {
   it("halts compilation (throws) when an existing data-testid is found", async () => {
     const plugins = createVuePomGeneratorPlugins({
@@ -28,8 +30,9 @@ describe("existingIdBehavior: 'error'", () => {
 
     // Using string matching instead of RegExp literal to satisfy linting rules.
     const expectedError = "remove-existing-test-id-attributes rule and --fix";
+    const transform = metadataPlugin.transform.bind({}) as PluginTransform;
 
-    await expect((metadataPlugin.transform as any).call({}, code, id)).rejects.toThrow(expectedError);
+    await expect(transform(code, id)).rejects.toThrow(expectedError);
   });
 });
 
@@ -40,7 +43,7 @@ describe("existingIdBehavior: 'preserve'", () => {
         existingIdBehavior: "preserve",
         scanDirs: ["."],
         nativeWrappers: {
-          ImmyRadioGroup: {
+          RadioGroup: {
             role: "radio",
             requiresOptionDataTestIdPrefix: true,
           },
@@ -57,11 +60,12 @@ describe("existingIdBehavior: 'preserve'", () => {
       throw new Error("Could not find metadata collector plugin");
     }
 
-    const code = `<template><ImmyRadioGroup data-testid="database-type" v-model="selectedGroup" /></template>`;
+    const code = `<template><RadioGroup data-testid="database-type" v-model="selectedGroup" /></template>`;
     const id = path.resolve(process.cwd(), "TestComponent.vue");
 
     const expectedError = "existingIdBehavior=\"preserve\" cannot safely preserve nested option ids";
+    const transform = metadataPlugin.transform.bind({}) as PluginTransform;
 
-    await expect((metadataPlugin.transform as any).call({}, code, id)).rejects.toThrow(expectedError);
+    await expect(transform(code, id)).rejects.toThrow(expectedError);
   });
 });
