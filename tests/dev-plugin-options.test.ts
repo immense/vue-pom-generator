@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDevProcessorPlugin } from "../plugin/support/dev-plugin";
+import type { PlaywrightOutputStructure } from "../plugin/types";
 import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 
 interface CreateTestIdTransformOptions {
@@ -30,7 +31,7 @@ type GenerateFilesCall = [
   Map<string, IComponentDependencies>,
   Map<string, string>,
   string,
-  { viewsDir?: string; scanDirs?: string[]; typescriptOutputStructure?: "aggregated" | "split" },
+  { viewsDir?: string; scanDirs?: string[]; typescriptOutputStructure?: PlaywrightOutputStructure },
 ];
 
 interface DevServerStub {

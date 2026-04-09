@@ -14,7 +14,7 @@ import type { IComponentDependencies, NativeWrappersMap, RouterIntrospectionResu
 import { setResolveToComponentNameFn, setRouteNameToComponentNameMap, toPascalCase } from "../../utils";
 import type { VuePomGeneratorLogger } from "../logger";
 import { resolveComponentNameFromPath } from "../path-utils";
-import type { PomNameCollisionBehavior, RouterModuleShimDefinition } from "../types";
+import type { PlaywrightOutputStructure, PomNameCollisionBehavior, RouterModuleShimDefinition } from "../types";
 
 interface BuildProcessorOptions {
   componentHierarchyMap: Map<string, IComponentDependencies>;
@@ -27,7 +27,7 @@ interface BuildProcessorOptions {
 
   outDir?: string;
   emitLanguages?: Array<"ts" | "csharp">;
-  typescriptOutputStructure?: "aggregated" | "split";
+  typescriptOutputStructure?: PlaywrightOutputStructure;
   csharp?: {
     namespace?: string;
   };

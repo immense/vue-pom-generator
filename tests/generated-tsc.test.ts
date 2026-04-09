@@ -26,20 +26,13 @@ function writeFile(filePath: string, content: string) {
   fs.writeFileSync(filePath, content, "utf8");
 }
 
+function copyRepoFixture(rootDir: string, fixtureName: string, destinationRelativePath: string) {
+  const content = fs.readFileSync(new URL(`./fixtures/generated-tsc/${fixtureName}`, import.meta.url), "utf8");
+  writeFile(path.join(rootDir, destinationRelativePath), content);
+}
+
 function writePlaywrightTypeStub(rootDir: string) {
-  // This test typechecks generated output in an isolated temp directory.
-  // The generator emits Playwright types (Page/Locator), so provide a minimal
-  // module stub for `@playwright/test` to keep the test self-contained.
-  writeFile(
-    path.join(rootDir, "node_modules", "@playwright", "test", "index.d.ts"),
-    [
-      "export type Page = any;",
-      "export type Locator = any;",
-      "export const test: { extend<T>(_fixtures: any): any };",
-      "export const expect: any;",
-      "",
-    ].join("\n"),
-  );
+  copyRepoFixture(rootDir, "playwright-test.d.ts", path.join("node_modules", "@playwright", "test", "index.d.ts"));
 }
 
 function runTscNoEmit(files: string[], options?: { cwd?: string }) {
@@ -77,50 +70,8 @@ describe("generated output", () => {
     writePlaywrightTypeStub(tempRoot);
 
     const basePagePath = path.join(tempRoot, "BasePage.ts");
-    writeFile(
-      basePagePath,
-      [
-        "export type Fluent<T extends object> = T & PromiseLike<T>;",
-        "export class BasePage {",
-        "  public page: any;",
-        "  public constructor(page?: any, _options?: { testIdAttribute?: string }) {",
-        "    this.page = page;",
-        "  }",
-        "  protected fluent<T extends object>(_factory: () => Promise<T>): Fluent<T> {",
-        "    throw new Error('not implemented');",
-        "  }",
-        "  protected locatorByTestId(_testId: string): any {",
-        "    return null as any;",
-        "  }",
-        "  protected keyedLocators<TKey extends string>(_getLocator: (key: TKey) => any): Record<TKey, any> {",
-        "    return {} as any;",
-        "  }",
-        "  protected selectorForTestId(testId: string): string {",
-        "    return `[data-testid=\"${testId}\"]`;",
-        "  }",
-        "  protected async clickByTestId(_testId: string, _annotationText: string = '', _wait: boolean = true): Promise<void> {}",
-        "  protected async clickWithinTestIdByLabel(_rootTestId: string, _label: string, _annotationText: string = '', _wait: boolean = true, _options?: { exact?: boolean }): Promise<void> {}",
-        "  protected async fillInputByTestId(_testId: string, _text: string, _annotationText: string = ''): Promise<void> {}",
-        "  protected async selectVSelectByTestId(_testId: string, _value: string, _timeOut = 500, _annotationText: string = ''): Promise<void> {}",
-        "  protected async animateCursorToElement(_selector: string, _executeClick = true, _delay = 100, _annotationText: string = '', _waitForInstrumentationEvent = true): Promise<void> {}",
-        "}",
-        "",
-      ].join("\n"),
-    );
-
-    // The generator now also inlines Pointer.ts. Provide a minimal stub next to BasePage.ts.
-    const pointerPath = path.join(tempRoot, "Pointer.ts");
-    writeFile(
-      pointerPath,
-      [
-        "export type PlaywrightAnimationOptions = any;",
-        "export function setPlaywrightAnimationOptions(_animation: PlaywrightAnimationOptions): void {}",
-        "export class Pointer {",
-        "  public constructor(_page: any, _testIdAttribute: string) {}",
-        "}",
-        "",
-      ].join("\n"),
-    );
+    copyRepoFixture(tempRoot, "BasePage.full.ts", "BasePage.ts");
+    copyRepoFixture(tempRoot, "Pointer.ts", "Pointer.ts");
 
     const componentName = "TestComponent";
 
@@ -189,47 +140,8 @@ describe("generated output", () => {
     writePlaywrightTypeStub(tempRoot);
 
     const basePagePath = path.join(tempRoot, "BasePage.ts");
-    writeFile(
-      basePagePath,
-      [
-        "export type Fluent<T extends object> = T & PromiseLike<T>;",
-        "export class BasePage {",
-        "  public page: any;",
-        "  public constructor(page?: any, _options?: { testIdAttribute?: string }) {",
-        "    this.page = page;",
-        "  }",
-        "  protected fluent<T extends object>(_factory: () => Promise<T>): Fluent<T> {",
-        "    throw new Error('not implemented');",
-        "  }",
-        "  protected locatorByTestId(_testId: string): any {",
-        "    return null as any;",
-        "  }",
-        "  protected keyedLocators<TKey extends string>(_getLocator: (key: TKey) => any): Record<TKey, any> {",
-        "    return {} as any;",
-        "  }",
-        "  protected selectorForTestId(testId: string): string {",
-        "    return `[data-testid=\"${testId}\"]`;",
-        "  }",
-        "  protected async clickByTestId(_testId: string, _annotationText: string = '', _wait: boolean = true): Promise<void> {}",
-        "  protected async clickWithinTestIdByLabel(_rootTestId: string, _label: string, _annotationText: string = '', _wait: boolean = true, _options?: { exact?: boolean }): Promise<void> {}",
-        "  protected async fillInputByTestId(_testId: string, _text: string, _annotationText: string = ''): Promise<void> {}",
-        "  protected async selectVSelectByTestId(_testId: string, _value: string, _timeOut = 500, _annotationText: string = ''): Promise<void> {}",
-        "  protected async animateCursorToElement(_selector: string, _executeClick = true, _delay = 100, _annotationText: string = '', _waitForInstrumentationEvent = true): Promise<void> {}",
-        "}",
-        "",
-      ].join("\n"),
-    );
-    writeFile(
-      path.join(tempRoot, "Pointer.ts"),
-      [
-        "export type PlaywrightAnimationOptions = any;",
-        "export function setPlaywrightAnimationOptions(_animation: PlaywrightAnimationOptions): void {}",
-        "export class Pointer {",
-        "  public constructor(_page: any, _testIdAttribute: string) {}",
-        "}",
-        "",
-      ].join("\n"),
-    );
+    copyRepoFixture(tempRoot, "BasePage.full.ts", "BasePage.ts");
+    copyRepoFixture(tempRoot, "Pointer.ts", "Pointer.ts");
 
     writeFile(
       path.join(tempRoot, "src", "views", "NewTenantPage.vue"),
@@ -302,30 +214,8 @@ describe("generated output", () => {
     writePlaywrightTypeStub(tempRoot);
 
     const basePagePath = path.join(tempRoot, "BasePage.ts");
-    writeFile(
-      basePagePath,
-      [
-        "export type Fluent<T extends object> = T & PromiseLike<T>;",
-        "export class BasePage {",
-        "  public page: any;",
-        "  public constructor(page?: any, _options?: { testIdAttribute?: string }) {",
-        "    this.page = page;",
-        "  }",
-        "}",
-        "",
-      ].join("\n"),
-    );
-    writeFile(
-      path.join(tempRoot, "Pointer.ts"),
-      [
-        "export type PlaywrightAnimationOptions = any;",
-        "export function setPlaywrightAnimationOptions(_animation: PlaywrightAnimationOptions): void {}",
-        "export class Pointer {",
-        "  public constructor(_page: any, _testIdAttribute: string) {}",
-        "}",
-        "",
-      ].join("\n"),
-    );
+    copyRepoFixture(tempRoot, "BasePage.minimal.ts", "BasePage.ts");
+    copyRepoFixture(tempRoot, "Pointer.ts", "Pointer.ts");
 
     writeFile(
       path.join(tempRoot, "tests", "playwright", "pom", "overrides", "PersonListPage.ts"),

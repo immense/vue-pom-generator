@@ -1,5 +1,8 @@
 import { parse } from "@babel/parser";
 import type { ClassMethod } from "@babel/types";
+import type { ElementNode, ForNode, IfBranchNode, IfNode, RootNode, TemplateChildNode } from "@vue/compiler-core";
+import { NodeTypes, parse as parseTemplate } from "@vue/compiler-dom";
+import { parse as parseSfc } from "@vue/compiler-sfc";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -25,6 +28,17 @@ const AUTO_GENERATED_COMMENT
 const GENERATED_GITATTRIBUTES_BLOCK_START = "# BEGIN vue-pom-generator generated files";
 const GENERATED_GITATTRIBUTES_BLOCK_END = "# END vue-pom-generator generated files";
 const eslintSuppressionHeader = "/* eslint-disable perfectionist/sort-imports */\n";
+const VUE_POM_GENERATOR_ERROR_PREFIX = "[vue-pom-generator]" as const;
+
+class VuePomGeneratorError extends Error {
+  public constructor(message: string) {
+    const normalized = message.startsWith(VUE_POM_GENERATOR_ERROR_PREFIX)
+      ? message
+      : `${VUE_POM_GENERATOR_ERROR_PREFIX} ${message}`;
+    super(normalized);
+    this.name = "VuePomGeneratorError";
+  }
+}
 
 function toPosixRelativePath(fromDir: string, toFile: string): string {
   let rel = path.relative(fromDir, toFile).replace(/\\/g, "/");
@@ -32,13 +46,6 @@ function toPosixRelativePath(fromDir: string, toFile: string): string {
     rel = `./${rel}`;
   }
   return rel;
-}
-
-function changeExtension(filePath: string, expectedExt: string, nextExtWithDot: string): string {
-  const parsed = path.parse(filePath);
-  if (parsed.ext !== expectedExt)
-    return filePath;
-  return path.format({ ...parsed, base: `${parsed.name}${nextExtWithDot}`, ext: nextExtWithDot });
 }
 
 function stripExtension(filePath: string): string {
@@ -99,6 +106,101 @@ interface CustomPomImportResolution {
   methodSignaturesByClass: Map<string, CustomPomMethodSignatureMap>;
   availableClassIdentifiers: Set<string>;
   importSpecifiersByClass: Record<string, ResolvedCustomPomImportSpecifier>;
+}
+
+function createCustomPomImportCollisionError(exportName: string, requested: string): VuePomGeneratorError {
+  return new VuePomGeneratorError(
+    `Custom POM import name collision detected for "${exportName}".\n`
+    + `The identifier "${requested}" conflicts with a generated POM class.\n`
+    + `Fix by setting generation.playwright.customPoms.importAliases["${exportName}"] to a unique name, `
+    + `or set generation.playwright.customPoms.importNameCollisionBehavior = "alias" to auto-alias collisions.`,
+  );
+}
+
+function isPascalCaseComponentTag(tag: string): boolean {
+  if (!tag) {
+    return false;
+  }
+
+  const first = tag.charCodeAt(0);
+  if (first < 65 || first > 90) {
+    return false;
+  }
+
+  for (let i = 1; i < tag.length; i += 1) {
+    const code = tag.charCodeAt(i);
+    const isUpper = code >= 65 && code <= 90;
+    const isLower = code >= 97 && code <= 122;
+    const isDigit = code >= 48 && code <= 57;
+    if (isUpper || isLower || isDigit || tag[i] === "_") {
+      continue;
+    }
+    return false;
+  }
+
+  return true;
+}
+
+function collectPascalCaseComponentTags(nodes: readonly TemplateChildNode[], names: Set<string>): void {
+  for (const node of nodes) {
+    switch (node.type) {
+      case NodeTypes.ELEMENT: {
+        const element = node as ElementNode;
+        if (isPascalCaseComponentTag(element.tag)) {
+          names.add(element.tag);
+        }
+        collectPascalCaseComponentTags(element.children, names);
+        break;
+      }
+      case NodeTypes.IF: {
+        const ifNode = node as IfNode;
+        for (const branch of ifNode.branches) {
+          collectPascalCaseComponentTags((branch as IfBranchNode).children, names);
+        }
+        break;
+      }
+      case NodeTypes.FOR: {
+        const forNode = node as ForNode;
+        collectPascalCaseComponentTags(forNode.children, names);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+}
+
+function getPascalCaseComponentTagsFromVueSource(source: string): string[] {
+  try {
+    const { descriptor } = parseSfc(source);
+    const template = descriptor.template?.content?.trim();
+    if (!template) {
+      return [];
+    }
+
+    const root = parseTemplate(template) as RootNode;
+    const names = new Set<string>();
+    collectPascalCaseComponentTags(root.children, names);
+    return [...names];
+  }
+  catch {
+    return [];
+  }
+}
+
+function resolveVueSourcePath(
+  targetClassName: string,
+  vueFilesPathMap: Map<string, string>,
+  projectRoot: string,
+): string | undefined {
+  const mapped = vueFilesPathMap.get(targetClassName);
+  const candidates = [
+    mapped,
+    path.join(projectRoot, "src", "views", `${targetClassName}.vue`),
+    path.join(projectRoot, "src", "components", `${targetClassName}.vue`),
+  ].filter((candidate): candidate is string => typeof candidate === "string" && candidate.length > 0);
+
+  return candidates.find(candidate => fs.existsSync(candidate));
 }
 
 async function getRouteMetaByComponent(
@@ -446,13 +548,9 @@ export interface GenerateFilesOptions {
   routeMetaByComponent?: Record<string, RouteMeta>;
 }
 
-interface GenerateContentOptions {
+interface BaseGenerateContentOptions {
   /** Directory the generated .g.ts file will live in (used for relative imports). Defaults to the Vue file's directory. */
   outputDir?: string;
-  /** Absolute path to the generated file being emitted. */
-  outputFilePath?: string;
-  /** When true, omit file headers/import blocks that should be shared in an aggregated file. */
-  aggregated?: boolean;
 
   customPomAttachments?: CustomPomAttachment[];
 
@@ -473,6 +571,12 @@ interface GenerateContentOptions {
 
   routeMetaByComponent?: Record<string, RouteMeta>;
 }
+
+type GenerateContentOptions
+  = BaseGenerateContentOptions & (
+    { outputStructure: "aggregated" }
+    | { outputStructure?: "split" }
+  );
 
 interface GeneratedFileOutput {
   filePath: string;
@@ -639,8 +743,7 @@ async function generateSplitTypeScriptFiles(
 
     const content = generateViewObjectModelContent(name, deps, componentHierarchyMap, vueFilesPathMap, runtimeBasePagePath, {
       outputDir: path.dirname(filePath),
-      outputFilePath: filePath,
-      aggregated: false,
+      outputStructure: "split",
       customPomAttachments: options.customPomAttachments ?? [],
       projectRoot,
       customPomDir: options.customPomDir,
@@ -1412,10 +1515,11 @@ function generateViewObjectModelContent(
 
   const {
     outputDir = path.dirname(filePath),
-    aggregated = false,
+    outputStructure = "split",
     customPomAttachments = [],
     testIdAttribute,
   } = options;
+  const aggregated = outputStructure === "aggregated";
 
   const hasChildComponent = (needle: string) => {
     const haystack = usedComponentSet?.size ? usedComponentSet : childrenComponentSet;
@@ -1883,41 +1987,54 @@ function resolvePluginAsset(relative: string): string {
   }
 }
 
-function buildRuntimeGeneratedFiles(baseDir: string, basePageClassPath: string): GeneratedFileOutput[] {
+interface RuntimeGeneratedAssetSpec {
+  absolutePath: string;
+  description: string;
+  outputPath: string;
+}
+
+function getRuntimeGeneratedAssetSpecs(baseDir: string, basePageClassPath: string): RuntimeGeneratedAssetSpec[] {
   const runtimeDirAbs = path.join(baseDir, "_pom-runtime");
   const runtimeClassGenAbs = path.join(runtimeDirAbs, "class-generation");
+  const runtimeClassGenSourceDir = resolvePluginAsset("../class-generation");
+  const runtimeClassGenFiles = fs.readdirSync(runtimeClassGenSourceDir)
+    .filter(file => file.endsWith(".ts"))
+    .filter(file => file !== "BasePage.ts" && file !== "index.ts")
+    .sort((left, right) => left.localeCompare(right));
 
+  return [
+    {
+      absolutePath: resolvePluginAsset("../click-instrumentation.ts"),
+      description: "click-instrumentation.ts",
+      outputPath: path.join(runtimeDirAbs, "click-instrumentation.ts"),
+    },
+    ...runtimeClassGenFiles.map(file => ({
+      absolutePath: path.join(runtimeClassGenSourceDir, file),
+      description: file,
+      outputPath: path.join(runtimeClassGenAbs, file),
+    })),
+    {
+      absolutePath: basePageClassPath,
+      description: "BasePage.ts",
+      outputPath: path.join(runtimeClassGenAbs, "BasePage.ts"),
+    },
+  ];
+}
+
+function buildRuntimeGeneratedFiles(baseDir: string, basePageClassPath: string): GeneratedFileOutput[] {
   const readText = (absPath: string, description: string) => {
     try {
       return fs.readFileSync(absPath, "utf8");
     }
     catch {
-      throw new Error(`Failed to read ${description} at ${absPath}`);
+      throw new VuePomGeneratorError(`Failed to read ${description} at ${absPath}`);
     }
   };
 
-  const clickInstrumentationAbs = resolvePluginAsset("../click-instrumentation.ts");
-  const pointerAbs = resolvePluginAsset("../class-generation/Pointer.ts");
-  const playwrightTypesAbs = resolvePluginAsset("../class-generation/playwright-types.ts");
-
-  return [
-    {
-      filePath: path.join(runtimeDirAbs, "click-instrumentation.ts"),
-      content: readText(clickInstrumentationAbs, "click-instrumentation.ts"),
-    },
-    {
-      filePath: path.join(runtimeClassGenAbs, "Pointer.ts"),
-      content: readText(pointerAbs, "Pointer.ts"),
-    },
-    {
-      filePath: path.join(runtimeClassGenAbs, "playwright-types.ts"),
-      content: readText(playwrightTypesAbs, "playwright-types.ts"),
-    },
-    {
-      filePath: path.join(runtimeClassGenAbs, "BasePage.ts"),
-      content: readText(basePageClassPath, "BasePage.ts"),
-    },
-  ];
+  return getRuntimeGeneratedAssetSpecs(baseDir, basePageClassPath).map(spec => ({
+    filePath: spec.outputPath,
+    content: readText(spec.absolutePath, spec.description),
+  }));
 }
 
 function resolveCustomPomImportResolution(
@@ -1984,12 +2101,7 @@ function resolveCustomPomImportResolution(
     const explicitAliasProvided = Object.prototype.hasOwnProperty.call(importAliases, exportName);
 
     if (collidesWithGeneratedClass && importCollisionBehavior === "error") {
-      throw new Error(
-        `[vue-pom-generator] Custom POM import name collision detected for "${exportName}".\n`
-        + `The identifier "${requested}" conflicts with a generated POM class.\n`
-        + `Fix by setting generation.playwright.customPoms.importAliases["${exportName}"] to a unique name, `
-        + `or set generation.playwright.customPoms.importNameCollisionBehavior = "alias" to auto-alias collisions.`,
-      );
+      throw createCustomPomImportCollisionError(exportName, requested);
     }
 
     let localIdentifier = requested;
@@ -2023,55 +2135,6 @@ function resolveCustomPomImportResolution(
   };
 }
 
-function scanPascalCaseTags(template: string): string[] {
-  const names: string[] = [];
-  const len = template.length;
-  let i = 0;
-  while (i < len) {
-    const ch = template[i];
-    if (ch !== "<") {
-      i++;
-      continue;
-    }
-
-    i++;
-    if (i >= len)
-      break;
-
-    if (template[i] === "/" || template[i] === "!" || template[i] === "?") {
-      i++;
-      continue;
-    }
-
-    while (i < len && (template[i] === " " || template[i] === "\n" || template[i] === "\t" || template[i] === "\r")) i++;
-    if (i >= len)
-      break;
-
-    const first = template[i];
-    if (first < "A" || first > "Z") {
-      continue;
-    }
-
-    const start = i;
-    i++;
-    while (i < len) {
-      const c = template[i];
-      const isLetter = (c >= "A" && c <= "Z") || (c >= "a" && c <= "z");
-      const isDigit = c >= "0" && c <= "9";
-      const isUnderscore = c === "_";
-      if (isLetter || isDigit || isUnderscore) {
-        i++;
-        continue;
-      }
-      break;
-    }
-    const name = template.slice(start, i);
-    if (name)
-      names.push(name);
-  }
-  return Array.from(new Set(names));
-}
-
 function getComposedStubBody(
   targetClassName: string,
   availableClassNames: Set<string>,
@@ -2079,14 +2142,7 @@ function getComposedStubBody(
   vueFilesPathMap: Map<string, string>,
   projectRoot: string,
 ) {
-  const mapped = vueFilesPathMap.get(targetClassName);
-  const candidates = [
-    mapped,
-    path.join(projectRoot, "src", "views", `${targetClassName}.vue`),
-    path.join(projectRoot, "src", "components", `${targetClassName}.vue`),
-  ].filter((p): p is string => typeof p === "string" && p.length > 0);
-
-  const filePath = candidates.find(p => fs.existsSync(p));
+  const filePath = resolveVueSourcePath(targetClassName, vueFilesPathMap, projectRoot);
   if (!filePath)
     return undefined;
 
@@ -2098,20 +2154,7 @@ function getComposedStubBody(
     return undefined;
   }
 
-  const templateOpen = source.indexOf("<template");
-  const templateClose = source.lastIndexOf("</template>");
-  if (templateOpen === -1 || templateClose === -1 || templateClose <= templateOpen)
-    return undefined;
-
-  const afterOpenTag = source.indexOf(">", templateOpen);
-  if (afterOpenTag === -1 || afterOpenTag >= templateClose)
-    return undefined;
-
-  const template = source.slice(afterOpenTag + 1, templateClose);
-  if (!template)
-    return undefined;
-
-  const tags = scanPascalCaseTags(template);
+  const tags = getPascalCaseComponentTagsFromVueSource(source);
   const childClassNames = Array.from(
     new Set(
       tags
@@ -2221,111 +2264,23 @@ async function generateAggregatedFiles(
     imports.push(`export * from "${runtimeClassGenRel}/Pointer";`);
     imports.push(`export * from "${runtimeClassGenRel}/BasePage";`);
 
-    // Handwritten POM helpers for complicated/third-party widgets.
-    // Convention: place them in `tests/playwright/pom/custom/*.ts`.
-    // Import them rather than inlining so TypeScript can typecheck them.
-    const addCustomPomImports = () => {
-      // Some custom POM helpers intentionally share names with generated component POMs
-      // (e.g. Toggle.vue -> generated class `Toggle`). Import with aliases to avoid
-      // merged-declaration conflicts in the aggregated output.
-      const importAliases: Record<string, string> = {
-        Toggle: "ToggleWidget",
-        Checkbox: "CheckboxWidget",
-        ...(options.customPomImportAliases),
-      };
-      const importCollisionBehavior = options.customPomImportNameCollisionBehavior ?? "error";
+    const customPomImportResolution = resolveCustomPomImportResolution(generatedClassNames, projectRoot, {
+      customPomDir: options.customPomDir,
+      customPomImportAliases: options.customPomImportAliases,
+      customPomImportNameCollisionBehavior: options.customPomImportNameCollisionBehavior,
+    });
+    const customPomClassIdentifierMap = customPomImportResolution.classIdentifierMap;
+    const customPomMethodSignaturesByClass = customPomImportResolution.methodSignaturesByClass;
+    const customPomAvailableClassIdentifiers = customPomImportResolution.availableClassIdentifiers;
 
-      const reservedIdentifiers = new Set<string>([
-        "PwLocator",
-        "PwPage",
-        "BasePage",
-        "Fluent",
-        ...generatedClassNames,
-      ]);
-      const usedImportIdentifiers = new Set<string>();
-      const customPomClassIdentifierMap: Record<string, string> = {};
-      const customPomMethodSignaturesByClass = new Map<string, CustomPomMethodSignatureMap>();
-
-      const ensureUniqueIdentifier = (base: string) => {
-        let candidate = base;
-        let i = 2;
-        while (reservedIdentifiers.has(candidate) || usedImportIdentifiers.has(candidate)) {
-          candidate = `${base}${i}`;
-          i++;
-        }
-        usedImportIdentifiers.add(candidate);
-        return candidate;
-      };
-
-      const customDirRelOrAbs = options.customPomDir ?? "tests/playwright/pom/custom";
-      const customDirAbs = path.isAbsolute(customDirRelOrAbs)
-        ? customDirRelOrAbs
-        : path.resolve(projectRoot, customDirRelOrAbs);
-
-      if (!fs.existsSync(customDirAbs)) {
-        return {
-          classIdentifierMap: customPomClassIdentifierMap,
-          methodSignaturesByClass: customPomMethodSignaturesByClass,
-        };
+    for (const importSpecifier of Object.values(customPomImportResolution.importSpecifiersByClass).sort((left, right) => left.exportName.localeCompare(right.exportName))) {
+      const importPath = stripExtension(toPosixRelativePath(outputDir, importSpecifier.absolutePath));
+      if (importSpecifier.localIdentifier !== importSpecifier.exportName) {
+        imports.push(`import { ${importSpecifier.exportName} as ${importSpecifier.localIdentifier} } from "${importPath}";`);
+        continue;
       }
-
-      const files = fs.readdirSync(customDirAbs)
-        .filter(f => f.endsWith(".ts"))
-        .sort((a, b) => a.localeCompare(b));
-
-      for (const file of files) {
-        const exportName = file.replace(/\.ts$/i, "");
-        // In this repo, custom POMs are authored as `export class <Name> { ... }`.
-        // Import by the basename, which matches the class name convention.
-        const requested = importAliases[exportName] ?? exportName;
-        const collidesWithGeneratedClass = generatedClassNames.has(requested);
-        const explicitAliasProvided = Object.prototype.hasOwnProperty.call(importAliases, exportName);
-
-        if (collidesWithGeneratedClass && importCollisionBehavior === "error") {
-          throw new Error(
-            `[vue-pom-generator] Custom POM import name collision detected for "${exportName}".\n`
-            + `The identifier "${requested}" conflicts with a generated POM class.\n`
-            + `Fix by setting generation.playwright.customPoms.importAliases["${exportName}"] to a unique name, `
-            + `or set generation.playwright.customPoms.importNameCollisionBehavior = "alias" to auto-alias collisions.`,
-          );
-        }
-
-        let localIdentifier = requested;
-        if (collidesWithGeneratedClass && importCollisionBehavior === "alias") {
-          const aliasBase = explicitAliasProvided ? requested : `${exportName}Custom`;
-          localIdentifier = ensureUniqueIdentifier(aliasBase);
-        }
-        else {
-          localIdentifier = ensureUniqueIdentifier(requested);
-        }
-
-        const customFileAbs = path.join(customDirAbs, file);
-        customPomClassIdentifierMap[exportName] = localIdentifier;
-        const customPomMethodSignatures = extractCustomPomMethodSignatures(fs.readFileSync(customFileAbs, "utf8"), exportName);
-        if (customPomMethodSignatures.size > 0) {
-          customPomMethodSignaturesByClass.set(exportName, customPomMethodSignatures);
-        }
-
-        const fromOutputDir = outputDir;
-        const importPath = stripExtension(toPosixRelativePath(fromOutputDir, customFileAbs));
-        if (localIdentifier !== exportName) {
-          imports.push(`import { ${exportName} as ${localIdentifier} } from "${importPath}";`);
-        }
-        else {
-          imports.push(`import { ${exportName} } from "${importPath}";`);
-        }
-      }
-
-      return {
-        classIdentifierMap: customPomClassIdentifierMap,
-        methodSignaturesByClass: customPomMethodSignaturesByClass,
-      };
-    };
-
-    const customPomImportResolution = addCustomPomImports();
-    const customPomClassIdentifierMap = customPomImportResolution?.classIdentifierMap ?? {};
-    const customPomMethodSignaturesByClass = customPomImportResolution?.methodSignaturesByClass ?? new Map<string, CustomPomMethodSignatureMap>();
-    const customPomAvailableClassIdentifiers = new Set(Object.values(customPomClassIdentifierMap));
+      imports.push(`import { ${importSpecifier.exportName} } from "${importPath}";`);
+    }
 
     // Collect any navigation return types referenced by generated methods so we can emit
     // stub classes when the destination view has no generated test ids (and therefore no
@@ -2347,164 +2302,9 @@ async function generateAggregatedFiles(
 
     const depsByClassName = new Map<string, IComponentDependencies>(entries);
 
-    const scanPascalCaseTags = (template: string) => {
-      // Extracts tag names like <TenantDetailsEditForm ...> without regex.
-      // We only care about PascalCase component tags.
-      const names: string[] = [];
-      const len = template.length;
-      let i = 0;
-      while (i < len) {
-        const ch = template[i];
-        if (ch !== "<") {
-          i++;
-          continue;
-        }
-
-        i++; // consume '<'
-        if (i >= len)
-          break;
-
-        // Skip closing tags and directives/comments
-        if (template[i] === "/" || template[i] === "!" || template[i] === "?") {
-          i++;
-          continue;
-        }
-
-        // Skip whitespace
-        while (i < len && (template[i] === " " || template[i] === "\n" || template[i] === "\t" || template[i] === "\r")) i++;
-        if (i >= len)
-          break;
-
-        const first = template[i];
-        // Only PascalCase (starts with A-Z)
-        if (first < "A" || first > "Z") {
-          continue;
-        }
-
-        const start = i;
-        i++;
-        while (i < len) {
-          const c = template[i];
-          const isLetter = (c >= "A" && c <= "Z") || (c >= "a" && c <= "z");
-          const isDigit = c >= "0" && c <= "9";
-          const isUnderscore = c === "_";
-          if (isLetter || isDigit || isUnderscore) {
-            i++;
-            continue;
-          }
-          break;
-        }
-        const name = template.slice(start, i);
-        if (name)
-          names.push(name);
-      }
-      return Array.from(new Set(names));
-    };
-
-    const getComposedStubBody = (targetClassName: string) => {
-      const mapped = vueFilesPathMap.get(targetClassName);
-      const candidates = [
-        mapped,
-        path.join(projectRoot, "src", "views", `${targetClassName}.vue`),
-        path.join(projectRoot, "src", "components", `${targetClassName}.vue`),
-      ].filter((p): p is string => typeof p === "string" && p.length > 0);
-
-      const filePath = candidates.find(p => fs.existsSync(p));
-      if (!filePath)
-        return undefined;
-
-      // Heuristic: scan the SFC template for PascalCase tags. If we have generated
-      // POM classes for those components, include them as composed children.
-      let source = "";
-      try {
-        source = fs.readFileSync(filePath, "utf8");
-      }
-      catch {
-        return undefined;
-      }
-
-      const templateOpen = source.indexOf("<template");
-      const templateClose = source.lastIndexOf("</template>");
-      if (templateOpen === -1 || templateClose === -1 || templateClose <= templateOpen)
-        return undefined;
-
-      const afterOpenTag = source.indexOf(">", templateOpen);
-      if (afterOpenTag === -1 || afterOpenTag >= templateClose)
-        return undefined;
-
-      const template = source.slice(afterOpenTag + 1, templateClose);
-      if (!template)
-        return undefined;
-
-      const tags = scanPascalCaseTags(template);
-      const childClassNames = Array.from(
-        new Set(
-          tags
-            .filter(name => availableClassNames.has(name))
-            .filter(name => name !== targetClassName),
-        ),
-      ).sort((a, b) => a.localeCompare(b));
-
-      if (!childClassNames.length)
-        return undefined;
-
-      // Build passthrough methods from stub -> child component when the method is unambiguous.
-      // This enables ergonomics like:
-      //   await tenantListPage.goToNewTenant().typeTenantName(...)
-      // without forcing the test to reference `.TenantDetailsEditForm`.
-      const methodToChildren = new Map<string, Array<{ child: string; params: string; argNames: string[] }>>();
-      for (const child of childClassNames) {
-        const childDeps = depsByClassName.get(child);
-        const methods = childDeps?.generatedMethods;
-        if (!methods)
-          continue;
-
-        for (const [name, sig] of methods.entries()) {
-          if (!sig)
-            continue; // ambiguous
-          const list = methodToChildren.get(name) ?? [];
-          list.push({ child, params: sig.params, argNames: sig.argNames });
-          methodToChildren.set(name, list);
-        }
-      }
-
-      const passthroughLines: string[] = [];
-      for (const [methodName, candidatesForMethod] of methodToChildren.entries()) {
-        if (candidatesForMethod.length !== 1)
-          continue;
-
-        // Avoid creating pass-throughs for internal-ish helpers.
-        if (methodName === "constructor")
-          continue;
-
-        const { child, params, argNames } = candidatesForMethod[0];
-        const callArgs = argNames.join(", ");
-
-        passthroughLines.push(
-          "",
-          `    async ${methodName}(${params}) {`,
-          `        return await this.${child}.${methodName}(${callArgs});`,
-          "    }",
-        );
-      }
-
-      return {
-        childClassNames,
-        lines: [
-          ...childClassNames.map(c => `    ${c}: ${c};`),
-          "",
-          "    constructor(page: PwPage) {",
-          "        super(page);",
-          ...childClassNames.map(c => `        this.${c} = new ${c}(page);`),
-          "    }",
-          ...passthroughLines,
-        ],
-      };
-    };
-
     const stubs = stubTargets.map(t =>
       (() => {
-        const composed = getComposedStubBody(t);
+        const composed = getComposedStubBody(t, availableClassNames, depsByClassName, vueFilesPathMap, projectRoot);
         const body = composed?.lines ?? [
           "    constructor(page: PwPage) {",
           "        super(page);",
@@ -2523,7 +2323,7 @@ async function generateAggregatedFiles(
     const classes = items.map(([name, deps]) =>
       generateViewObjectModelContent(name, deps, componentHierarchyMap, vueFilesPathMap, basePageClassPath, {
         outputDir,
-        aggregated: true,
+        outputStructure: "aggregated",
 
         customPomAttachments: options.customPomAttachments ?? [],
         customPomClassIdentifierMap,

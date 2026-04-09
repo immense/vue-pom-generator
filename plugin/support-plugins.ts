@@ -4,7 +4,7 @@ import type { PluginOption } from "vite";
 
 import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 import type { VuePomGeneratorLogger } from "./logger";
-import type { PomNameCollisionBehavior, RouterModuleShimDefinition } from "./types";
+import type { PlaywrightOutputStructure, PomNameCollisionBehavior, RouterModuleShimDefinition } from "./types";
 import { createBuildProcessorPlugin } from "./support/build-plugin";
 import { createDevProcessorPlugin } from "./support/dev-plugin";
 import { createTestIdsVirtualModulesPlugin } from "./support/virtual-modules";
@@ -28,7 +28,7 @@ interface SupportFactoryOptions {
 
   /** Languages to emit POMs for. */
   emitLanguages?: Array<"ts" | "csharp">;
-  typescriptOutputStructure?: "aggregated" | "split";
+  typescriptOutputStructure?: PlaywrightOutputStructure;
 
   csharp?: {
     namespace?: string;
