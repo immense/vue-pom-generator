@@ -3,7 +3,7 @@
  * Generates TypeScript types and manifests from collected test IDs
  */
 
-import { renderTypeScript } from "./typescript-codegen";
+import { renderSourceFile, VariableDeclarationKind } from "./typescript-codegen";
 
 /**
  * Generates the complete virtual:testids module content
@@ -12,18 +12,34 @@ export function generateTestIdsModule(componentTestIds: Map<string, Set<string>>
   const manifestEntries = Array.from(componentTestIds.entries())
     .sort((a, b) => a[0].localeCompare(b[0]));
 
-  return renderTypeScript((writer) => {
-    writer.writeLine("// Virtual module: test id manifest");
-    writer.writeLine("export const testIdManifest = {");
-    writer.indent(() => {
-      for (let i = 0; i < manifestEntries.length; i += 1) {
-        const [componentName, testIds] = manifestEntries[i];
-        const suffix = i === manifestEntries.length - 1 ? "" : ",";
-        writer.writeLine(`${JSON.stringify(componentName)}: ${JSON.stringify(Array.from(testIds).sort())}${suffix}`);
-      }
+  return renderSourceFile("virtual-testids.ts", (sourceFile) => {
+    sourceFile.addStatements("// Virtual module: test id manifest");
+    sourceFile.addVariableStatement({
+      declarationKind: VariableDeclarationKind.Const,
+      isExported: true,
+      declarations: [{
+        name: "testIdManifest",
+        initializer: (writer) => {
+          writer.write("{").newLine();
+          writer.indent(() => {
+            manifestEntries.forEach(([componentName, testIds], index) => {
+              const suffix = index === manifestEntries.length - 1 ? "" : ",";
+              writer.writeLine(`${JSON.stringify(componentName)}: ${JSON.stringify(Array.from(testIds).sort())}${suffix}`);
+            });
+          });
+          writer.write("} as const");
+        },
+      }],
     });
-    writer.writeLine("} as const;");
-    writer.writeLine("export type TestIdManifest = typeof testIdManifest;");
-    writer.writeLine("export type ComponentName = keyof TestIdManifest;");
+    sourceFile.addTypeAlias({
+      isExported: true,
+      name: "TestIdManifest",
+      type: "typeof testIdManifest",
+    });
+    sourceFile.addTypeAlias({
+      isExported: true,
+      name: "ComponentName",
+      type: "keyof TestIdManifest",
+    });
   });
 }

@@ -8,9 +8,32 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { generateViewObjectModelMethodContent } from "../method-generation";
+import { generateViewObjectModelMembers, generateViewObjectModelMethodContent } from "../method-generation";
 import { introspectNuxtPages, parseRouterFileFromCwd } from "../router-introspection";
-import { renderTypeScript, type TypeScriptWriter, writeCommentBlock } from "../typescript-codegen";
+import {
+  addExportAll,
+  addNamedImport,
+  buildCommentBlock,
+  buildFilePrefix,
+  createClassConstructor,
+  createClassMethod,
+  createClassProperty,
+  renderClassMembers as renderTsMorphClassMembers,
+  renderSourceFile,
+  renderTypeScript,
+  StructureKind,
+  VariableDeclarationKind,
+  type ConstructorDeclarationStructure,
+  type GetAccessorDeclarationStructure,
+  type MethodDeclarationStructure,
+  type OptionalKind,
+  type ParameterDeclarationStructure,
+  type PropertyDeclarationStructure,
+  type TypeScriptClassMember,
+  type TypeScriptSourceFile,
+  type TypeScriptWriter,
+  writeCommentBlock,
+} from "../typescript-codegen";
 import {
   IComponentDependencies,
   IDataTestId,
@@ -70,6 +93,136 @@ function writeClassMembersText(writer: TypeScriptWriter, content: string): void 
     .join("\n");
 
   writer.write(normalized.endsWith("\n") ? normalized : `${normalized}\n`);
+}
+
+function writeGeneratedMembers(writer: TypeScriptWriter, members: TypeScriptClassMember[]): void {
+  if (!members.length) {
+    return;
+  }
+
+  writeClassMembersText(writer, renderTsMorphClassMembers(members));
+}
+
+function splitParameterList(parameters: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let parenDepth = 0;
+  let angleDepth = 0;
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let inTemplateString = false;
+
+  for (let index = 0; index < parameters.length; index += 1) {
+    const char = parameters[index];
+    const previous = index > 0 ? parameters[index - 1] : "";
+
+    if (char === "'" && !inDoubleQuote && !inTemplateString && previous !== "\\") {
+      inSingleQuote = !inSingleQuote;
+      current += char;
+      continue;
+    }
+    if (char === "\"" && !inSingleQuote && !inTemplateString && previous !== "\\") {
+      inDoubleQuote = !inDoubleQuote;
+      current += char;
+      continue;
+    }
+    if (char === "`" && !inSingleQuote && !inDoubleQuote && previous !== "\\") {
+      inTemplateString = !inTemplateString;
+      current += char;
+      continue;
+    }
+
+    if (inSingleQuote || inDoubleQuote || inTemplateString) {
+      current += char;
+      continue;
+    }
+
+    switch (char) {
+      case "{":
+        braceDepth += 1;
+        break;
+      case "}":
+        braceDepth -= 1;
+        break;
+      case "[":
+        bracketDepth += 1;
+        break;
+      case "]":
+        bracketDepth -= 1;
+        break;
+      case "(":
+        parenDepth += 1;
+        break;
+      case ")":
+        parenDepth -= 1;
+        break;
+      case "<":
+        angleDepth += 1;
+        break;
+      case ">":
+        angleDepth -= 1;
+        break;
+      case ",":
+        if (braceDepth === 0 && bracketDepth === 0 && parenDepth === 0 && angleDepth === 0) {
+          const trimmed = current.trim();
+          if (trimmed) {
+            parts.push(trimmed);
+          }
+          current = "";
+          continue;
+        }
+        break;
+      default:
+        break;
+    }
+
+    current += char;
+  }
+
+  const trimmed = current.trim();
+  if (trimmed) {
+    parts.push(trimmed);
+  }
+
+  return parts;
+}
+
+function parseParameterSignature(parameter: string): OptionalKind<ParameterDeclarationStructure> {
+  const colonIndex = parameter.indexOf(":");
+  if (colonIndex < 0) {
+    return { name: parameter.trim() };
+  }
+
+  const rawName = parameter.slice(0, colonIndex).trim();
+  const hasQuestionToken = rawName.endsWith("?");
+  const name = hasQuestionToken ? rawName.slice(0, -1).trim() : rawName;
+  const remainder = parameter.slice(colonIndex + 1).trim();
+  const initializerIndex = remainder.lastIndexOf("=");
+
+  if (initializerIndex < 0) {
+    return {
+      name,
+      hasQuestionToken,
+      type: remainder || undefined,
+    };
+  }
+
+  return {
+    name,
+    hasQuestionToken,
+    type: remainder.slice(0, initializerIndex).trim() || undefined,
+    initializer: remainder.slice(initializerIndex + 1).trim() || undefined,
+  };
+}
+
+function parseParameterSignatures(parameters: string): OptionalKind<ParameterDeclarationStructure>[] {
+  const trimmed = parameters.trim();
+  if (!trimmed) {
+    return [];
+  }
+  return splitParameterList(trimmed).map(parseParameterSignature);
 }
 
 function toPosixRelativePath(fromDir: string, toFile: string): string {
@@ -272,40 +425,44 @@ async function getRouteMetaByComponent(
   );
 }
 
-function generateRouteProperty(routeMeta: RouteMeta | null): string {
-  return renderClassMembers((writer) => {
-    if (!routeMeta) {
-      writer.writeLine("static readonly route: { template: string } | null = null;");
-      return;
-    }
-
-    writer.writeLine("static readonly route: { template: string } | null = {");
-    writer.indent(() => {
-      writer.writeLine(`template: ${JSON.stringify(routeMeta.template)},`);
-    });
-    writer.writeLine("} as const;");
-  });
+function generateRouteProperty(routeMeta: RouteMeta | null): TypeScriptClassMember[] {
+  return [
+    createClassProperty({
+      name: "route",
+      isStatic: true,
+      isReadonly: true,
+      type: "{ template: string } | null",
+      initializer: routeMeta
+        ? `{ template: ${JSON.stringify(routeMeta.template)} } as const`
+        : "null",
+    }),
+  ];
 }
 
-function generateGoToSelfMethod(componentName: string): string {
-  return renderClassMembers((writer) => {
-    writeMemberBlock(writer, "async goTo()", (writer) => {
-      writer.writeLine("await this.goToSelf();");
-    });
-    writer.blankLine();
-    writeMemberBlock(writer, "async goToSelf()", (writer) => {
-      writer.writeLine(`const route = ${componentName}.route;`);
-      writer.writeLine("if (!route) {");
-      writer.indent(() => {
-        writer.writeLine(`throw new Error("[pom] No router path found for component/page-object '${componentName}'.");`);
-      });
-      writer.writeLine("}");
-      writer.writeLine("const runtimeEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;");
-      writer.writeLine("const runtimeBaseUrl = runtimeEnv?.PLAYWRIGHT_RUNTIME_BASE_URL ?? runtimeEnv?.PLAYWRIGHT_TEST_BASE_URL ?? runtimeEnv?.VITE_PLAYWRIGHT_BASE_URL;");
-      writer.writeLine("const targetUrl = runtimeBaseUrl ? new URL(route.template, runtimeBaseUrl).toString() : route.template;");
-      writer.writeLine("await this.page.goto(targetUrl);");
-    });
-  });
+function generateGoToSelfMethod(componentName: string): TypeScriptClassMember[] {
+  return [
+    createClassMethod({
+      name: "goTo",
+      isAsync: true,
+      statements: [
+        "await this.goToSelf();",
+      ],
+    }),
+    createClassMethod({
+      name: "goToSelf",
+      isAsync: true,
+      statements: [
+        `const route = ${componentName}.route;`,
+        "if (!route) {",
+        `    throw new Error("[pom] No router path found for component/page-object '${componentName}'.");`,
+        "}",
+        "const runtimeEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;",
+        "const runtimeBaseUrl = runtimeEnv?.PLAYWRIGHT_RUNTIME_BASE_URL ?? runtimeEnv?.PLAYWRIGHT_TEST_BASE_URL ?? runtimeEnv?.VITE_PLAYWRIGHT_BASE_URL;",
+        "const targetUrl = runtimeBaseUrl ? new URL(route.template, runtimeBaseUrl).toString() : route.template;",
+        "await this.page.goto(targetUrl);",
+      ],
+    }),
+  ];
 }
 
 function formatMethodParams(params: Record<string, string> | undefined): string {
@@ -331,18 +488,14 @@ function formatMethodParams(params: Record<string, string> | undefined): string 
     .join(", ");
 }
 
-function generateExtraClickMethodContent(spec: PomExtraClickMethodSpec): string {
+function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScriptClassMember[] {
   if (spec.kind !== "click") {
-    return "";
+    return [];
   }
 
   const params = spec.params ?? {};
   const signatureParams = formatMethodParams(params);
-  const signature = signatureParams ? `(${signatureParams})` : "()";
-
-  if (spec.keyLiteral !== undefined) {
-    // handled below
-  }
+  const parameters = parseParameterSignatures(signatureParams);
 
   const hasAnnotationText = Object.prototype.hasOwnProperty.call(params, "annotationText");
   const hasWait = Object.prototype.hasOwnProperty.call(params, "wait");
@@ -369,17 +522,22 @@ function generateExtraClickMethodContent(spec: PomExtraClickMethodSpec): string 
       clickArgs.push(waitArg);
     }
 
-    return renderClassMembers((writer) => {
-      writeMemberBlock(writer, `async ${spec.name}${signature}`, (writer) => {
-        if (spec.keyLiteral !== undefined) {
-          writer.writeLine(`const key = ${JSON.stringify(spec.keyLiteral)};`);
-        }
-        if (needsTemplate) {
-          writer.writeLine(`const testId = ${testIdExpr};`);
-        }
-        writer.writeLine(`await this.clickByTestId(${clickArgs.join(", ")});`);
-      });
-    });
+    return [
+      createClassMethod({
+        name: spec.name,
+        isAsync: true,
+        parameters,
+        statements: (writer) => {
+          if (spec.keyLiteral !== undefined) {
+            writer.writeLine(`const key = ${JSON.stringify(spec.keyLiteral)};`);
+          }
+          if (needsTemplate) {
+            writer.writeLine(`const testId = ${testIdExpr};`);
+          }
+          writer.writeLine(`await this.clickByTestId(${clickArgs.join(", ")});`);
+        },
+      }),
+    ];
   }
 
   const rootNeedsTemplate = spec.selector.rootFormattedDataTestId.includes("${");
@@ -393,28 +551,33 @@ function generateExtraClickMethodContent(spec: PomExtraClickMethodSpec): string 
 
   const rootArg = rootNeedsTemplate ? "rootTestId" : rootExpr;
   const labelArg = labelNeedsTemplate ? "label" : labelExpr;
-  return renderClassMembers((writer) => {
-    writeMemberBlock(writer, `async ${spec.name}${signature}`, (writer) => {
-      if (spec.keyLiteral !== undefined) {
-        writer.writeLine(`const key = ${JSON.stringify(spec.keyLiteral)};`);
-      }
-      if (rootNeedsTemplate) {
-        writer.writeLine(`const rootTestId = ${rootExpr};`);
-      }
-      if (labelNeedsTemplate) {
-        writer.writeLine(`const label = ${labelExpr};`);
-      }
-      writer.writeLine(`await this.clickWithinTestIdByLabel(${rootArg}, ${labelArg}, ${annotationArg}, ${waitArg});`);
-    });
-  });
+  return [
+    createClassMethod({
+      name: spec.name,
+      isAsync: true,
+      parameters,
+      statements: (writer) => {
+        if (spec.keyLiteral !== undefined) {
+          writer.writeLine(`const key = ${JSON.stringify(spec.keyLiteral)};`);
+        }
+        if (rootNeedsTemplate) {
+          writer.writeLine(`const rootTestId = ${rootExpr};`);
+        }
+        if (labelNeedsTemplate) {
+          writer.writeLine(`const label = ${labelExpr};`);
+        }
+        writer.writeLine(`await this.clickWithinTestIdByLabel(${rootArg}, ${labelArg}, ${annotationArg}, ${waitArg});`);
+      },
+    }),
+  ];
 }
 
-function generateMethodContentFromPom(primary: PomPrimarySpec, targetPageObjectModelClass?: string): string {
+function generateMethodMembersFromPom(primary: PomPrimarySpec, targetPageObjectModelClass?: string): TypeScriptClassMember[] {
   if (primary.emitPrimary === false) {
-    return "";
+    return [];
   }
 
-  return generateViewObjectModelMethodContent(
+  return generateViewObjectModelMembers(
     targetPageObjectModelClass,
     primary.methodName,
     primary.nativeRole,
@@ -425,7 +588,7 @@ function generateMethodContentFromPom(primary: PomPrimarySpec, targetPageObjectM
   );
 }
 
-function generateMethodsContentForDependencies(dependencies: IComponentDependencies): string {
+function generateMethodsContentForDependencies(dependencies: IComponentDependencies): TypeScriptClassMember[] {
   const entries = Array.from(dependencies.dataTestIdSet ?? []);
   const primarySpecsAll = entries
     .map(e => ({ pom: e.pom, target: e.targetPageObjectModelClass }))
@@ -463,16 +626,16 @@ function generateMethodsContentForDependencies(dependencies: IComponentDependenc
     .slice()
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  let content = "";
+  const members: TypeScriptClassMember[] = [];
   for (const { pom, target } of primarySpecs) {
-    content += generateMethodContentFromPom(pom, target);
+    members.push(...generateMethodMembersFromPom(pom, target));
   }
 
   for (const extra of extras) {
-    content += generateExtraClickMethodContent(extra);
+    members.push(...generateExtraClickMethodMembers(extra));
   }
 
-  return content;
+  return members;
 }
 
 export interface GenerateFilesOptions {
@@ -793,29 +956,14 @@ async function generateSplitTypeScriptFiles(
     const outputDir = path.dirname(filePath);
     const basePageImportSpecifier = stripExtension(toPosixRelativePath(outputDir, runtimeBasePagePath));
     const composed = getComposedStubBody(targetClassName, availableClassNames, depsByClassName, vueFilesPathMap, projectRoot);
-    const childImports = (composed?.childClassNames ?? [])
-      .map((childClassName) => {
-        const childFilePath = generatedTsFilePathByComponent.get(childClassName);
-        if (!childFilePath) {
-          return null;
-        }
-        const importPath = stripExtension(toPosixRelativePath(outputDir, childFilePath));
-        return `import { ${childClassName} } from "${importPath}";`;
-      })
-      .filter((line): line is string => !!line)
-      .sort((a, b) => a.localeCompare(b));
-
-    const body = composed?.lines ?? [
-      "    constructor(page: PwPage) {",
-      "        super(page);",
-      "    }",
-    ];
+    const childImports = getChildImportSpecifiers(outputDir, composed?.childClassNames ?? [], generatedTsFilePathByComponent);
+    const members = composed?.members ?? getDefaultStubMembers();
 
     const content = renderSplitStubPomContent({
       className: targetClassName,
       basePageImportSpecifier,
       childImports,
-      bodyLines: body,
+      members,
     });
 
     files.push({ filePath, content });
@@ -823,23 +971,24 @@ async function generateSplitTypeScriptFiles(
 
   const runtimeAssetSpecs = getRuntimeGeneratedAssetSpecs(base, basePageClassPath);
   const runtimeFiles = buildRuntimeGeneratedFilesFromSpecs(runtimeAssetSpecs);
-  const indexContent = renderTypeScript((writer) => {
-    writer.write(eslintSuppressionHeader);
-    writeCommentBlock(writer, [
-      "POM exports",
-      "DO NOT MODIFY BY HAND",
-      "",
-      "This file is auto-generated by vue-pom-generator.",
-      "Changes should be made in the generator/template, not in the generated output.",
-    ]);
-    writer.blankLine();
-    for (const line of buildRuntimeGeneratedBarrelExports(base, runtimeAssetSpecs)) {
-      writer.writeLine(line);
+  const indexContent = renderSourceFile("index.ts", (sourceFile) => {
+    for (const spec of runtimeAssetSpecs) {
+      addExportAll(sourceFile, stripExtension(toPosixRelativePath(base, spec.outputPath)));
     }
-    writer.blankLine();
     for (const [, filePath] of Array.from(generatedTsFilePathByComponent.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
-      writer.writeLine(`export * from "./${stripExtension(path.basename(filePath))}";`);
+      addExportAll(sourceFile, `./${stripExtension(path.basename(filePath))}`);
     }
+  }, {
+    prefixText: buildFilePrefix({
+      eslintDisableSortImports: true,
+      commentLines: [
+        "POM exports",
+        "DO NOT MODIFY BY HAND",
+        "",
+        "This file is auto-generated by vue-pom-generator.",
+        "Changes should be made in the generator/template, not in the generated output.",
+      ],
+    }),
   });
 
   return [
@@ -1442,108 +1591,179 @@ function maybeGenerateFixtureRegistry(
     ctorExpression: fixtureCtorExpression(name),
   }));
 
-  const fixturesContent = renderTypeScript((writer) => {
-    writer.write(eslintSuppressionHeader);
-    writeCommentBlock(writer, [
-      "DO NOT MODIFY BY HAND",
-      "",
-      "This file is auto-generated by vue-pom-generator.",
-      "Changes should be made in the generator/template, not in the generated output.",
-    ]);
-    writer.blankLine();
-    writer.writeLine("/** Generated Playwright fixtures (typed page objects). */");
-    writer.blankLine();
-    writer.writeLine('import { expect, test as base } from "@playwright/test";');
-    writer.writeLine('import type { Page as PwPage } from "@playwright/test";');
-    writer.writeLine(`import * as Pom from "${pomImport}";`);
+  const fixturesContent = renderSourceFile(fixtureFileName, (sourceFile) => {
+    sourceFile.addStatements("/** Generated Playwright fixtures (typed page objects). */");
+
+    addNamedImport(sourceFile, {
+      moduleSpecifier: "@playwright/test",
+      namedImports: [
+        "expect",
+        { name: "test", alias: "base" },
+      ],
+    });
+    addNamedImport(sourceFile, {
+      moduleSpecifier: "@playwright/test",
+      isTypeOnly: true,
+      namedImports: [{ name: "Page", alias: "PwPage" }],
+    });
+    sourceFile.addImportDeclaration({
+      namespaceImport: "Pom",
+      moduleSpecifier: pomImport,
+    });
     for (const entry of overrideCtorEntries) {
-      writer.writeLine(`import { ${entry.className} as ${entry.localIdentifier} } from "${entry.importSpecifier}";`);
+      addNamedImport(sourceFile, {
+        moduleSpecifier: entry.importSpecifier,
+        namedImports: [{ name: entry.className, alias: entry.localIdentifier }],
+      });
     }
-    if (overrideCtorEntries.length > 0) {
-      writer.blankLine();
-    }
-    writer.writeLine("export interface PlaywrightOptions {");
-    writer.indent(() => {
-      writer.writeLine("animation: Pom.PlaywrightAnimationOptions;");
+
+    sourceFile.addInterface({
+      isExported: true,
+      name: "PlaywrightOptions",
+      properties: [{
+        name: "animation",
+        type: "Pom.PlaywrightAnimationOptions",
+      }],
     });
-    writer.writeLine("}");
-    writer.blankLine();
-    writer.writeLine("export type PomConstructor<T> = new (page: PwPage) => T;");
-    writer.blankLine();
-    writer.writeLine("export interface PomFactory {");
-    writer.indent(() => {
-      writer.writeLine("create<T>(ctor: PomConstructor<T>): T;");
+    sourceFile.addTypeAlias({
+      isExported: true,
+      name: "PomConstructor",
+      typeParameters: [{ name: "T" }],
+      type: "new (page: PwPage) => T",
     });
-    writer.writeLine("}");
-    writer.blankLine();
-    writer.writeLine("type PomSetupFixture = { pomSetup: void };");
-    writer.writeLine("type PomFactoryFixture = { pomFactory: PomFactory };");
-    writer.blankLine();
-    writer.writeLine("const pageCtors = {");
-    writer.indent(() => {
-      for (const entry of pageCtorEntries) {
-        writer.writeLine(`${entry.fixtureName}: ${entry.ctorExpression},`);
-      }
+    sourceFile.addInterface({
+      isExported: true,
+      name: "PomFactory",
+      methods: [{
+        name: "create",
+        typeParameters: [{ name: "T" }],
+        parameters: [{ name: "ctor", type: "PomConstructor<T>" }],
+        returnType: "T",
+      }],
     });
-    writer.writeLine("} as const;");
-    writer.writeLine("const componentCtors = {");
-    writer.indent(() => {
-      for (const entry of componentCtorEntries) {
-        writer.writeLine(`${entry.fixtureName}: ${entry.ctorExpression},`);
-      }
+    sourceFile.addTypeAlias({
+      name: "PomSetupFixture",
+      type: "{ pomSetup: void }",
     });
-    writer.writeLine("} as const;");
-    writer.blankLine();
-    writer.writeLine("export type GeneratedPageFixtures = { [K in keyof typeof pageCtors]: InstanceType<(typeof pageCtors)[K]> };");
-    writer.writeLine("export type GeneratedComponentFixtures = { [K in keyof typeof componentCtors]: InstanceType<(typeof componentCtors)[K]> };");
-    writer.blankLine();
-    writer.writeLine("const makePomFixture = <T>(Ctor: PomConstructor<T>) => async ({ page }: { page: PwPage }, use: (t: T) => Promise<void>) => {");
-    writer.indent(() => {
-      writer.writeLine("await use(new Ctor(page));");
+    sourceFile.addTypeAlias({
+      name: "PomFactoryFixture",
+      type: "{ pomFactory: PomFactory }",
     });
-    writer.writeLine("};");
-    writer.blankLine();
-    writer.writeLine("const createPomFixtures = <TMap extends Record<string, PomConstructor<any>>>(ctors: TMap) => {");
-    writer.indent(() => {
-      writer.writeLine("const out: Record<string, any> = {};");
-      writer.writeLine("for (const [key, Ctor] of Object.entries(ctors)) {");
-      writer.indent(() => {
-        writer.writeLine("out[key] = makePomFixture(Ctor as PomConstructor<any>);");
-      });
-      writer.writeLine("}");
-      writer.writeLine("return out as any;");
+
+    sourceFile.addVariableStatement({
+      declarationKind: VariableDeclarationKind.Const,
+      declarations: [{
+        name: "pageCtors",
+        initializer: (writer) => {
+          writer.write("{").newLine();
+          writer.indent(() => {
+            for (const entry of pageCtorEntries) {
+              writer.writeLine(`${entry.fixtureName}: ${entry.ctorExpression},`);
+            }
+          });
+          writer.write("} as const");
+        },
+      }],
     });
-    writer.writeLine("};");
-    writer.blankLine();
-    writer.writeLine("const test = base.extend<PlaywrightOptions & PomSetupFixture & PomFactoryFixture & GeneratedPageFixtures & GeneratedComponentFixtures>({");
-    writer.indent(() => {
-      writer.writeLine("animation: [{");
-      writer.indent(() => {
-        writer.writeLine('pointer: { durationMilliseconds: 250, transitionStyle: "ease-in-out", clickDelayMilliseconds: 0 },');
-        writer.writeLine("keyboard: { typeDelayMilliseconds: 100 },");
-      });
-      writer.writeLine("}, { option: true }],");
-      writer.writeLine("pomSetup: [async ({ animation }, use) => {");
-      writer.indent(() => {
-        writer.writeLine("Pom.setPlaywrightAnimationOptions(animation);");
-        writer.writeLine("await use();");
-      });
-      writer.writeLine("}, { auto: true }],");
-      writer.writeLine("pomFactory: async ({ page }, use) => {");
-      writer.indent(() => {
-        writer.writeLine("await use({");
-        writer.indent(() => {
-          writer.writeLine("create: <T>(ctor: PomConstructor<T>) => new ctor(page),");
-        });
-        writer.writeLine("});");
-      });
-      writer.writeLine("},");
-      writer.writeLine("...createPomFixtures(pageCtors),");
-      writer.writeLine("...createPomFixtures(componentCtors),");
+    sourceFile.addVariableStatement({
+      declarationKind: VariableDeclarationKind.Const,
+      declarations: [{
+        name: "componentCtors",
+        initializer: (writer) => {
+          writer.write("{").newLine();
+          writer.indent(() => {
+            for (const entry of componentCtorEntries) {
+              writer.writeLine(`${entry.fixtureName}: ${entry.ctorExpression},`);
+            }
+          });
+          writer.write("} as const");
+        },
+      }],
     });
-    writer.writeLine("});");
-    writer.blankLine();
-    writer.writeLine("export { test, expect };");
+
+    sourceFile.addTypeAlias({
+      isExported: true,
+      name: "GeneratedPageFixtures",
+      type: "{ [K in keyof typeof pageCtors]: InstanceType<(typeof pageCtors)[K]> }",
+    });
+    sourceFile.addTypeAlias({
+      isExported: true,
+      name: "GeneratedComponentFixtures",
+      type: "{ [K in keyof typeof componentCtors]: InstanceType<(typeof componentCtors)[K]> }",
+    });
+
+    sourceFile.addFunction({
+      name: "makePomFixture",
+      typeParameters: [{ name: "T" }],
+      parameters: [{ name: "Ctor", type: "PomConstructor<T>" }],
+      statements: [
+        "return async ({ page }: { page: PwPage }, use: (t: T) => Promise<void>) => {",
+        "    await use(new Ctor(page));",
+        "};",
+      ],
+    });
+    sourceFile.addFunction({
+      name: "createPomFixtures",
+      typeParameters: [{ name: "TMap", constraint: "Record<string, PomConstructor<any>>" }],
+      parameters: [{ name: "ctors", type: "TMap" }],
+      statements: [
+        "const out: Record<string, any> = {};",
+        "for (const [key, Ctor] of Object.entries(ctors)) {",
+        "    out[key] = makePomFixture(Ctor as PomConstructor<any>);",
+        "}",
+        "return out as any;",
+      ],
+    });
+
+    sourceFile.addVariableStatement({
+      declarationKind: VariableDeclarationKind.Const,
+      declarations: [{
+        name: "test",
+        initializer: (writer) => {
+          writer.write("base.extend<PlaywrightOptions & PomSetupFixture & PomFactoryFixture & GeneratedPageFixtures & GeneratedComponentFixtures>(");
+          writer.block(() => {
+            writer.writeLine("animation: [{");
+            writer.indent(() => {
+              writer.writeLine('pointer: { durationMilliseconds: 250, transitionStyle: "ease-in-out", clickDelayMilliseconds: 0 },');
+              writer.writeLine("keyboard: { typeDelayMilliseconds: 100 },");
+            });
+            writer.writeLine("}, { option: true }],");
+            writer.writeLine("pomSetup: [async ({ animation }, use) => {");
+            writer.indent(() => {
+              writer.writeLine("Pom.setPlaywrightAnimationOptions(animation);");
+              writer.writeLine("await use();");
+            });
+            writer.writeLine("}, { auto: true }],");
+            writer.writeLine("pomFactory: async ({ page }, use) => {");
+            writer.indent(() => {
+              writer.writeLine("await use({");
+              writer.indent(() => {
+                writer.writeLine("create: <T>(ctor: PomConstructor<T>) => new ctor(page),");
+              });
+              writer.writeLine("});");
+            });
+            writer.writeLine("},");
+            writer.writeLine("...createPomFixtures(pageCtors),");
+            writer.writeLine("...createPomFixtures(componentCtors),");
+          });
+          writer.write(")");
+        },
+      }],
+    });
+
+    sourceFile.addExportDeclaration({
+      namedExports: ["test", "expect"],
+    });
+  }, {
+    prefixText: buildFilePrefix({
+      eslintDisableSortImports: true,
+      commentLines: [
+        "DO NOT MODIFY BY HAND",
+        "",
+        "This file is auto-generated by vue-pom-generator.",
+        "Changes should be made in the generator/template, not in the generated output.",
+      ],
+    }),
   });
 
   return {
@@ -1554,23 +1774,17 @@ function maybeGenerateFixtureRegistry(
   // No pomFixture is generated; goToSelf is emitted directly on each view POM.
 }
 
-function generateViewObjectModelContent(
+function prepareViewObjectModelClass(
   componentName: string,
   dependencies: IComponentDependencies,
   componentHierarchyMap: Map<string, IComponentDependencies>,
-  vueFilesPathMap: Map<string, string>,
-  basePageClassPath: string,
   options: GenerateContentOptions = {},
 ) {
-  const { isView, childrenComponentSet, usedComponentSet, filePath } = dependencies;
-
+  const { isView, childrenComponentSet, usedComponentSet } = dependencies;
   const {
-    outputDir = path.dirname(filePath),
-    outputStructure = "split",
     customPomAttachments = [],
     testIdAttribute,
   } = options;
-  const aggregated = outputStructure === "aggregated";
 
   const hasChildComponent = (needle: string) => {
     const haystack = usedComponentSet?.size ? usedComponentSet : childrenComponentSet;
@@ -1587,7 +1801,6 @@ function generateViewObjectModelContent(
 
   const customPomClassIdentifierMap = options.customPomClassIdentifierMap ?? {};
   const customPomAvailableClassIdentifiers = options.customPomAvailableClassIdentifiers ?? new Set<string>();
-  const customPomImportSpecifiersByClass = options.customPomImportSpecifiersByClass ?? {};
   const customPomMethodSignaturesByClass = options.customPomMethodSignaturesByClass ?? new Map<string, CustomPomMethodSignatureMap>();
 
   const attachmentsForThisClass = customPomAttachments
@@ -1617,101 +1830,10 @@ function generateViewObjectModelContent(
     ? getWidgetInstancesForView(componentName, dependencies.dataTestIdSet, customPomAvailableClassIdentifiers)
     : [];
 
-  // For views, `childrenComponentSet` only includes component tags on which we applied a data-testid.
-  // Thin wrapper views (e.g. NewTenantPage) may have *no* generated test ids but still contain
-  // important child component POMs (forms, grids, etc). In those cases, we use `usedComponentSet`
-  // to discover and instantiate child component POMs.
   const componentRefsForInstances = isView
     ? (usedComponentSet?.size ? usedComponentSet : childrenComponentSet)
     : childrenComponentSet;
 
-  const sourceRel = toPosixRelativePath(outputDir, filePath);
-  const kind = isView ? "Page" : "Component";
-  const doc = `/** ${kind} POM: ${componentName} (source: ${sourceRel}) */`;
-  let needsPlaywrightPageImport = false;
-  let basePageImportSpecifier = "";
-  let customImportLines: string[] = [];
-  let generatedImportLines: string[] = [];
-
-  // In aggregated mode, imports are hoisted once at the top of the file.
-  if (!aggregated) {
-    // We only need PwPage when we emit a constructor (views always do; components only do
-    // when they have custom attachments like Grid).
-    needsPlaywrightPageImport = isView || attachmentsForThisClass.length > 0;
-
-    const projectRoot = options.projectRoot ?? process.cwd();
-    const fromAbs = path.isAbsolute(outputDir) ? outputDir : path.resolve(projectRoot, outputDir);
-    const toAbs = basePageClassPath
-      ? (path.isAbsolute(basePageClassPath) ? basePageClassPath : path.resolve(projectRoot, basePageClassPath))
-      : "";
-    const basePageImport = path.relative(fromAbs, toAbs).replace(/\\/g, "/");
-    // stripExtension uses node:path formatting (platform-specific). Re-normalize to POSIX
-    // so the import specifier is valid on Windows.
-    const basePageImportNoExt = stripExtension(basePageImport).replace(/\\/g, "/");
-    basePageImportSpecifier = basePageImportNoExt.startsWith(".") ? basePageImportNoExt : `./${basePageImportNoExt}`;
-
-    const importedGeneratedClasses = new Set<string>();
-    const generatedTsFilePathByComponent = options.generatedTsFilePathByComponent;
-
-    const addGeneratedImport = (className: string) => {
-      if (!generatedTsFilePathByComponent || importedGeneratedClasses.has(className) || className === componentName) {
-        return;
-      }
-      const generatedFilePath = generatedTsFilePathByComponent.get(className);
-      if (!generatedFilePath) {
-        return;
-      }
-
-      const importPath = stripExtension(toPosixRelativePath(fromAbs, generatedFilePath));
-      generatedImportLines.push(`import { ${className} } from '${importPath}';`);
-      importedGeneratedClasses.add(className);
-    };
-
-    customImportLines = Array.from(
-      new Set([
-        ...attachmentsForThisClass.map(attachment => attachment.className),
-        ...widgetInstances.map(widget => widget.className),
-      ]),
-    )
-      .map((localIdentifier) => {
-        const specifier = Object.values(customPomImportSpecifiersByClass)
-          .find(spec => spec.localIdentifier === localIdentifier);
-        if (!specifier) {
-          return null;
-        }
-
-        const importPath = stripExtension(toPosixRelativePath(fromAbs, specifier.absolutePath));
-        if (specifier.localIdentifier !== specifier.exportName) {
-          return `import { ${specifier.exportName} as ${specifier.localIdentifier} } from "${importPath}";`;
-        }
-        return `import { ${specifier.exportName} } from "${importPath}";`;
-      })
-      .filter((line): line is string => !!line)
-      .sort((a, b) => a.localeCompare(b));
-
-    for (const child of componentRefsForInstances) {
-      const childName = child.endsWith(".vue") ? child.slice(0, -4) : child;
-      const childDeps = componentHierarchyMap.get(child) ?? componentHierarchyMap.get(childName);
-      if (childDeps?.dataTestIdSet.size) {
-        addGeneratedImport(childName);
-      }
-    }
-
-    const targetClassNames = Array.from(
-      new Set(
-        Array.from(dependencies.dataTestIdSet ?? [])
-          .map(entry => entry.targetPageObjectModelClass)
-          .filter((target): target is string => typeof target === "string" && target.length > 0),
-      ),
-    ).sort((a, b) => a.localeCompare(b));
-
-    for (const targetClassName of targetClassNames) {
-      addGeneratedImport(targetClassName);
-    }
-  }
-
-  // Convert raw component name (may contain hyphens/dots, e.g. "error-test", "FirmsGrid.client")
-  // to a valid PascalCase TypeScript identifier for the class declaration.
   const className = toPascalCaseLocal(componentName);
   const childInstancePropertyNames = Array.from(componentRefsForInstances)
     .filter(child => componentHierarchyMap.has(child) && componentHierarchyMap.get(child)?.dataTestIdSet.size)
@@ -1727,63 +1849,178 @@ function generateViewObjectModelContent(
     ...childInstancePropertyNames,
   ]);
 
-  // Ergonomics: when a view is primarily composed of a single component POM (e.g. a form),
-  // allow calling that component's methods directly on the page class.
-  //
-  // Example:
-  //   await tenantListPage.goToNewTenant().typeTenantName(...).clickCreateTenant();
-  //
-  // Rules:
-  // - Only for views (not components) to avoid polluting component surfaces.
-  // - Only generate pass-throughs when the method is unambiguous across child components.
-  // - Never generate a pass-through that would collide with an existing method on the view.
-  // Only generate view passthrough methods when the view is essentially a thin wrapper
-  // around a single child component POM. This prevents "layout" components (Page, PageHeader,
-  // etc.) from injecting lots of noisy passthrough APIs into every view.
-  return renderTypeScript((writer) => {
-    if (!aggregated) {
-      writer.write(eslintSuppressionHeader);
+  const members: TypeScriptClassMember[] = [];
+  if (isView && (componentRefsForInstances.size > 0 || attachmentsForThisClass.length > 0 || widgetInstances.length > 0)) {
+    members.push(...getComponentInstances(componentRefsForInstances, componentHierarchyMap, attachmentsForThisClass, widgetInstances));
+    members.push(getConstructor(componentRefsForInstances, componentHierarchyMap, attachmentsForThisClass, widgetInstances, { testIdAttribute }));
+  }
+  if (!isView && attachmentsForThisClass.length > 0) {
+    members.push(...getComponentInstances(new Set(), componentHierarchyMap, attachmentsForThisClass));
+    members.push(getConstructor(new Set(), componentHierarchyMap, attachmentsForThisClass, [], { testIdAttribute }));
+  }
+
+  members.push(
+    ...getAttachmentPassthroughMethods(componentName, dependencies, attachmentsForThisClass, reservedAttachmentPassthroughNames),
+  );
+
+  if (isView && componentRefsForInstances.size === 1) {
+    members.push(
+      ...getViewPassthroughMethods(
+        componentName,
+        dependencies,
+        componentRefsForInstances,
+        componentHierarchyMap,
+        blockedViewPassthroughMethodNames,
+      ),
+    );
+  }
+
+  if (isView && options.vueRouterFluentChaining) {
+    const routeMeta = options.routeMetaByComponent?.[componentName] ?? null;
+    members.push(...generateRouteProperty(routeMeta));
+    members.push(...generateGoToSelfMethod(className));
+  }
+
+  members.push(...generateMethodsContentForDependencies(dependencies));
+
+  return {
+    className,
+    componentRefsForInstances,
+    attachmentsForThisClass,
+    widgetInstances,
+    isView,
+    members,
+  };
+}
+
+function generateViewObjectModelContent(
+  componentName: string,
+  dependencies: IComponentDependencies,
+  componentHierarchyMap: Map<string, IComponentDependencies>,
+  _vueFilesPathMap: Map<string, string>,
+  basePageClassPath: string,
+  options: GenerateContentOptions = {},
+) {
+  const { filePath } = dependencies;
+  const outputDir = options.outputDir ?? path.dirname(filePath);
+  const prepared = prepareViewObjectModelClass(componentName, dependencies, componentHierarchyMap, options);
+  const sourceRel = toPosixRelativePath(outputDir, filePath);
+  const kind = prepared.isView ? "Page" : "Component";
+  const doc = `/** ${kind} POM: ${componentName} (source: ${sourceRel}) */`;
+  const projectRoot = options.projectRoot ?? process.cwd();
+  const fromAbs = path.isAbsolute(outputDir) ? outputDir : path.resolve(projectRoot, outputDir);
+  const toAbs = basePageClassPath
+    ? (path.isAbsolute(basePageClassPath) ? basePageClassPath : path.resolve(projectRoot, basePageClassPath))
+    : "";
+  const basePageImport = path.relative(fromAbs, toAbs).replace(/\\/g, "/");
+  const basePageImportNoExt = stripExtension(basePageImport).replace(/\\/g, "/");
+  const basePageImportSpecifier = basePageImportNoExt.startsWith(".") ? basePageImportNoExt : `./${basePageImportNoExt}`;
+  const needsPlaywrightPageImport = prepared.isView || prepared.attachmentsForThisClass.length > 0;
+  const customPomImportSpecifiersByClass = options.customPomImportSpecifiersByClass ?? {};
+
+  const customImports = Array.from(
+    new Set([
+      ...prepared.attachmentsForThisClass.map(attachment => attachment.className),
+      ...prepared.widgetInstances.map(widget => widget.className),
+    ]),
+  )
+    .reduce<Array<{ moduleSpecifier: string; name: string; alias?: string }>>((imports, localIdentifier) => {
+      const specifier = Object.values(customPomImportSpecifiersByClass)
+        .find(spec => spec.localIdentifier === localIdentifier);
+      if (!specifier) {
+        return imports;
+      }
+
+      imports.push({
+        moduleSpecifier: stripExtension(toPosixRelativePath(fromAbs, specifier.absolutePath)),
+        name: specifier.exportName,
+        alias: specifier.localIdentifier !== specifier.exportName ? specifier.localIdentifier : undefined,
+      });
+      return imports;
+    }, [])
+    .sort((a, b) => (a.alias ?? a.name).localeCompare(b.alias ?? b.name));
+
+  const generatedImports: Array<{ className: string; moduleSpecifier: string }> = [];
+  const importedGeneratedClasses = new Set<string>();
+  const generatedTsFilePathByComponent = options.generatedTsFilePathByComponent;
+
+  const addGeneratedImport = (className: string) => {
+    if (!generatedTsFilePathByComponent || importedGeneratedClasses.has(className) || className === componentName) {
+      return;
     }
-    writer.writeLine(doc);
-    if (!aggregated) {
-      if (needsPlaywrightPageImport) {
-        writer.writeLine('import type { Page as PwPage } from "@playwright/test";');
-      }
-      writer.writeLine(`import { BasePage, Fluent } from '${basePageImportSpecifier}';`);
-      if (customImportLines.length > 0 || generatedImportLines.length > 0) {
-        writer.blankLine();
-        for (const line of customImportLines) {
-          writer.writeLine(line);
-        }
-        for (const line of generatedImportLines) {
-          writer.writeLine(line);
-        }
-      }
+    const generatedFilePath = generatedTsFilePathByComponent.get(className);
+    if (!generatedFilePath) {
+      return;
     }
 
-    writer.blankLine();
-    writer.write(`export class ${className} extends BasePage `).block(() => {
-      if (isView && (componentRefsForInstances.size > 0 || attachmentsForThisClass.length > 0 || widgetInstances.length > 0)) {
-        writeClassMembersText(writer, getComponentInstances(componentRefsForInstances, componentHierarchyMap, attachmentsForThisClass, widgetInstances));
-        writeClassMembersText(writer, getConstructor(componentRefsForInstances, componentHierarchyMap, attachmentsForThisClass, widgetInstances, { testIdAttribute }));
-      }
-      if (!isView && attachmentsForThisClass.length > 0) {
-        writeClassMembersText(writer, getComponentInstances(new Set(), componentHierarchyMap, attachmentsForThisClass));
-        writeClassMembersText(writer, getConstructor(new Set(), componentHierarchyMap, attachmentsForThisClass, [], { testIdAttribute }));
-      }
-      writeClassMembersText(writer, getAttachmentPassthroughMethods(componentName, dependencies, attachmentsForThisClass, reservedAttachmentPassthroughNames));
-      if (isView && componentRefsForInstances.size === 1) {
-        writeClassMembersText(writer, getViewPassthroughMethods(componentName, dependencies, componentRefsForInstances, componentHierarchyMap, blockedViewPassthroughMethodNames));
-      }
-      if (isView && options.vueRouterFluentChaining) {
-        const routeMeta = options.routeMetaByComponent?.[componentName] ?? null;
-        writeClassMembersText(writer, generateRouteProperty(routeMeta));
-        // Pass className (PascalCase) so the generated route self-reference is a valid identifier.
-        writeClassMembersText(writer, generateGoToSelfMethod(className));
-      }
-      writeClassMembersText(writer, generateMethodsContentForDependencies(dependencies));
+    generatedImports.push({
+      className,
+      moduleSpecifier: stripExtension(toPosixRelativePath(fromAbs, generatedFilePath)),
     });
-  });
+    importedGeneratedClasses.add(className);
+  };
+
+  for (const child of prepared.componentRefsForInstances) {
+    const childName = child.endsWith(".vue") ? child.slice(0, -4) : child;
+    const childDeps = componentHierarchyMap.get(child) ?? componentHierarchyMap.get(childName);
+    if (childDeps?.dataTestIdSet.size) {
+      addGeneratedImport(childName);
+    }
+  }
+
+  const targetClassNames = Array.from(
+    new Set(
+      Array.from(dependencies.dataTestIdSet ?? [])
+        .map(entry => entry.targetPageObjectModelClass)
+        .filter((target): target is string => typeof target === "string" && target.length > 0),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
+
+  for (const targetClassName of targetClassNames) {
+    addGeneratedImport(targetClassName);
+  }
+
+  generatedImports.sort((a, b) => a.className.localeCompare(b.className));
+
+  const prefixText = `${buildFilePrefix({ eslintDisableSortImports: true })}${doc}\n`;
+  return renderSourceFile(`${prepared.className}.ts`, (sourceFile) => {
+    if (needsPlaywrightPageImport) {
+      addNamedImport(sourceFile, {
+        moduleSpecifier: "@playwright/test",
+        isTypeOnly: true,
+        namedImports: [{ name: "Page", alias: "PwPage" }],
+      });
+    }
+
+    addNamedImport(sourceFile, {
+      moduleSpecifier: basePageImportSpecifier,
+      namedImports: ["BasePage", "Fluent"],
+    });
+
+    for (const customImport of customImports) {
+      addNamedImport(sourceFile, {
+        moduleSpecifier: customImport.moduleSpecifier,
+        namedImports: [{ name: customImport.name, alias: customImport.alias }],
+      });
+    }
+
+    for (const generatedImport of generatedImports) {
+      addNamedImport(sourceFile, {
+        moduleSpecifier: generatedImport.moduleSpecifier,
+        namedImports: [generatedImport.className],
+      });
+    }
+
+    const classDeclaration = sourceFile.addClass({
+      name: prepared.className,
+      isExported: true,
+      extends: "BasePage",
+    });
+
+    for (const member of prepared.members) {
+      addClassMember(classDeclaration, member);
+    }
+  }, { prefixText });
 }
 
 function getViewPassthroughMethods(
@@ -1827,19 +2064,20 @@ function getViewPassthroughMethods(
   const sorted = Array.from(methodToChildren.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   const passthroughs = sorted.filter(([, candidates]) => candidates.length === 1);
   if (!passthroughs.length) {
-    return "";
+    return [];
   }
 
-  return renderClassMembers((writer) => {
-    writer.writeLine(`// Passthrough methods composed from child component POMs of ${viewName}.`);
-    for (const [methodName, candidates] of passthroughs) {
-      const { childProp, params, argNames } = candidates[0];
-      const callArgs = argNames.join(", ");
-      writer.blankLine();
-      writeMemberBlock(writer, `async ${methodName}(${params})`, (writer) => {
-        writer.writeLine(`return await this.${childProp}.${methodName}(${callArgs});`);
-      });
-    }
+  return passthroughs.map(([methodName, candidates]) => {
+    const { childProp, params, argNames } = candidates[0];
+    const callArgs = argNames.join(", ");
+    return createClassMethod({
+      name: methodName,
+      isAsync: true,
+      parameters: parseParameterSignatures(params),
+      statements: [
+        `return await this.${childProp}.${methodName}(${callArgs});`,
+      ],
+    });
   });
 }
 
@@ -1850,7 +2088,7 @@ function getAttachmentPassthroughMethods(
   reservedMemberNames: Set<string>,
 ) {
   if (!attachmentsForThisClass.some(a => a.flatten && a.methodSignatures.size > 0)) {
-    return "";
+    return [];
   }
 
   const existingOnClass = ownerDependencies.generatedMethods ?? new Map<string, { params: string; argNames: string[] } | null>();
@@ -1879,22 +2117,22 @@ function getAttachmentPassthroughMethods(
   const sorted = Array.from(methodToAttachments.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   const passthroughs = sorted.filter(([, candidates]) => candidates.length === 1);
   if (!passthroughs.length) {
-    return "";
+    return [];
   }
 
-  return renderClassMembers((writer) => {
-    writer.writeLine(`// Passthrough methods composed from custom helper attachments of ${ownerName}.`);
-    for (const [methodName, candidates] of passthroughs) {
-      const { propertyName, params, argNames } = candidates[0];
-      const callArgs = argNames.join(", ");
-      const invocation = callArgs
-        ? `this.${propertyName}.${methodName}(${callArgs})`
-        : `this.${propertyName}.${methodName}()`;
-      writer.blankLine();
-      writeMemberBlock(writer, `${methodName}(${params})`, (writer) => {
-        writer.writeLine(`return ${invocation};`);
-      });
-    }
+  return passthroughs.map(([methodName, candidates]) => {
+    const { propertyName, params, argNames } = candidates[0];
+    const callArgs = argNames.join(", ");
+    const invocation = callArgs
+      ? `this.${propertyName}.${methodName}(${callArgs})`
+      : `this.${propertyName}.${methodName}()`;
+    return createClassMethod({
+      name: methodName,
+      parameters: parseParameterSignatures(params),
+      statements: [
+        `return ${invocation};`,
+      ],
+    });
   });
 }
 
@@ -2020,41 +2258,119 @@ function readTextAsset(absPath: string, description: string): string {
   }
 }
 
+function getDefaultStubMembers(): TypeScriptClassMember[] {
+  return [
+    createClassConstructor({
+      parameters: [{ name: "page", type: "PwPage" }],
+      statements: [
+        "super(page);",
+      ],
+    }),
+  ];
+}
+
 function renderSplitStubPomContent(options: {
   className: string;
   basePageImportSpecifier: string;
-  childImports: string[];
-  bodyLines: string[];
+  childImports: Array<{ className: string; importPath: string }>;
+  members: TypeScriptClassMember[];
 }): string {
-  const body = options.bodyLines
-    .map(line => line.startsWith("    ") ? line.slice(4) : line)
-    .join("\n");
-
-  return renderTypeScript((writer) => {
-    writer.write(eslintSuppressionHeader);
-    writeCommentBlock(writer, [
+  const prefixText = buildFilePrefix({
+    eslintDisableSortImports: true,
+    commentLines: [
       `Stub POM: ${options.className}`,
       "DO NOT MODIFY BY HAND",
       "",
       "This file is auto-generated by vue-pom-generator.",
       "Changes should be made in the generator/template, not in the generated output.",
-    ]);
-    writer.writeLine('import type { Page as PwPage } from "@playwright/test";');
-    writer.writeLine(`import { BasePage } from "${options.basePageImportSpecifier}";`);
+    ],
+  });
+
+  return renderSourceFile(`${options.className}.ts`, (sourceFile) => {
+    addNamedImport(sourceFile, {
+      moduleSpecifier: "@playwright/test",
+      isTypeOnly: true,
+      namedImports: [{ name: "Page", alias: "PwPage" }],
+    });
+    addNamedImport(sourceFile, {
+      moduleSpecifier: options.basePageImportSpecifier,
+      namedImports: ["BasePage"],
+    });
     for (const childImport of options.childImports) {
-      writer.writeLine(childImport);
+      addNamedImport(sourceFile, {
+        moduleSpecifier: childImport.importPath,
+        namedImports: [childImport.className],
+      });
     }
-    if (options.childImports.length > 0) {
-      writer.blankLine();
-    }
-    writeCommentBlock(writer, [
+    sourceFile.addStatements(buildCommentBlock([
       "Stub POM generated because it is referenced as a navigation target but",
       "did not have any generated test ids in this build.",
-    ]);
-    writer.write(`export class ${options.className} extends BasePage `).block(() => {
-      writer.write(`${body}\n`);
+    ]).trimEnd());
+    const classDeclaration = sourceFile.addClass({
+      name: options.className,
+      isExported: true,
+      extends: "BasePage",
     });
-  });
+    for (const member of options.members) {
+      addClassMember(classDeclaration, member);
+    }
+  }, { prefixText });
+}
+
+function getChildImportSpecifiers(
+  outputDir: string,
+  childClassNames: string[],
+  generatedTsFilePathByComponent: Map<string, string>,
+): Array<{ className: string; importPath: string }> {
+  return childClassNames
+    .map((childClassName) => {
+      const childFilePath = generatedTsFilePathByComponent.get(childClassName);
+      if (!childFilePath) {
+        return null;
+      }
+      return {
+        className: childClassName,
+        importPath: stripExtension(toPosixRelativePath(outputDir, childFilePath)),
+      };
+    })
+    .filter((entry): entry is { className: string; importPath: string } => !!entry)
+    .sort((a, b) => a.className.localeCompare(b.className));
+}
+
+function isConstructorMember(member: TypeScriptClassMember): member is OptionalKind<ConstructorDeclarationStructure> {
+  return member.kind === StructureKind.Constructor;
+}
+
+function isGetterMember(member: TypeScriptClassMember): member is OptionalKind<GetAccessorDeclarationStructure> {
+  return member.kind === StructureKind.GetAccessor;
+}
+
+function isMethodMember(member: TypeScriptClassMember): member is OptionalKind<MethodDeclarationStructure> {
+  return member.kind === StructureKind.Method;
+}
+
+function isPropertyMember(member: TypeScriptClassMember): member is OptionalKind<PropertyDeclarationStructure> {
+  return member.kind === StructureKind.Property;
+}
+
+function addClassMember(classDeclaration: ReturnType<TypeScriptSourceFile["addClass"]>, member: TypeScriptClassMember): void {
+  if (isConstructorMember(member)) {
+    classDeclaration.addConstructor(member);
+    return;
+  }
+  if (isGetterMember(member)) {
+    classDeclaration.addGetAccessor(member);
+    return;
+  }
+  if (isMethodMember(member)) {
+    classDeclaration.addMethod(member);
+    return;
+  }
+  if (isPropertyMember(member)) {
+    classDeclaration.addProperty(member);
+    return;
+  }
+  throw new Error(`Unsupported class member structure: ${String(member)}`);
 }
 
 interface RuntimeGeneratedAssetSpec {
@@ -2251,7 +2567,7 @@ function getComposedStubBody(
     }
   }
 
-  const passthroughLines: string[] = [];
+  const passthroughMembers: TypeScriptClassMember[] = [];
   for (const [methodName, candidatesForMethod] of methodToChildren.entries()) {
     if (candidatesForMethod.length !== 1 || methodName === "constructor")
       continue;
@@ -2259,24 +2575,34 @@ function getComposedStubBody(
     const { child, params, argNames } = candidatesForMethod[0];
     const callArgs = argNames.join(", ");
 
-    passthroughLines.push(
-      "",
-      `    async ${methodName}(${params}) {`,
-      `        return await this.${child}.${methodName}(${callArgs});`,
-      "    }",
-    );
+    passthroughMembers.push(createClassMethod({
+      name: methodName,
+      isAsync: true,
+      parameters: parseParameterSignatures(params),
+      statements: [
+        `return await this.${child}.${methodName}(${callArgs});`,
+      ],
+    }));
   }
 
   return {
     childClassNames,
-    lines: [
-      ...childClassNames.map(c => `    ${c}: ${c};`),
-      "",
-      "    constructor(page: PwPage) {",
-      "        super(page);",
-      ...childClassNames.map(c => `        this.${c} = new ${c}(page);`),
-      "    }",
-      ...passthroughLines,
+    members: [
+      ...childClassNames.map(childClassName =>
+        createClassProperty({
+          name: childClassName,
+          type: childClassName,
+        })),
+      createClassConstructor({
+        parameters: [{ name: "page", type: "PwPage" }],
+        statements: (writer) => {
+          writer.writeLine("super(page);");
+          for (const childClassName of childClassNames) {
+            writer.writeLine(`this.${childClassName} = new ${childClassName}(page);`);
+          }
+        },
+      }),
+      ...passthroughMembers,
     ],
   };
 }
@@ -2373,29 +2699,18 @@ async function generateAggregatedFiles(
     const stubs = stubTargets.map(t =>
       (() => {
         const composed = getComposedStubBody(t, availableClassNames, depsByClassName, vueFilesPathMap, projectRoot);
-        const body = composed?.lines ?? [
-          "    constructor(page: PwPage) {",
-          "        super(page);",
-          "    }",
-        ];
-
-        return renderTypeScript((writer) => {
-          writeCommentBlock(writer, [
-            "Stub POM generated because it is referenced as a navigation target but",
-            "did not have any generated test ids in this build.",
-          ]);
-          writer.write(`export class ${t} extends BasePage `).block(() => {
-            writeClassMembersText(writer, body.join("\n"));
-          });
-        });
+        return {
+          className: t,
+          members: composed?.members ?? getDefaultStubMembers(),
+          isStub: true as const,
+        };
       })(),
     );
 
-    const classes = items.map(([name, deps]) =>
-      generateViewObjectModelContent(name, deps, componentHierarchyMap, vueFilesPathMap, basePageClassPath, {
+    const classes = items.map(([name, deps]) => {
+      const prepared = prepareViewObjectModelClass(name, deps, componentHierarchyMap, {
         outputDir,
         outputStructure: "aggregated",
-
         customPomAttachments: options.customPomAttachments ?? [],
         customPomClassIdentifierMap,
         customPomAvailableClassIdentifiers,
@@ -2403,29 +2718,56 @@ async function generateAggregatedFiles(
         testIdAttribute: options.testIdAttribute,
         vueRouterFluentChaining: options.vueRouterFluentChaining,
         routeMetaByComponent: options.routeMetaByComponent,
-      }),
-    );
+      });
+      const sourceRel = toPosixRelativePath(outputDir, deps.filePath);
+      const kind = deps.isView ? "Page" : "Component";
+      return {
+        className: prepared.className,
+        doc: `/** ${kind} POM: ${name} (source: ${sourceRel}) */`,
+        members: prepared.members,
+        isStub: false as const,
+      };
+    });
 
-    return renderTypeScript((writer) => {
-      writer.writeLine('/// <reference lib="es2015" />');
-      writer.write(eslintSuppressionHeader);
-      writeCommentBlock(writer, [
+    const prefixText = buildFilePrefix({
+      referenceLib: "es2015",
+      eslintDisableSortImports: true,
+      commentLines: [
         "Aggregated generated POMs",
         "DO NOT MODIFY BY HAND",
         "",
         "This file is auto-generated by vue-pom-generator.",
         "Changes should be made in the generator/template, not in the generated output.",
-      ]);
-      writer.blankLine();
-      for (const line of imports) {
-        writer.writeLine(line);
-      }
-      for (const classContent of [...classes, ...stubs]) {
-        writer.blankLine();
-        writer.write(classContent.trimEnd());
-        writer.write("\n");
-      }
+      ],
     });
+
+    return renderSourceFile("page-object-models.g.ts", (sourceFile) => {
+      for (const line of imports) {
+        sourceFile.addStatements(line);
+      }
+
+      for (const entry of [...classes, ...stubs]) {
+        if (entry.isStub) {
+          sourceFile.addStatements(buildCommentBlock([
+            "Stub POM generated because it is referenced as a navigation target but",
+            "did not have any generated test ids in this build.",
+          ]).trimEnd());
+        }
+        else {
+          sourceFile.addStatements(entry.doc);
+        }
+
+        const classDeclaration = sourceFile.addClass({
+          name: entry.className,
+          isExported: true,
+          extends: "BasePage",
+        });
+
+        for (const member of entry.members) {
+          addClassMember(classDeclaration, member);
+        }
+      }
+    }, { prefixText });
   };
 
   const base = ensureDir(outDir);
@@ -2433,17 +2775,19 @@ async function generateAggregatedFiles(
   const content = makeAggregatedContent(path.dirname(outputFile), [...views, ...components]);
 
   const indexFile = path.join(base, "index.ts");
-  const indexContent = renderTypeScript((writer) => {
-    writer.write(eslintSuppressionHeader);
-    writeCommentBlock(writer, [
-      "POM exports",
-      "DO NOT MODIFY BY HAND",
-      "",
-      "This file is auto-generated by vue-pom-generator.",
-      "Changes should be made in the generator/template, not in the generated output.",
-    ]);
-    writer.blankLine();
-    writer.writeLine('export * from "./page-object-models.g";');
+  const indexContent = renderSourceFile("index.ts", (sourceFile) => {
+    addExportAll(sourceFile, "./page-object-models.g");
+  }, {
+    prefixText: buildFilePrefix({
+      eslintDisableSortImports: true,
+      commentLines: [
+        "POM exports",
+        "DO NOT MODIFY BY HAND",
+        "",
+        "This file is auto-generated by vue-pom-generator.",
+        "Changes should be made in the generator/template, not in the generated output.",
+      ],
+    }),
   });
   const runtimeFiles = buildRuntimeGeneratedFiles(base, basePageClassPath);
 
@@ -2590,32 +2934,33 @@ function getComponentInstances(
   attachmentsForThisView: Array<{ className: string; propertyName: string }> = [],
   widgetInstances: WidgetInstance[] = [],
 ) {
-  const declarations: string[] = [];
+  const declarations: TypeScriptClassMember[] = [];
 
   for (const a of attachmentsForThisView) {
-    declarations.push(`${a.propertyName}: ${a.className};`);
+    declarations.push(createClassProperty({
+      name: a.propertyName,
+      type: a.className,
+    }));
   }
 
   for (const w of widgetInstances) {
-    declarations.push(`${w.propertyName}: ${w.className};`);
+    declarations.push(createClassProperty({
+      name: w.propertyName,
+      type: w.className,
+    }));
   }
 
   childrenComponent.forEach((child) => {
     if (componentHierarchyMap.has(child) && componentHierarchyMap.get(child)?.dataTestIdSet.size) {
       const childName = child.split(".vue")[0];
-      declarations.push(`${childName}: ${childName};`);
+      declarations.push(createClassProperty({
+        name: childName,
+        type: childName,
+      }));
     }
   });
 
-  if (!declarations.length) {
-    return "";
-  }
-
-  return renderClassMembers((writer) => {
-    for (const declaration of declarations) {
-      writer.writeLine(declaration);
-    }
-  });
+  return declarations;
 }
 
 function getConstructor(
@@ -2626,8 +2971,9 @@ function getConstructor(
   options?: { testIdAttribute?: string },
 ) {
   const attr = (options?.testIdAttribute ?? "data-testid").trim() || "data-testid";
-  return renderClassMembers((writer) => {
-    writeMemberBlock(writer, "constructor(page: PwPage)", (writer) => {
+  return createClassConstructor({
+    parameters: [{ name: "page", type: "PwPage" }],
+    statements: (writer) => {
       writer.writeLine(`super(page, { testIdAttribute: ${JSON.stringify(attr)} });`);
 
       for (const a of attachmentsForThisView) {
@@ -2644,6 +2990,6 @@ function getConstructor(
           writer.writeLine(`this.${childName} = new ${childName}(page);`);
         }
       });
-    });
+    },
   });
 }

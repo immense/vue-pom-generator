@@ -636,7 +636,6 @@ describe("generated output", () => {
     const viewContentTwo = extractClassBlock(aggregatedContentTwo, viewName);
 
     // With multiple child component POMs, we intentionally do not generate any passthrough methods.
-    expect(viewContentTwo).not.toContain("Passthrough methods composed");
     expect(viewContentTwo).not.toContain("async clickOnlyInAButton");
 
     // Single child component case: passthrough should be emitted.
@@ -660,7 +659,6 @@ describe("generated output", () => {
     expect(fs.existsSync(aggregatedFileOne)).toBe(true);
     const aggregatedContentOne = fs.readFileSync(aggregatedFileOne, "utf8");
     const viewContentOne = extractClassBlock(aggregatedContentOne, "TestViewPageSingle");
-    expect(viewContentOne).toContain("Passthrough methods composed");
     expect(viewContentOne).toContain("async clickOnlyInAButton");
   });
 });
