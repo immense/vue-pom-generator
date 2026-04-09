@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { parseRouterFileFromCwd } from "../router-introspection";
+import { renderTypeScriptLines } from "../typescript-codegen";
 
 const fixturesDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -16,7 +17,14 @@ function readFixture(fixtureName: string): string {
 
 function writeFile(filePath: string, content: string) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, content, "utf8");
+  const normalizedContent = filePath.endsWith(".ts") || filePath.endsWith(".tsx") || filePath.endsWith(".mts") || filePath.endsWith(".cts") || filePath.endsWith(".d.ts")
+    ? renderTypeScriptLines(content.replace(/\r\n/g, "\n").split("\n"))
+    : content;
+  fs.writeFileSync(filePath, normalizedContent, "utf8");
+}
+
+function writeTypeScriptFile(filePath: string, lines: string[]) {
+  writeFile(filePath, lines.join("\n"));
 }
 
 function ensureTempNodeModules(tempRoot: string) {
@@ -54,7 +62,7 @@ describe("parseRouterFileFromCwd", () => {
       writeFile(path.join(tempRoot, "ThingsView.vue"), stubViewContent);
 
       const routerEntry = path.join(tempRoot, "router.ts");
-      writeFile(
+      writeTypeScriptFile(
         routerEntry,
         [
           "import { createMemoryHistory, createRouter } from 'vue-router';",
@@ -81,7 +89,7 @@ describe("parseRouterFileFromCwd", () => {
           "  });",
           "}",
           "",
-        ].join("\n"),
+        ],
       );
 
       const result = await parseRouterFileFromCwd(routerEntry);
@@ -117,7 +125,7 @@ describe("parseRouterFileFromCwd", () => {
       writeFile(path.join(tempRoot, "UsersView.vue"), stubViewContent);
 
       const routerEntry = path.join(tempRoot, "router.ts");
-      writeFile(
+      writeTypeScriptFile(
         routerEntry,
         [
           "import { createMemoryHistory, createRouter } from 'vue-router';",
@@ -138,7 +146,7 @@ describe("parseRouterFileFromCwd", () => {
           "  });",
           "}",
           "",
-        ].join("\n"),
+        ],
       );
 
       const result = await parseRouterFileFromCwd(routerEntry, {
@@ -169,7 +177,7 @@ describe("parseRouterFileFromCwd", () => {
       writeFile(path.join(tempRoot, "src", "views", "denied-domains", "List.vue"), stubViewContent);
 
       const routerEntry = path.join(tempRoot, "src", "router.ts");
-      writeFile(
+      writeTypeScriptFile(
         routerEntry,
         [
           "import { createMemoryHistory, createRouter } from 'vue-router';",
@@ -192,7 +200,7 @@ describe("parseRouterFileFromCwd", () => {
           "  });",
           "}",
           "",
-        ].join("\n"),
+        ],
       );
 
       const result = await parseRouterFileFromCwd(routerEntry, {
@@ -224,7 +232,7 @@ describe("parseRouterFileFromCwd", () => {
       writeFile(path.join(tempRoot, "UsersView.vue"), stubViewContent);
 
       const routerEntry = path.join(tempRoot, "router.ts");
-      writeFile(
+      writeTypeScriptFile(
         routerEntry,
         [
           "import { createMemoryHistory, createRouter } from 'vue-router';",
@@ -241,7 +249,7 @@ describe("parseRouterFileFromCwd", () => {
           "  });",
           "}",
           "",
-        ].join("\n"),
+        ],
       );
 
       await expect(() =>

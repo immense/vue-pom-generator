@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import type { IComponentDependencies, IDataTestId } from "../utils";
 import { generateFiles } from "../class-generation";
+import { renderTypeScriptLines } from "../typescript-codegen";
 
 function extractClassBlock(content: string, className: string): string {
   const start = content.indexOf(`export class ${className}`);
@@ -23,7 +24,10 @@ function extractClassBlock(content: string, className: string): string {
 
 function writeFile(filePath: string, content: string) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, content, "utf8");
+  const normalizedContent = filePath.endsWith(".ts") || filePath.endsWith(".tsx") || filePath.endsWith(".mts") || filePath.endsWith(".cts") || filePath.endsWith(".d.ts")
+    ? renderTypeScriptLines(content.replace(/\r\n/g, "\n").split("\n"))
+    : content;
+  fs.writeFileSync(filePath, normalizedContent, "utf8");
 }
 
 function copyRepoFixture(rootDir: string, fixtureName: string, destinationRelativePath: string) {
