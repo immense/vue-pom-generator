@@ -74,7 +74,7 @@ The generator does not use one naming trick. It layers several signals.
 - **Router links / `:to` bindings** can contribute route-based naming and typed navigation return types when the target can be resolved.
 - **Wrapper components** can be explicit (`nativeWrappers`) or inferred from simple local SFC templates.
 - **Fallback naming exists, but it is intentionally conservative.** That is why `generation.nameCollisionBehavior` exists.
-- **You can opt into stricter wrapper-action generation.** `generation.playwright.errorBehavior: "error"` blocks button-like wrapper `:handler` expressions that the generator cannot turn into a semantic action name.
+- **You can opt into stricter wrapper-action generation.** `errorBehavior: "error"` blocks button-like wrapper `:handler` expressions that the generator cannot turn into a semantic action name.
 
 Important limit: wrapper inference is helpful, not magical. The current implementation recursively inspects simple local SFC templates for the first inferable primitive (`input`, `textarea`, `select`, `button`, `vselect`, radio/checkbox inputs). It also recognizes some naming patterns like `*Button`. For anything more complex, configure `nativeWrappers` explicitly.
 
@@ -202,6 +202,7 @@ const pomConfig = defineVuePomGeneratorConfig({
     script: { defineModel: true, propsDestructure: true },
   },
   logging: { verbosity: "info" },
+  errorBehavior: "error",
   injection: {
     attribute: "data-testid",
     viewsDir: "src/views",
@@ -233,7 +234,6 @@ const pomConfig = defineVuePomGeneratorConfig({
     },
     playwright: {
       fixtures: true,
-      errorBehavior: "error",
       customPoms: {
         dir: "tests/playwright/pom/custom",
         importAliases: {
@@ -807,6 +807,18 @@ The sections below follow the actual `VuePomGeneratorPluginOptions` shape from `
   logging: { verbosity: "debug" }
   ```
 
+#### `errorBehavior`
+
+- **What it does:** Controls strict/error behavior for generator checks.
+- **Why it exists:** complex inline handlers can otherwise fall through to generic naming, which makes generated APIs harder to discover and review.
+- **Benefit:** `"error"` lets you opt into fail-fast behavior globally, while the object form lets you turn on only the checks you care about.
+- **Without it:** the default is `"ignore"`, so existing permissive fallback behavior remains in place.
+- **Accepted values:**
+  - `"ignore"` — keep permissive defaults for all supported checks
+  - `"error"` — enable error-on-failure behavior for all supported checks
+  - `{ missingSemanticNameBehavior: "error" }` — enable only the button-wrapper semantic-name check
+- **Current scope:** this first pass is intentionally narrow. The object form currently supports `missingSemanticNameBehavior`, which targets button-like wrappers with `:handler`; value/model-driven wrappers still use their existing naming flow.
+
 ### `injection`
 
 `injection` controls compile-time test-id derivation and template rewriting.
@@ -1024,18 +1036,6 @@ This object holds Playwright-specific additions on top of the generated TypeScri
   - `true` — emit `fixtures.g.ts` next to the generated POMs
   - `"path"` — if the string ends in `.ts` / `.tsx` / `.mts` / `.cts`, it is treated as a file path; otherwise as an output directory
   - `{ outDir }` — emit to a custom directory
-
-#### `generation.playwright.errorBehavior`
-
-- **What it does:** Controls strict/error behavior for Playwright generation checks.
-- **Why it exists:** complex inline handlers can otherwise fall through to generic naming, which makes generated APIs harder to discover and review.
-- **Benefit:** `"error"` lets you opt into fail-fast behavior globally, while the object form lets you turn on only the checks you care about.
-- **Without it:** the default is `"ignore"`, so existing permissive fallback behavior remains in place.
-- **Accepted values:**
-  - `"ignore"` — keep permissive defaults for all supported checks
-  - `"error"` — enable error-on-failure behavior for all supported checks
-  - `{ missingSemanticNameBehavior: "error" }` — enable only the button-wrapper semantic-name check
-- **Current scope:** this first pass is intentionally narrow. The object form currently supports `missingSemanticNameBehavior`, which targets button-like wrappers with `:handler`; value/model-driven wrappers still use their existing naming flow.
 
 #### `generation.playwright.customPoms`
 

@@ -135,28 +135,24 @@ describe("createVuePomGeneratorPlugins options", () => {
     expect(names).toContain("vue-pom-generator-dev");
   });
 
-  it("accepts generation.playwright.errorBehavior as a string", () => {
+  it("accepts root-level errorBehavior as a string", () => {
     const plugins = createVuePomGeneratorPlugins({
+      errorBehavior: "error",
       generation: {
         outDir: "./tests/playwright/generated",
-        playwright: {
-          errorBehavior: "error",
-        },
       },
     });
 
     expect(() => runConfigResolved(plugins)).not.toThrow();
   });
 
-  it("accepts generation.playwright.errorBehavior as an object", () => {
+  it("accepts root-level errorBehavior as an object", () => {
     const plugins = createVuePomGeneratorPlugins({
+      errorBehavior: {
+        missingSemanticNameBehavior: "error",
+      },
       generation: {
         outDir: "./tests/playwright/generated",
-        playwright: {
-          errorBehavior: {
-            missingSemanticNameBehavior: "error",
-          },
-        },
       },
     });
 
@@ -191,32 +187,28 @@ describe("createVuePomGeneratorPlugins options", () => {
     expect(() => runConfigResolved(plugins)).toThrow("generation.router.entry");
   });
 
-  it("fails fast for invalid generation.playwright.errorBehavior string", () => {
+  it("fails fast for invalid root-level errorBehavior string", () => {
     const plugins = createVuePomGeneratorPlugins({
+      errorBehavior: "strict" as "ignore",
       generation: {
         outDir: "tests/playwright/generated",
-        playwright: {
-          errorBehavior: "strict" as "ignore",
-        },
       },
     });
 
-    expect(() => runConfigResolved(plugins)).toThrow("generation.playwright.errorBehavior");
+    expect(() => runConfigResolved(plugins)).toThrow("errorBehavior");
   });
 
-  it("fails fast for invalid generation.playwright.errorBehavior object", () => {
+  it("fails fast for invalid root-level errorBehavior object", () => {
     const plugins = createVuePomGeneratorPlugins({
+      errorBehavior: {
+        missingSemanticNameBehavior: "strict" as "ignore",
+      },
       generation: {
         outDir: "tests/playwright/generated",
-        playwright: {
-          errorBehavior: {
-            missingSemanticNameBehavior: "strict" as "ignore",
-          },
-        },
       },
     });
 
-    expect(() => runConfigResolved(plugins)).toThrow("generation.playwright.errorBehavior.missingSemanticNameBehavior");
+    expect(() => runConfigResolved(plugins)).toThrow("errorBehavior.missingSemanticNameBehavior");
   });
 
   it("fails fast when generation.router.moduleShims has an empty export list", () => {
@@ -252,6 +244,9 @@ describe("createVuePomGeneratorPlugins options", () => {
 
   it("supports alias and typed config helper exports", () => {
     const config = defineVuePomGeneratorConfig({
+      errorBehavior: {
+        missingSemanticNameBehavior: "error",
+      },
       generation: false,
       vueOptions: {
         script: { defineModel: true },
@@ -261,6 +256,9 @@ describe("createVuePomGeneratorPlugins options", () => {
     const plugins = vuePomGenerator(config);
     expect(Array.isArray(plugins)).toBe(true);
     expect(plugins.length).toBeGreaterThan(0);
+    expect(config.errorBehavior).toEqual({
+      missingSemanticNameBehavior: "error",
+    });
   });
 
   it("patches the resolved vite:vue plugin for Nuxt projects", () => {
