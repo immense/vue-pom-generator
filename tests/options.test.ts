@@ -135,12 +135,27 @@ describe("createVuePomGeneratorPlugins options", () => {
     expect(names).toContain("vue-pom-generator-dev");
   });
 
-  it("accepts generation.playwright.missingSemanticNameBehavior", () => {
+  it("accepts generation.playwright.errorBehavior as a string", () => {
     const plugins = createVuePomGeneratorPlugins({
       generation: {
         outDir: "./tests/playwright/generated",
         playwright: {
-          missingSemanticNameBehavior: "error",
+          errorBehavior: "error",
+        },
+      },
+    });
+
+    expect(() => runConfigResolved(plugins)).not.toThrow();
+  });
+
+  it("accepts generation.playwright.errorBehavior as an object", () => {
+    const plugins = createVuePomGeneratorPlugins({
+      generation: {
+        outDir: "./tests/playwright/generated",
+        playwright: {
+          errorBehavior: {
+            missingSemanticNameBehavior: "error",
+          },
         },
       },
     });
@@ -176,17 +191,32 @@ describe("createVuePomGeneratorPlugins options", () => {
     expect(() => runConfigResolved(plugins)).toThrow("generation.router.entry");
   });
 
-  it("fails fast for invalid generation.playwright.missingSemanticNameBehavior", () => {
+  it("fails fast for invalid generation.playwright.errorBehavior string", () => {
     const plugins = createVuePomGeneratorPlugins({
       generation: {
         outDir: "tests/playwright/generated",
         playwright: {
-          missingSemanticNameBehavior: "strict" as "ignore",
+          errorBehavior: "strict" as "ignore",
         },
       },
     });
 
-    expect(() => runConfigResolved(plugins)).toThrow("generation.playwright.missingSemanticNameBehavior");
+    expect(() => runConfigResolved(plugins)).toThrow("generation.playwright.errorBehavior");
+  });
+
+  it("fails fast for invalid generation.playwright.errorBehavior object", () => {
+    const plugins = createVuePomGeneratorPlugins({
+      generation: {
+        outDir: "tests/playwright/generated",
+        playwright: {
+          errorBehavior: {
+            missingSemanticNameBehavior: "strict" as "ignore",
+          },
+        },
+      },
+    });
+
+    expect(() => runConfigResolved(plugins)).toThrow("generation.playwright.errorBehavior.missingSemanticNameBehavior");
   });
 
   it("fails fast when generation.router.moduleShims has an empty export list", () => {

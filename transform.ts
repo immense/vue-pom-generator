@@ -1303,7 +1303,7 @@ export function createTestIdTransform(
         + `Handler: ${handlerSource}\n\n`
         + `Fix: move complex inline logic into a named function (for example, const onAction = () => ...; then bind :handler="onAction"), `
         + `or simplify the handler to a direct identifier/call the generator can name. `
-        + `You can also set generation.playwright.missingSemanticNameBehavior = "ignore" to keep generic fallback behavior.`,
+        + `You can also set generation.playwright.errorBehavior = "ignore" to keep generic fallback behavior.`,
       );
     }
 

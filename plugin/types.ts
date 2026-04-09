@@ -4,6 +4,10 @@ import type { NativeWrappersMap } from "../utils";
 export type ExistingIdBehavior = "preserve" | "overwrite" | "error";
 export type VuePluginOwnership = "internal" | "external";
 export type MissingSemanticNameBehavior = "ignore" | "error";
+export interface PlaywrightErrorBehaviorOptions {
+  missingSemanticNameBehavior?: MissingSemanticNameBehavior;
+}
+export type PlaywrightErrorBehavior = MissingSemanticNameBehavior | PlaywrightErrorBehaviorOptions;
 
 /**
  * Controls what happens when the generator would emit duplicate POM member names within a single class.
@@ -237,12 +241,13 @@ export interface VuePomGeneratorPluginOptions {
     /** Playwright-specific generation features (fixtures + custom POM helpers). */
     playwright?: {
       /**
-       * Controls what happens when an interactive wrapper action cannot yield a usable semantic name.
+       * Controls strict/error behavior for Playwright generation.
        *
-       * - `"ignore"` (default): allow existing generic fallback behavior
-       * - `"error"`: fail generation and require a stable, nameable action signal
+       * - `"ignore"` (default): keep current permissive defaults for all supported strictness checks
+       * - `"error"`: enable error-on-failure behavior for all supported strictness checks
+       * - `{ ... }`: override individual checks without enabling all of them
        */
-      missingSemanticNameBehavior?: MissingSemanticNameBehavior;
+      errorBehavior?: PlaywrightErrorBehavior;
 
       /**
        * Generate Playwright fixture helpers alongside generated POMs.

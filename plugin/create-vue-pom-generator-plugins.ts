@@ -7,7 +7,7 @@ import type { VuePomGeneratorLogger, VuePomGeneratorVerbosity } from "./logger";
 import { createLogger } from "./logger";
 import { createSupportPlugins } from "./support-plugins";
 import { createTestIdsVirtualModulesPlugin } from "./support/virtual-modules";
-import type { ExistingIdBehavior, MissingSemanticNameBehavior, PomNameCollisionBehavior, RouterModuleShimDefinition, VuePluginOwnership, VuePomGeneratorPluginOptions } from "./types";
+import type { ExistingIdBehavior, MissingSemanticNameBehavior, PlaywrightErrorBehavior, PlaywrightErrorBehaviorOptions, PomNameCollisionBehavior, RouterModuleShimDefinition, VuePluginOwnership, VuePomGeneratorPluginOptions } from "./types";
 import { createVuePluginWithTestIds } from "./vue-plugin";
 
 import type { ElementMetadata } from "../metadata-collector";
@@ -35,6 +35,46 @@ function assertOneOf<T extends string>(value: T | undefined, allowed: readonly T
     return;
   }
   throw new TypeError(`${name} must be one of: ${allowed.join(", ")}.`);
+}
+
+function assertPlaywrightErrorBehavior(
+  value: PlaywrightErrorBehavior | undefined,
+  name: string,
+): asserts value is PlaywrightErrorBehavior {
+  if (!value) {
+    return;
+  }
+
+  if (value === "ignore" || value === "error") {
+    return;
+  }
+
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`${name} must be "ignore", "error", or an object.`);
+  }
+
+  const supportedKeys = new Set<keyof PlaywrightErrorBehaviorOptions>(["missingSemanticNameBehavior"]);
+  for (const key of Object.keys(value)) {
+    if (!supportedKeys.has(key as keyof PlaywrightErrorBehaviorOptions)) {
+      throw new TypeError(`${name} contains unsupported key "${key}".`);
+    }
+  }
+
+  assertOneOf(value.missingSemanticNameBehavior, ["ignore", "error"], `${name}.missingSemanticNameBehavior`);
+}
+
+function resolveMissingSemanticNameBehavior(
+  value: PlaywrightErrorBehavior | undefined,
+): MissingSemanticNameBehavior {
+  if (!value) {
+    return "ignore";
+  }
+
+  if (value === "ignore" || value === "error") {
+    return value;
+  }
+
+  return value.missingSemanticNameBehavior ?? "ignore";
 }
 
 function assertRouterModuleShims(
@@ -231,7 +271,8 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
   const vuePluginOwnership: VuePluginOwnership = isNuxt ? "external" : (options.vuePluginOwnership ?? "internal");
   const usesExternalVuePlugin = vuePluginOwnership === "external";
   const csharp = generationOptions?.csharp;
-  const missingSemanticNameBehavior: MissingSemanticNameBehavior = generationOptions?.playwright?.missingSemanticNameBehavior ?? "ignore";
+  const playwrightErrorBehavior = generationOptions?.playwright?.errorBehavior;
+  const missingSemanticNameBehavior = resolveMissingSemanticNameBehavior(playwrightErrorBehavior);
   const generateFixtures = generationOptions?.playwright?.fixtures;
   const customPoms = generationOptions?.playwright?.customPoms;
 
@@ -273,7 +314,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
 
       if (generationEnabled) {
         assertNonEmptyString(outDir, "[vue-pom-generator] generation.outDir");
-        assertOneOf(missingSemanticNameBehavior, ["ignore", "error"], "[vue-pom-generator] generation.playwright.missingSemanticNameBehavior");
+        assertPlaywrightErrorBehavior(playwrightErrorBehavior, "[vue-pom-generator] generation.playwright.errorBehavior");
         assertRouterModuleShims(routerModuleShims, "[vue-pom-generator] generation.router.moduleShims");
 
         if (generationOptions?.router && routerType === "vue-router") {
