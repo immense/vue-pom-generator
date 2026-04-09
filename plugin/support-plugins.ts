@@ -28,6 +28,7 @@ interface SupportFactoryOptions {
 
   /** Languages to emit POMs for. */
   emitLanguages?: Array<"ts" | "csharp">;
+  typescriptOutputStructure?: "aggregated" | "split";
 
   csharp?: {
     namespace?: string;
@@ -66,6 +67,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     existingIdBehavior,
     outDir,
     emitLanguages,
+    typescriptOutputStructure,
     csharp,
     routerAwarePoms,
     routerEntry,
@@ -120,6 +122,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     normalizedBasePagePath,
     outDir,
     emitLanguages,
+    typescriptOutputStructure,
     csharp,
     generateFixtures,
     customPomAttachments,
@@ -152,6 +155,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     basePageClassPath,
     outDir,
     emitLanguages,
+    typescriptOutputStructure,
     csharp,
     generateFixtures,
     customPomAttachments,

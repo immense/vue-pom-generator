@@ -183,6 +183,119 @@ describe("generated output", () => {
     }
   });
 
+  it("typechecks split TypeScript output with barrel exports and stub targets", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-split-"));
+
+    writePlaywrightTypeStub(tempRoot);
+
+    const basePagePath = path.join(tempRoot, "BasePage.ts");
+    writeFile(
+      basePagePath,
+      [
+        "export type Fluent<T extends object> = T & PromiseLike<T>;",
+        "export class BasePage {",
+        "  public page: any;",
+        "  public constructor(page?: any, _options?: { testIdAttribute?: string }) {",
+        "    this.page = page;",
+        "  }",
+        "  protected fluent<T extends object>(_factory: () => Promise<T>): Fluent<T> {",
+        "    throw new Error('not implemented');",
+        "  }",
+        "  protected locatorByTestId(_testId: string): any {",
+        "    return null as any;",
+        "  }",
+        "  protected keyedLocators<TKey extends string>(_getLocator: (key: TKey) => any): Record<TKey, any> {",
+        "    return {} as any;",
+        "  }",
+        "  protected selectorForTestId(testId: string): string {",
+        "    return `[data-testid=\"${testId}\"]`;",
+        "  }",
+        "  protected async clickByTestId(_testId: string, _annotationText: string = '', _wait: boolean = true): Promise<void> {}",
+        "  protected async clickWithinTestIdByLabel(_rootTestId: string, _label: string, _annotationText: string = '', _wait: boolean = true, _options?: { exact?: boolean }): Promise<void> {}",
+        "  protected async fillInputByTestId(_testId: string, _text: string, _annotationText: string = ''): Promise<void> {}",
+        "  protected async selectVSelectByTestId(_testId: string, _value: string, _timeOut = 500, _annotationText: string = ''): Promise<void> {}",
+        "  protected async animateCursorToElement(_selector: string, _executeClick = true, _delay = 100, _annotationText: string = '', _waitForInstrumentationEvent = true): Promise<void> {}",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    writeFile(
+      path.join(tempRoot, "Pointer.ts"),
+      [
+        "export type PlaywrightAnimationOptions = any;",
+        "export function setPlaywrightAnimationOptions(_animation: PlaywrightAnimationOptions): void {}",
+        "export class Pointer {",
+        "  public constructor(_page: any, _testIdAttribute: string) {}",
+        "}",
+        "",
+      ].join("\n"),
+    );
+
+    writeFile(
+      path.join(tempRoot, "src", "views", "NewTenantPage.vue"),
+      "<template><TenantDetailsEditForm /></template>\n",
+    );
+
+    const navigationEntry: IDataTestId = {
+      value: "TenantListPage-NewTenant-routerlink",
+      targetPageObjectModelClass: "NewTenantPage",
+      pom: {
+        nativeRole: "button",
+        methodName: "NewTenant",
+        formattedDataTestId: "TenantListPage-NewTenant-routerlink",
+        params: {},
+      },
+    };
+
+    const tenantListDeps: IComponentDependencies = {
+      filePath: path.join(tempRoot, "src", "views", "TenantListPage.vue"),
+      childrenComponentSet: new Set(["TenantDetailsEditForm"]),
+      usedComponentSet: new Set(["TenantDetailsEditForm"]),
+      dataTestIdSet: new Set([navigationEntry]),
+      generatedMethods: new Map(),
+      isView: true,
+    };
+
+    const formDeps: IComponentDependencies = {
+      filePath: path.join(tempRoot, "src", "components", "TenantDetailsEditForm.vue"),
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set([{
+        value: "TenantDetailsEditForm-Name-input",
+        pom: {
+          nativeRole: "input",
+          methodName: "TenantName",
+          formattedDataTestId: "TenantDetailsEditForm-Name-input",
+          params: { text: "string", annotationText: 'string = ""' },
+        },
+      }]),
+      generatedMethods: new Map([
+        ["typeTenantName", { params: "name: string", argNames: ["name"] }],
+      ]),
+      isView: false,
+    };
+
+    const componentHierarchyMap = new Map<string, IComponentDependencies>([
+      ["TenantListPage", tenantListDeps],
+      ["TenantDetailsEditForm", formDeps],
+    ]);
+
+    const outDir = path.join(tempRoot, "out");
+    await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
+      outDir,
+      projectRoot: tempRoot,
+      typescriptOutputStructure: "split",
+    });
+
+    const result = runTscNoEmit([path.join(outDir, "index.ts")], { cwd: tempRoot });
+
+    if (result.status !== 0) {
+      const stdout = (result.stdout || "").toString();
+      const stderr = (result.stderr || "").toString();
+      throw new Error(`tsc failed (exit ${result.status})\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`);
+    }
+  });
+
   it("typechecks generated fixtures that prefer matching override classes", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-"));
 

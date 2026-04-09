@@ -27,6 +27,7 @@ interface BuildProcessorOptions {
 
   outDir?: string;
   emitLanguages?: Array<"ts" | "csharp">;
+  typescriptOutputStructure?: "aggregated" | "split";
   csharp?: {
     namespace?: string;
   };
@@ -105,6 +106,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     normalizedBasePagePath,
     outDir,
     emitLanguages,
+    typescriptOutputStructure,
     csharp,
     generateFixtures,
     customPomAttachments,
@@ -364,6 +366,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
       await generateFiles(componentHierarchyMap, vueFilesPathMap, normalizedBasePagePath, {
         outDir,
         emitLanguages,
+        typescriptOutputStructure,
         csharp,
         generateFixtures,
         customPomAttachments,

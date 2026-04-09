@@ -159,6 +159,18 @@ describe("createVuePomGeneratorPlugins options", () => {
     expect(() => runConfigResolved(plugins)).not.toThrow();
   });
 
+  it("accepts split Playwright output structure", () => {
+    const plugins = createVuePomGeneratorPlugins({
+      generation: {
+        outDir: "./tests/playwright/generated",
+        playwright: {
+          outputStructure: "split",
+        },
+      },
+    });
+
+    expect(() => runConfigResolved(plugins)).not.toThrow();
+  });
   it("fails fast for invalid injection.viewsDir", () => {
     const plugins = createVuePomGeneratorPlugins({
       injection: { viewsDir: "   " },
@@ -211,6 +223,18 @@ describe("createVuePomGeneratorPlugins options", () => {
     expect(() => runConfigResolved(plugins)).toThrow("errorBehavior.missingSemanticNameBehavior");
   });
 
+  it("fails fast for invalid generation.playwright.outputStructure", () => {
+    const plugins = createVuePomGeneratorPlugins({
+      generation: {
+        outDir: "tests/playwright/generated",
+        playwright: {
+          outputStructure: "directory" as "aggregated",
+        },
+      },
+    });
+
+    expect(() => runConfigResolved(plugins)).toThrow("generation.playwright.outputStructure");
+  });
   it("fails fast when generation.router.moduleShims has an empty export list", () => {
     const plugins = createVuePomGeneratorPlugins({
       generation: {

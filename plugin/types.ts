@@ -8,6 +8,7 @@ export interface ErrorBehaviorOptions {
   missingSemanticNameBehavior?: MissingSemanticNameBehavior;
 }
 export type ErrorBehavior = MissingSemanticNameBehavior | ErrorBehaviorOptions;
+export type PlaywrightOutputStructure = "aggregated" | "split";
 
 /**
  * Controls what happens when the generator would emit duplicate POM member names within a single class.
@@ -139,16 +140,16 @@ export interface VuePomGeneratorPluginOptions {
    * Set to `false` to disable code generation entirely while still injecting/collecting test ids.
    */
   generation?: false | {
-    /**
-     * Output directory for generated files.
-     *
-      * Defaults to `tests/playwright/__generated__` (relative to the Vite project root).
-      *
-      * Generated outputs (by default):
-      * - `<outDir>/page-object-models.g.ts`
-      * - `<outDir>/index.ts` (stable barrel that re-exports from `page-object-models.g`)
-      * - managed `.gitattributes` entries when using a custom outDir outside `__generated__`
-      */
+      /**
+       * Output directory for generated files.
+       *
+       * Defaults to `tests/playwright/__generated__` (relative to the Vite project root).
+       *
+       * Generated outputs (by default):
+       * - `<outDir>/page-object-models.g.ts`
+       * - `<outDir>/index.ts` (stable barrel that re-exports from `page-object-models.g`)
+       * - managed `.gitattributes` entries when using a custom outDir outside `__generated__`
+       */
     outDir?: string;
 
     /**
@@ -253,6 +254,14 @@ export interface VuePomGeneratorPluginOptions {
 
     /** Playwright-specific generation features (fixtures + custom POM helpers). */
     playwright?: {
+      /**
+       * Controls how generated TypeScript Playwright page objects are laid out on disk.
+       *
+       * - `"aggregated"` (default): emit a single `page-object-models.g.ts`
+       * - `"split"`: emit one generated `.g.ts` file per class plus a stable `index.ts` barrel
+       */
+      outputStructure?: PlaywrightOutputStructure;
+
       /**
        * Generate Playwright fixture helpers alongside generated POMs.
        *

@@ -30,6 +30,7 @@ interface DevProcessorOptions {
 
   outDir?: string;
   emitLanguages?: Array<"ts" | "csharp">;
+  typescriptOutputStructure?: "aggregated" | "split";
   csharp?: {
     namespace?: string;
   };
@@ -64,6 +65,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     basePageClassPath,
     outDir,
     emitLanguages,
+    typescriptOutputStructure,
     csharp,
     generateFixtures,
     customPomAttachments,
@@ -333,6 +335,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         generateFiles(snapshotHierarchy, snapshotVuePathMap, normalizedBasePagePath, {
           outDir,
           emitLanguages,
+          typescriptOutputStructure,
           csharp,
           generateFixtures,
           customPomAttachments,

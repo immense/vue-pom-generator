@@ -30,7 +30,7 @@ type GenerateFilesCall = [
   Map<string, IComponentDependencies>,
   Map<string, string>,
   string,
-  { viewsDir?: string; scanDirs?: string[] },
+  { viewsDir?: string; scanDirs?: string[]; typescriptOutputStructure?: "aggregated" | "split" },
 ];
 
 interface DevServerStub {
@@ -111,6 +111,8 @@ describe("dev processor option plumbing", () => {
         customPomAttachments: [],
         nameCollisionBehavior: "error",
         missingSemanticNameBehavior: "error",
+        typescriptOutputStructure: "split",
+        missingSemanticNameBehavior: "error",
         testIdAttribute: "data-testid",
         routerAwarePoms: false,
         loggerRef: {
@@ -161,6 +163,7 @@ describe("dev processor option plumbing", () => {
       expect(generateOptions).toMatchObject({
         viewsDir: "src/views",
         scanDirs: ["src"],
+        typescriptOutputStructure: "split",
       });
     }
     finally {

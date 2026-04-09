@@ -289,6 +289,83 @@ describe("class-generation coverage", () => {
     }
   });
 
+  it("emits split TypeScript POM files with a stable barrel and stub targets", async () => {
+    const tempRoot = makeTempRoot("vue-pom-split-");
+
+    try {
+      const basePagePath = path.join(tempRoot, "BasePage.ts");
+      writeMinimalBasePage(basePagePath);
+
+      writeFile(
+        path.join(tempRoot, "src", "views", "NewTenantPage.vue"),
+        [
+          "<template>",
+          "  <TenantDetailsEditForm />",
+          "</template>",
+          "",
+        ].join("\n"),
+      );
+
+      const navigationEntry: IDataTestId = {
+        value: "TenantListPage-NewTenant-routerlink",
+        targetPageObjectModelClass: "NewTenantPage",
+      };
+
+      const depsTenantListPage = makeDeps({
+        filePath: path.join(tempRoot, "src", "views", "TenantListPage.vue"),
+        isView: true,
+        usedComponentSet: new Set(["TenantDetailsEditForm"]),
+        dataTestIdSet: new Set([navigationEntry]),
+      });
+
+      const depsForm = makeDeps({
+        filePath: path.join(tempRoot, "src", "components", "TenantDetailsEditForm.vue"),
+        isView: false,
+        dataTestIdSet: new Set([{ value: "TenantDetailsEditForm-Name-input" }]),
+        generatedMethods: new Map([
+          ["typeTenantName", { params: "name: string", argNames: ["name"] }],
+        ]),
+      });
+
+      const componentHierarchyMap = new Map<string, IComponentDependencies>([
+        ["TenantListPage", depsTenantListPage],
+        ["TenantDetailsEditForm", depsForm],
+      ]);
+
+      const outDir = path.join(tempRoot, "pom");
+      await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
+        outDir,
+        projectRoot: tempRoot,
+        typescriptOutputStructure: "split",
+      });
+
+      expect(fs.existsSync(path.join(outDir, "page-object-models.g.ts"))).toBe(false);
+
+      const indexContent = readFile(path.join(outDir, "index.ts"));
+      expect(indexContent).toContain('export * from "./TenantDetailsEditForm.g";');
+      expect(indexContent).toContain('export * from "./TenantListPage.g";');
+      expect(indexContent).toContain('export * from "./NewTenantPage.g";');
+
+      const tenantListPageContent = readFile(path.join(outDir, "TenantListPage.g.ts"));
+      expect(tenantListPageContent).toContain('import { NewTenantPage }');
+      expect(tenantListPageContent).toContain('import { TenantDetailsEditForm }');
+
+      const newTenantPageContent = readFile(path.join(outDir, "NewTenantPage.g.ts"));
+      expect(newTenantPageContent).toContain("export class NewTenantPage extends BasePage");
+      expect(newTenantPageContent).toContain("TenantDetailsEditForm: TenantDetailsEditForm;");
+      expect(newTenantPageContent).toContain("async typeTenantName(name: string)");
+
+      const gitAttributesContent = readFile(path.join(outDir, ".gitattributes"));
+      expect(gitAttributesContent).toContain("TenantDetailsEditForm.g.ts linguist-generated");
+      expect(gitAttributesContent).toContain("TenantListPage.g.ts linguist-generated");
+      expect(gitAttributesContent).toContain("NewTenantPage.g.ts linguist-generated");
+      expect(gitAttributesContent).toContain("index.ts linguist-generated");
+    }
+    finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("supports vueRouterFluentChaining by emitting route metadata and goToSelf/goTo methods", async () => {
     const tempRoot = makeTempRoot("vue-pom-router-fluent-");
 
