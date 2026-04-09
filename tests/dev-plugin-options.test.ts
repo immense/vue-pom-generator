@@ -113,7 +113,6 @@ describe("dev processor option plumbing", () => {
         nameCollisionBehavior: "error",
         missingSemanticNameBehavior: "error",
         typescriptOutputStructure: "split",
-        missingSemanticNameBehavior: "error",
         testIdAttribute: "data-testid",
         routerAwarePoms: false,
         loggerRef: {

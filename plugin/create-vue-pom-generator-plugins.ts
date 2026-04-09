@@ -273,9 +273,6 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
   const errorBehavior = options.errorBehavior;
   const missingSemanticNameBehavior = resolveMissingSemanticNameBehavior(errorBehavior);
   const typescriptOutputStructure: PlaywrightOutputStructure = generationOptions?.playwright?.outputStructure ?? "aggregated";
-  const errorBehavior = options.errorBehavior;
-  const missingSemanticNameBehavior = resolveMissingSemanticNameBehavior(errorBehavior);
-  const typescriptOutputStructure: PlaywrightOutputStructure = generationOptions?.playwright?.outputStructure ?? "aggregated";
   const generateFixtures = generationOptions?.playwright?.fixtures;
   const customPoms = generationOptions?.playwright?.customPoms;
 
