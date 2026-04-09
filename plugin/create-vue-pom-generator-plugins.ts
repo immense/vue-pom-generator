@@ -7,7 +7,7 @@ import type { VuePomGeneratorLogger, VuePomGeneratorVerbosity } from "./logger";
 import { createLogger } from "./logger";
 import { createSupportPlugins } from "./support-plugins";
 import { createTestIdsVirtualModulesPlugin } from "./support/virtual-modules";
-import type { ExistingIdBehavior, PomNameCollisionBehavior, RouterModuleShimDefinition, VuePluginOwnership, VuePomGeneratorPluginOptions } from "./types";
+import type { ErrorBehavior, ErrorBehaviorOptions, ExistingIdBehavior, MissingSemanticNameBehavior, PomNameCollisionBehavior, RouterModuleShimDefinition, VuePluginOwnership, VuePomGeneratorPluginOptions } from "./types";
 import { createVuePluginWithTestIds } from "./vue-plugin";
 
 import type { ElementMetadata } from "../metadata-collector";
@@ -26,6 +26,55 @@ function assertNonEmptyStringArray(value: string[] | undefined, name: string): a
   for (const [index, entry] of value.entries()) {
     assertNonEmptyString(entry, `${name}[${index}]`);
   }
+}
+
+function assertOneOf<T extends string>(value: T | undefined, allowed: readonly T[], name: string): asserts value is T {
+  if (!value)
+    return;
+  if (allowed.includes(value)) {
+    return;
+  }
+  throw new TypeError(`${name} must be one of: ${allowed.join(", ")}.`);
+}
+
+function assertErrorBehavior(
+  value: ErrorBehavior | undefined,
+  name: string,
+): asserts value is ErrorBehavior {
+  if (!value) {
+    return;
+  }
+
+  if (value === "ignore" || value === "error") {
+    return;
+  }
+
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`${name} must be "ignore", "error", or an object.`);
+  }
+
+  const supportedKeys = new Set<keyof ErrorBehaviorOptions>(["missingSemanticNameBehavior"]);
+  for (const key of Object.keys(value)) {
+    if (!supportedKeys.has(key as keyof ErrorBehaviorOptions)) {
+      throw new TypeError(`${name} contains unsupported key "${key}".`);
+    }
+  }
+
+  assertOneOf(value.missingSemanticNameBehavior, ["ignore", "error"], `${name}.missingSemanticNameBehavior`);
+}
+
+function resolveMissingSemanticNameBehavior(
+  value: ErrorBehavior | undefined,
+): MissingSemanticNameBehavior {
+  if (!value) {
+    return "ignore";
+  }
+
+  if (value === "ignore" || value === "error") {
+    return value;
+  }
+
+  return value.missingSemanticNameBehavior ?? "ignore";
 }
 
 function assertRouterModuleShims(
@@ -222,6 +271,8 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
   const vuePluginOwnership: VuePluginOwnership = isNuxt ? "external" : (options.vuePluginOwnership ?? "internal");
   const usesExternalVuePlugin = vuePluginOwnership === "external";
   const csharp = generationOptions?.csharp;
+  const errorBehavior = options.errorBehavior;
+  const missingSemanticNameBehavior = resolveMissingSemanticNameBehavior(errorBehavior);
   const generateFixtures = generationOptions?.playwright?.fixtures;
   const customPoms = generationOptions?.playwright?.customPoms;
 
@@ -260,6 +311,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
       assertNonEmptyString(testIdAttribute, "[vue-pom-generator] injection.attribute");
       assertNonEmptyString(viewsDir, "[vue-pom-generator] injection.viewsDir");
       assertNonEmptyStringArray(wrapperSearchRoots, "[vue-pom-generator] injection.wrapperSearchRoots");
+      assertErrorBehavior(errorBehavior, "[vue-pom-generator] errorBehavior");
 
       if (generationEnabled) {
         assertNonEmptyString(outDir, "[vue-pom-generator] generation.outDir");
@@ -276,7 +328,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
 
       // Small but helpful diagnostics.
       loggerRef.current.info(`projectRoot=${projectRootRef.current}`);
-      loggerRef.current.info(`Active plugins: ${config.plugins.map(p => p.name).filter(n => n.includes('vue-pom')).join(', ')}`);
+      loggerRef.current.info(`Active plugins: ${(config.plugins ?? []).map(p => p.name).filter(n => n.includes('vue-pom')).join(', ')}`);
     }
   };
 
@@ -315,6 +367,7 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     scanDirs,
     getWrapperSearchRoots: getWrapperSearchRootsAbs,
     nameCollisionBehavior,
+    missingSemanticNameBehavior,
     existingIdBehavior,
     outDir,
     emitLanguages,

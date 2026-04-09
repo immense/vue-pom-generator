@@ -3,6 +3,11 @@ import type { NativeWrappersMap } from "../utils";
 
 export type ExistingIdBehavior = "preserve" | "overwrite" | "error";
 export type VuePluginOwnership = "internal" | "external";
+export type MissingSemanticNameBehavior = "ignore" | "error";
+export interface ErrorBehaviorOptions {
+  missingSemanticNameBehavior?: MissingSemanticNameBehavior;
+}
+export type ErrorBehavior = MissingSemanticNameBehavior | ErrorBehaviorOptions;
 
 /**
  * Controls what happens when the generator would emit duplicate POM member names within a single class.
@@ -49,6 +54,19 @@ export interface VuePomGeneratorPluginOptions {
      */
     verbosity?: "silent" | "warn" | "info" | "debug";
   };
+
+  /**
+   * Controls strict/error behavior for generator checks.
+   *
+   * - `"ignore"` (default): keep current permissive defaults for all supported strictness checks
+   * - `"error"`: enable error-on-failure behavior for all supported strictness checks
+   * - `{ ... }`: override individual checks without enabling all of them
+   *
+   * Current scope: this first pass is intentionally narrow. The object form currently supports
+   * `missingSemanticNameBehavior`, which targets button-like wrappers with `:handler` during
+   * Playwright generation.
+   */
+  errorBehavior?: ErrorBehavior;
 
   /**
    * Configuration for injecting/deriving test ids from Vue templates.

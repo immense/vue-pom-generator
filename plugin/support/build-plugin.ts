@@ -40,6 +40,7 @@ interface BuildProcessorOptions {
 
   /** How to handle POM member-name collisions. */
   nameCollisionBehavior?: PomNameCollisionBehavior;
+  missingSemanticNameBehavior?: "ignore" | "error";
   /** How to handle existing data-testid attributes. */
   existingIdBehavior?: "preserve" | "overwrite" | "error";
   /** Native wrapper component config. */
@@ -113,6 +114,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     customPomImportNameCollisionBehavior,
     testIdAttribute,
     nameCollisionBehavior,
+    missingSemanticNameBehavior,
     existingIdBehavior,
     nativeWrappers,
     excludedComponents,
@@ -252,6 +254,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
                   existingIdBehavior: existingIdBehavior ?? "preserve",
                   testIdAttribute,
                   nameCollisionBehavior,
+                  missingSemanticNameBehavior,
                   warn: (message: string) => loggerRef.current.warn(message),
                   vueFilesPathMap,
                   wrapperSearchRoots: getWrapperSearchRoots(),

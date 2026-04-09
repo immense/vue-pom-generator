@@ -720,6 +720,29 @@ describe('createTestIdTransform', () => {
     expect(deps?.generatedMethods?.has('clickRunDeploymentActionAssign')).toBe(true)
   })
 
+  it('fails fast for button-like wrapper handlers that cannot produce a semantic name when configured', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const nativeWrappers: NativeWrappersMap = {
+      LoadButton: { role: 'button' },
+    }
+
+    expect(() => {
+      compileAndCaptureAst(
+        `
+          <LoadButton :handler="() => person && impersonateUser(person.userId!)">
+            Impersonate
+          </LoadButton>
+        `,
+        {
+          filename: '/src/views/RbacUserDetailsPage.vue',
+          nodeTransforms: [createTestIdTransform('RbacUserDetailsPage', componentHierarchyMap, nativeWrappers, [], '/src/views', {
+            missingSemanticNameBehavior: 'error',
+          })],
+        },
+      )
+    }).toThrow(/move complex inline logic into a named function/i)
+  })
+
   it('emits per-key click methods when v-for iterates a static literal list', () => {
     const componentHierarchyMap = new Map()
 

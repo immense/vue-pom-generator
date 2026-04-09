@@ -10,6 +10,7 @@ import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 interface CreateTestIdTransformOptions {
   existingIdBehavior?: string;
   nameCollisionBehavior?: string;
+  missingSemanticNameBehavior?: string;
   testIdAttribute?: string;
   warn?: (message: string) => void;
   vueFilesPathMap?: Map<string, string>;
@@ -109,6 +110,7 @@ describe("dev processor option plumbing", () => {
         basePageClassPath,
         customPomAttachments: [],
         nameCollisionBehavior: "error",
+        missingSemanticNameBehavior: "error",
         testIdAttribute: "data-testid",
         routerAwarePoms: false,
         loggerRef: {
@@ -141,6 +143,7 @@ describe("dev processor option plumbing", () => {
       expect(transformOptions).toMatchObject({
         existingIdBehavior: "preserve",
         nameCollisionBehavior: "error",
+        missingSemanticNameBehavior: "error",
         testIdAttribute: "data-testid",
         wrapperSearchRoots,
       });

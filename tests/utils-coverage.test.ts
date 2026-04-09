@@ -367,6 +367,15 @@ describe("utils.ts coverage", () => {
     expect(info?.semanticNameHint).toBe("SetShowModalTrue");
   });
 
+  it("does not derive a :handler semanticNameHint from logical-expression arrow bodies", () => {
+    const root = parseTemplate(`
+      <LoadButton :handler="() => person && impersonateUser(person.userId!)">Impersonate</LoadButton>
+    `);
+    const el = firstElement(root);
+
+    expect(nodeHandlerAttributeInfo(el)).toBeNull();
+  });
+
   it("handles :key extraction paths", () => {
     const ast = parseTemplate("<div :key=\"item.id\" />");
     const el = firstElement(ast);
