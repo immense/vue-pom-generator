@@ -1,0 +1,13 @@
+/* eslint-disable perfectionist/sort-imports */
+/** Stub POM: __CLASS_NAME__
+__AUTO_GENERATED_COMMENT__
+import type { Page as PwPage } from "@playwright/test";
+import { BasePage } from "__BASE_PAGE_IMPORT__";
+__CHILD_IMPORTS__
+/**
+ * Stub POM generated because it is referenced as a navigation target but
+ * did not have any generated test ids in this build.
+ */
+export class __CLASS_NAME__ extends BasePage {
+__CLASS_BODY__
+}

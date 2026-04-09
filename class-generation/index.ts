@@ -9,7 +9,15 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { generateViewObjectModelMethodContent } from "../method-generation";
 import { introspectNuxtPages, parseRouterFileFromCwd } from "../router-introspection";
-import { IComponentDependencies, IDataTestId, PomExtraClickMethodSpec, PomPrimarySpec, upperFirst } from "../utils";
+import {
+  IComponentDependencies,
+  IDataTestId,
+  PomExtraClickMethodSpec,
+  PomPrimarySpec,
+  isAsciiAlphaNumericCode,
+  isAsciiUppercaseLetterCode,
+  upperFirst,
+} from "../utils";
 
 // Intentionally imported so tooling understands this exported helper is part of the
 // generated POM public surface (it is consumed by generated Playwright fixtures).
@@ -123,16 +131,13 @@ function isPascalCaseComponentTag(tag: string): boolean {
   }
 
   const first = tag.charCodeAt(0);
-  if (first < 65 || first > 90) {
+  if (!isAsciiUppercaseLetterCode(first)) {
     return false;
   }
 
   for (let i = 1; i < tag.length; i += 1) {
     const code = tag.charCodeAt(i);
-    const isUpper = code >= 65 && code <= 90;
-    const isLower = code >= 97 && code <= 122;
-    const isDigit = code >= 48 && code <= 57;
-    if (isUpper || isLower || isDigit || tag[i] === "_") {
+    if (isAsciiAlphaNumericCode(code) || tag[i] === "_") {
       continue;
     }
     return false;
@@ -787,22 +792,12 @@ async function generateSplitTypeScriptFiles(
       "    }",
     ];
 
-    const content = [
-      eslintSuppressionHeader,
-      `/** Stub POM: ${targetClassName}\n${AUTO_GENERATED_COMMENT}`,
-      'import type { Page as PwPage } from "@playwright/test";',
-      `import { BasePage } from "${basePageImportSpecifier}";`,
-      ...(childImports.length ? ["", ...childImports] : []),
-      "",
-      "/**",
-      " * Stub POM generated because it is referenced as a navigation target but",
-      " * did not have any generated test ids in this build.",
-      " */",
-      `export class ${targetClassName} extends BasePage {`,
-      ...body,
-      "}",
-      "",
-    ].join("\n");
+    const content = renderSplitStubPomContent({
+      className: targetClassName,
+      basePageImportSpecifier,
+      childImports,
+      bodyLines: body,
+    });
 
     files.push({ filePath, content });
   }
@@ -1987,6 +1982,48 @@ function resolvePluginAsset(relative: string): string {
   }
 }
 
+function readTextAsset(absPath: string, description: string): string {
+  try {
+    return fs.readFileSync(absPath, "utf8");
+  }
+  catch {
+    throw new VuePomGeneratorError(`Failed to read ${description} at ${absPath}`);
+  }
+}
+
+let splitStubPomTemplate: string | undefined;
+
+function replaceTemplateToken(content: string, token: string, value: string): string {
+  return content.split(token).join(value);
+}
+
+function getSplitStubPomTemplate(): string {
+  if (splitStubPomTemplate) {
+    return splitStubPomTemplate;
+  }
+
+  splitStubPomTemplate = readTextAsset(
+    resolvePluginAsset("../class-generation/SplitStubPage.template"),
+    "SplitStubPage.template",
+  );
+  return splitStubPomTemplate;
+}
+
+function renderSplitStubPomContent(options: {
+  className: string;
+  basePageImportSpecifier: string;
+  childImports: string[];
+  bodyLines: string[];
+}): string {
+  let content = getSplitStubPomTemplate();
+  content = replaceTemplateToken(content, "__CLASS_NAME__", options.className);
+  content = replaceTemplateToken(content, "__AUTO_GENERATED_COMMENT__", AUTO_GENERATED_COMMENT);
+  content = replaceTemplateToken(content, "__BASE_PAGE_IMPORT__", options.basePageImportSpecifier);
+  content = replaceTemplateToken(content, "__CHILD_IMPORTS__", options.childImports.join("\n"));
+  content = replaceTemplateToken(content, "__CLASS_BODY__", options.bodyLines.join("\n"));
+  return content;
+}
+
 interface RuntimeGeneratedAssetSpec {
   absolutePath: string;
   description: string;
@@ -2022,18 +2059,9 @@ function getRuntimeGeneratedAssetSpecs(baseDir: string, basePageClassPath: strin
 }
 
 function buildRuntimeGeneratedFiles(baseDir: string, basePageClassPath: string): GeneratedFileOutput[] {
-  const readText = (absPath: string, description: string) => {
-    try {
-      return fs.readFileSync(absPath, "utf8");
-    }
-    catch {
-      throw new VuePomGeneratorError(`Failed to read ${description} at ${absPath}`);
-    }
-  };
-
   return getRuntimeGeneratedAssetSpecs(baseDir, basePageClassPath).map(spec => ({
     filePath: spec.outputPath,
-    content: readText(spec.absolutePath, spec.description),
+    content: readTextAsset(spec.absolutePath, spec.description),
   }));
 }
 
@@ -2352,58 +2380,7 @@ async function generateAggregatedFiles(
 
   const indexFile = path.join(base, "index.ts");
   const indexContent = `${eslintSuppressionHeader}/**\n * POM exports\n${AUTO_GENERATED_COMMENT}\n\nexport * from "./page-object-models.g";\n`;
-
-  const runtimeDirAbs = path.join(base, "_pom-runtime");
-  const runtimeClassGenAbs = path.join(runtimeDirAbs, "class-generation");
-
-  const readText = (absPath: string, description: string) => {
-    try {
-      return fs.readFileSync(absPath, "utf8");
-    }
-    catch {
-      throw new Error(`Failed to read ${description} at ${absPath}`);
-    }
-  };
-
-  // Copy runtime dependencies into the output folder so the aggregated POM file can
-  // import them without relying on workspace package resolution.
-  // Resolve paths to bundled runtime files.  Mirror the pattern in support-plugins.ts:
-  // try fileURLToPath(new URL(..., import.meta.url)) (works in ESM where import.meta.url
-  // is a proper file:// URL), then fall back to __dirname (available in the CJS bundle
-  // via Node's module wrapper).  The fallback is needed because ensureDomShim() in
-  // router-introspection sets globalThis.document via JSDOM (url "https://example.test/"),
-  // after which Rollup's CJS shim for import.meta.url resolves to document.baseURI
-  // ("https://example.test/index.cjs") — not a file:// URL — causing fileURLToPath to throw.
-  const resolvePluginAsset = (relative: string): string => {
-    try {
-      return fileURLToPath(new URL(relative, import.meta.url));
-    }
-    catch {
-      return path.resolve(__dirname, relative);
-    }
-  };
-  const clickInstrumentationAbs = resolvePluginAsset("../click-instrumentation.ts");
-  const pointerAbs = resolvePluginAsset("../class-generation/Pointer.ts");
-  const playwrightTypesAbs = resolvePluginAsset("../class-generation/playwright-types.ts");
-
-  const runtimeFiles: Array<{ filePath: string; content: string }> = [
-    {
-      filePath: path.join(runtimeDirAbs, "click-instrumentation.ts"),
-      content: readText(clickInstrumentationAbs, "click-instrumentation.ts"),
-    },
-    {
-      filePath: path.join(runtimeClassGenAbs, "Pointer.ts"),
-      content: readText(pointerAbs, "Pointer.ts"),
-    },
-    {
-      filePath: path.join(runtimeClassGenAbs, "playwright-types.ts"),
-      content: readText(playwrightTypesAbs, "playwright-types.ts"),
-    },
-    {
-      filePath: path.join(runtimeClassGenAbs, "BasePage.ts"),
-      content: readText(basePageClassPath, "BasePage.ts"),
-    },
-  ];
+  const runtimeFiles = buildRuntimeGeneratedFiles(base, basePageClassPath);
 
   return [
     { filePath: outputFile, content },
