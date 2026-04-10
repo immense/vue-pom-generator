@@ -54,7 +54,7 @@ let tempRoot = "";
 
 try {
   // Ensure dist is current.
-  run("yarn", ["build"], { cwd: packageDir });
+  run("npm", ["run", "build"], { cwd: packageDir });
 
   // Create a packed tarball.
   const packOutRaw = runCapture("npm", ["pack", "--silent"], { cwd: packageDir });

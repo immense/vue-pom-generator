@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDevProcessorPlugin } from "../plugin/support/dev-plugin";
 
 // Mock generateFiles so the dev plugin doesn't try to write real files
-// (which would fail because BasePage.ts doesn't exist in the temp dir).
+// (which would fail because base-page.ts doesn't exist in the temp dir).
 // We're testing the compile path, not file generation.
 vi.mock("../class-generation", () => ({
   generateFiles: vi.fn(async () => undefined),
@@ -78,7 +78,7 @@ function makeDevPlugin(
   projectRoot: string,
   overrides?: Record<string, unknown>,
 ) {
-  const basePageClassPath = path.join(projectRoot, "BasePage.ts");
+  const basePageClassPath = path.join(projectRoot, "base-page.ts");
   return createDevProcessorPlugin({
     nativeWrappers: {},
     excludedComponents: [],

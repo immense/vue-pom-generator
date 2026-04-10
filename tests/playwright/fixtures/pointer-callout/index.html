@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pointer callout fixture</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%);
+        color: #0f172a;
+      }
+
+      main {
+        width: 1120px;
+        height: 640px;
+        margin: 40px auto;
+        position: relative;
+        border-radius: 32px;
+        background: rgba(255, 255, 255, 0.88);
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        box-shadow: 0 30px 80px rgba(15, 23, 42, 0.14);
+        overflow: hidden;
+      }
+
+      .hero {
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(circle at top left, rgba(56, 189, 248, 0.18), transparent 28%),
+          radial-gradient(circle at bottom right, rgba(14, 165, 233, 0.2), transparent 22%);
+      }
+
+      .card,
+      .target-panel {
+        position: absolute;
+        width: 220px;
+        padding: 22px;
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        background: rgba(255, 255, 255, 0.96);
+        box-shadow: 0 18px 36px rgba(15, 23, 42, 0.12);
+      }
+
+      .card h2,
+      .target-panel h1 {
+        margin: 0 0 10px;
+        font-size: 1.05rem;
+      }
+
+      .card p,
+      .target-panel p {
+        margin: 0;
+        line-height: 1.5;
+        color: #334155;
+      }
+
+      .card button,
+      .target-panel button {
+        margin-top: 16px;
+        border: 0;
+        padding: 11px 15px;
+        font: inherit;
+        color: #fff;
+        background: #2563eb;
+        cursor: pointer;
+      }
+
+      .north-east {
+        left: 710px;
+        top: 130px;
+      }
+
+      .south-east {
+        left: 710px;
+        top: 360px;
+      }
+
+      .south-west {
+        left: 250px;
+        top: 440px;
+      }
+
+      .target-panel {
+        left: 470px;
+        top: 265px;
+        width: 200px;
+        text-align: center;
+      }
+
+      .eyebrow {
+        margin-bottom: 10px;
+        font-size: 0.78rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #0f766e;
+      }
+
+      .target-panel button {
+        width: 100%;
+        background: #0f172a;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="hero"></div>
+
+      <section class="card north-east" data-callout-avoid data-testid="north-east-card">
+        <h2>Release notes</h2>
+        <p>Keep this summary readable while highlighting the final publish step.</p>
+        <button type="button">Review notes</button>
+      </section>
+
+      <section class="card south-east" data-callout-avoid data-testid="south-east-card">
+        <h2>Validation checks</h2>
+        <p>These results should stay visible when the callout is pointing at the main action.</p>
+        <button type="button">Inspect checks</button>
+      </section>
+
+      <section class="card south-west" data-callout-avoid data-testid="south-west-card">
+        <h2>Deployment options</h2>
+        <p>Another nearby card occupies the lower-left quadrant around the target button.</p>
+        <button type="button">Configure deploy</button>
+      </section>
+
+      <section class="target-panel" data-testid="target-panel">
+        <p class="eyebrow">Focused action</p>
+        <h1>Primary publish step</h1>
+        <p>The callout should stay clear of the surrounding cards when it appears.</p>
+        <button type="button" data-testid="callout-target">Publish package</button>
+      </section>
+    </main>
+  </body>
+</html>

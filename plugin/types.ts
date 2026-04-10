@@ -211,7 +211,7 @@ export interface VuePomGeneratorPluginOptions {
 
     /**
      * Absolute path to the BasePage template module to inline into generated output.
-     * Defaults to the copy shipped with this package: ./class-generation/BasePage.ts.
+     * Defaults to the copy shipped with this package: ./class-generation/base-page.ts.
      */
     basePageClassPath?: string;
 

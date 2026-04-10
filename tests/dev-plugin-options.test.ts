@@ -98,7 +98,7 @@ describe("dev processor option plumbing", () => {
 
       const warn = vi.fn();
       const wrapperSearchRoots = [path.join(projectRoot, "shared-wrappers")];
-      const basePageClassPath = path.join(projectRoot, "BasePage.ts");
+      const basePageClassPath = path.join(projectRoot, "base-page.ts");
 
       const plugin = createDevProcessorPlugin({
         nativeWrappers: {},
@@ -195,8 +195,8 @@ describe("dev processor option plumbing", () => {
         scanDirs: ["src"],
         getWrapperSearchRoots: () => [],
         projectRootRef: { current: projectRoot },
-        normalizedBasePagePath: path.posix.normalize(path.join(projectRoot, "BasePage.ts")),
-        basePageClassPath: path.join(projectRoot, "BasePage.ts"),
+        normalizedBasePagePath: path.posix.normalize(path.join(projectRoot, "base-page.ts")),
+        basePageClassPath: path.join(projectRoot, "base-page.ts"),
         customPomAttachments: [],
         nameCollisionBehavior: "error",
         testIdAttribute: "data-testid",

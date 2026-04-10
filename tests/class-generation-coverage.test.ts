@@ -42,8 +42,8 @@ function writeMinimalBasePage(filePath: string) {
     ].join("\n"),
   );
 
-	// The generator now also inlines Pointer.ts. Provide a minimal stub next to BasePage.ts.
-	const pointerPath = path.join(path.dirname(filePath), "Pointer.ts");
+	// The generator now also inlines pointer.ts. Provide a minimal stub next to base-page.ts.
+	const pointerPath = path.join(path.dirname(filePath), "pointer.ts");
 	writeFile(
 		pointerPath,
 		[
@@ -74,7 +74,7 @@ describe("class-generation coverage", () => {
     const tempRoot = makeTempRoot("vue-pom-fixtures-");
 
     try {
-      const basePagePath = path.join(tempRoot, "BasePage.ts");
+      const basePagePath = path.join(tempRoot, "base-page.ts");
       writeMinimalBasePage(basePagePath);
 
       const componentHierarchyMap = new Map<string, IComponentDependencies>([
@@ -155,8 +155,10 @@ describe("class-generation coverage", () => {
       const runtimeClassGenGitAttributesPath = path.join(outDir, "_pom-runtime", "class-generation", ".gitattributes");
       expect(fs.existsSync(runtimeClassGenGitAttributesPath)).toBe(true);
       const runtimeClassGenGitAttributesContent = readFile(runtimeClassGenGitAttributesPath);
-      expect(runtimeClassGenGitAttributesContent).toContain("BasePage.ts linguist-generated");
-      expect(runtimeClassGenGitAttributesContent).toContain("Pointer.ts linguist-generated");
+      expect(runtimeClassGenGitAttributesContent).toContain("base-page.ts linguist-generated");
+      expect(runtimeClassGenGitAttributesContent).toContain("callout.ts linguist-generated");
+      expect(runtimeClassGenGitAttributesContent).toContain("floating-ui.ts linguist-generated");
+      expect(runtimeClassGenGitAttributesContent).toContain("pointer.ts linguist-generated");
       expect(runtimeClassGenGitAttributesContent).toContain("playwright-types.ts linguist-generated");
 
       // 2) explicit file path
@@ -196,7 +198,7 @@ describe("class-generation coverage", () => {
     const tempRoot = makeTempRoot("vue-pom-generated-path-");
 
     try {
-      const basePagePath = path.join(tempRoot, "BasePage.ts");
+      const basePagePath = path.join(tempRoot, "base-page.ts");
       writeMinimalBasePage(basePagePath);
 
       const componentHierarchyMap = new Map<string, IComponentDependencies>([
@@ -230,7 +232,7 @@ describe("class-generation coverage", () => {
     const tempRoot = makeTempRoot("vue-pom-stubs-");
 
     try {
-      const basePagePath = path.join(tempRoot, "BasePage.ts");
+      const basePagePath = path.join(tempRoot, "base-page.ts");
       writeMinimalBasePage(basePagePath);
 
       // Create a referenced target view that will NOT be in componentHierarchyMap.
@@ -297,7 +299,7 @@ describe("class-generation coverage", () => {
     const tempRoot = makeTempRoot("vue-pom-split-");
 
     try {
-      const basePagePath = path.join(tempRoot, "BasePage.ts");
+      const basePagePath = path.join(tempRoot, "base-page.ts");
       writeMinimalBasePage(basePagePath);
 
       writeFile(
@@ -398,7 +400,7 @@ describe("class-generation coverage", () => {
         fs.symlinkSync(frontendNodeModules, tempNodeModules, "dir");
       }
 
-      const basePagePath = path.join(tempRoot, "BasePage.ts");
+      const basePagePath = path.join(tempRoot, "base-page.ts");
       writeMinimalBasePage(basePagePath);
 
       // The route introspector expects imported .vue files to exist.
@@ -490,7 +492,7 @@ describe("class-generation coverage", () => {
         fs.symlinkSync(frontendNodeModules, tempNodeModules, "dir");
       }
 
-      const basePagePath = path.join(tempRoot, "BasePage.ts");
+      const basePagePath = path.join(tempRoot, "base-page.ts");
       writeMinimalBasePage(basePagePath);
 
       writeFile(path.join(tempRoot, "src", "views", "msp-instances", "List.vue"), "<template><div /></template>\n");
@@ -557,7 +559,7 @@ describe("class-generation coverage", () => {
     const tempRoot = makeTempRoot("vue-pom-pascal-");
 
     try {
-      const basePagePath = path.join(tempRoot, "BasePage.ts");
+      const basePagePath = path.join(tempRoot, "base-page.ts");
       writeMinimalBasePage(basePagePath);
 
       const componentHierarchyMap = new Map<string, IComponentDependencies>([
@@ -702,7 +704,7 @@ describe("class-generation coverage", () => {
       ]);
 
       const outDir = path.join(tempRoot, "pom");
-      const basePagePath = path.join(tempRoot, "BasePage.ts");
+      const basePagePath = path.join(tempRoot, "base-page.ts");
       writeMinimalBasePage(basePagePath);
       await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
         outDir,
@@ -759,7 +761,7 @@ describe("class-generation coverage", () => {
       ]);
 
       const outDir = path.join(tempRoot, "pom");
-      const basePagePath = path.join(tempRoot, "BasePage.ts");
+      const basePagePath = path.join(tempRoot, "base-page.ts");
       writeMinimalBasePage(basePagePath);
       await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
         outDir,

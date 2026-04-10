@@ -73,9 +73,9 @@ describe("generated output", () => {
 
     writePlaywrightTypeStub(tempRoot);
 
-    const basePagePath = path.join(tempRoot, "BasePage.ts");
-    copyRepoFixture(tempRoot, "BasePage.full.ts", "BasePage.ts");
-    copyRepoFixture(tempRoot, "Pointer.ts", "Pointer.ts");
+    const basePagePath = path.join(tempRoot, "base-page.ts");
+    copyRepoFixture(tempRoot, "base-page.full.ts", "base-page.ts");
+    copyRepoFixture(tempRoot, "pointer.ts", "pointer.ts");
 
     const componentName = "TestComponent";
 
@@ -143,9 +143,9 @@ describe("generated output", () => {
 
     writePlaywrightTypeStub(tempRoot);
 
-    const basePagePath = path.join(tempRoot, "BasePage.ts");
-    copyRepoFixture(tempRoot, "BasePage.full.ts", "BasePage.ts");
-    copyRepoFixture(tempRoot, "Pointer.ts", "Pointer.ts");
+    const basePagePath = path.join(tempRoot, "base-page.ts");
+    copyRepoFixture(tempRoot, "base-page.full.ts", "base-page.ts");
+    copyRepoFixture(tempRoot, "pointer.ts", "pointer.ts");
 
     writeFile(
       path.join(tempRoot, "src", "views", "NewTenantPage.vue"),
@@ -217,9 +217,9 @@ describe("generated output", () => {
 
     writePlaywrightTypeStub(tempRoot);
 
-    const basePagePath = path.join(tempRoot, "BasePage.ts");
-    copyRepoFixture(tempRoot, "BasePage.minimal.ts", "BasePage.ts");
-    copyRepoFixture(tempRoot, "Pointer.ts", "Pointer.ts");
+    const basePagePath = path.join(tempRoot, "base-page.ts");
+    copyRepoFixture(tempRoot, "base-page.minimal.ts", "base-page.ts");
+    copyRepoFixture(tempRoot, "pointer.ts", "pointer.ts");
 
     writeFile(
       path.join(tempRoot, "tests", "playwright", "pom", "overrides", "PersonListPage.ts"),
@@ -268,10 +268,10 @@ describe("generated output", () => {
 
     writePlaywrightTypeStub(tempRoot);
 
-    const basePagePath = path.join(tempRoot, "BasePage.ts");
+    const basePagePath = path.join(tempRoot, "base-page.ts");
     writeFile(basePagePath, "export class BasePage { constructor(public page?: any) {} }");
     writeFile(
-      path.join(tempRoot, "Pointer.ts"),
+      path.join(tempRoot, "pointer.ts"),
       "export type PlaywrightAnimationOptions = any; export function setPlaywrightAnimationOptions(_: PlaywrightAnimationOptions): void {} export class Pointer { constructor(_: any, __: string) {} }",
     );
 
@@ -304,7 +304,7 @@ describe("generated output", () => {
 
     writePlaywrightTypeStub(tempRoot);
 
-    const basePagePath = path.join(tempRoot, "BasePage.ts");
+    const basePagePath = path.join(tempRoot, "base-page.ts");
     writeFile(
       basePagePath,
       [
@@ -315,7 +315,7 @@ describe("generated output", () => {
       ].join("\n"),
     );
     writeFile(
-      path.join(tempRoot, "Pointer.ts"),
+      path.join(tempRoot, "pointer.ts"),
       "export type PlaywrightAnimationOptions = any; export function setPlaywrightAnimationOptions(_: PlaywrightAnimationOptions): void {} export class Pointer { constructor(_: any, __: string) {} }",
     );
 
@@ -362,7 +362,7 @@ describe("generated output", () => {
 
     writePlaywrightTypeStub(tempRoot);
 
-    const basePagePath = path.join(tempRoot, "BasePage.ts");
+    const basePagePath = path.join(tempRoot, "base-page.ts");
     writeFile(
       basePagePath,
       [
@@ -373,7 +373,7 @@ describe("generated output", () => {
       ].join("\n"),
     );
     writeFile(
-      path.join(tempRoot, "Pointer.ts"),
+      path.join(tempRoot, "pointer.ts"),
       "export type PlaywrightAnimationOptions = any; export function setPlaywrightAnimationOptions(_: PlaywrightAnimationOptions): void {} export class Pointer { constructor(_: any, __: string) {} }",
     );
     writeFile(
@@ -445,7 +445,7 @@ describe("generated output", () => {
 
     writePlaywrightTypeStub(tempRoot);
 
-    const basePagePath = path.join(tempRoot, "BasePage.ts");
+    const basePagePath = path.join(tempRoot, "base-page.ts");
     writeFile(
       basePagePath,
       [
@@ -456,7 +456,7 @@ describe("generated output", () => {
       ].join("\n"),
     );
     writeFile(
-      path.join(tempRoot, "Pointer.ts"),
+      path.join(tempRoot, "pointer.ts"),
       "export type PlaywrightAnimationOptions = any; export function setPlaywrightAnimationOptions(_: PlaywrightAnimationOptions): void {} export class Pointer { constructor(_: any, __: string) {} }",
     );
 
@@ -522,7 +522,7 @@ describe("generated output", () => {
 
     writePlaywrightTypeStub(tempRoot);
 
-    const basePagePath = path.join(tempRoot, "BasePage.ts");
+    const basePagePath = path.join(tempRoot, "base-page.ts");
     writeFile(
       basePagePath,
       [
@@ -553,8 +553,8 @@ describe("generated output", () => {
       ].join("\n"),
     );
 
-    // The generator now also inlines Pointer.ts. Provide a minimal stub next to BasePage.ts.
-    const pointerPath = path.join(tempRoot, "Pointer.ts");
+    // The generator now also inlines pointer.ts. Provide a minimal stub next to base-page.ts.
+    const pointerPath = path.join(tempRoot, "pointer.ts");
     writeFile(
       pointerPath,
       [

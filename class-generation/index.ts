@@ -45,7 +45,7 @@ import {
 
 // Intentionally imported so tooling understands this exported helper is part of the
 // generated POM public surface (it is consumed by generated Playwright fixtures).
-import { setPlaywrightAnimationOptions } from "./Pointer";
+import { setPlaywrightAnimationOptions } from "./pointer";
 
 void setPlaywrightAnimationOptions;
 
@@ -919,7 +919,7 @@ async function generateSplitTypeScriptFiles(
     customPomImportNameCollisionBehavior: options.customPomImportNameCollisionBehavior,
   });
 
-  const runtimeBasePagePath = path.join(base, "_pom-runtime", "class-generation", "BasePage.ts");
+  const runtimeBasePagePath = path.join(base, "_pom-runtime", "class-generation", "base-page.ts");
   const files: GeneratedFileOutput[] = [];
 
   for (const [name, deps] of entries) {
@@ -2385,7 +2385,7 @@ function getRuntimeGeneratedAssetSpecs(baseDir: string, basePageClassPath: strin
   const runtimeClassGenSourceDir = resolvePluginAsset("../class-generation");
   const runtimeClassGenFiles = fs.readdirSync(runtimeClassGenSourceDir)
     .filter(file => file.endsWith(".ts"))
-    .filter(file => file !== "BasePage.ts" && file !== "index.ts")
+    .filter(file => file !== "base-page.ts" && file !== "index.ts")
     .sort((left, right) => left.localeCompare(right));
 
   return [
@@ -2401,8 +2401,8 @@ function getRuntimeGeneratedAssetSpecs(baseDir: string, basePageClassPath: strin
     })),
     {
       absolutePath: basePageClassPath,
-      description: "BasePage.ts",
-      outputPath: path.join(runtimeClassGenAbs, "BasePage.ts"),
+      description: "base-page.ts",
+      outputPath: path.join(runtimeClassGenAbs, "base-page.ts"),
     },
   ];
 }
@@ -2643,7 +2643,7 @@ async function generateAggregatedFiles(
     }
 
     // Aggregate mode goal: consolidate all generated POM classes into one file.
-    // Instead of inlining BasePage/Pointer helpers and stripping imports via regex, we
+    // Instead of inlining BasePage/Pointer/Callout helpers and stripping imports via regex, we
     // emit/copy those dependencies into the output folder and import them normally.
     //
     // This keeps output deterministic and avoids fragile source rewriting.
@@ -2651,12 +2651,13 @@ async function generateAggregatedFiles(
     const runtimeClassGenRel = `${runtimeDirRel}/class-generation`;
 
     imports.push(`import type { PwLocator, PwPage } from "${runtimeClassGenRel}/playwright-types";`);
-    imports.push(`import { BasePage } from "${runtimeClassGenRel}/BasePage";`);
-    imports.push(`import type { Fluent } from "${runtimeClassGenRel}/BasePage";`);
+    imports.push(`import { BasePage } from "${runtimeClassGenRel}/base-page";`);
+    imports.push(`import type { Fluent } from "${runtimeClassGenRel}/base-page";`);
     imports.push(`export * from "${runtimeDirRel}/click-instrumentation";`);
     imports.push(`export * from "${runtimeClassGenRel}/playwright-types";`);
-    imports.push(`export * from "${runtimeClassGenRel}/Pointer";`);
-    imports.push(`export * from "${runtimeClassGenRel}/BasePage";`);
+    imports.push(`export * from "${runtimeClassGenRel}/callout";`);
+    imports.push(`export * from "${runtimeClassGenRel}/pointer";`);
+    imports.push(`export * from "${runtimeClassGenRel}/base-page";`);
 
     const customPomImportResolution = resolveCustomPomImportResolution(generatedClassNames, projectRoot, {
       customPomDir: options.customPomDir,

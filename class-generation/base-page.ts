@@ -1,8 +1,9 @@
 import type { PwLocator, PwPage } from "./playwright-types";
 import { TESTID_CLICK_EVENT_NAME, TESTID_CLICK_EVENT_STRICT_FLAG } from "../click-instrumentation";
 import type { TestIdClickEventDetail } from "../click-instrumentation";
-import { Pointer } from "./Pointer";
-import type { AfterPointerClick, AfterPointerClickInfo } from "./Pointer";
+import { Callout } from "./callout";
+import { Pointer } from "./pointer";
+import type { AfterPointerClick, AfterPointerClickInfo } from "./pointer";
 
 // Click instrumentation is optional for generated POMs.
 //
@@ -92,6 +93,7 @@ export class ObjectId {
 export class BasePage {
   protected readonly testIdAttribute: string;
 
+  private readonly callout: Callout;
   private readonly pointer: InstanceType<typeof Pointer>;
 
   /**
@@ -100,7 +102,8 @@ export class BasePage {
   constructor(protected page: PwPage, options?: { testIdAttribute?: string }) {
     this.testIdAttribute = (options?.testIdAttribute || "data-testid").trim() || "data-testid";
 
-    this.pointer = new Pointer(this.page, this.testIdAttribute);
+    this.callout = new Callout(this.page);
+    this.pointer = new Pointer(this.page, this.testIdAttribute, this.callout);
   }
 
   private async waitForTestIdClickEventAfter(testId: string, options?: { timeoutMs?: number }): Promise<void> {
@@ -239,13 +242,25 @@ export class BasePage {
   protected async animateCursorToElement(
     target: string | PwLocator,
     executeClick: boolean = true,
-    delayMs: number = 100,
+    delayMs: number = 1000,
     annotationText: string = "",
     options?: {
       afterClick?: AfterPointerClick;
     },
   ): Promise<void> {
     await this.pointer.animateCursorToElement(target, executeClick, delayMs, annotationText, options);
+  }
+
+  public async showCallout(target: string | PwLocator, annotationText: string): Promise<void> {
+    await this.callout.showForElement(target, annotationText);
+  }
+
+  public async showCalloutByTestId(testId: string, annotationText: string): Promise<void> {
+    await this.showCallout(this.selectorForTestId(testId), annotationText);
+  }
+
+  public async hideCallout(): Promise<void> {
+    await this.callout.hide();
   }
 
   /**

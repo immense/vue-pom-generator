@@ -414,7 +414,14 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
 
       const watchedVueGlobs = scanDirs.map(dir => path.resolve(projectRootRef.current, dir, "**", "*.vue"));
       const watchedPluginGlob = path.resolve(projectRootRef.current, "vite-plugins", "vue-pom-generator", "**", "*.ts");
-      server.watcher.add([...watchedVueGlobs, watchedPluginGlob, basePageClassPath]);
+      const runtimeDir = path.dirname(basePageClassPath);
+      server.watcher.add([
+        ...watchedVueGlobs,
+        watchedPluginGlob,
+        basePageClassPath,
+        path.resolve(runtimeDir, "pointer.ts"),
+        path.resolve(runtimeDir, "callout.ts"),
+      ]);
 
       scheduleVueFileRegenLocal = (filePath: string, source: "hmr" | "fs") => {
         pendingChangedVueFiles.add(filePath);

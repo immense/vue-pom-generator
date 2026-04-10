@@ -100,11 +100,11 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     // Prefer resolving relative to this package so consumers don't need a repo-specific layout.
     // Works in ESM output.
     try {
-      return fileURLToPath(new URL("../class-generation/BasePage.ts", import.meta.url));
+      return fileURLToPath(new URL("../class-generation/base-page.ts", import.meta.url));
     }
     catch {
       // Fallback for CJS output.
-      return path.resolve(__dirname, "..", "class-generation", "BasePage.ts");
+      return path.resolve(__dirname, "..", "class-generation", "base-page.ts");
     }
   };
 

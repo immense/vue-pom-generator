@@ -333,15 +333,21 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
       });
 
       if (!fs.existsSync(basePageClassPath)) {
-        this.error(`BasePage.ts not found at ${basePageClassPath}. Ensure it is included in the build.`);
+        this.error(`Base page runtime file not found at ${basePageClassPath}. Ensure it is included in the build.`);
       }
       this.addWatchFile(basePageClassPath);
 
-      const pointerPath = path.resolve(path.dirname(basePageClassPath), "Pointer.ts");
+      const pointerPath = path.resolve(path.dirname(basePageClassPath), "pointer.ts");
       if (!fs.existsSync(pointerPath)) {
-        this.error(`Pointer.ts not found at ${pointerPath}. Ensure it is included in the build.`);
+        this.error(`pointer.ts not found at ${pointerPath}. Ensure it is included in the build.`);
       }
       this.addWatchFile(pointerPath);
+
+      const calloutPath = path.resolve(path.dirname(basePageClassPath), "callout.ts");
+      if (!fs.existsSync(calloutPath)) {
+        this.error(`callout.ts not found at ${calloutPath}. Ensure it is included in the build.`);
+      }
+      this.addWatchFile(calloutPath);
     },
     async buildEnd(error) {
       if (error) {
