@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it } from "vitest";
+import { JSDOM } from "jsdom";
 
 import { Pointer, setPlaywrightAnimationOptions } from "../class-generation/Pointer";
 
@@ -13,13 +14,38 @@ class FakeKeyboard {
 
 class FakePage {
   public readonly keyboard = new FakeKeyboard();
+  public readonly dom = new JSDOM("<!doctype html><html><body></body></html>");
 
-  async evaluate<TResult, TArg>(_fn: ((arg: TArg) => TResult) | string, arg?: TArg): Promise<TResult> {
-    if (typeof arg === "string") {
-      return false as TResult;
+  async evaluate<TResult, TArg>(fn: ((arg: TArg) => TResult) | string, arg?: TArg): Promise<TResult> {
+    if (typeof fn === "string") {
+      return undefined as TResult;
     }
 
-    return undefined as TResult;
+    const globalWithDom = globalThis as Record<string, unknown>;
+    const previousDocument = globalWithDom.document;
+    const previousHTMLElement = globalWithDom.HTMLElement;
+
+    globalWithDom.document = this.dom.window.document;
+    globalWithDom.HTMLElement = this.dom.window.HTMLElement;
+
+    try {
+      return fn(arg as TArg);
+    }
+    finally {
+      if (previousDocument === undefined) {
+        delete globalWithDom.document;
+      }
+      else {
+        globalWithDom.document = previousDocument;
+      }
+
+      if (previousHTMLElement === undefined) {
+        delete globalWithDom.HTMLElement;
+      }
+      else {
+        globalWithDom.HTMLElement = previousHTMLElement;
+      }
+    }
   }
 
   async waitForTimeout(_milliseconds: number) {}
@@ -148,5 +174,23 @@ describe("Pointer", () => {
 
     expect(wrapper.clicks).toBe(1);
     expect(input.fills).toEqual(["Acme"]);
+  });
+
+  it("renders annotation text next to the animated cursor", async () => {
+    const page = new FakePage();
+    const target = new FakeLocator({ tagName: "BUTTON" }, { testId: "AdministrationTemplatesIndex-521-TogglePreview-button" });
+
+    const pointer = new Pointer(page as never, "data-testid");
+    await pointer.animateCursorToElement(
+      target as never,
+      false,
+      0,
+      "Choose the Motion to Set Divorce Trial saved answer set",
+    );
+
+    const annotation = page.dom.window.document.getElementById("__pw_cursor_annotation__");
+    expect(annotation).not.toBeNull();
+    expect(annotation?.textContent).toBe("Choose the Motion to Set Divorce Trial saved answer set");
+    expect(annotation?.getAttribute("style")).toContain("opacity: 1");
   });
 });

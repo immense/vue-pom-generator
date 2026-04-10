@@ -5,6 +5,7 @@ import type { PwLocator, PwPage } from "./playwright-types";
 // ---------------------------------------------------------------------------
 
 const __PW_CURSOR_ID__ = "__pw_cursor__";
+const __PW_CURSOR_ANNOTATION_ID__ = "__pw_cursor_annotation__";
 const __PW_EDITABLE_DESCENDANT_SELECTOR__
 	= "input, textarea, select, [contenteditable=''], [contenteditable='true'], [contenteditable]:not([contenteditable='false'])";
 
@@ -34,8 +35,9 @@ function __pw_set_cursor_pos__(page: PwPage, x: number, y: number): void {
 
 async function __pw_ensure_cursor__(page: PwPage): Promise<void> {
 	const exists = await page.evaluate(
-		(id: string) => document.getElementById(id) != null,
-		__PW_CURSOR_ID__,
+		({ cursorId, annotationId }: { cursorId: string; annotationId: string }) =>
+			document.getElementById(cursorId) != null && document.getElementById(annotationId) != null,
+		{ cursorId: __PW_CURSOR_ID__, annotationId: __PW_CURSOR_ANNOTATION_ID__ },
 	);
 	if (exists) return;
 
@@ -43,7 +45,7 @@ async function __pw_ensure_cursor__(page: PwPage): Promise<void> {
 	__pw_set_cursor_pos__(page, 0, 0);
 
 	await page.evaluate(
-		({ id, src }: { id: string; src: string }) => {
+		({ id, src, annotationId }: { id: string; src: string; annotationId: string }) => {
 			const img = document.createElement("img");
 			img.setAttribute("src", src);
 			img.setAttribute("id", id);
@@ -53,8 +55,32 @@ async function __pw_ensure_cursor__(page: PwPage): Promise<void> {
 				"position:fixed;z-index:2147483647;pointer-events:none;left:0;top:0;transform-origin:0 0;",
 			);
 			document.body.appendChild(img);
+
+			const annotation = document.createElement("div");
+			annotation.setAttribute("id", annotationId);
+			annotation.setAttribute(
+				"style",
+				[
+					"position:fixed",
+					"z-index:2147483647",
+					"pointer-events:none",
+					"left:18px",
+					"top:18px",
+					"max-width:320px",
+					"padding:6px 10px",
+					"border-radius:999px",
+					"background:rgba(15,23,42,0.92)",
+					"color:#f8fafc",
+					"font:600 13px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+					"box-shadow:0 12px 30px rgba(15,23,42,0.35)",
+					"opacity:0",
+					"white-space:normal",
+					"transform:translate3d(0,0,0)",
+				].join(";"),
+			);
+			document.body.appendChild(annotation);
 		},
-		{ id: __PW_CURSOR_ID__, src: __PW_CURSOR_PNG__ },
+		{ id: __PW_CURSOR_ID__, src: __PW_CURSOR_PNG__, annotationId: __PW_CURSOR_ANNOTATION_ID__ },
 	);
 }
 
@@ -209,7 +235,7 @@ export class Pointer {
 		target: ElementTarget,
 		executeClick: boolean = true,
 		delayMs: number = 100,
-		_annotationText: string = "",
+		annotationText: string = "",
 		options?: {
 			afterClick?: AfterPointerClick;
 		},
@@ -248,6 +274,7 @@ export class Pointer {
 		const clickDelayMs = opts.pointer?.clickDelayMilliseconds ?? 0;
 		const extraDelayMs = Math.max(0, opts.extraDelayMs ?? 0);
 		const actionDelayMs = Math.max(0, delayMs);
+		const trimmedAnnotationText = annotationText.trim();
 
 		// Inject the visual cursor if it doesn't exist yet.
 		await __pw_ensure_cursor__(this.page);
@@ -263,22 +290,47 @@ export class Pointer {
 			if (moveDurationMs > 0 && distance > 0) {
 				// Glide the cursor image using a CSS transition.
 				await this.page.evaluate(
-					({ id, sx, sy, ex, ey, dur, style }: {
-						id: string; sx: number; sy: number; ex: number; ey: number; dur: number; style: string;
+					({ id, annotationId, sx, sy, ex, ey, dur, style, annotationText }: {
+						id: string; annotationId: string; sx: number; sy: number; ex: number; ey: number; dur: number; style: string; annotationText: string;
 					}) => {
 						const el = document.getElementById(id);
+						const annotation = document.getElementById(annotationId);
 						if (!el) return;
 						el.style.transition = "";
 						el.style.willChange = "left, top";
 						el.style.left = `${sx}px`;
 						el.style.top = `${sy}px`;
+						if (annotation) {
+							annotation.textContent = annotationText;
+							annotation.style.transition = "";
+							annotation.style.willChange = "left, top, opacity";
+							annotation.style.left = `${sx + 18}px`;
+							annotation.style.top = `${sy + 22}px`;
+							annotation.style.opacity = annotationText ? "1" : "0";
+						}
 						// Force reflow so the browser registers the start position before transitioning.
 						void el.offsetWidth;
+						void annotation?.offsetWidth;
 						el.style.transition = `left ${dur}ms ${style}, top ${dur}ms ${style}`;
 						el.style.left = `${ex}px`;
 						el.style.top = `${ey}px`;
+						if (annotation) {
+							annotation.style.transition = `left ${dur}ms ${style}, top ${dur}ms ${style}, opacity 120ms ease-in-out`;
+							annotation.style.left = `${ex + 18}px`;
+							annotation.style.top = `${ey + 22}px`;
+						}
 					},
-					{ id: __PW_CURSOR_ID__, sx: startX, sy: startY, ex: endX, ey: endY, dur: moveDurationMs, style: transitionStyle },
+					{
+						id: __PW_CURSOR_ID__,
+						annotationId: __PW_CURSOR_ANNOTATION_ID__,
+						sx: startX,
+						sy: startY,
+						ex: endX,
+						ey: endY,
+						dur: moveDurationMs,
+						style: transitionStyle,
+						annotationText: trimmedAnnotationText,
+					},
 				);
 				// Wait for the animation to finish.
 				await this.page.waitForTimeout(moveDurationMs + 25);
@@ -286,11 +338,18 @@ export class Pointer {
 			else {
 				// Teleport (distance 0 or duration 0).
 				await this.page.evaluate(
-					({ id, x, y }: { id: string; x: number; y: number }) => {
+					({ id, annotationId, x, y, annotationText }: { id: string; annotationId: string; x: number; y: number; annotationText: string }) => {
 						const el = document.getElementById(id);
 						if (el) { el.style.left = `${x}px`; el.style.top = `${y}px`; }
+						const annotation = document.getElementById(annotationId);
+						if (annotation) {
+							annotation.textContent = annotationText;
+							annotation.style.left = `${x + 18}px`;
+							annotation.style.top = `${y + 22}px`;
+							annotation.style.opacity = annotationText ? "1" : "0";
+						}
 					},
-					{ id: __PW_CURSOR_ID__, x: endX, y: endY },
+					{ id: __PW_CURSOR_ID__, annotationId: __PW_CURSOR_ANNOTATION_ID__, x: endX, y: endY, annotationText: trimmedAnnotationText },
 				);
 			}
 
