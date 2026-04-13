@@ -334,10 +334,10 @@ function tryGetBindingIdentifierName(node: BabelNode | null | undefined): string
   return null;
 }
 
-interface SlotScopeKeyCandidate {
+type SlotScopeKeyCandidate = {
   priority: number;
   expression: string;
-}
+};
 
 function splitNullishCoalescingExpression(expr: string): string[] {
   const parts: string[] = [];
