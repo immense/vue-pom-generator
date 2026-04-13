@@ -284,12 +284,20 @@ function isSimpleScopeIdentifier(value: string): boolean {
     return false;
   }
 
+  const CHAR_CODE_DOLLAR = 36;
+  const CHAR_CODE_ZERO = 48;
+  const CHAR_CODE_NINE = 57;
+  const CHAR_CODE_UPPER_A = 65;
+  const CHAR_CODE_UPPER_Z = 90;
+  const CHAR_CODE_UNDERSCORE = 95;
+  const CHAR_CODE_LOWER_A = 97;
+  const CHAR_CODE_LOWER_Z = 122;
   const firstCharacter = value.charCodeAt(0);
   const isIdentifierStart
-    = firstCharacter === 36
-      || firstCharacter === 95
-      || (firstCharacter >= 65 && firstCharacter <= 90)
-      || (firstCharacter >= 97 && firstCharacter <= 122);
+    = firstCharacter === CHAR_CODE_DOLLAR
+      || firstCharacter === CHAR_CODE_UNDERSCORE
+      || (firstCharacter >= CHAR_CODE_UPPER_A && firstCharacter <= CHAR_CODE_UPPER_Z)
+      || (firstCharacter >= CHAR_CODE_LOWER_A && firstCharacter <= CHAR_CODE_LOWER_Z);
   if (!isIdentifierStart) {
     return false;
   }
@@ -297,11 +305,11 @@ function isSimpleScopeIdentifier(value: string): boolean {
   for (let index = 1; index < value.length; index += 1) {
     const character = value.charCodeAt(index);
     const isIdentifierContinue
-      = character === 36
-        || character === 95
-        || (character >= 48 && character <= 57)
-        || (character >= 65 && character <= 90)
-        || (character >= 97 && character <= 122);
+      = character === CHAR_CODE_DOLLAR
+        || character === CHAR_CODE_UNDERSCORE
+        || (character >= CHAR_CODE_ZERO && character <= CHAR_CODE_NINE)
+        || (character >= CHAR_CODE_UPPER_A && character <= CHAR_CODE_UPPER_Z)
+        || (character >= CHAR_CODE_LOWER_A && character <= CHAR_CODE_LOWER_Z);
     if (!isIdentifierContinue) {
       return false;
     }
@@ -352,7 +360,7 @@ function splitNullishCoalescingExpression(expr: string): string[] {
   for (let index = 0; index < expr.length; index += 1) {
     const char = expr[index];
     const next = expr[index + 1];
-    const previous = index > 0 ? expr[index - 1] : "";
+    const previous = index > 0 ? expr[index - 1] : undefined;
 
     if (char === "'" && !inDoubleQuote && !inTemplateString && previous !== "\\") {
       inSingleQuote = !inSingleQuote;

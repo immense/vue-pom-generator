@@ -134,12 +134,13 @@ function getNativeHtmlControlRole(element: ElementNode): NativeRole | null {
 
 function normalizeControlLabelText(value: string | null): string | null {
   const source = value ?? "";
+  const whitespaceCharacters = new Set([" ", "\n", "\r", "\t", "\f"]);
   let normalized = "";
   let sawNonWhitespace = false;
   let pendingSpace = false;
 
   for (const char of source) {
-    const isWhitespace = char === " " || char === "\n" || char === "\r" || char === "\t" || char === "\f";
+    const isWhitespace = whitespaceCharacters.has(char);
     if (char === "*" || isWhitespace) {
       pendingSpace = sawNonWhitespace;
       continue;
