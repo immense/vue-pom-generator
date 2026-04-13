@@ -54,6 +54,15 @@ import {
 } from "@babel/types";
 import { parse, parseExpression } from "@babel/parser";
 
+const CHAR_CODE_DOLLAR = 36;
+const CHAR_CODE_ZERO = 48;
+const CHAR_CODE_NINE = 57;
+const CHAR_CODE_UPPER_A = 65;
+const CHAR_CODE_UPPER_Z = 90;
+const CHAR_CODE_UNDERSCORE = 95;
+const CHAR_CODE_LOWER_A = 97;
+const CHAR_CODE_LOWER_Z = 122;
+
 export { isSimpleExpressionNode } from "./compiler/ast-guards";
 export type { RouterIntrospectionResult } from "./router-introspection";
 export {
@@ -279,19 +288,21 @@ function isTemplateWithData(node: ElementNode): boolean {
   return getTemplateSlotScope(node) !== null;
 }
 
+function isEscapedCharacter(input: string, index: number): boolean {
+  let backslashCount = 0;
+
+  for (let cursor = index - 1; cursor >= 0 && input[cursor] === "\\"; cursor -= 1) {
+    backslashCount += 1;
+  }
+
+  return backslashCount % 2 === 1;
+}
+
 function isSimpleScopeIdentifier(value: string): boolean {
   if (!value) {
     return false;
   }
 
-  const CHAR_CODE_DOLLAR = 36;
-  const CHAR_CODE_ZERO = 48;
-  const CHAR_CODE_NINE = 57;
-  const CHAR_CODE_UPPER_A = 65;
-  const CHAR_CODE_UPPER_Z = 90;
-  const CHAR_CODE_UNDERSCORE = 95;
-  const CHAR_CODE_LOWER_A = 97;
-  const CHAR_CODE_LOWER_Z = 122;
   const firstCharacter = value.charCodeAt(0);
   const isIdentifierStart
     = firstCharacter === CHAR_CODE_DOLLAR
@@ -360,19 +371,18 @@ function splitNullishCoalescingExpression(expr: string): string[] {
   for (let index = 0; index < expr.length; index += 1) {
     const char = expr[index];
     const next = expr[index + 1];
-    const previous = index > 0 ? expr[index - 1] : undefined;
 
-    if (char === "'" && !inDoubleQuote && !inTemplateString && previous !== "\\") {
+    if (char === "'" && !inDoubleQuote && !inTemplateString && !isEscapedCharacter(expr, index)) {
       inSingleQuote = !inSingleQuote;
       current += char;
       continue;
     }
-    if (char === "\"" && !inSingleQuote && !inTemplateString && previous !== "\\") {
+    if (char === "\"" && !inSingleQuote && !inTemplateString && !isEscapedCharacter(expr, index)) {
       inDoubleQuote = !inDoubleQuote;
       current += char;
       continue;
     }
-    if (char === "`" && !inSingleQuote && !inDoubleQuote && previous !== "\\") {
+    if (char === "`" && !inSingleQuote && !inDoubleQuote && !isEscapedCharacter(expr, index)) {
       inTemplateString = !inTemplateString;
       current += char;
       continue;

@@ -56,6 +56,7 @@ import {
 
 const CLICK_EVENT_NAME = TESTID_CLICK_EVENT_NAME;
 const ENABLE_CLICK_INSTRUMENTATION = true;
+const WHITESPACE_CHARACTERS = new Set([" ", "\n", "\r", "\t", "\f"]);
 
 // Cache inferred wrapper configs across transforms/build passes.
 const inferredNativeWrapperConfigByLookup = new Map<string, { role: string }>();
@@ -134,13 +135,12 @@ function getNativeHtmlControlRole(element: ElementNode): NativeRole | null {
 
 function normalizeControlLabelText(value: string | null): string | null {
   const source = value ?? "";
-  const whitespaceCharacters = new Set([" ", "\n", "\r", "\t", "\f"]);
   let normalized = "";
   let sawNonWhitespace = false;
   let pendingSpace = false;
 
   for (const char of source) {
-    const isWhitespace = whitespaceCharacters.has(char);
+    const isWhitespace = WHITESPACE_CHARACTERS.has(char);
     if (char === "*" || isWhitespace) {
       pendingSpace = sawNonWhitespace;
       continue;
