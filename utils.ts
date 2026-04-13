@@ -280,7 +280,34 @@ function isTemplateWithData(node: ElementNode): boolean {
 }
 
 function isSimpleScopeIdentifier(value: string): boolean {
-  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value);
+  if (!value) {
+    return false;
+  }
+
+  const firstCharacter = value.charCodeAt(0);
+  const isIdentifierStart
+    = firstCharacter === 36
+      || firstCharacter === 95
+      || (firstCharacter >= 65 && firstCharacter <= 90)
+      || (firstCharacter >= 97 && firstCharacter <= 122);
+  if (!isIdentifierStart) {
+    return false;
+  }
+
+  for (let index = 1; index < value.length; index += 1) {
+    const character = value.charCodeAt(index);
+    const isIdentifierContinue
+      = character === 36
+        || character === 95
+        || (character >= 48 && character <= 57)
+        || (character >= 65 && character <= 90)
+        || (character >= 97 && character <= 122);
+    if (!isIdentifierContinue) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function buildSlotScopeFallbackKeyExpression(identifier: string): string {
@@ -307,10 +334,90 @@ function tryGetBindingIdentifierName(node: BabelNode | null | undefined): string
   return null;
 }
 
-type SlotScopeKeyCandidate = {
+interface SlotScopeKeyCandidate {
   priority: number;
   expression: string;
-};
+}
+
+function splitNullishCoalescingExpression(expr: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let parenDepth = 0;
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let inTemplateString = false;
+
+  for (let index = 0; index < expr.length; index += 1) {
+    const char = expr[index];
+    const next = expr[index + 1];
+    const previous = index > 0 ? expr[index - 1] : "";
+
+    if (char === "'" && !inDoubleQuote && !inTemplateString && previous !== "\\") {
+      inSingleQuote = !inSingleQuote;
+      current += char;
+      continue;
+    }
+    if (char === "\"" && !inSingleQuote && !inTemplateString && previous !== "\\") {
+      inDoubleQuote = !inDoubleQuote;
+      current += char;
+      continue;
+    }
+    if (char === "`" && !inSingleQuote && !inDoubleQuote && previous !== "\\") {
+      inTemplateString = !inTemplateString;
+      current += char;
+      continue;
+    }
+
+    if (inSingleQuote || inDoubleQuote || inTemplateString) {
+      current += char;
+      continue;
+    }
+
+    switch (char) {
+      case "{":
+        braceDepth += 1;
+        break;
+      case "}":
+        braceDepth = Math.max(0, braceDepth - 1);
+        break;
+      case "[":
+        bracketDepth += 1;
+        break;
+      case "]":
+        bracketDepth = Math.max(0, bracketDepth - 1);
+        break;
+      case "(":
+        parenDepth += 1;
+        break;
+      case ")":
+        parenDepth = Math.max(0, parenDepth - 1);
+        break;
+      default:
+        break;
+    }
+
+    if (char === "?" && next === "?" && braceDepth === 0 && bracketDepth === 0 && parenDepth === 0) {
+      const trimmed = current.trim();
+      if (trimmed) {
+        parts.push(trimmed);
+      }
+      current = "";
+      index += 1;
+      continue;
+    }
+
+    current += char;
+  }
+
+  const trimmed = current.trim();
+  if (trimmed) {
+    parts.push(trimmed);
+  }
+
+  return parts;
+}
 
 function getSlotScopeObjectPropertyKeyName(node: BabelNode): string | null {
   if (isIdentifier(node)) {
@@ -2305,10 +2412,7 @@ export function applyResolvedDataTestId(args: {
       return [];
     }
 
-    return expr
-      .split("??")
-      .map(part => part.trim())
-      .filter(Boolean);
+    return splitNullishCoalescingExpression(expr);
   };
 
   // 1) Resolve effective data-testid (respecting any existing attribute).

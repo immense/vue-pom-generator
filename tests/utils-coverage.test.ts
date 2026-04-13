@@ -1,4 +1,3 @@
-/* eslint-disable no-restricted-syntax */
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 

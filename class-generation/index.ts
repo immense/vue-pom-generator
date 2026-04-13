@@ -18,9 +18,7 @@ import {
   createClassConstructor,
   createClassMethod,
   createClassProperty,
-  renderClassMembers as renderTsMorphClassMembers,
   renderSourceFile,
-  renderTypeScript,
   StructureKind,
   VariableDeclarationKind,
   type ConstructorDeclarationStructure,
@@ -31,8 +29,6 @@ import {
   type PropertyDeclarationStructure,
   type TypeScriptClassMember,
   type TypeScriptSourceFile,
-  type TypeScriptWriter,
-  writeCommentBlock,
 } from "../typescript-codegen";
 import {
   IComponentDependencies,
@@ -53,7 +49,6 @@ export { generateViewObjectModelMethodContent };
 
 const GENERATED_GITATTRIBUTES_BLOCK_START = "# BEGIN vue-pom-generator generated files";
 const GENERATED_GITATTRIBUTES_BLOCK_END = "# END vue-pom-generator generated files";
-const eslintSuppressionHeader = "/* eslint-disable perfectionist/sort-imports */\n";
 const VUE_POM_GENERATOR_ERROR_PREFIX = "[vue-pom-generator]" as const;
 
 class VuePomGeneratorError extends Error {
@@ -64,43 +59,6 @@ class VuePomGeneratorError extends Error {
     super(normalized);
     this.name = "VuePomGeneratorError";
   }
-}
-
-function renderClassMembers(write: (writer: TypeScriptWriter) => void): string {
-  const content = renderTypeScript((writer) => {
-    writer.indent(() => {
-      write(writer);
-    });
-  });
-  return content.endsWith("\n") ? content : `${content}\n`;
-}
-
-function writeMemberBlock(writer: TypeScriptWriter, signature: string, body: (writer: TypeScriptWriter) => void): void {
-  writer.write(`${signature} `).block(() => {
-    body(writer);
-  });
-}
-
-function writeClassMembersText(writer: TypeScriptWriter, content: string): void {
-  if (!content) {
-    return;
-  }
-
-  const normalized = content
-    .replace(/\r\n/g, "\n")
-    .split("\n")
-    .map(line => line.startsWith("    ") ? line.slice(4) : line)
-    .join("\n");
-
-  writer.write(normalized.endsWith("\n") ? normalized : `${normalized}\n`);
-}
-
-function writeGeneratedMembers(writer: TypeScriptWriter, members: TypeScriptClassMember[]): void {
-  if (!members.length) {
-    return;
-  }
-
-  writeClassMembersText(writer, renderTsMorphClassMembers(members));
 }
 
 function splitParameterList(parameters: string): string[] {
@@ -2416,10 +2374,6 @@ function buildRuntimeGeneratedFilesFromSpecs(assetSpecs: RuntimeGeneratedAssetSp
     filePath: spec.outputPath,
     content: readTextAsset(spec.absolutePath, spec.description),
   }));
-}
-
-function buildRuntimeGeneratedBarrelExports(outputDir: string, assetSpecs: RuntimeGeneratedAssetSpec[]): string[] {
-  return assetSpecs.map(spec => `export * from "${stripExtension(toPosixRelativePath(outputDir, spec.outputPath))}";`);
 }
 
 function resolveCustomPomImportResolution(
