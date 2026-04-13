@@ -160,6 +160,10 @@ describe("class-generation coverage", () => {
       expect(runtimeClassGenGitAttributesContent).toContain("floating-ui.ts linguist-generated");
       expect(runtimeClassGenGitAttributesContent).toContain("pointer.ts linguist-generated");
       expect(runtimeClassGenGitAttributesContent).toContain("playwright-types.ts linguist-generated");
+      expect(readFile(fileURLToPath(new URL("../class-generation/base-page.ts", import.meta.url)))).toContain("/* eslint-disable no-console */");
+      const runtimeFloatingUiContent = readFile(path.join(outDir, "_pom-runtime", "class-generation", "floating-ui.ts"));
+      expect(runtimeFloatingUiContent).toContain("Portions of this file are derived from Floating UI.");
+      expect(runtimeFloatingUiContent).toContain("SPDX-License-Identifier: MIT");
 
       // 2) explicit file path
       await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
