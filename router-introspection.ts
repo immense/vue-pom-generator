@@ -339,10 +339,6 @@ interface GlobalDomShim {
   | ((...args: never[]) => object);
 }
 
-type DocumentWithQueryCommandSupported = Document & {
-  queryCommandSupported?: (commandId: string) => boolean;
-};
-
 interface VueComponentLike {
   __file?: string;
   __name?: string;
@@ -587,21 +583,120 @@ function resolveIntrospectedComponentName(
   return componentInfo.componentName;
 }
 
+interface MinimalRect {
+  top: number;
+  left: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+  x: number;
+  y: number;
+  toJSON: () => object;
+}
+
+interface MinimalTextNode {
+  nodeType: 3;
+  textContent: string;
+}
+
+interface MinimalCommentNode {
+  nodeType: 8;
+  textContent: string;
+}
+
+interface MinimalElement {
+  nodeType: 1;
+  tagName: string;
+  id?: string;
+  childNodes: MinimalNode[];
+  children: MinimalElement[];
+  style: Record<string, string>;
+  dataset: Record<string, string>;
+  setAttribute: (name: string, value: string) => void;
+  getAttribute: (name: string) => string | null;
+  removeAttribute: (name: string) => void;
+  addEventListener: () => void;
+  removeEventListener: () => void;
+  appendChild: (child: MinimalNode) => MinimalNode;
+  removeChild: (child: MinimalNode) => MinimalNode;
+  insertBefore: (child: MinimalNode) => MinimalNode;
+  querySelector: (selector: string) => null;
+  querySelectorAll: (selector: string) => MinimalElement[];
+  contains: (child: MinimalNode) => boolean;
+  matches: (selector: string) => boolean;
+  closest: (selector: string) => null;
+  getBoundingClientRect: () => MinimalRect;
+  cloneNode: () => MinimalElement;
+}
+
+interface MinimalDocumentFragment {
+  nodeType: 11;
+  childNodes: MinimalNode[];
+  appendChild: (child: MinimalNode) => MinimalNode;
+}
+
+type MinimalNode = MinimalElement | MinimalTextNode | MinimalCommentNode | MinimalDocumentFragment;
+
+interface MinimalDocumentShape {
+  nodeType: 9;
+  documentElement: MinimalElement | null;
+  head: MinimalElement | null;
+  body: MinimalElement | null;
+  createElement: (tag: string) => MinimalElement;
+  createTextNode: (text: string) => MinimalTextNode;
+  createComment: (text: string) => MinimalCommentNode;
+  createDocumentFragment: () => MinimalDocumentFragment;
+  getElementById: (id: string) => null;
+  querySelector: (selector: string) => null;
+  querySelectorAll: (selector: string) => MinimalElement[];
+  addEventListener: () => void;
+  removeEventListener: () => void;
+  createEvent: (type: string) => { initEvent: () => void };
+  queryCommandSupported: (commandId: string) => boolean;
+}
+
+type MinimalParentNode = { childNodes: MinimalNode[] };
+type MinimalElementParent = MinimalParentNode & { children: MinimalElement[] };
+
+function hasChildren(parent: MinimalParentNode | MinimalElementParent): parent is MinimalElementParent {
+  return "children" in parent;
+}
+
+function appendNode(parent: MinimalParentNode | MinimalElementParent, child: MinimalNode) {
+  parent.childNodes.push(child);
+  if (hasChildren(parent) && child.nodeType === 1)
+    parent.children.push(child);
+  return child;
+}
+
+function removeNode(parent: MinimalParentNode | MinimalElementParent, child: MinimalNode) {
+  const idx = parent.childNodes.indexOf(child);
+  if (idx >= 0)
+    parent.childNodes.splice(idx, 1);
+  if (hasChildren(parent) && child.nodeType === 1) {
+    const childIdx = parent.children.indexOf(child);
+    if (childIdx >= 0)
+      parent.children.splice(childIdx, 1);
+  }
+  return child;
+}
+
 function createMinimalDocument(): Document {
   // Minimal DOM tree: <!doctype html><html><head></head><body><div id="app"></div></body></html>
   // We build this by hand — the only consumer is Vue Router's createWebHistory / createMemoryHistory
   // which probes document, location, and a handful of DOM globals during SSR route enumeration.
-  const doc = {
+  const doc: MinimalDocumentShape = {
     nodeType: 9, // DOCUMENT_NODE
-    documentElement: null as unknown as Element,
-    head: null as unknown as Element,
-    body: null as unknown as Element,
+    documentElement: null,
+    head: null,
+    body: null,
     createElement(tag: string) {
-      return {
+      const element: MinimalElement = {
         nodeType: 1,
         tagName: tag.toUpperCase(),
-        childNodes: [] as unknown[],
-        children: [] as unknown[],
+        childNodes: [],
+        children: [],
         style: {},
         dataset: {},
         setAttribute() { },
@@ -609,21 +704,20 @@ function createMinimalDocument(): Document {
         removeAttribute() { },
         addEventListener() { },
         removeEventListener() { },
-        appendChild(c: unknown) { (this as { childNodes: unknown[] }).childNodes.push(c); return c; },
-        removeChild(c: unknown) {
-          const idx = (this as { childNodes: unknown[] }).childNodes.indexOf(c);
-          if (idx >= 0) (this as { childNodes: unknown[] }).childNodes.splice(idx, 1);
-          return c;
-        },
-        insertBefore(c: unknown) { (this as { childNodes: unknown[] }).childNodes.push(c); return c; },
+        appendChild(child) { return appendNode(this, child); },
+        removeChild(child) { return removeNode(this, child); },
+        insertBefore(child) { return appendNode(this, child); },
         querySelector() { return null; },
         querySelectorAll() { return []; },
         contains() { return false; },
         matches() { return false; },
         closest() { return null; },
-        getBoundingClientRect() { return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, toJSON() { return {}; } }; },
+        getBoundingClientRect() {
+          return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, toJSON() { return {}; } };
+        },
         cloneNode() { return this; },
       };
+      return element;
     },
     createTextNode(text: string) {
       return { nodeType: 3, textContent: text };
@@ -634,8 +728,8 @@ function createMinimalDocument(): Document {
     createDocumentFragment() {
       return {
         nodeType: 11,
-        childNodes: [] as unknown[],
-        appendChild(c: unknown) { (this as { childNodes: unknown[] }).childNodes.push(c); return c; },
+        childNodes: [],
+        appendChild(child: MinimalNode) { return appendNode(this, child); },
       };
     },
     getElementById() { return null; },
@@ -655,15 +749,15 @@ function createMinimalDocument(): Document {
   const head = doc.createElement("head");
   const body = doc.createElement("body");
   const app = doc.createElement("div");
-  (app as unknown as Record<string, string>).id = "app";
+  app.id = "app";
   html.appendChild(head);
   html.appendChild(body);
   body.appendChild(app);
-  doc.documentElement = html as unknown as Element;
-  doc.head = head as unknown as Element;
-  doc.body = body as unknown as Element;
+  doc.documentElement = html;
+  doc.head = head;
+  doc.body = body;
 
-  return doc as unknown as Document;
+  return Object.assign({} as Document, doc);
 }
 
 function createMinimalLocation(): Location {
