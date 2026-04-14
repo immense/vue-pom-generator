@@ -288,16 +288,6 @@ function isTemplateWithData(node: ElementNode): boolean {
   return getTemplateSlotScope(node) !== null;
 }
 
-function isEscapedCharacter(input: string, index: number): boolean {
-  let backslashCount = 0;
-
-  for (let cursor = index - 1; cursor >= 0 && input[cursor] === "\\"; cursor -= 1) {
-    backslashCount += 1;
-  }
-
-  return backslashCount % 2 === 1;
-}
-
 function isSimpleScopeIdentifier(value: string): boolean {
   if (!value) {
     return false;
@@ -359,81 +349,31 @@ type SlotScopeKeyCandidate = {
 };
 
 function splitNullishCoalescingExpression(expr: string): string[] {
+  const ast = parseExpression(expr, { plugins: ["typescript"] }) as BabelNode;
+
+  const toSourceText = (node: BabelNode): string => {
+    if (node.start == null || node.end == null) {
+      throw new Error("[vue-pom-generator] Unable to recover source for nullish-coalescing expression.");
+    }
+
+    return expr.slice(node.start, node.end).trim();
+  };
+
   const parts: string[] = [];
-  let current = "";
-  let braceDepth = 0;
-  let bracketDepth = 0;
-  let parenDepth = 0;
-  let inSingleQuote = false;
-  let inDoubleQuote = false;
-  let inTemplateString = false;
-
-  for (let index = 0; index < expr.length; index += 1) {
-    const char = expr[index];
-    const next = expr[index + 1];
-
-    if (char === "'" && !inDoubleQuote && !inTemplateString && !isEscapedCharacter(expr, index)) {
-      inSingleQuote = !inSingleQuote;
-      current += char;
-      continue;
-    }
-    if (char === "\"" && !inSingleQuote && !inTemplateString && !isEscapedCharacter(expr, index)) {
-      inDoubleQuote = !inDoubleQuote;
-      current += char;
-      continue;
-    }
-    if (char === "`" && !inSingleQuote && !inDoubleQuote && !isEscapedCharacter(expr, index)) {
-      inTemplateString = !inTemplateString;
-      current += char;
-      continue;
+  const visit = (node: BabelNode): void => {
+    if (isLogicalExpression(node) && node.operator === "??") {
+      visit(node.left as BabelNode);
+      visit(node.right as BabelNode);
+      return;
     }
 
-    if (inSingleQuote || inDoubleQuote || inTemplateString) {
-      current += char;
-      continue;
+    const candidate = toSourceText(node);
+    if (candidate) {
+      parts.push(candidate);
     }
+  };
 
-    switch (char) {
-      case "{":
-        braceDepth += 1;
-        break;
-      case "}":
-        braceDepth = Math.max(0, braceDepth - 1);
-        break;
-      case "[":
-        bracketDepth += 1;
-        break;
-      case "]":
-        bracketDepth = Math.max(0, bracketDepth - 1);
-        break;
-      case "(":
-        parenDepth += 1;
-        break;
-      case ")":
-        parenDepth = Math.max(0, parenDepth - 1);
-        break;
-      default:
-        break;
-    }
-
-    if (char === "?" && next === "?" && braceDepth === 0 && bracketDepth === 0 && parenDepth === 0) {
-      const trimmed = current.trim();
-      if (trimmed) {
-        parts.push(trimmed);
-      }
-      current = "";
-      index += 1;
-      continue;
-    }
-
-    current += char;
-  }
-
-  const trimmed = current.trim();
-  if (trimmed) {
-    parts.push(trimmed);
-  }
-
+  visit(ast);
   return parts;
 }
 
