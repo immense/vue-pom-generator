@@ -184,6 +184,8 @@ Without `flatten`, helper composition is still available; it is just more explic
 npm install @immense/vue-pom-generator
 ```
 
+Peer Vite support: Vite 5, 6, or 7.
+
 Exports:
 
 - `createVuePomGeneratorPlugins()`

@@ -300,6 +300,29 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     current: createLogger({ verbosity }),
   };
 
+  const getViewsDirAbs = () => resolveFromProjectRoot(projectRootRef.current, viewsDir);
+  const getWrapperSearchRootsAbs = () => wrapperSearchRoots.map(root => resolveFromProjectRoot(projectRootRef.current, root));
+
+  const { componentTestIds, elementMetadata, semanticNameMap, componentHierarchyMap, vueFilesPathMap } = sharedState;
+
+  const { metadataCollectorPlugin, internalVuePlugin, templateCompilerOptions } = createVuePluginWithTestIds({
+    vueOptions,
+    existingIdBehavior,
+    nameCollisionBehavior,
+    nativeWrappers,
+    elementMetadata,
+    semanticNameMap,
+    componentHierarchyMap,
+    vueFilesPathMap,
+    excludedComponents,
+    getViewsDirAbs,
+    testIdAttribute,
+    loggerRef,
+    scanDirs,
+    getWrapperSearchRoots: getWrapperSearchRootsAbs,
+    getProjectRoot: () => projectRootRef.current,
+  });
+
   const configPlugin: PluginOption = {
     name: "vue-pom-generator-config",
     enforce: "pre",
@@ -329,32 +352,9 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
 
       // Small but helpful diagnostics.
       loggerRef.current.info(`projectRoot=${projectRootRef.current}`);
-      loggerRef.current.info(`Active plugins: ${(config.plugins ?? []).map(p => p.name).filter(n => n.includes('vue-pom')).join(', ')}`);
-    }
+      loggerRef.current.info(`Active plugins: ${(config.plugins ?? []).map(p => p.name).filter(n => n.includes("vue-pom")).join(", ")}`);
+    },
   };
-
-  const getViewsDirAbs = () => resolveFromProjectRoot(projectRootRef.current, viewsDir);
-  const getWrapperSearchRootsAbs = () => wrapperSearchRoots.map(root => resolveFromProjectRoot(projectRootRef.current, root));
-
-  const { componentTestIds, elementMetadata, semanticNameMap, componentHierarchyMap, vueFilesPathMap } = sharedState;
-
-  const { metadataCollectorPlugin, internalVuePlugin, templateCompilerOptions } = createVuePluginWithTestIds({
-    vueOptions,
-    existingIdBehavior,
-    nameCollisionBehavior,
-    nativeWrappers,
-    elementMetadata,
-    semanticNameMap,
-    componentHierarchyMap,
-    vueFilesPathMap,
-    excludedComponents,
-    getViewsDirAbs,
-    testIdAttribute,
-    loggerRef,
-    scanDirs,
-    getWrapperSearchRoots: getWrapperSearchRootsAbs,
-    getProjectRoot: () => projectRootRef.current,
-  });
 
   const routerAwarePoms = (typeof routerEntry === "string" && routerEntry.trim().length > 0) || routerType === "nuxt";
 

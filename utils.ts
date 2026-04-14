@@ -279,8 +279,24 @@ function isTemplateWithData(node: ElementNode): boolean {
   return getTemplateSlotScope(node) !== null;
 }
 
+/**
+ * Returns true when the raw slot-scope content parses as a single identifier expression.
+ *
+ * This is intentionally AST-based so object destructuring, member access, and other compound
+ * expressions are rejected without relying on string heuristics.
+ */
 function isSimpleScopeIdentifier(value: string): boolean {
-  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value);
+  if (!value) {
+    return false;
+  }
+
+  try {
+    return isIdentifier(parseExpression(value, { plugins: ["typescript"] }) as BabelNode);
+  }
+  catch {
+    // Any parse failure means the slot scope is not a bare identifier.
+    return false;
+  }
 }
 
 function buildSlotScopeFallbackKeyExpression(identifier: string): string {
@@ -311,6 +327,40 @@ type SlotScopeKeyCandidate = {
   priority: number;
   expression: string;
 };
+
+/**
+ * Flattens a nullish-coalescing chain into its top-level operand source strings.
+ *
+ * For example, `foo ?? bar ?? baz` becomes `["foo", "bar", "baz"]`.
+ */
+function splitNullishCoalescingExpression(expr: string): string[] {
+  const ast = parseExpression(expr, { plugins: ["typescript"] }) as BabelNode;
+
+  const toSourceText = (node: BabelNode): string => {
+    if (node.start == null || node.end == null) {
+      throw new Error("[vue-pom-generator] Unable to recover source for nullish-coalescing expression.");
+    }
+
+    return expr.slice(node.start, node.end).trim();
+  };
+
+  const parts: string[] = [];
+  const visit = (node: BabelNode): void => {
+    if (isLogicalExpression(node) && node.operator === "??") {
+      visit(node.left as BabelNode);
+      visit(node.right as BabelNode);
+      return;
+    }
+
+    const candidate = toSourceText(node);
+    if (candidate) {
+      parts.push(candidate);
+    }
+  };
+
+  visit(ast);
+  return parts;
+}
 
 function getSlotScopeObjectPropertyKeyName(node: BabelNode): string | null {
   if (isIdentifier(node)) {
@@ -2221,7 +2271,9 @@ function replaceAllTemplateExpressionsWithKey(template: string): string {
 
 // Internal exports for unit testing (not part of the public plugin API).
 export const __internal = {
+  isSimpleScopeIdentifier,
   safeMethodNameFromParts,
+  splitNullishCoalescingExpression,
   replaceAllTemplateExpressionsWithKey,
 };
 
@@ -2305,10 +2357,7 @@ export function applyResolvedDataTestId(args: {
       return [];
     }
 
-    return expr
-      .split("??")
-      .map(part => part.trim())
-      .filter(Boolean);
+    return splitNullishCoalescingExpression(expr);
   };
 
   // 1) Resolve effective data-testid (respecting any existing attribute).

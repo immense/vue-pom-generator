@@ -56,7 +56,6 @@ import {
 
 const CLICK_EVENT_NAME = TESTID_CLICK_EVENT_NAME;
 const ENABLE_CLICK_INSTRUMENTATION = true;
-
 // Cache inferred wrapper configs across transforms/build passes.
 const inferredNativeWrapperConfigByLookup = new Map<string, { role: string }>();
 const inferredSfcPathByLookup = new Map<string, string | null>();
@@ -132,6 +131,13 @@ function getNativeHtmlControlRole(element: ElementNode): NativeRole | null {
   return "input";
 }
 
+/**
+ * Normalizes label text into the stable string used for generated control names.
+ *
+ * This operates on plain UI text, not source code, so the regex usage is intentionally scoped
+ * to this helper instead of adding broader string-scanning logic.
+ */
+/* eslint-disable no-restricted-syntax -- allowed: regex is restricted for source parsing, but this helper only normalizes plain UI label text */
 function normalizeControlLabelText(value: string | null): string | null {
   const normalized = (value ?? "")
     .replace(/\*/g, " ")
@@ -140,6 +146,7 @@ function normalizeControlLabelText(value: string | null): string | null {
 
   return normalized || null;
 }
+/* eslint-enable no-restricted-syntax */
 
 function getLabelNodeText(labelNode: ElementNode): string | null {
   for (const child of labelNode.children || []) {
@@ -205,6 +212,11 @@ function getAssociatedLabelText(element: ElementNode, hierarchyMap: HierarchyMap
 
   return null;
 }
+
+// Internal exports for unit testing (not part of the public plugin API).
+export const __internal = {
+  normalizeControlLabelText,
+};
 
 function normalizeSearchRoots(wrapperSearchRoots: string[]): string[] {
   const normalized = new Set<string>();

@@ -15,7 +15,7 @@ import { parse as parseSfc } from '@vue/compiler-sfc'
 import { extend } from '@vue/shared'
 
 import { describe, expect, it } from 'vitest'
-import { createTestIdTransform } from '../transform'
+import { __internal, createTestIdTransform } from '../transform'
 
 
 
@@ -257,6 +257,11 @@ function findFirstDataTestId(root: RootNode): string | null {
 }
 
 describe('createTestIdTransform', () => {
+  it('normalizes control label text for generated names', () => {
+    expect(__internal.normalizeControlLabelText('  First * Name \n')).toBe('First Name')
+    expect(__internal.normalizeControlLabelText(' \n\t*  ')).toBe(null)
+  })
+
   it('injects html attributes and collects ids', () => {
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
 

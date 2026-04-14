@@ -5,6 +5,7 @@ export default antfu({
   stylistic: false,
   rules: {
     "no-console": "off",
+    "import/consistent-type-specifier-style": "off",
     "no-restricted-syntax": ["error",
       {
         selector: "TSAsExpression[typeAnnotation.type='TSUnknownKeyword']",
@@ -48,20 +49,28 @@ export default antfu({
       },
     ],
     "@typescript-eslint/no-explicit-any": "error",
+    "eslint-comments/no-unlimited-disable": "off",
+    "node/prefer-global/process": "off",
     // Keep noise low for this package until it's formatted/sorted consistently.
+    "perfectionist/sort-named-exports": "off",
     "perfectionist/sort-imports": "off",
     "perfectionist/sort-named-imports": "off",
+    "prefer-template": "off",
     "jsonc/sort-keys": "off",
     "jsonc/sort-array-values": "off",
+    "ts/consistent-type-definitions": "off",
     "ts/consistent-type-imports": "off",
     // "unused-imports/no-unused-vars": "off",
     "no-template-curly-in-string": "off",
   },
 }, {
   ignores: [
+    "**/*.md",
     "dist/**",
     "node_modules/**",
     ".vendor/**",
+    "class-generation/floating-ui.ts",
+    "tests/fixtures/generated-tsc/**",
   ],
 }, {
   files: ["**/class-generation/**/*.ts"],
@@ -88,6 +97,9 @@ export default antfu({
 }, {
   files: ["**/tests/**/*.ts"],
   rules: {
+    "@typescript-eslint/no-explicit-any": "off",
     "no-console": "off",
+    "no-restricted-syntax": "off",
+    "test/prefer-lowercase-title": "off",
   },
 });

@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import type { PwLocator, PwPage } from "./playwright-types";
 import { TESTID_CLICK_EVENT_NAME, TESTID_CLICK_EVENT_STRICT_FLAG } from "../click-instrumentation";
 import type { TestIdClickEventDetail } from "../click-instrumentation";
