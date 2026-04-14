@@ -1202,7 +1202,7 @@ function generateAggregatedCSharpFiles(
     "    }",
     "",
     "    // Minimal vue-select helper mirroring the TS BasePage.selectVSelectByTestId behavior.",
-    "    // Note: annotationText is currently a no-op in C# output (we don't render a cursor overlay).",
+    "    // Note: annotationText is currently a no-op in C# output (we don't render a pointer overlay).",
     "    protected async Task SelectVSelectByTestIdAsync(string testId, string value, int timeOut = 500)",
     "    {",
     "        var root = LocatorByTestId(testId);",

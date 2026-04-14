@@ -2,8 +2,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { JSDOM } from "jsdom";
 
-import { Callout } from "../class-generation/callout";
-import { Pointer, setPlaywrightAnimationOptions } from "../class-generation/pointer";
+import { Callout, type CalloutRenderer } from "../class-generation/callout";
+import { Pointer, type PointerRenderer, setPlaywrightAnimationOptions } from "../class-generation/pointer";
 
 interface BoundingBox {
   x: number;
@@ -274,8 +274,8 @@ describe("pointer", () => {
       "Choose the Motion to Set Divorce Trial saved answer set",
     );
 
-    const annotation = page.dom.window.document.getElementById("__pw_cursor_annotation__") as HTMLDivElement | null;
-    const arrowEl = page.dom.window.document.getElementById("__pw_cursor_annotation_arrow__") as HTMLDivElement | null;
+    const annotation = page.dom.window.document.getElementById("__pw_pointer_callout__") as HTMLDivElement | null;
+    const arrowEl = page.dom.window.document.getElementById("__pw_pointer_callout_arrow__") as HTMLDivElement | null;
     const annotationStyle = annotation?.getAttribute("style") ?? "";
 
     expect(annotation).not.toBeNull();
@@ -290,7 +290,7 @@ describe("pointer", () => {
     expect(arrowEl?.style.opacity).toBe("1");
   });
 
-  it("shows and hides a callout without creating the cursor overlay", async () => {
+  it("shows and hides a callout without creating the pointer overlay", async () => {
     const page = new FakePage();
     const target = new FakeLocator(
       { tagName: "BUTTON" },
@@ -303,12 +303,12 @@ describe("pointer", () => {
     const callout = new Callout(page as never);
     await callout.showForElement(target as never, "Keep the nearby controls visible while pointing here");
 
-    const annotation = page.dom.window.document.getElementById("__pw_cursor_annotation__") as HTMLDivElement | null;
-    const cursor = page.dom.window.document.getElementById("__pw_cursor__");
+    const annotation = page.dom.window.document.getElementById("__pw_pointer_callout__") as HTMLDivElement | null;
+    const pointerOverlay = page.dom.window.document.getElementById("__pw_pointer__");
 
     expect(annotation?.style.opacity).toBe("1");
     expect(annotation?.textContent).toBe("Keep the nearby controls visible while pointing here");
-    expect(cursor).toBeNull();
+    expect(pointerOverlay).toBeNull();
 
     await callout.hide();
 
@@ -335,7 +335,7 @@ describe("pointer", () => {
     const pointer = new Pointer(page as never, "data-testid");
     await pointer.animateCursorToElement(target as never, false, 0, "Keep the nearby controls visible while pointing here");
 
-    const annotation = page.dom.window.document.getElementById("__pw_cursor_annotation__") as HTMLDivElement | null;
+    const annotation = page.dom.window.document.getElementById("__pw_pointer_callout__") as HTMLDivElement | null;
     const annotationBox = {
       x: Number.parseFloat(annotation?.style.left ?? "0"),
       y: Number.parseFloat(annotation?.style.top ?? "0"),
@@ -383,7 +383,7 @@ describe("pointer", () => {
     const pointer = new Pointer(page as never, "data-testid");
     await pointer.animateCursorToElement(target as never, false, 0, "Keep the nearby controls visible while pointing here");
 
-    const annotation = page.dom.window.document.getElementById("__pw_cursor_annotation__") as HTMLDivElement | null;
+    const annotation = page.dom.window.document.getElementById("__pw_pointer_callout__") as HTMLDivElement | null;
     const annotationText = "Keep the nearby controls visible while pointing here";
     const annotationLeft = Number.parseFloat(annotation?.style.left ?? "0");
     const annotationTop = Number.parseFloat(annotation?.style.top ?? "0");
@@ -406,5 +406,68 @@ describe("pointer", () => {
       || annotationBottom <= 265
       || annotationTop >= 465,
     ).toBe(true);
+  });
+
+  it("supports custom pointer and callout renderers", async () => {
+    setPlaywrightAnimationOptions({
+      enabled: true,
+      pointer: {
+        durationMilliseconds: 120,
+        clickDelayMilliseconds: 0,
+      },
+      keyboard: {
+        typeDelayMilliseconds: 25,
+      },
+    });
+
+    const page = new FakePage();
+    const target = new FakeLocator(
+      { tagName: "BUTTON" },
+      {
+        boundingBox: { x: 470, y: 295, width: 80, height: 36 },
+        testId: "CalloutTarget-button",
+      },
+    );
+
+    const pointerCalls: string[] = [];
+    const calloutCalls: string[] = [];
+    const pointerRenderer: PointerRenderer = {
+      overlayIds: ["__custom_pointer__"],
+      async ensure() {
+        pointerCalls.push("ensure");
+      },
+      async move(_page, request) {
+        pointerCalls.push(`move:${request.startX}->${request.endX}`);
+      },
+      async press(_page, request) {
+        pointerCalls.push(`press:${request.durationMilliseconds}`);
+      },
+    };
+    const calloutRenderer: CalloutRenderer = {
+      overlayIds: ["__custom_callout__"],
+      async hide() {
+        calloutCalls.push("hide");
+      },
+      async show(_page, request) {
+        calloutCalls.push(`${request.text}:${request.layout?.placement ?? "none"}`);
+      },
+    };
+
+    const callout = new Callout(page as never, {
+      extraOverlayIds: pointerRenderer.overlayIds,
+      renderer: calloutRenderer,
+    });
+    const pointer = new Pointer(page as never, "data-testid", callout, pointerRenderer);
+
+    await pointer.animateCursorToElement(target as never, true, 0, "Highlight the publish action");
+
+    expect(pointerCalls).toEqual([
+      "ensure",
+      expect.stringMatching(/^move:/),
+      expect.stringMatching(/^press:/),
+    ]);
+    expect(calloutCalls).toEqual([expect.stringContaining("Highlight the publish action")]);
+    expect(page.dom.window.document.getElementById("__pw_pointer__")).toBeNull();
+    expect(page.dom.window.document.getElementById("__pw_pointer_callout__")).toBeNull();
   });
 });

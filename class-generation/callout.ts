@@ -1,11 +1,11 @@
-import { computePosition, limitShift, offset, shift } from "./floating-ui";
+import { arrow, autoPlacement, computePosition, limitShift, offset, shift } from "./floating-ui";
 import type { PwLocator, PwPage } from "./playwright-types";
 
-const __PW_CURSOR_ID__ = "__pw_cursor__";
-const __PW_CURSOR_ANNOTATION_ID__ = "__pw_cursor_annotation__";
-const __PW_CURSOR_ANNOTATION_CONTENT_ID__ = "__pw_cursor_annotation_content__";
-const __PW_CURSOR_ANNOTATION_ARROW_ID__ = "__pw_cursor_annotation_arrow__";
-const __PW_CURSOR_ANNOTATION_AVOID_SELECTOR__
+const __PW_POINTER_ID__ = "__pw_pointer__";
+const __PW_POINTER_CALLOUT_ID__ = "__pw_pointer_callout__";
+const __PW_POINTER_CALLOUT_CONTENT_ID__ = "__pw_pointer_callout_content__";
+const __PW_POINTER_CALLOUT_ARROW_ID__ = "__pw_pointer_callout_arrow__";
+const __PW_POINTER_CALLOUT_AVOID_SELECTOR__
 	= [
 		"[data-callout-avoid]",
 		"button",
@@ -25,15 +25,15 @@ const __PW_CURSOR_ANNOTATION_AVOID_SELECTOR__
 		"[contenteditable='true']",
 		"[contenteditable]:not([contenteditable='false'])",
 	].join(",");
-const __PW_CURSOR_ANNOTATION_MARGIN__ = 18;
-const __PW_CURSOR_ANNOTATION_GAP__ = 18;
-const __PW_CURSOR_ANNOTATION_ARROW_SIZE__ = 14;
-const __PW_CURSOR_ANNOTATION_AVOID_PADDING__ = 12;
-const __PW_CURSOR_ANNOTATION_BACKGROUND__ = "#dc2626";
-const __PW_CURSOR_ANNOTATION_BORDER__ = "0px solid transparent";
-const __PW_CURSOR_ANNOTATION_BOX_SHADOW__ = "0 20px 44px rgba(127, 29, 29, 0.32)";
-const __PW_CURSOR_ANNOTATION_TEXT_COLOR__ = "#f8fafc";
-const __PW_CURSOR_ANNOTATION_RADIUS__ = 0;
+const __PW_POINTER_CALLOUT_MARGIN__ = 18;
+const __PW_POINTER_CALLOUT_GAP__ = 18;
+const __PW_POINTER_CALLOUT_ARROW_SIZE__ = 14;
+const __PW_POINTER_CALLOUT_AVOID_PADDING__ = 12;
+const __PW_POINTER_CALLOUT_BACKGROUND__ = "#dc2626";
+const __PW_POINTER_CALLOUT_BORDER__ = "0px solid transparent";
+const __PW_POINTER_CALLOUT_BOX_SHADOW__ = "0 20px 44px rgba(127, 29, 29, 0.32)";
+const __PW_POINTER_CALLOUT_TEXT_COLOR__ = "#f8fafc";
+const __PW_POINTER_CALLOUT_RADIUS__ = 0;
 
 type Placement =
 	| "top"
@@ -49,7 +49,7 @@ type Placement =
 	| "left-start"
 	| "left-end";
 
-const __PW_CURSOR_ALLOWED_PLACEMENTS__: Placement[] = [
+const __PW_POINTER_ALLOWED_PLACEMENTS__: Placement[] = [
 	"top-start",
 	"top",
 	"top-end",
@@ -75,6 +75,7 @@ export interface CalloutTargetBox {
 
 interface CalloutContext {
 	avoidRects: CalloutTargetBox[];
+	preferredPlacement?: Placement;
 	protectedTargetRects: CalloutTargetBox[];
 	viewportHeight: number;
 	viewportWidth: number;
@@ -96,6 +97,28 @@ interface CalloutLayout {
 export interface ShowCalloutOptions {
 	skipScroll?: boolean;
 	targetBox?: CalloutTargetBox;
+}
+
+export interface CalloutRenderRequest {
+	bubbleHeight: number;
+	bubbleWidth: number;
+	fallbackX: number;
+	fallbackY: number;
+	layout: CalloutLayout | null;
+	target: ElementTarget;
+	targetBox: CalloutTargetBox;
+	text: string;
+}
+
+export interface CalloutRenderer {
+	readonly overlayIds?: string[];
+	hide: (page: PwPage) => Promise<void>;
+	show: (page: PwPage, request: CalloutRenderRequest) => Promise<void>;
+}
+
+export interface CalloutOptions {
+	extraOverlayIds?: string[];
+	renderer?: CalloutRenderer;
 }
 
 function __pw_overlap_area__(first: CalloutTargetBox, second: CalloutTargetBox): number {
@@ -232,12 +255,21 @@ async function __pw_compute_shifted_position__(
 	const platform = __pw_create_platform__(viewportWidth, viewportHeight);
 	const floatingElement = __pw_create_virtual_element__(floatingRect, "floating");
 	const referenceElement = __pw_create_virtual_element__(referenceRect, "reference");
+	const arrowPadding = 10;
+	const arrowElement = __pw_create_virtual_element__(
+		{ x: 0, y: 0, width: __PW_POINTER_CALLOUT_ARROW_SIZE__, height: __PW_POINTER_CALLOUT_ARROW_SIZE__ },
+		"arrow",
+	);
 	const result = await computePosition(referenceElement, floatingElement, {
 		middleware: [
-			offset(__PW_CURSOR_ANNOTATION_GAP__),
+			offset(__PW_POINTER_CALLOUT_GAP__),
 			shift({
 				limiter: limitShift({}),
-				padding: __PW_CURSOR_ANNOTATION_MARGIN__,
+				padding: __PW_POINTER_CALLOUT_MARGIN__,
+			}),
+			arrow({
+				element: arrowElement,
+				padding: arrowPadding,
 			}),
 		],
 		placement,
@@ -280,18 +312,17 @@ async function __pw_compute_shifted_position__(
 	}
 
 	x = Math.min(
-		Math.max(x, __PW_CURSOR_ANNOTATION_MARGIN__),
-		Math.max(__PW_CURSOR_ANNOTATION_MARGIN__, viewportWidth - floatingRect.width - __PW_CURSOR_ANNOTATION_MARGIN__),
+		Math.max(x, __PW_POINTER_CALLOUT_MARGIN__),
+		Math.max(__PW_POINTER_CALLOUT_MARGIN__, viewportWidth - floatingRect.width - __PW_POINTER_CALLOUT_MARGIN__),
 	);
 	y = Math.min(
-		Math.max(y, __PW_CURSOR_ANNOTATION_MARGIN__),
-		Math.max(__PW_CURSOR_ANNOTATION_MARGIN__, viewportHeight - floatingRect.height - __PW_CURSOR_ANNOTATION_MARGIN__),
+		Math.max(y, __PW_POINTER_CALLOUT_MARGIN__),
+		Math.max(__PW_POINTER_CALLOUT_MARGIN__, viewportHeight - floatingRect.height - __PW_POINTER_CALLOUT_MARGIN__),
 	);
 	const adjustmentDistance = Math.abs(x - baseX) + Math.abs(y - baseY);
 	const referenceCenterX = referenceRect.x + referenceRect.width / 2;
 	const referenceCenterY = referenceRect.y + referenceRect.height / 2;
-	const arrowPadding = 10;
-	const arrowHalf = __PW_CURSOR_ANNOTATION_ARROW_SIZE__ / 2;
+	const arrowHalf = __PW_POINTER_CALLOUT_ARROW_SIZE__ / 2;
 	const middlewareData = result.middlewareData as { arrow?: { x?: number; y?: number } };
 	const baseArrowData = middlewareData.arrow;
 	const arrowX = side === "top" || side === "bottom"
@@ -299,7 +330,7 @@ async function __pw_compute_shifted_position__(
 			? Math.round(baseArrowData.x)
 			: Math.min(
 				Math.max(referenceCenterX - x - arrowHalf, arrowPadding),
-				Math.max(arrowPadding, floatingRect.width - __PW_CURSOR_ANNOTATION_ARROW_SIZE__ - arrowPadding),
+				Math.max(arrowPadding, floatingRect.width - __PW_POINTER_CALLOUT_ARROW_SIZE__ - arrowPadding),
 			)
 		: null;
 	const arrowY = side === "left" || side === "right"
@@ -307,7 +338,7 @@ async function __pw_compute_shifted_position__(
 			? Math.round(baseArrowData.y)
 			: Math.min(
 				Math.max(referenceCenterY - y - arrowHalf, arrowPadding),
-				Math.max(arrowPadding, floatingRect.height - __PW_CURSOR_ANNOTATION_ARROW_SIZE__ - arrowPadding),
+				Math.max(arrowPadding, floatingRect.height - __PW_POINTER_CALLOUT_ARROW_SIZE__ - arrowPadding),
 			)
 		: null;
 
@@ -328,8 +359,11 @@ async function __pw_compute_callout_layout__(
 ): Promise<CalloutLayout> {
 	const referenceRect = targetRect;
 	let bestLayout: (CalloutLayout & { score: number }) | null = null;
+	const orderedPlacements = context.preferredPlacement
+		? [context.preferredPlacement, ...__PW_POINTER_ALLOWED_PLACEMENTS__.filter(placement => placement !== context.preferredPlacement)]
+		: __PW_POINTER_ALLOWED_PLACEMENTS__;
 
-	for (const placement of __PW_CURSOR_ALLOWED_PLACEMENTS__) {
+	for (const placement of orderedPlacements) {
 		const result = await __pw_compute_shifted_position__(
 			referenceRect,
 			floatingRect,
@@ -350,7 +384,7 @@ async function __pw_compute_callout_layout__(
 			0,
 		);
 		const avoidOverlap = context.avoidRects.reduce(
-			(sum, avoidRect) => sum + __pw_overlap_area__(positionedRect, __pw_expand_rect__(avoidRect, __PW_CURSOR_ANNOTATION_AVOID_PADDING__)),
+			(sum, avoidRect) => sum + __pw_overlap_area__(positionedRect, __pw_expand_rect__(avoidRect, __PW_POINTER_CALLOUT_AVOID_PADDING__)),
 			0,
 		);
 		const targetGap = __pw_rect_gap__(positionedRect, targetRect);
@@ -401,6 +435,34 @@ function __pw_get_callout_dimensions__(annotationText: string): { bubbleHeight: 
 	};
 }
 
+async function __pw_get_preferred_callout_placement__(
+	targetRect: CalloutTargetBox,
+	floatingRect: CalloutTargetBox,
+	viewportWidth: number,
+	viewportHeight: number,
+): Promise<Placement> {
+	const platform = __pw_create_platform__(viewportWidth, viewportHeight);
+	const floatingElement = __pw_create_virtual_element__(floatingRect, "floating");
+	const referenceElement = __pw_create_virtual_element__(targetRect, "reference");
+	const result = await computePosition(referenceElement, floatingElement, {
+		middleware: [
+			offset(__PW_POINTER_CALLOUT_GAP__),
+			autoPlacement({
+				allowedPlacements: __PW_POINTER_ALLOWED_PLACEMENTS__,
+				padding: __PW_POINTER_CALLOUT_MARGIN__,
+			}),
+			shift({
+				limiter: limitShift({}),
+				padding: __PW_POINTER_CALLOUT_MARGIN__,
+			}),
+		],
+		placement: "top",
+		platform,
+		strategy: "fixed",
+	});
+	return result.placement as Placement;
+}
+
 async function __pw_ensure_callout__(page: PwPage): Promise<void> {
 	const exists = await page.evaluate(
 		({ contentId, annotationId, arrowId }: { contentId: string; annotationId: string; arrowId: string }) =>
@@ -408,9 +470,9 @@ async function __pw_ensure_callout__(page: PwPage): Promise<void> {
 				&& document.getElementById(contentId) != null
 				&& document.getElementById(arrowId) != null,
 		{
-			arrowId: __PW_CURSOR_ANNOTATION_ARROW_ID__,
-			contentId: __PW_CURSOR_ANNOTATION_CONTENT_ID__,
-			annotationId: __PW_CURSOR_ANNOTATION_ID__,
+			arrowId: __PW_POINTER_CALLOUT_ARROW_ID__,
+			contentId: __PW_POINTER_CALLOUT_CONTENT_ID__,
+			annotationId: __PW_POINTER_CALLOUT_ID__,
 		},
 	);
 	if (exists) return;
@@ -493,32 +555,27 @@ async function __pw_ensure_callout__(page: PwPage): Promise<void> {
 			document.body.appendChild(annotation);
 		},
 		{
-			annotationId: __PW_CURSOR_ANNOTATION_ID__,
-			contentId: __PW_CURSOR_ANNOTATION_CONTENT_ID__,
-			arrowId: __PW_CURSOR_ANNOTATION_ARROW_ID__,
-			arrowSize: __PW_CURSOR_ANNOTATION_ARROW_SIZE__,
-			background: __PW_CURSOR_ANNOTATION_BACKGROUND__,
-			border: __PW_CURSOR_ANNOTATION_BORDER__,
-			borderRadius: __PW_CURSOR_ANNOTATION_RADIUS__,
-			boxShadow: __PW_CURSOR_ANNOTATION_BOX_SHADOW__,
-			textColor: __PW_CURSOR_ANNOTATION_TEXT_COLOR__,
+			annotationId: __PW_POINTER_CALLOUT_ID__,
+			contentId: __PW_POINTER_CALLOUT_CONTENT_ID__,
+			arrowId: __PW_POINTER_CALLOUT_ARROW_ID__,
+			arrowSize: __PW_POINTER_CALLOUT_ARROW_SIZE__,
+			background: __PW_POINTER_CALLOUT_BACKGROUND__,
+			border: __PW_POINTER_CALLOUT_BORDER__,
+			borderRadius: __PW_POINTER_CALLOUT_RADIUS__,
+			boxShadow: __PW_POINTER_CALLOUT_BOX_SHADOW__,
+			textColor: __PW_POINTER_CALLOUT_TEXT_COLOR__,
 		},
 	);
 }
 
-export class Callout {
-	private readonly page: PwPage;
-
-	public constructor(page: PwPage) {
-		this.page = page;
-	}
-
-	private toLocator(target: ElementTarget): PwLocator {
-		return typeof target === "string" ? this.page.locator(target) : target;
-	}
-
-	public async hide(): Promise<void> {
-		await this.page.evaluate(
+const __pw_default_callout_renderer__: CalloutRenderer = {
+	overlayIds: [
+		__PW_POINTER_CALLOUT_ID__,
+		__PW_POINTER_CALLOUT_CONTENT_ID__,
+		__PW_POINTER_CALLOUT_ARROW_ID__,
+	],
+	async hide(page) {
+		await page.evaluate(
 			({ annotationId, contentId, arrowId }: { annotationId: string; contentId: string; arrowId: string }) => {
 				const annotation = document.getElementById(annotationId) as HTMLDivElement | null;
 				const content = document.getElementById(contentId) as HTMLDivElement | null;
@@ -544,11 +601,117 @@ export class Callout {
 				}
 			},
 			{
-				annotationId: __PW_CURSOR_ANNOTATION_ID__,
-				contentId: __PW_CURSOR_ANNOTATION_CONTENT_ID__,
-				arrowId: __PW_CURSOR_ANNOTATION_ARROW_ID__,
+				annotationId: __PW_POINTER_CALLOUT_ID__,
+				contentId: __PW_POINTER_CALLOUT_CONTENT_ID__,
+				arrowId: __PW_POINTER_CALLOUT_ARROW_ID__,
 			},
 		);
+	},
+	async show(page, request) {
+		await __pw_ensure_callout__(page);
+		await page.evaluate(
+			({
+				annotationId,
+				arrowId,
+				arrowSize,
+				background,
+				border,
+				borderRadius,
+				bubbleHeight,
+				bubbleWidth,
+				contentId,
+				fallbackX,
+				fallbackY,
+				layout,
+				text,
+			}: {
+				annotationId: string;
+				arrowId: string;
+				arrowSize: number;
+				background: string;
+				border: string;
+				borderRadius: number;
+				bubbleHeight: number;
+				bubbleWidth: number;
+				contentId: string;
+				fallbackX: number;
+				fallbackY: number;
+				layout: CalloutLayout | null;
+				text: string;
+			}) => {
+				const annotation = document.getElementById(annotationId) as HTMLDivElement | null;
+				const content = document.getElementById(contentId) as HTMLDivElement | null;
+				const arrow = document.getElementById(arrowId) as HTMLDivElement | null;
+				if (!annotation || !content) {
+					return;
+				}
+
+				content.textContent = text;
+				annotation.style.width = `${bubbleWidth}px`;
+				annotation.style.minHeight = `${bubbleHeight}px`;
+				annotation.style.background = background;
+				annotation.style.border = border;
+				annotation.style.borderRadius = `${borderRadius}px`;
+				annotation.style.transition = "opacity 120ms ease-in-out, transform 160ms ease-in-out";
+				annotation.style.willChange = "left, top, opacity, transform";
+				annotation.style.left = `${layout?.x ?? fallbackX}px`;
+				annotation.style.top = `${layout?.y ?? fallbackY}px`;
+				annotation.style.opacity = "1";
+				annotation.style.transform = "scale(1)";
+				annotation.setAttribute("data-placement", layout?.placement ?? "hidden");
+
+				if (arrow && layout) {
+					arrow.style.left = "";
+					arrow.style.top = "";
+					arrow.style.right = "";
+					arrow.style.bottom = "";
+					arrow.style.transform = "rotate(45deg)";
+					if (layout.arrowX !== null) {
+						arrow.style.left = `${layout.arrowX}px`;
+					}
+					if (layout.arrowY !== null) {
+						arrow.style.top = `${layout.arrowY}px`;
+					}
+					arrow.style.setProperty(layout.staticSide, `${Math.round(arrowSize / -2)}px`);
+					arrow.style.opacity = "1";
+				}
+			},
+			{
+				annotationId: __PW_POINTER_CALLOUT_ID__,
+				arrowId: __PW_POINTER_CALLOUT_ARROW_ID__,
+				arrowSize: __PW_POINTER_CALLOUT_ARROW_SIZE__,
+				background: __PW_POINTER_CALLOUT_BACKGROUND__,
+				border: __PW_POINTER_CALLOUT_BORDER__,
+				borderRadius: __PW_POINTER_CALLOUT_RADIUS__,
+				bubbleHeight: request.bubbleHeight,
+				bubbleWidth: request.bubbleWidth,
+				contentId: __PW_POINTER_CALLOUT_CONTENT_ID__,
+				fallbackX: request.fallbackX,
+				fallbackY: request.fallbackY,
+				layout: request.layout,
+				text: request.text,
+			},
+		);
+	},
+};
+
+export class Callout {
+	private readonly page: PwPage;
+	private readonly extraOverlayIds: string[];
+	private readonly renderer: CalloutRenderer;
+
+	public constructor(page: PwPage, options?: CalloutOptions) {
+		this.page = page;
+		this.extraOverlayIds = options?.extraOverlayIds ?? [];
+		this.renderer = options?.renderer ?? __pw_default_callout_renderer__;
+	}
+
+	private toLocator(target: ElementTarget): PwLocator {
+		return typeof target === "string" ? this.page.locator(target) : target;
+	}
+
+	public async hide(): Promise<void> {
+		await this.renderer.hide(this.page);
 	}
 
 	public async showForElement(
@@ -577,25 +740,18 @@ export class Callout {
 			throw new Error("Callout.showForElement: target has no bounding box");
 		}
 
-		await __pw_ensure_callout__(this.page);
 		const { bubbleHeight, bubbleWidth } = __pw_get_callout_dimensions__(text);
 		const context = await this.page.evaluate(
 			({
-				annotationId,
-				arrowId,
 				avoidSelector,
-				contentId,
-				cursorId,
 				ex,
 				ey,
+				overlayIds,
 			}: {
-				annotationId: string;
-				arrowId: string;
 				avoidSelector: string;
-				contentId: string;
-				cursorId: string;
 				ex: number;
 				ey: number;
+				overlayIds: string[];
 			}) => {
 				type BrowserRect = { x: number; y: number; width: number; height: number };
 
@@ -603,7 +759,7 @@ export class Callout {
 				const viewportWidth = Math.max(window.innerWidth || 0, document.documentElement.clientWidth, 1280);
 				const viewportHeight = Math.max(window.innerHeight || 0, document.documentElement.clientHeight, 720);
 				const viewportArea = viewportWidth * viewportHeight;
-				const overlayIds = new Set([annotationId, arrowId, contentId, cursorId]);
+				const overlayIdSet = new Set(overlayIds);
 
 				const toViewportRect = (candidateRect: { left: number; top: number; right: number; bottom: number } | DOMRect): BrowserRect | null => {
 					const left = clamp(candidateRect.left, 0, viewportWidth);
@@ -637,7 +793,7 @@ export class Callout {
 
 				const collectAvoidRects = (): BrowserRect[] =>
 					Array.from(document.querySelectorAll<HTMLElement>(avoidSelector))
-						.filter((candidate) => !overlayIds.has(candidate.id))
+						.filter((candidate) => !overlayIdSet.has(candidate.id))
 						.flatMap((candidate) => {
 							const computedStyle = window.getComputedStyle(candidate);
 							if (
@@ -725,103 +881,39 @@ export class Callout {
 				};
 			},
 			{
-				annotationId: __PW_CURSOR_ANNOTATION_ID__,
-				arrowId: __PW_CURSOR_ANNOTATION_ARROW_ID__,
-				avoidSelector: __PW_CURSOR_ANNOTATION_AVOID_SELECTOR__,
-				contentId: __PW_CURSOR_ANNOTATION_CONTENT_ID__,
-				cursorId: __PW_CURSOR_ID__,
+				avoidSelector: __PW_POINTER_CALLOUT_AVOID_SELECTOR__,
 				ex: targetBox.x + targetBox.width / 2,
 				ey: targetBox.y + targetBox.height / 2,
+				overlayIds: [
+					...(this.renderer.overlayIds ?? []),
+					__PW_POINTER_ID__,
+					...this.extraOverlayIds,
+				],
 			},
+		);
+		const preferredPlacement = await __pw_get_preferred_callout_placement__(
+			{ x: targetBox.x, y: targetBox.y, width: targetBox.width, height: targetBox.height },
+			{ x: 0, y: 0, width: bubbleWidth, height: bubbleHeight },
+			context.viewportWidth,
+			context.viewportHeight,
 		);
 		const layout = await __pw_compute_callout_layout__(
 			{ x: targetBox.x, y: targetBox.y, width: targetBox.width, height: targetBox.height },
 			{ x: 0, y: 0, width: bubbleWidth, height: bubbleHeight },
-			context,
-		);
-
-		await this.page.evaluate(
-			({
-				annotationId,
-				arrowId,
-				arrowSize,
-				background,
-				border,
-				borderRadius,
-				bubbleHeight,
-				bubbleWidth,
-				contentId,
-				fallbackX,
-				fallbackY,
-				layout,
-				text,
-			}: {
-				annotationId: string;
-				arrowId: string;
-				arrowSize: number;
-				background: string;
-				border: string;
-				borderRadius: number;
-				bubbleHeight: number;
-				bubbleWidth: number;
-				contentId: string;
-				fallbackX: number;
-				fallbackY: number;
-				layout: CalloutLayout | null;
-				text: string;
-			}) => {
-				const annotation = document.getElementById(annotationId) as HTMLDivElement | null;
-				const content = document.getElementById(contentId) as HTMLDivElement | null;
-				const arrow = document.getElementById(arrowId) as HTMLDivElement | null;
-				if (!annotation || !content) {
-					return;
-				}
-
-				content.textContent = text;
-				annotation.style.width = `${bubbleWidth}px`;
-				annotation.style.minHeight = `${bubbleHeight}px`;
-				annotation.style.background = background;
-				annotation.style.border = border;
-				annotation.style.borderRadius = `${borderRadius}px`;
-				annotation.style.transition = "opacity 120ms ease-in-out, transform 160ms ease-in-out";
-				annotation.style.willChange = "left, top, opacity, transform";
-				annotation.style.left = `${layout?.x ?? fallbackX}px`;
-				annotation.style.top = `${layout?.y ?? fallbackY}px`;
-				annotation.style.opacity = "1";
-				annotation.style.transform = "scale(1)";
-				annotation.setAttribute("data-placement", layout?.placement ?? "hidden");
-
-				if (arrow && layout) {
-					arrow.style.left = "";
-					arrow.style.top = "";
-					arrow.style.right = "";
-					arrow.style.bottom = "";
-					arrow.style.transform = "rotate(45deg)";
-					if (layout.arrowX !== null) {
-						arrow.style.left = `${layout.arrowX}px`;
-					}
-					if (layout.arrowY !== null) {
-						arrow.style.top = `${layout.arrowY}px`;
-					}
-					arrow.style.setProperty(layout.staticSide, `${Math.round(arrowSize / -2)}px`);
-					arrow.style.opacity = "1";
-				}
-			},
 			{
-				annotationId: __PW_CURSOR_ANNOTATION_ID__,
-				arrowId: __PW_CURSOR_ANNOTATION_ARROW_ID__,
-				arrowSize: __PW_CURSOR_ANNOTATION_ARROW_SIZE__,
-				background: __PW_CURSOR_ANNOTATION_BACKGROUND__,
-				border: __PW_CURSOR_ANNOTATION_BORDER__,
-				borderRadius: __PW_CURSOR_ANNOTATION_RADIUS__,
-				bubbleHeight,
-				bubbleWidth,
-				contentId: __PW_CURSOR_ANNOTATION_CONTENT_ID__,
-				fallbackX: targetBox.x + (targetBox.width / 2) + __PW_CURSOR_ANNOTATION_GAP__,
-				fallbackY: targetBox.y + (targetBox.height / 2) + __PW_CURSOR_ANNOTATION_GAP__,
-				layout,
-				text,
+				...context,
+				preferredPlacement,
 			},
 		);
+		await this.renderer.show(this.page, {
+			bubbleHeight,
+			bubbleWidth,
+			fallbackX: targetBox.x + (targetBox.width / 2) + __PW_POINTER_CALLOUT_GAP__,
+			fallbackY: targetBox.y + (targetBox.height / 2) + __PW_POINTER_CALLOUT_GAP__,
+			layout,
+			target,
+			targetBox,
+			text,
+		});
 	}
 }

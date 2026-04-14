@@ -45,8 +45,8 @@ test.describe("pointer callout", () => {
     const northEastCard = page.getByTestId("north-east-card");
     const southEastCard = page.getByTestId("south-east-card");
     const southWestCard = page.getByTestId("south-west-card");
-    const annotation = page.locator("#__pw_cursor_annotation__");
-    const arrow = page.locator("#__pw_cursor_annotation_arrow__");
+    const annotation = page.locator("#__pw_pointer_callout__");
+    const arrow = page.locator("#__pw_pointer_callout_arrow__");
 
     await expect(target).toBeVisible();
     await expect(targetPanel).toBeVisible();
@@ -117,29 +117,29 @@ test.describe("pointer callout", () => {
     expect(annotationStyle.borderRadius).toBe("0px");
   });
 
-  test("shows a callout without creating the cursor overlay", async ({ page }) => {
+  test("shows a callout without creating the pointer overlay", async ({ page }) => {
     await page.goto("/tests/playwright/fixtures/pointer-callout/index.html");
 
     const target = page.getByTestId("callout-target");
-    const annotation = page.locator("#__pw_cursor_annotation__");
-    const cursor = page.locator("#__pw_cursor__");
+    const annotation = page.locator("#__pw_pointer_callout__");
+    const pointerOverlay = page.locator("#__pw_pointer__");
 
     await expect(target).toBeVisible();
-    await expect(cursor).toHaveCount(0);
+    await expect(pointerOverlay).toHaveCount(0);
 
     const callout = new Callout(page as never);
     await callout.showForElement(target as never, "Capture the primary action without moving the pointer");
 
     await expect(annotation).toBeVisible();
-    await expect(cursor).toHaveCount(0);
+    await expect(pointerOverlay).toHaveCount(0);
     await expect(annotation).toHaveCSS("background-color", "rgb(220, 38, 38)");
   });
 
   test("cycles through multiple callouts in one video", async ({ page }) => {
     await page.goto("/tests/playwright/fixtures/pointer-callout/index.html");
 
-    const annotation = page.locator("#__pw_cursor_annotation__");
-    const cursor = page.locator("#__pw_cursor__");
+    const annotation = page.locator("#__pw_pointer_callout__");
+    const pointerOverlay = page.locator("#__pw_pointer__");
     const callout = new Callout(page as never);
     const steps = [
       {
@@ -160,7 +160,7 @@ test.describe("pointer callout", () => {
       },
     ] as const;
 
-    await expect(cursor).toHaveCount(0);
+    await expect(pointerOverlay).toHaveCount(0);
 
     for (const step of steps) {
       await callout.showForElement(step.target as never, step.message);
@@ -170,7 +170,7 @@ test.describe("pointer callout", () => {
     }
 
     await callout.hide();
-    await expect(cursor).toHaveCount(0);
+    await expect(pointerOverlay).toHaveCount(0);
     await expect(annotation).toHaveCSS("opacity", "0");
     await page.waitForTimeout(250);
   });

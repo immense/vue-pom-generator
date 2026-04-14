@@ -1,12 +1,12 @@
-import { Callout, type ElementTarget } from "./callout";
+import { Callout, type CalloutOptions, type ElementTarget } from "./callout";
 import type { PwLocator, PwPage } from "./playwright-types";
 
-const __PW_CURSOR_ID__ = "__pw_cursor__";
+const __PW_POINTER_ID__ = "__pw_pointer__";
 const __PW_EDITABLE_DESCENDANT_SELECTOR__
 	= "input, textarea, select, [contenteditable=''], [contenteditable='true'], [contenteditable]:not([contenteditable='false'])";
 
-// A minimal 16×24 arrow cursor encoded as a base64 PNG.
-const __PW_CURSOR_PNG__ =
+// A minimal 16×24 arrow pointer encoded as a base64 PNG.
+const __PW_POINTER_PNG__ =
 	"data:image/png;base64,"
 	+ "iVBORw0KGgoAAAANSUhEUgAAABQAAAAeCAQAAACGG/bgAAAAAmJLR0QA/4ePzL8AAAAJcEhZcwAA"
 	+ "HsYAAB7GAZEt8iwAAAAHdElNRQfgAwgMIwdxU/i7AAABZklEQVQ4y43TsU4UURSH8W+XmYwkS2I0"
@@ -18,41 +18,35 @@ const __PW_CURSOR_PNG__ =
 	+ "ONcpr3PrXy9VfS473M/D7H+TLmrqsXtOGctvxvMv2oVNP+Av0uHbzbxyJaywyUjx8TlnPY2YxqkD"
 	+ "dAAAAABJRU5ErkJggg==";
 
-const __pw_cursor_positions__ = new WeakMap<object, { x: number; y: number }>();
+const __pw_pointer_positions__ = new WeakMap<object, { x: number; y: number }>();
 
-function __pw_get_cursor_pos__(page: PwPage): { x: number; y: number } {
-	return __pw_cursor_positions__.get(page as object) ?? { x: 0, y: 0 };
+function __pw_get_pointer_pos__(page: PwPage): { x: number; y: number } {
+	return __pw_pointer_positions__.get(page as object) ?? { x: 0, y: 0 };
 }
 
-function __pw_set_cursor_pos__(page: PwPage, x: number, y: number): void {
-	__pw_cursor_positions__.set(page as object, { x, y });
+function __pw_set_pointer_pos__(page: PwPage, x: number, y: number): void {
+	__pw_pointer_positions__.set(page as object, { x, y });
 }
 
-async function __pw_ensure_cursor__(page: PwPage): Promise<void> {
-	const exists = await page.evaluate(
-		({ cursorId }: { cursorId: string }) => document.getElementById(cursorId) != null,
-		{ cursorId: __PW_CURSOR_ID__ },
-	);
-	if (exists) return;
+export interface PointerMoveRequest {
+	animate: boolean;
+	durationMilliseconds: number;
+	endX: number;
+	endY: number;
+	startX: number;
+	startY: number;
+	transitionStyle: string;
+}
 
-	__pw_set_cursor_pos__(page, 0, 0);
+export interface PointerPressRequest {
+	durationMilliseconds: number;
+}
 
-	await page.evaluate(
-		({ id, src }: { id: string; src: string }) => {
-			const img = document.createElement("img");
-			img.setAttribute("src", src);
-			img.setAttribute("id", id);
-			img.setAttribute(
-				"style",
-				"position:fixed;z-index:2147483647;pointer-events:none;left:0;top:0;transform-origin:0 0;",
-			);
-			document.body.appendChild(img);
-		},
-		{
-			id: __PW_CURSOR_ID__,
-			src: __PW_CURSOR_PNG__,
-		},
-	);
+export interface PointerRenderer {
+	readonly overlayIds?: string[];
+	ensure: (page: PwPage) => Promise<void>;
+	move: (page: PwPage, request: PointerMoveRequest) => Promise<void>;
+	press: (page: PwPage, request: PointerPressRequest) => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -72,17 +66,17 @@ export interface PlaywrightAnimationOptions {
 	 */
 	extraDelayMs?: number;
 
-	/** Visual cursor / pointer-movement configuration. */
+	/** Visual pointer-movement configuration. */
 	pointer?: {
 		/**
-		 * Duration of the CSS-transition cursor glide in ms.
-		 * Set to 0 to teleport the cursor without animation.
+		 * Duration of the CSS-transition pointer glide in ms.
+		 * Set to 0 to teleport the pointer without animation.
 		 * Default: 250
 		 */
 		durationMilliseconds?: number;
 
 		/**
-		 * CSS transition timing function for the cursor glide.
+		 * CSS transition timing function for the pointer glide.
 		 * Default: "ease-in-out"
 		 */
 		transitionStyle?: "linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out";
@@ -139,6 +133,102 @@ export interface AfterPointerClickInfo {
 
 export type AfterPointerClick = (info: AfterPointerClickInfo) => void | Promise<void>;
 
+const __pw_default_pointer_renderer__: PointerRenderer = {
+	overlayIds: [__PW_POINTER_ID__],
+	async ensure(page) {
+		const exists = await page.evaluate(
+			({ pointerId }: { pointerId: string }) => document.getElementById(pointerId) != null,
+			{ pointerId: __PW_POINTER_ID__ },
+		);
+		if (exists) return;
+
+		__pw_set_pointer_pos__(page, 0, 0);
+
+		await page.evaluate(
+			({ id, src }: { id: string; src: string }) => {
+				const img = document.createElement("img");
+				img.setAttribute("src", src);
+				img.setAttribute("id", id);
+				img.setAttribute(
+					"style",
+					"position:fixed;z-index:2147483647;pointer-events:none;left:0;top:0;transform-origin:0 0;",
+				);
+				document.body.appendChild(img);
+			},
+			{
+				id: __PW_POINTER_ID__,
+				src: __PW_POINTER_PNG__,
+			},
+		);
+	},
+	async move(page, request) {
+		await page.evaluate(
+			({
+				animate,
+				dur,
+				ex,
+				ey,
+				id,
+				style,
+				sx,
+				sy,
+			}: {
+				animate: boolean;
+				dur: number;
+				ex: number;
+				ey: number;
+				id: string;
+				style: string;
+				sx: number;
+				sy: number;
+			}) => {
+				const el = document.getElementById(id);
+				if (!el) {
+					return;
+				}
+
+				el.style.transition = "";
+				el.style.willChange = "left, top";
+				el.style.left = `${animate ? sx : ex}px`;
+				el.style.top = `${animate ? sy : ey}px`;
+
+				if (animate) {
+					void el.offsetWidth;
+					el.style.transition = `left ${dur}ms ${style}, top ${dur}ms ${style}`;
+					el.style.left = `${ex}px`;
+					el.style.top = `${ey}px`;
+				}
+			},
+			{
+				animate: request.animate,
+				dur: request.durationMilliseconds,
+				ex: request.endX,
+				ey: request.endY,
+				id: __PW_POINTER_ID__,
+				style: request.transitionStyle,
+				sx: request.startX,
+				sy: request.startY,
+			},
+		);
+	},
+	async press(page, request) {
+		await page.evaluate(
+			({ id, dur }: { id: string; dur: number }) => {
+				const el = document.getElementById(id);
+				if (el) {
+					el.style.transition = `transform ${dur}ms`;
+					el.style.transform = "scale(0.6)";
+					setTimeout(() => {
+						el.style.transition = `transform ${dur}ms`;
+						el.style.transform = "scale(1)";
+					}, dur);
+				}
+			},
+			{ id: __PW_POINTER_ID__, dur: request.durationMilliseconds },
+		);
+	},
+};
+
 // ---------------------------------------------------------------------------
 // Pointer class
 // ---------------------------------------------------------------------------
@@ -147,11 +237,16 @@ export class Pointer {
 	private readonly page: PwPage;
 	private readonly testIdAttribute: string;
 	private readonly callout: Callout;
+	private readonly renderer: PointerRenderer;
 
-	public constructor(page: PwPage, testIdAttribute: string, callout?: Callout) {
+	public constructor(page: PwPage, testIdAttribute: string, callout?: Callout, renderer?: PointerRenderer) {
 		this.page = page;
 		this.testIdAttribute = (testIdAttribute ?? "data-testid").trim() || "data-testid";
-		this.callout = callout ?? new Callout(page);
+		this.renderer = renderer ?? __pw_default_pointer_renderer__;
+		const calloutOptions: CalloutOptions = {
+			extraOverlayIds: this.renderer.overlayIds,
+		};
+		this.callout = callout ?? new Callout(page, calloutOptions);
 	}
 
 	private toLocator(target: ElementTarget): PwLocator {
@@ -254,66 +349,27 @@ export class Pointer {
 		const extraDelayMs = Math.max(0, opts.extraDelayMs ?? 0);
 		const actionDelayMs = Math.max(0, delayMs);
 
-		// Inject the visual cursor if it doesn't exist yet.
-		await __pw_ensure_cursor__(this.page);
+		// Inject the visual pointer if it doesn't exist yet.
+		await this.renderer.ensure(this.page);
 
-		// Move the cursor to the target element.
+		// Move the pointer to the target element.
 		const box = await locator.first().boundingBox();
 		if (box) {
 			const endX = box.x + box.width / 2;
 			const endY = box.y + box.height / 2;
-			const { x: startX, y: startY } = __pw_get_cursor_pos__(this.page);
+			const { x: startX, y: startY } = __pw_get_pointer_pos__(this.page);
 			const distance = Math.sqrt((endX - startX) ** 2 + (endY - startY) ** 2);
 
 			const shouldAnimate = moveDurationMs > 0 && distance > 0;
-			await this.page.evaluate(
-				({
-					dur,
-					ex,
-					ey,
-					id,
-					style,
-					sx,
-					sy,
-					animate,
-				}: {
-					dur: number;
-					ex: number;
-					ey: number;
-					id: string;
-					style: string;
-					sx: number;
-					sy: number;
-					animate: boolean;
-				}) => {
-					const el = document.getElementById(id);
-					if (!el) {
-						return;
-					}
-
-					el.style.transition = "";
-					el.style.willChange = "left, top";
-					el.style.left = `${animate ? sx : ex}px`;
-					el.style.top = `${animate ? sy : ey}px`;
-
-					if (animate) {
-						void el.offsetWidth;
-						el.style.transition = `left ${dur}ms ${style}, top ${dur}ms ${style}`;
-						el.style.left = `${ex}px`;
-						el.style.top = `${ey}px`;
-					}
-				},
-				{
-					dur: moveDurationMs,
-					ex: endX,
-					ey: endY,
-					id: __PW_CURSOR_ID__,
-					style: transitionStyle,
-					sx: startX,
-					sy: startY,
-					animate: shouldAnimate,
-				},
-			);
+			await this.renderer.move(this.page, {
+				animate: shouldAnimate,
+				durationMilliseconds: moveDurationMs,
+				endX,
+				endY,
+				startX,
+				startY,
+				transitionStyle,
+			});
 
 			if (trimmedAnnotationText) {
 				await this.callout.showForElement(locator, trimmedAnnotationText, {
@@ -330,7 +386,7 @@ export class Pointer {
 				await this.page.waitForTimeout(moveDurationMs + 25);
 			}
 
-			__pw_set_cursor_pos__(this.page, endX, endY);
+			__pw_set_pointer_pos__(this.page, endX, endY);
 		}
 		else {
 			await this.callout.hide();
@@ -342,23 +398,10 @@ export class Pointer {
 
 		let clickedTestId: string | undefined;
 		if (executeClick) {
-			// Brief scale-down "press" animation on the cursor image.
+			// Brief scale-down "press" animation on the pointer image.
 			if (moveDurationMs > 0) {
 				const pressDur = Math.max(80, Math.round(moveDurationMs / 3));
-				await this.page.evaluate(
-					({ id, dur }: { id: string; dur: number }) => {
-						const el = document.getElementById(id);
-						if (el) {
-							el.style.transition = `transform ${dur}ms`;
-							el.style.transform = "scale(0.6)";
-							setTimeout(() => {
-								el.style.transition = `transform ${dur}ms`;
-								el.style.transform = "scale(1)";
-							}, dur);
-						}
-					},
-					{ id: __PW_CURSOR_ID__, dur: pressDur },
-				);
+				await this.renderer.press(this.page, { durationMilliseconds: pressDur });
 			}
 
 			try { clickedTestId = await this.getTestId(locator); } catch { /* noop */ }
@@ -380,7 +423,7 @@ export class Pointer {
 			afterClick?: AfterPointerClick;
 		},
 	): Promise<void> {
-		// Animate cursor + click first.
+		// Animate the pointer + click first.
 		await this.animateCursorToElement(target, executeClick, delayMs, annotationText, options);
 
 		const locator = this.toLocator(target);
