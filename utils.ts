@@ -54,15 +54,6 @@ import {
 } from "@babel/types";
 import { parse, parseExpression } from "@babel/parser";
 
-const CHAR_CODE_DOLLAR = 36;
-const CHAR_CODE_ZERO = 48;
-const CHAR_CODE_NINE = 57;
-const CHAR_CODE_UPPER_A = 65;
-const CHAR_CODE_UPPER_Z = 90;
-const CHAR_CODE_UNDERSCORE = 95;
-const CHAR_CODE_LOWER_A = 97;
-const CHAR_CODE_LOWER_Z = 122;
-
 export { isSimpleExpressionNode } from "./compiler/ast-guards";
 export type { RouterIntrospectionResult } from "./router-introspection";
 export {
@@ -288,35 +279,23 @@ function isTemplateWithData(node: ElementNode): boolean {
   return getTemplateSlotScope(node) !== null;
 }
 
+/**
+ * Returns true when the raw slot-scope content parses as a single identifier expression.
+ *
+ * This is intentionally AST-based so object destructuring, member access, and other compound
+ * expressions are rejected without relying on string heuristics.
+ */
 function isSimpleScopeIdentifier(value: string): boolean {
   if (!value) {
     return false;
   }
 
-  const firstCharacter = value.charCodeAt(0);
-  const isIdentifierStart
-    = firstCharacter === CHAR_CODE_DOLLAR
-      || firstCharacter === CHAR_CODE_UNDERSCORE
-      || (firstCharacter >= CHAR_CODE_UPPER_A && firstCharacter <= CHAR_CODE_UPPER_Z)
-      || (firstCharacter >= CHAR_CODE_LOWER_A && firstCharacter <= CHAR_CODE_LOWER_Z);
-  if (!isIdentifierStart) {
+  try {
+    return isIdentifier(parseExpression(value, { plugins: ["typescript"] }) as BabelNode);
+  }
+  catch {
     return false;
   }
-
-  for (let index = 1; index < value.length; index += 1) {
-    const character = value.charCodeAt(index);
-    const isIdentifierContinue
-      = character === CHAR_CODE_DOLLAR
-        || character === CHAR_CODE_UNDERSCORE
-        || (character >= CHAR_CODE_ZERO && character <= CHAR_CODE_NINE)
-        || (character >= CHAR_CODE_UPPER_A && character <= CHAR_CODE_UPPER_Z)
-        || (character >= CHAR_CODE_LOWER_A && character <= CHAR_CODE_LOWER_Z);
-    if (!isIdentifierContinue) {
-      return false;
-    }
-  }
-
-  return true;
 }
 
 function buildSlotScopeFallbackKeyExpression(identifier: string): string {
@@ -348,6 +327,11 @@ type SlotScopeKeyCandidate = {
   expression: string;
 };
 
+/**
+ * Flattens a nullish-coalescing chain into its top-level operand source strings.
+ *
+ * For example, `foo ?? bar ?? baz` becomes `["foo", "bar", "baz"]`.
+ */
 function splitNullishCoalescingExpression(expr: string): string[] {
   const ast = parseExpression(expr, { plugins: ["typescript"] }) as BabelNode;
 
@@ -2286,7 +2270,9 @@ function replaceAllTemplateExpressionsWithKey(template: string): string {
 
 // Internal exports for unit testing (not part of the public plugin API).
 export const __internal = {
+  isSimpleScopeIdentifier,
   safeMethodNameFromParts,
+  splitNullishCoalescingExpression,
   replaceAllTemplateExpressionsWithKey,
 };
 

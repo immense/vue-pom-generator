@@ -56,8 +56,6 @@ import {
 
 const CLICK_EVENT_NAME = TESTID_CLICK_EVENT_NAME;
 const ENABLE_CLICK_INSTRUMENTATION = true;
-const WHITESPACE_CHARACTERS = new Set([" ", "\n", "\r", "\t", "\f"]);
-
 // Cache inferred wrapper configs across transforms/build passes.
 const inferredNativeWrapperConfigByLookup = new Map<string, { role: string }>();
 const inferredSfcPathByLookup = new Map<string, string | null>();
@@ -133,30 +131,22 @@ function getNativeHtmlControlRole(element: ElementNode): NativeRole | null {
   return "input";
 }
 
+/**
+ * Normalizes label text into the stable string used for generated control names.
+ *
+ * This operates on plain UI text, not source code, so the regex usage is intentionally scoped
+ * to this helper instead of adding broader string-scanning logic.
+ */
+/* eslint-disable no-restricted-syntax -- allowed: normalize plain label text, not source parsing */
 function normalizeControlLabelText(value: string | null): string | null {
-  const source = value ?? "";
-  let normalized = "";
-  let sawNonWhitespace = false;
-  let pendingSpace = false;
-
-  for (const char of source) {
-    const isWhitespace = WHITESPACE_CHARACTERS.has(char);
-    if (char === "*" || isWhitespace) {
-      pendingSpace = sawNonWhitespace;
-      continue;
-    }
-
-    if (pendingSpace) {
-      normalized += " ";
-      pendingSpace = false;
-    }
-
-    normalized += char;
-    sawNonWhitespace = true;
-  }
+  const normalized = (value ?? "")
+    .replace(/\*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
   return normalized || null;
 }
+/* eslint-enable no-restricted-syntax */
 
 function getLabelNodeText(labelNode: ElementNode): string | null {
   for (const child of labelNode.children || []) {
@@ -222,6 +212,11 @@ function getAssociatedLabelText(element: ElementNode, hierarchyMap: HierarchyMap
 
   return null;
 }
+
+// Internal exports for unit testing (not part of the public plugin API).
+export const __internal = {
+  normalizeControlLabelText,
+};
 
 function normalizeSearchRoots(wrapperSearchRoots: string[]): string[] {
   const normalized = new Set<string>();
