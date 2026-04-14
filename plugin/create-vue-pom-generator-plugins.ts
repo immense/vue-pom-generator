@@ -67,14 +67,14 @@ function resolveMissingSemanticNameBehavior(
   value: ErrorBehavior | undefined,
 ): MissingSemanticNameBehavior {
   if (!value) {
-    return "ignore";
+    return "error";
   }
 
   if (value === "ignore" || value === "error") {
     return value;
   }
 
-  return value.missingSemanticNameBehavior ?? "ignore";
+  return value.missingSemanticNameBehavior ?? "error";
 }
 function assertRouterModuleShims(
   value: Record<string, RouterModuleShimDefinition> | undefined,

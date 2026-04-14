@@ -725,7 +725,28 @@ describe('createTestIdTransform', () => {
     expect(deps?.generatedMethods?.has('clickRunDeploymentActionAssign')).toBe(true)
   })
 
-  it('fails fast for button-like wrapper handlers that cannot produce a semantic name when configured', () => {
+  it('fails fast for button-like wrapper handlers that cannot produce a semantic name by default', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const nativeWrappers: NativeWrappersMap = {
+      LoadButton: { role: 'button' },
+    }
+
+    expect(() => {
+      compileAndCaptureAst(
+        `
+          <LoadButton :handler="() => person && impersonateUser(person.userId!)">
+            Impersonate
+          </LoadButton>
+        `,
+        {
+          filename: '/src/views/RbacUserDetailsPage.vue',
+          nodeTransforms: [createTestIdTransform('RbacUserDetailsPage', componentHierarchyMap, nativeWrappers, [], '/src/views')],
+        },
+      )
+    }).toThrow(/move complex inline logic into a named function/i)
+  })
+
+  it('preserves the old permissive fallback when missingSemanticNameBehavior is explicitly ignore', () => {
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
     const nativeWrappers: NativeWrappersMap = {
       LoadButton: { role: 'button' },
@@ -741,11 +762,11 @@ describe('createTestIdTransform', () => {
         {
           filename: '/src/views/RbacUserDetailsPage.vue',
           nodeTransforms: [createTestIdTransform('RbacUserDetailsPage', componentHierarchyMap, nativeWrappers, [], '/src/views', {
-            missingSemanticNameBehavior: 'error',
+            missingSemanticNameBehavior: 'ignore',
           })],
         },
       )
-    }).toThrow(/move complex inline logic into a named function/i)
+    }).not.toThrow()
   })
 
   it('emits per-key click methods when v-for iterates a static literal list', () => {

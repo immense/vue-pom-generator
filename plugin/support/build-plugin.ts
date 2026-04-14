@@ -116,7 +116,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     customPomImportNameCollisionBehavior,
     testIdAttribute,
     nameCollisionBehavior,
-    missingSemanticNameBehavior,
+    missingSemanticNameBehavior = "error",
     existingIdBehavior,
     nativeWrappers,
     excludedComponents,

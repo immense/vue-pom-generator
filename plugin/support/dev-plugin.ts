@@ -73,7 +73,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     customPomImportAliases,
     customPomImportNameCollisionBehavior,
     nameCollisionBehavior = "suffix",
-    missingSemanticNameBehavior,
+    missingSemanticNameBehavior = "error",
     existingIdBehavior,
     testIdAttribute,
     routerAwarePoms,
