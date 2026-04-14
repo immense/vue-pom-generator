@@ -28,6 +28,7 @@ const __PW_POINTER_CALLOUT_AVOID_SELECTOR__
 const __PW_POINTER_CALLOUT_MARGIN__ = 18;
 const __PW_POINTER_CALLOUT_GAP__ = 18;
 const __PW_POINTER_CALLOUT_ARROW_SIZE__ = 14;
+const __PW_POINTER_CALLOUT_ARROW_PADDING__ = 10;
 const __PW_POINTER_CALLOUT_AVOID_PADDING__ = 12;
 const __PW_POINTER_CALLOUT_BACKGROUND__ = "#dc2626";
 const __PW_POINTER_CALLOUT_BORDER__ = "0px solid transparent";
@@ -64,6 +65,16 @@ const __PW_POINTER_ALLOWED_PLACEMENTS__: Placement[] = [
 	"left-end",
 ];
 
+const __PW_POINTER_ORDERED_PLACEMENTS__ = Object.fromEntries(
+	__PW_POINTER_ALLOWED_PLACEMENTS__.map(placement => [
+		placement,
+		[
+			placement,
+			...__PW_POINTER_ALLOWED_PLACEMENTS__.filter(candidate => candidate !== placement),
+		],
+	]),
+) as Record<Placement, Placement[]>;
+
 export type ElementTarget = string | PwLocator;
 
 export interface CalloutTargetBox {
@@ -75,7 +86,8 @@ export interface CalloutTargetBox {
 
 interface CalloutContext {
 	avoidRects: CalloutTargetBox[];
-	preferredPlacement?: Placement;
+	/** Auto-placement result used to try the most likely Floating UI placement first. */
+	preferredPosition?: CalloutPositionResult;
 	protectedTargetRects: CalloutTargetBox[];
 	viewportHeight: number;
 	viewportWidth: number;
@@ -90,6 +102,15 @@ interface CalloutLayout {
 	arrowY: number | null;
 	placement: Placement;
 	staticSide: "bottom" | "left" | "right" | "top";
+	x: number;
+	y: number;
+}
+
+interface CalloutPositionResult {
+	adjustmentDistance: number;
+	arrowX: number | null;
+	arrowY: number | null;
+	placement: Placement;
 	x: number;
 	y: number;
 }
@@ -237,49 +258,20 @@ function __pw_create_platform__(viewportWidth: number, viewportHeight: number) {
 	};
 }
 
-async function __pw_compute_shifted_position__(
+function __pw_finalize_callout_position__(
 	referenceRect: CalloutTargetBox,
 	floatingRect: CalloutTargetBox,
-	placement: Placement,
 	protectedRects: CalloutTargetBox[],
 	viewportWidth: number,
 	viewportHeight: number,
-): Promise<{
-	adjustmentDistance: number;
-	arrowX: number | null;
-	arrowY: number | null;
-	placement: Placement;
-	x: number;
-	y: number;
-}> {
-	const platform = __pw_create_platform__(viewportWidth, viewportHeight);
-	const floatingElement = __pw_create_virtual_element__(floatingRect, "floating");
-	const referenceElement = __pw_create_virtual_element__(referenceRect, "reference");
-	const arrowPadding = 10;
-	const arrowElement = __pw_create_virtual_element__(
-		{ x: 0, y: 0, width: __PW_POINTER_CALLOUT_ARROW_SIZE__, height: __PW_POINTER_CALLOUT_ARROW_SIZE__ },
-		"arrow",
-	);
-	const result = await computePosition(referenceElement, floatingElement, {
-		middleware: [
-			offset(__PW_POINTER_CALLOUT_GAP__),
-			shift({
-				limiter: limitShift({}),
-				padding: __PW_POINTER_CALLOUT_MARGIN__,
-			}),
-			arrow({
-				element: arrowElement,
-				padding: arrowPadding,
-			}),
-		],
-		placement,
-		platform,
-		strategy: "fixed",
-	});
-	const resolvedPlacement = result.placement as Placement;
+	resolvedPlacement: Placement,
+	rawX: number,
+	rawY: number,
+	baseArrowData?: { x?: number; y?: number },
+): CalloutPositionResult {
 	const { side } = __pw_parse_placement__(resolvedPlacement);
-	let x = Math.round(result.x);
-	let y = Math.round(result.y);
+	let x = Math.round(rawX);
+	let y = Math.round(rawY);
 	const baseX = x;
 	const baseY = y;
 	let layoutAdjustedForProtectedRect = false;
@@ -323,22 +315,20 @@ async function __pw_compute_shifted_position__(
 	const referenceCenterX = referenceRect.x + referenceRect.width / 2;
 	const referenceCenterY = referenceRect.y + referenceRect.height / 2;
 	const arrowHalf = __PW_POINTER_CALLOUT_ARROW_SIZE__ / 2;
-	const middlewareData = result.middlewareData as { arrow?: { x?: number; y?: number } };
-	const baseArrowData = middlewareData.arrow;
 	const arrowX = side === "top" || side === "bottom"
 		? !layoutAdjustedForProtectedRect && typeof baseArrowData?.x === "number"
 			? Math.round(baseArrowData.x)
 			: Math.min(
-				Math.max(referenceCenterX - x - arrowHalf, arrowPadding),
-				Math.max(arrowPadding, floatingRect.width - __PW_POINTER_CALLOUT_ARROW_SIZE__ - arrowPadding),
+				Math.max(referenceCenterX - x - arrowHalf, __PW_POINTER_CALLOUT_ARROW_PADDING__),
+				Math.max(__PW_POINTER_CALLOUT_ARROW_PADDING__, floatingRect.width - __PW_POINTER_CALLOUT_ARROW_SIZE__ - __PW_POINTER_CALLOUT_ARROW_PADDING__),
 			)
 		: null;
 	const arrowY = side === "left" || side === "right"
 		? !layoutAdjustedForProtectedRect && typeof baseArrowData?.y === "number"
 			? Math.round(baseArrowData.y)
 			: Math.min(
-				Math.max(referenceCenterY - y - arrowHalf, arrowPadding),
-				Math.max(arrowPadding, floatingRect.height - __PW_POINTER_CALLOUT_ARROW_SIZE__ - arrowPadding),
+				Math.max(referenceCenterY - y - arrowHalf, __PW_POINTER_CALLOUT_ARROW_PADDING__),
+				Math.max(__PW_POINTER_CALLOUT_ARROW_PADDING__, floatingRect.height - __PW_POINTER_CALLOUT_ARROW_SIZE__ - __PW_POINTER_CALLOUT_ARROW_PADDING__),
 			)
 		: null;
 
@@ -352,6 +342,50 @@ async function __pw_compute_shifted_position__(
 	};
 }
 
+async function __pw_compute_shifted_position__(
+	referenceRect: CalloutTargetBox,
+	floatingRect: CalloutTargetBox,
+	placement: Placement,
+	protectedRects: CalloutTargetBox[],
+	viewportWidth: number,
+	viewportHeight: number,
+): Promise<CalloutPositionResult> {
+	const platform = __pw_create_platform__(viewportWidth, viewportHeight);
+	const floatingElement = __pw_create_virtual_element__(floatingRect, "floating");
+	const referenceElement = __pw_create_virtual_element__(referenceRect, "reference");
+	const arrowElement = __pw_create_virtual_element__(
+		{ x: 0, y: 0, width: __PW_POINTER_CALLOUT_ARROW_SIZE__, height: __PW_POINTER_CALLOUT_ARROW_SIZE__ },
+		"arrow",
+	);
+	const result = await computePosition(referenceElement, floatingElement, {
+		middleware: [
+			offset(__PW_POINTER_CALLOUT_GAP__),
+			shift({
+				limiter: limitShift({}),
+				padding: __PW_POINTER_CALLOUT_MARGIN__,
+			}),
+			arrow({
+				element: arrowElement,
+				padding: __PW_POINTER_CALLOUT_ARROW_PADDING__,
+			}),
+		],
+		placement,
+		platform,
+		strategy: "fixed",
+	});
+	return __pw_finalize_callout_position__(
+		referenceRect,
+		floatingRect,
+		protectedRects,
+		viewportWidth,
+		viewportHeight,
+		result.placement as Placement,
+		result.x,
+		result.y,
+		(result.middlewareData as { arrow?: { x?: number; y?: number } }).arrow,
+	);
+}
+
 async function __pw_compute_callout_layout__(
 	targetRect: CalloutTargetBox,
 	floatingRect: CalloutTargetBox,
@@ -359,19 +393,21 @@ async function __pw_compute_callout_layout__(
 ): Promise<CalloutLayout> {
 	const referenceRect = targetRect;
 	let bestLayout: (CalloutLayout & { score: number }) | null = null;
-	const orderedPlacements = context.preferredPlacement
-		? [context.preferredPlacement, ...__PW_POINTER_ALLOWED_PLACEMENTS__.filter(placement => placement !== context.preferredPlacement)]
+	const orderedPlacements = context.preferredPosition
+		? __PW_POINTER_ORDERED_PLACEMENTS__[context.preferredPosition.placement]
 		: __PW_POINTER_ALLOWED_PLACEMENTS__;
 
 	for (const placement of orderedPlacements) {
-		const result = await __pw_compute_shifted_position__(
-			referenceRect,
-			floatingRect,
-			placement,
-			context.protectedTargetRects,
-			context.viewportWidth,
-			context.viewportHeight,
-		);
+		const result = context.preferredPosition && placement === context.preferredPosition.placement
+			? context.preferredPosition
+			: await __pw_compute_shifted_position__(
+				referenceRect,
+				floatingRect,
+				placement,
+				context.protectedTargetRects,
+				context.viewportWidth,
+				context.viewportHeight,
+			);
 
 		const positionedRect: CalloutTargetBox = {
 			x: result.x,
@@ -435,15 +471,20 @@ function __pw_get_callout_dimensions__(annotationText: string): { bubbleHeight: 
 	};
 }
 
-async function __pw_get_preferred_callout_placement__(
+async function __pw_get_preferred_callout_position__(
 	targetRect: CalloutTargetBox,
 	floatingRect: CalloutTargetBox,
+	protectedRects: CalloutTargetBox[],
 	viewportWidth: number,
 	viewportHeight: number,
-): Promise<Placement> {
+): Promise<CalloutPositionResult> {
 	const platform = __pw_create_platform__(viewportWidth, viewportHeight);
 	const floatingElement = __pw_create_virtual_element__(floatingRect, "floating");
 	const referenceElement = __pw_create_virtual_element__(targetRect, "reference");
+	const arrowElement = __pw_create_virtual_element__(
+		{ x: 0, y: 0, width: __PW_POINTER_CALLOUT_ARROW_SIZE__, height: __PW_POINTER_CALLOUT_ARROW_SIZE__ },
+		"arrow",
+	);
 	const result = await computePosition(referenceElement, floatingElement, {
 		middleware: [
 			offset(__PW_POINTER_CALLOUT_GAP__),
@@ -455,12 +496,26 @@ async function __pw_get_preferred_callout_placement__(
 				limiter: limitShift({}),
 				padding: __PW_POINTER_CALLOUT_MARGIN__,
 			}),
+			arrow({
+				element: arrowElement,
+				padding: __PW_POINTER_CALLOUT_ARROW_PADDING__,
+			}),
 		],
 		placement: "top",
 		platform,
 		strategy: "fixed",
 	});
-	return result.placement as Placement;
+	return __pw_finalize_callout_position__(
+		targetRect,
+		floatingRect,
+		protectedRects,
+		viewportWidth,
+		viewportHeight,
+		result.placement as Placement,
+		result.x,
+		result.y,
+		(result.middlewareData as { arrow?: { x?: number; y?: number } }).arrow,
+	);
 }
 
 async function __pw_ensure_callout__(page: PwPage): Promise<void> {
@@ -891,9 +946,10 @@ export class Callout {
 				],
 			},
 		);
-		const preferredPlacement = await __pw_get_preferred_callout_placement__(
+		const preferredPosition = await __pw_get_preferred_callout_position__(
 			{ x: targetBox.x, y: targetBox.y, width: targetBox.width, height: targetBox.height },
 			{ x: 0, y: 0, width: bubbleWidth, height: bubbleHeight },
+			context.protectedTargetRects,
 			context.viewportWidth,
 			context.viewportHeight,
 		);
@@ -902,7 +958,7 @@ export class Callout {
 			{ x: 0, y: 0, width: bubbleWidth, height: bubbleHeight },
 			{
 				...context,
-				preferredPlacement,
+				preferredPosition,
 			},
 		);
 		await this.renderer.show(this.page, {
