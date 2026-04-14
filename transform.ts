@@ -137,7 +137,7 @@ function getNativeHtmlControlRole(element: ElementNode): NativeRole | null {
  * This operates on plain UI text, not source code, so the regex usage is intentionally scoped
  * to this helper instead of adding broader string-scanning logic.
  */
-/* eslint-disable no-restricted-syntax -- allowed: normalize plain label text, not source parsing */
+/* eslint-disable no-restricted-syntax -- allowed: regex is restricted for source parsing, but this helper only normalizes plain UI label text */
 function normalizeControlLabelText(value: string | null): string | null {
   const normalized = (value ?? "")
     .replace(/\*/g, " ")

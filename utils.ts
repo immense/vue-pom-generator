@@ -294,6 +294,7 @@ function isSimpleScopeIdentifier(value: string): boolean {
     return isIdentifier(parseExpression(value, { plugins: ["typescript"] }) as BabelNode);
   }
   catch {
+    // Any parse failure means the slot scope is not a bare identifier.
     return false;
   }
 }
