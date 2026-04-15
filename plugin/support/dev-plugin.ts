@@ -304,7 +304,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         return { componentName, ms: performance.now() - started, compiled: true };
       };
 
-      const fullRebuildSnapshotFromFilesystem = () => {
+      const fullRebuildSnapshotFromFilesystem = (reason: string) => {
         const t0 = performance.now();
         const nextHierarchy = new Map<string, IComponentDependencies>();
         const nextVuePathMap = new Map<string, string>();
@@ -332,28 +332,25 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         snapshotVuePathMap = nextVuePathMap;
 
         const t1 = performance.now();
-        logInfo(`initial scan: found ${totalVueFiles} .vue files in ${scanDirs.join(", ")}`);
-        logInfo(`initial compile: ${compiledCount}/${totalVueFiles} files in ${formatMs(t1 - t0)} (components=${snapshotHierarchy.size})`);
+        logInfo(`scan(${reason}): found ${totalVueFiles} .vue files in ${scanDirs.join(", ")}`);
+        logInfo(`compile(${reason}): ${compiledCount}/${totalVueFiles} files in ${formatMs(t1 - t0)} (components=${snapshotHierarchy.size})`);
       };
 
       const generateAggregatedFromSnapshot = (reason: string) => {
-        const metrics = getGenerationMetrics(snapshotHierarchy);
-        if (metrics.selectorCount <= 0) {
-          logDebug(
-            `skip generate(${reason}): no selectors detected `
-            + `(entries=${metrics.entryCount} methods=${metrics.generatedMethodCount})`,
-          );
-          return;
-        }
+        let metrics = getGenerationMetrics(snapshotHierarchy);
+        const shouldConfirmWithFilesystem = reason !== "startup"
+          && (metrics.selectorCount <= 0 || isLessRich(metrics, lastGeneratedMetrics));
 
-        if (isLessRich(metrics, lastGeneratedMetrics)) {
+        if (shouldConfirmWithFilesystem) {
           logDebug(
-            `skip generate(${reason}): snapshot less rich than previous `
+            `confirm generate(${reason}): incremental snapshot may be incomplete `
             + `(entries=${metrics.entryCount}/${lastGeneratedMetrics.entryCount} `
             + `selectors=${metrics.selectorCount}/${lastGeneratedMetrics.selectorCount} `
             + `methods=${metrics.generatedMethodCount}/${lastGeneratedMetrics.generatedMethodCount})`,
           );
-          return;
+
+          fullRebuildSnapshotFromFilesystem(`${reason}:filesystem-confirmation`);
+          metrics = getGenerationMetrics(snapshotHierarchy);
         }
 
         const t0 = performance.now();
@@ -392,7 +389,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
       const initialBuildPromise = (async () => {
         const t0 = performance.now();
         await routerInitPromise;
-        fullRebuildSnapshotFromFilesystem();
+        fullRebuildSnapshotFromFilesystem("startup");
         generateAggregatedFromSnapshot("startup");
         const t1 = performance.now();
         logInfo(`startup total: ${formatMs(t1 - t0)}`);
