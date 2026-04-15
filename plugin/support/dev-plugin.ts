@@ -14,6 +14,7 @@ import { createTestIdTransform } from "../../transform";
 import type { IComponentDependencies, NativeWrappersMap, RouterIntrospectionResult } from "../../utils";
 import { setResolveToComponentNameFn, setRouteNameToComponentNameMap, toPascalCase } from "../../utils";
 import type { VuePomGeneratorLogger } from "../logger";
+import { getGenerationMetrics, isLessRich, type GenerationMetrics } from "./generation-metrics";
 import { resolveComponentNameFromPath } from "../path-utils";
 import type { PlaywrightOutputStructure, PomNameCollisionBehavior, RouterModuleShimDefinition } from "../types";
 
@@ -220,6 +221,11 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
       let snapshotHierarchy = new Map<string, IComponentDependencies>();
       let snapshotVuePathMap = new Map<string, string>();
       const filePathToComponentName = new Map<string, string>();
+      let lastGeneratedMetrics: GenerationMetrics = {
+        entryCount: 0,
+        selectorCount: 0,
+        generatedMethodCount: 0,
+      };
 
       const getComponentNameForFile = (filePath: string) => {
         const normalized = path.resolve(filePath);
@@ -331,6 +337,25 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
       };
 
       const generateAggregatedFromSnapshot = (reason: string) => {
+        const metrics = getGenerationMetrics(snapshotHierarchy);
+        if (metrics.selectorCount <= 0) {
+          logDebug(
+            `skip generate(${reason}): no selectors detected `
+            + `(entries=${metrics.entryCount} methods=${metrics.generatedMethodCount})`,
+          );
+          return;
+        }
+
+        if (isLessRich(metrics, lastGeneratedMetrics)) {
+          logDebug(
+            `skip generate(${reason}): snapshot less rich than previous `
+            + `(entries=${metrics.entryCount}/${lastGeneratedMetrics.entryCount} `
+            + `selectors=${metrics.selectorCount}/${lastGeneratedMetrics.selectorCount} `
+            + `methods=${metrics.generatedMethodCount}/${lastGeneratedMetrics.generatedMethodCount})`,
+          );
+          return;
+        }
+
         const t0 = performance.now();
         generateFiles(snapshotHierarchy, snapshotVuePathMap, normalizedBasePagePath, {
           outDir,
@@ -350,8 +375,13 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
           routerEntry: resolvedRouterEntry,
           routerType,
         });
+        lastGeneratedMetrics = metrics;
         const t1 = performance.now();
-        logInfo(`generate(${reason}): components=${snapshotHierarchy.size} in ${formatMs(t1 - t0)}`);
+        logInfo(
+          `generate(${reason}): components=${snapshotHierarchy.size} `
+          + `selectors=${metrics.selectorCount} methods=${metrics.generatedMethodCount} `
+          + `in ${formatMs(t1 - t0)}`,
+        );
       };
 
       let timer: NodeJS.Timeout | null = null;

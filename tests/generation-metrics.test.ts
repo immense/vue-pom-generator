@@ -44,4 +44,17 @@ describe("generation metrics", () => {
     expect(isLessRich(smaller, richer)).toBe(true);
     expect(isLessRich(richer, smaller)).toBe(false);
   });
+
+  it("treats selector-less snapshots as less rich than previous generated output", () => {
+    const richer = getGenerationMetrics(new Map([
+      ["HomeIndex", makeDeps(["a", "b"], 2)],
+    ]));
+
+    const selectorLess = getGenerationMetrics(new Map([
+      ["HomeIndex", makeDeps([], 0)],
+    ]));
+
+    expect(selectorLess.selectorCount).toBe(0);
+    expect(isLessRich(selectorLess, richer)).toBe(true);
+  });
 });
