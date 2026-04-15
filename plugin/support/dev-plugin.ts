@@ -14,8 +14,7 @@ import { createTestIdTransform } from "../../transform";
 import type { IComponentDependencies, NativeWrappersMap, RouterIntrospectionResult } from "../../utils";
 import { setResolveToComponentNameFn, setRouteNameToComponentNameMap, toPascalCase } from "../../utils";
 import type { VuePomGeneratorLogger } from "../logger";
-import { getGenerationMetrics, isLessRich, type GenerationMetrics } from "./generation-metrics";
-import { resolveComponentNameFromPath } from "../path-utils";
+import { isPathWithinDir, resolveComponentNameFromPath } from "../path-utils";
 import type { PlaywrightOutputStructure, PomNameCollisionBehavior, RouterModuleShimDefinition } from "../types";
 
 interface DevProcessorOptions {
@@ -86,6 +85,24 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
 
   // Bridge between configureServer (where we have timers/logger) and handleHotUpdate.
   let scheduleVueFileRegen: ((filePath: string, source: "hmr" | "fs") => void) | null = null;
+  const getProjectRootCandidates = () => Array.from(new Set([
+    path.resolve(projectRootRef.current),
+    path.resolve(process.cwd()),
+  ]));
+  const resolveProjectPath = (maybePath: string) => {
+    if (path.isAbsolute(maybePath))
+      return maybePath;
+
+    const candidates = getProjectRootCandidates().map(root => path.resolve(root, maybePath));
+    return candidates.find(candidate => fs.existsSync(candidate)) ?? candidates[0]!;
+  };
+  const getScanDirRoots = () => Array.from(new Set(
+    getProjectRootCandidates().flatMap(root => scanDirs.map(dir => path.resolve(root, dir))),
+  ));
+  const isContainedInScanDirs = (filePath: string) => {
+    const absolutePath = path.resolve(filePath);
+    return getScanDirRoots().some(scanDirAbs => isPathWithinDir(absolutePath, scanDirAbs));
+  };
 
   return {
     name: "vue-pom-generator-dev",
@@ -99,21 +116,14 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
       if (!ctx.file.endsWith(".vue"))
         return;
 
-      const isContainedInScanDirs = scanDirs.some((dir) => {
-        const absDir = path.resolve(projectRootRef.current, dir);
-        return ctx.file.startsWith(absDir + path.sep);
-      });
-
-      if (!isContainedInScanDirs)
+      if (!isContainedInScanDirs(ctx.file))
         return;
 
       scheduleVueFileRegen(ctx.file, "hmr");
     },
 
     async configureServer(server: ViteDevServer) {
-      const getViewsDirAbs = () => (path.isAbsolute(viewsDir)
-        ? viewsDir
-        : path.resolve(projectRootRef.current, viewsDir));
+      const getViewsDirAbs = () => resolveProjectPath(viewsDir);
 
       // Router introspection (dev-server): mirror the buildStart behavior.
       const routerInitPromise = (async () => {
@@ -221,10 +231,20 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
       let snapshotHierarchy = new Map<string, IComponentDependencies>();
       let snapshotVuePathMap = new Map<string, string>();
       const filePathToComponentName = new Map<string, string>();
-      let lastGeneratedMetrics: GenerationMetrics = {
-        entryCount: 0,
-        selectorCount: 0,
-        generatedMethodCount: 0,
+
+      const createEmptyComponentDependencies = (absolutePath: string): IComponentDependencies => {
+        const viewsDirAbs = path.resolve(getViewsDirAbs());
+        const relToViewsDir = path.relative(viewsDirAbs, absolutePath);
+        const isView = !relToViewsDir.startsWith("..") && !path.isAbsolute(relToViewsDir);
+
+        return {
+          filePath: absolutePath,
+          childrenComponentSet: new Set<string>(),
+          usedComponentSet: new Set<string>(),
+          dataTestIdSet: new Set(),
+          isView,
+          methodsContent: "",
+        };
       };
 
       const getComponentNameForFile = (filePath: string) => {
@@ -251,10 +271,6 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         const started = performance.now();
         const absolutePath = path.resolve(filePath);
         const componentName = getComponentNameForFile(absolutePath);
-        targetVuePathMap.set(componentName, absolutePath);
-
-        // Ensure a clean rebuild for this component to avoid stale accumulation.
-        targetHierarchy.delete(componentName);
 
         let sfc = "";
         try {
@@ -265,8 +281,11 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         }
 
         const template = extractTemplateFromSfc(sfc, absolutePath);
-        if (!template.trim())
+        if (!template.trim()) {
+          targetVuePathMap.set(componentName, absolutePath);
+          targetHierarchy.set(componentName, createEmptyComponentDependencies(absolutePath));
           return { componentName, ms: performance.now() - started, compiled: true };
+        }
 
         // Compile <script>/<script setup> to get binding metadata so the
         // template compiler resolves identifiers the same way the Vue
@@ -276,6 +295,10 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         // a $setup. prefix. We mirror that here.
         const { bindings: bindingMetadata, isScriptSetup } = getScriptInfo(sfc, absolutePath);
 
+        const provisionalHierarchy = new Map<string, IComponentDependencies>();
+        const provisionalVuePathMap = new Map(targetVuePathMap);
+        provisionalVuePathMap.set(componentName, absolutePath);
+
         compilerDom.compile(template, {
           filename: absolutePath,
           prefixIdentifiers: true,
@@ -284,7 +307,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
           nodeTransforms: [
             createTestIdTransform(
               componentName,
-              targetHierarchy,
+              provisionalHierarchy,
               nativeWrappers,
               excludedComponents,
               getViewsDirAbs(),
@@ -294,17 +317,23 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
                 missingSemanticNameBehavior,
                 testIdAttribute,
                 warn: message => loggerRef.current.warn(message),
-                vueFilesPathMap: targetVuePathMap,
+                vueFilesPathMap: provisionalVuePathMap,
                 wrapperSearchRoots: getWrapperSearchRoots(),
               },
             ),
           ],
         });
 
+        targetVuePathMap.set(componentName, absolutePath);
+        targetHierarchy.set(
+          componentName,
+          provisionalHierarchy.get(componentName) ?? createEmptyComponentDependencies(absolutePath),
+        );
+
         return { componentName, ms: performance.now() - started, compiled: true };
       };
 
-      const fullRebuildSnapshotFromFilesystem = (reason: string) => {
+      const fullRebuildSnapshotFromFilesystem = (logLabel: string) => {
         const t0 = performance.now();
         const nextHierarchy = new Map<string, IComponentDependencies>();
         const nextVuePathMap = new Map<string, string>();
@@ -313,8 +342,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         let totalVueFiles = 0;
         let compiledCount = 0;
 
-        for (const dir of scanDirs) {
-          const absDir = path.resolve(projectRootRef.current, dir);
+        for (const absDir of getScanDirRoots()) {
           if (!fs.existsSync(absDir))
             continue;
 
@@ -332,29 +360,13 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         snapshotVuePathMap = nextVuePathMap;
 
         const t1 = performance.now();
-        logInfo(`scan(${reason}): found ${totalVueFiles} .vue files in ${scanDirs.join(", ")}`);
-        logInfo(`compile(${reason}): ${compiledCount}/${totalVueFiles} files in ${formatMs(t1 - t0)} (components=${snapshotHierarchy.size})`);
+        logInfo(`scan(${logLabel}): found ${totalVueFiles} .vue files in ${scanDirs.join(", ")}`);
+        logInfo(`compile(${logLabel}): ${compiledCount}/${totalVueFiles} files in ${formatMs(t1 - t0)} (components=${snapshotHierarchy.size})`);
       };
 
-      const generateAggregatedFromSnapshot = (reason: string) => {
-        let metrics = getGenerationMetrics(snapshotHierarchy);
-        const shouldConfirmWithFilesystem = reason !== "startup"
-          && (metrics.selectorCount <= 0 || isLessRich(metrics, lastGeneratedMetrics));
-
-        if (shouldConfirmWithFilesystem) {
-          logDebug(
-            `confirm generate(${reason}): incremental snapshot may be incomplete `
-            + `(entries=${metrics.entryCount}/${lastGeneratedMetrics.entryCount} `
-            + `selectors=${metrics.selectorCount}/${lastGeneratedMetrics.selectorCount} `
-            + `methods=${metrics.generatedMethodCount}/${lastGeneratedMetrics.generatedMethodCount})`,
-          );
-
-          fullRebuildSnapshotFromFilesystem(`${reason}:filesystem-confirmation`);
-          metrics = getGenerationMetrics(snapshotHierarchy);
-        }
-
+      const generateAggregatedFromSnapshot = async (logLabel: string) => {
         const t0 = performance.now();
-        generateFiles(snapshotHierarchy, snapshotVuePathMap, normalizedBasePagePath, {
+        await generateFiles(snapshotHierarchy, snapshotVuePathMap, normalizedBasePagePath, {
           outDir,
           emitLanguages,
           typescriptOutputStructure,
@@ -372,25 +384,21 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
           routerEntry: resolvedRouterEntry,
           routerType,
         });
-        lastGeneratedMetrics = metrics;
         const t1 = performance.now();
-        logInfo(
-          `generate(${reason}): components=${snapshotHierarchy.size} `
-          + `selectors=${metrics.selectorCount} methods=${metrics.generatedMethodCount} `
-          + `in ${formatMs(t1 - t0)}`,
-        );
+        logInfo(`generate(${logLabel}): components=${snapshotHierarchy.size} in ${formatMs(t1 - t0)}`);
       };
 
       let timer: NodeJS.Timeout | null = null;
       let maxWaitTimer: NodeJS.Timeout | null = null;
       const pendingChangedVueFiles = new Set<string>();
       const pendingDeletedComponents = new Set<string>();
+      let regenerationSequence: Promise<void> = Promise.resolve();
 
       const initialBuildPromise = (async () => {
         const t0 = performance.now();
         await routerInitPromise;
         fullRebuildSnapshotFromFilesystem("startup");
-        generateAggregatedFromSnapshot("startup");
+        await generateAggregatedFromSnapshot("startup");
         const t1 = performance.now();
         logInfo(`startup total: ${formatMs(t1 - t0)}`);
       })();
@@ -426,7 +434,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         snapshotVuePathMap = nextVuePathMap;
 
         const t1 = performance.now();
-        generateAggregatedFromSnapshot(reason);
+        await generateAggregatedFromSnapshot(reason);
         const t2 = performance.now();
 
         return {
@@ -439,7 +447,15 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         };
       };
 
-      const watchedVueGlobs = scanDirs.map(dir => path.resolve(projectRootRef.current, dir, "**", "*.vue"));
+      const enqueueRegeneration = (reason: string) => {
+        const currentRun = regenerationSequence
+          .catch(() => undefined)
+          .then(() => regenerateFromPending(reason));
+        regenerationSequence = currentRun.then(() => undefined, () => undefined);
+        return currentRun;
+      };
+
+      const watchedVueGlobs = getScanDirRoots().map(scanDirAbs => path.resolve(scanDirAbs, "**", "*.vue"));
       const watchedPluginGlob = path.resolve(projectRootRef.current, "vite-plugins", "vue-pom-generator", "**", "*.ts");
       const runtimeDir = path.dirname(basePageClassPath);
       server.watcher.add([
@@ -469,7 +485,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
               timer = null;
             }
             maxWaitTimer = null;
-            void regenerateFromPending("max-wait")
+            void enqueueRegeneration("max-wait")
               .then(({ files, deletedCount, compileMs, preGenerateMs, generateMs, totalMs }) => {
                 logInfo(
                   `max-wait: files=${files.length} deleted=${deletedCount} `
@@ -499,7 +515,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
           }
 
           const reason = pendingChangedVueFiles.size || pendingDeletedComponents.size ? "batched" : "noop";
-          void regenerateFromPending(reason)
+          void enqueueRegeneration(reason)
             .then(({ files, deletedCount, compileMs, preGenerateMs, generateMs, totalMs }) => {
               if (files.length || deletedCount) {
                 logInfo(
@@ -538,12 +554,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         if (!p.endsWith(".vue"))
           return;
 
-        const isContainedInScanDirs = scanDirs.some((dir) => {
-          const absDir = path.resolve(projectRootRef.current, dir);
-          return p.startsWith(absDir + path.sep);
-        });
-
-        if (!isContainedInScanDirs)
+        if (!isContainedInScanDirs(p))
           return;
 
         void (async () => {
@@ -559,12 +570,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         if (!p.endsWith(".vue"))
           return;
 
-        const isContainedInScanDirs = scanDirs.some((dir) => {
-          const absDir = path.resolve(projectRootRef.current, dir);
-          return p.startsWith(absDir + path.sep);
-        });
-
-        if (!isContainedInScanDirs)
+        if (!isContainedInScanDirs(p))
           return;
 
         void (async () => {

@@ -15,7 +15,6 @@ import * as compilerDom from "@vue/compiler-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateFiles } from "../class-generation";
 import { createDevProcessorPlugin } from "../plugin/support/dev-plugin";
-import { getGenerationMetrics } from "../plugin/support/generation-metrics";
 
 // Mock generateFiles so the dev plugin doesn't try to write real files
 // (which would fail because base-page.ts doesn't exist in the temp dir).
@@ -123,7 +122,8 @@ describe("build–serve parity: dev plugin integration", () => {
 
   beforeEach(() => {
     compileSpy = vi.spyOn(compilerDom, "compile");
-    vi.mocked(generateFiles).mockClear();
+    vi.mocked(generateFiles).mockReset();
+    vi.mocked(generateFiles).mockImplementation(async () => undefined);
   });
 
   afterEach(() => {
@@ -326,7 +326,7 @@ export default defineComponent({
     }
   });
 
-  it("confirms suspicious incremental snapshots with a filesystem rebuild before emitting", async () => {
+  it("preserves the previous component snapshot when incremental recompilation throws", async () => {
     const { projectRoot, cleanup } = createTmpProjectWithSfc(
       '<template><button @click="save()">Recover</button></template>',
       "Recoverable.vue",
@@ -338,14 +338,14 @@ export default defineComponent({
       await (plugin as any).configureServer!(server);
 
       const initialSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, any>;
-      const initialMetrics = getGenerationMetrics(initialSnapshot);
-      expect(initialMetrics.selectorCount).toBeGreaterThan(0);
+      expect(initialSnapshot.size).toBe(1);
+      expect(initialSnapshot.has("Recoverable")).toBe(true);
 
       let intercepted = false;
       compileSpy.mockImplementation((template: string, options?: CompilerOptions) => {
         if (!intercepted && (options as any)?.filename?.includes("Recoverable.vue")) {
           intercepted = true;
-          return {} as any;
+          throw new Error("transient compile failure");
         }
 
         return realCompile(template, options as any);
@@ -355,10 +355,129 @@ export default defineComponent({
       await new Promise(resolve => setTimeout(resolve, 900));
 
       const finalSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, any>;
-      const finalMetrics = getGenerationMetrics(finalSnapshot);
-      expect(finalMetrics).toEqual(initialMetrics);
+      expect(finalSnapshot.size).toBe(1);
+      expect(finalSnapshot.has("Recoverable")).toBe(true);
+      expect(finalSnapshot.get("Recoverable")?.dataTestIdSet?.size ?? 0).toBeGreaterThan(0);
     } finally {
       cleanup();
+    }
+  });
+
+  it("keeps a template-less component entry during incremental rebuilds", async () => {
+    const { projectRoot, cleanup } = createTmpProjectWithSfc(
+      '<template><button @click="save()">TemplateLess</button></template>',
+      "TemplateLess.vue",
+    );
+
+    const componentPath = path.join(projectRoot, "src", "components", "TemplateLess.vue");
+
+    try {
+      const plugin = makeDevPlugin(projectRoot);
+      const server = createDevServerStub();
+      await (plugin as any).configureServer!(server);
+
+      const initialSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, any>;
+      expect(initialSnapshot.size).toBe(1);
+      expect(initialSnapshot.has("TemplateLess")).toBe(true);
+
+      fs.writeFileSync(
+        componentPath,
+        `<script setup lang="ts">
+const count = 1
+</script>`,
+      );
+
+      await (plugin as any).handleHotUpdate({ file: componentPath });
+      await new Promise(resolve => setTimeout(resolve, 900));
+
+      const finalSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, any>;
+      expect(finalSnapshot.size).toBe(1);
+      expect(finalSnapshot.has("TemplateLess")).toBe(true);
+      expect(finalSnapshot.get("TemplateLess")?.dataTestIdSet?.size ?? 0).toBe(0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("serializes dev generation so hot updates cannot overlap startup writes", async () => {
+    const { projectRoot, cleanup } = createTmpProjectWithSfc(
+      '<template><button @click="save()">Serialize</button></template>',
+      "Serialize.vue",
+    );
+
+    const componentPath = path.join(projectRoot, "src", "components", "Serialize.vue");
+
+    try {
+      let inFlight = 0;
+      let maxInFlight = 0;
+      const releases: Array<() => void> = [];
+
+      vi.mocked(generateFiles).mockImplementation(async () => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise<void>(resolve => releases.push(resolve));
+        inFlight -= 1;
+      });
+
+      const plugin = makeDevPlugin(projectRoot);
+      const server = createDevServerStub();
+      const configurePromise = (plugin as any).configureServer!(server);
+
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(vi.mocked(generateFiles).mock.calls.length).toBe(1);
+      expect(inFlight).toBe(1);
+
+      await (plugin as any).handleHotUpdate({ file: componentPath });
+      await new Promise(resolve => setTimeout(resolve, 900));
+
+      expect(maxInFlight).toBe(1);
+      expect(vi.mocked(generateFiles).mock.calls.length).toBe(1);
+
+      releases.shift()?.();
+      await configurePromise;
+
+      await new Promise(resolve => setTimeout(resolve, 900));
+      expect(vi.mocked(generateFiles).mock.calls.length).toBe(2);
+      expect(maxInFlight).toBe(1);
+
+      releases.shift()?.();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("scans scanDirs relative to cwd when Nuxt serve resolves config.root to the app subdirectory", async () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pom-parity-nuxt-root-"));
+    fs.mkdirSync(path.join(projectRoot, "app", "components"), { recursive: true });
+    fs.writeFileSync(
+      path.join(projectRoot, "app", "components", "NuxtRooted.vue"),
+      '<template><button @click="save()">NuxtRooted</button></template>',
+    );
+
+    const originalCwd = process.cwd();
+
+    try {
+      process.chdir(projectRoot);
+
+      const appRoot = path.join(projectRoot, "app");
+      const basePageClassPath = path.join(appRoot, "base-page.ts");
+      const plugin = makeDevPlugin(appRoot, {
+        viewsDir: "views",
+        scanDirs: ["app"],
+        projectRootRef: { current: appRoot },
+        normalizedBasePagePath: path.posix.normalize(basePageClassPath),
+        basePageClassPath,
+      });
+
+      const server = createDevServerStub();
+      await (plugin as any).configureServer!(server);
+
+      const snapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, any>;
+      expect(snapshot.size).toBe(1);
+      expect(snapshot.has("NuxtRooted")).toBe(true);
+    } finally {
+      process.chdir(originalCwd);
+      fs.rmSync(projectRoot, { recursive: true, force: true });
     }
   });
 });
