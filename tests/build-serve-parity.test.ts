@@ -10,9 +10,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import type { CompilerOptions } from "@vue/compiler-dom";
 import * as compilerDom from "@vue/compiler-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { generateFiles } from "../class-generation";
 import { createDevProcessorPlugin } from "../plugin/support/dev-plugin";
+import { getGenerationMetrics } from "../plugin/support/generation-metrics";
 
 // Mock generateFiles so the dev plugin doesn't try to write real files
 // (which would fail because base-page.ts doesn't exist in the temp dir).
@@ -51,6 +54,12 @@ function createDevServerStub(): DevServerStub {
     },
     restart: vi.fn(),
   };
+}
+
+function getWatcherHandler(server: DevServerStub, event: string) {
+  const call = server.watcher.on.mock.calls.find(([name]) => name === event);
+  expect(call).toBeTruthy();
+  return call![1] as (path: string) => void;
 }
 
 function createTmpProjectWithSfc(
@@ -110,9 +119,11 @@ function makeDevPlugin(
 
 describe("build–serve parity: dev plugin integration", () => {
   let compileSpy: ReturnType<typeof vi.spyOn>;
+  const realCompile = compilerDom.compile;
 
   beforeEach(() => {
     compileSpy = vi.spyOn(compilerDom, "compile");
+    vi.mocked(generateFiles).mockClear();
   });
 
   afterEach(() => {
@@ -277,6 +288,75 @@ export default defineComponent({
 
       // Should NOT throw.
       await (plugin as any).configureServer!(server);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("regenerates with fewer components when a vue file is legitimately deleted", async () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pom-parity-delete-"));
+    fs.mkdirSync(path.join(projectRoot, "src", "components"), { recursive: true });
+    fs.mkdirSync(path.join(projectRoot, "src", "views"), { recursive: true });
+
+    const alphaPath = path.join(projectRoot, "src", "components", "Alpha.vue");
+    const betaPath = path.join(projectRoot, "src", "components", "Beta.vue");
+    fs.writeFileSync(alphaPath, '<template><button @click="save()">Alpha</button></template>');
+    fs.writeFileSync(betaPath, '<template><button @click="save()">Beta</button></template>');
+
+    try {
+      const plugin = makeDevPlugin(projectRoot);
+      const server = createDevServerStub();
+      await (plugin as any).configureServer!(server);
+
+      const initialSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, unknown>;
+      expect(initialSnapshot.size).toBe(2);
+
+      fs.rmSync(betaPath);
+      const unlink = getWatcherHandler(server, "unlink");
+      unlink(betaPath);
+
+      await new Promise(resolve => setTimeout(resolve, 900));
+
+      const finalSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, unknown>;
+      expect(finalSnapshot.size).toBe(1);
+      expect(finalSnapshot.has("Alpha")).toBe(true);
+      expect(finalSnapshot.has("Beta")).toBe(false);
+    } finally {
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("confirms suspicious incremental snapshots with a filesystem rebuild before emitting", async () => {
+    const { projectRoot, cleanup } = createTmpProjectWithSfc(
+      '<template><button @click="save()">Recover</button></template>',
+      "Recoverable.vue",
+    );
+
+    try {
+      const plugin = makeDevPlugin(projectRoot);
+      const server = createDevServerStub();
+      await (plugin as any).configureServer!(server);
+
+      const initialSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, any>;
+      const initialMetrics = getGenerationMetrics(initialSnapshot);
+      expect(initialMetrics.selectorCount).toBeGreaterThan(0);
+
+      let intercepted = false;
+      compileSpy.mockImplementation((template: string, options?: CompilerOptions) => {
+        if (!intercepted && (options as any)?.filename?.includes("Recoverable.vue")) {
+          intercepted = true;
+          return {} as any;
+        }
+
+        return realCompile(template, options as any);
+      });
+
+      await (plugin as any).handleHotUpdate({ file: path.join(projectRoot, "src", "components", "Recoverable.vue") });
+      await new Promise(resolve => setTimeout(resolve, 900));
+
+      const finalSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, any>;
+      const finalMetrics = getGenerationMetrics(finalSnapshot);
+      expect(finalMetrics).toEqual(initialMetrics);
     } finally {
       cleanup();
     }
