@@ -1,79 +1,27 @@
-import { arrow, autoPlacement, computePosition, limitShift, offset, shift } from "./floating-ui";
 import type { PwLocator, PwPage } from "./playwright-types";
 
-const __PW_POINTER_ID__ = "__pw_pointer__";
-const __PW_POINTER_CALLOUT_ID__ = "__pw_pointer_callout__";
-const __PW_POINTER_CALLOUT_CONTENT_ID__ = "__pw_pointer_callout_content__";
-const __PW_POINTER_CALLOUT_ARROW_ID__ = "__pw_pointer_callout_arrow__";
-const __PW_POINTER_CALLOUT_AVOID_SELECTOR__
-	= [
-		"[data-callout-avoid]",
-		"button",
-		"input",
-		"textarea",
-		"select",
-		"summary",
-		"a[href]",
-		"[role='button']",
-		"[role='link']",
-		"[role='textbox']",
-		"[role='combobox']",
-		"[role='option']",
-		"[role='tab']",
-		"[role='menuitem']",
-		"[contenteditable='']",
-		"[contenteditable='true']",
-		"[contenteditable]:not([contenteditable='false'])",
-	].join(",");
-const __PW_POINTER_CALLOUT_MARGIN__ = 18;
-const __PW_POINTER_CALLOUT_GAP__ = 18;
-const __PW_POINTER_CALLOUT_ARROW_SIZE__ = 14;
-const __PW_POINTER_CALLOUT_ARROW_PADDING__ = 10;
-const __PW_POINTER_CALLOUT_AVOID_PADDING__ = 12;
-const __PW_POINTER_CALLOUT_BACKGROUND__ = "#dc2626";
-const __PW_POINTER_CALLOUT_BORDER__ = "0px solid transparent";
-const __PW_POINTER_CALLOUT_BOX_SHADOW__ = "0 20px 44px rgba(127, 29, 29, 0.32)";
-const __PW_POINTER_CALLOUT_TEXT_COLOR__ = "#f8fafc";
-const __PW_POINTER_CALLOUT_RADIUS__ = 0;
+export const POINTER_CALLOUT_IDS = {
+	annotation: "__pw_pointer_callout__",
+	arrow: "__pw_pointer_callout_arrow__",
+	content: "__pw_pointer_callout_content__",
+} as const;
 
-type Placement =
-	| "top"
-	| "top-start"
-	| "top-end"
-	| "right"
-	| "right-start"
-	| "right-end"
-	| "bottom"
-	| "bottom-start"
-	| "bottom-end"
-	| "left"
-	| "left-start"
-	| "left-end";
-
-const __PW_POINTER_ALLOWED_PLACEMENTS__: Placement[] = [
-	"top-start",
-	"top",
-	"top-end",
-	"right-start",
-	"right",
-	"right-end",
-	"bottom-start",
-	"bottom",
-	"bottom-end",
-	"left-start",
-	"left",
-	"left-end",
-];
-
-const __PW_POINTER_ORDERED_PLACEMENTS__ = Object.fromEntries(
-	__PW_POINTER_ALLOWED_PLACEMENTS__.map(placement => [
-		placement,
-		[
-			placement,
-			...__PW_POINTER_ALLOWED_PLACEMENTS__.filter(candidate => candidate !== placement),
-		],
-	]),
-) as Record<Placement, Placement[]>;
+export const POINTER_CALLOUT_THEME = {
+	arrowPadding: 10,
+	arrowSize: 14,
+	avoidPadding: 12,
+	background: "#dc2626",
+	border: "0px solid transparent",
+	borderRadius: 0,
+	boxShadow: "0 20px 44px rgba(127, 29, 29, 0.32)",
+	charsPerLine: 28,
+	gap: 18,
+	margin: 18,
+	maxWidth: 320,
+	minHeight: 52,
+	minWidth: 180,
+	textColor: "#f8fafc",
+} as const;
 
 export type ElementTarget = string | PwLocator;
 
@@ -84,48 +32,13 @@ export interface CalloutTargetBox {
 	height: number;
 }
 
-interface CalloutContext {
-	avoidRects: CalloutTargetBox[];
-	/** Auto-placement result used to try the most likely Floating UI placement first. */
-	preferredPosition?: CalloutPositionResult;
-	protectedTargetRects: CalloutTargetBox[];
-	viewportHeight: number;
-	viewportWidth: number;
-}
-
-interface FloatingVirtualElement extends CalloutTargetBox {
-	kind: "arrow" | "floating" | "reference";
-}
-
-interface CalloutLayout {
-	arrowX: number | null;
-	arrowY: number | null;
-	placement: Placement;
-	staticSide: "bottom" | "left" | "right" | "top";
-	x: number;
-	y: number;
-}
-
-interface CalloutPositionResult {
-	adjustmentDistance: number;
-	arrowX: number | null;
-	arrowY: number | null;
-	placement: Placement;
-	x: number;
-	y: number;
-}
-
 export interface ShowCalloutOptions {
 	skipScroll?: boolean;
 	targetBox?: CalloutTargetBox;
 }
 
 export interface CalloutRenderRequest {
-	bubbleHeight: number;
-	bubbleWidth: number;
-	fallbackX: number;
-	fallbackY: number;
-	layout: CalloutLayout | null;
+	overlayIds: string[];
 	target: ElementTarget;
 	targetBox: CalloutTargetBox;
 	text: string;
@@ -142,402 +55,27 @@ export interface CalloutOptions {
 	renderer?: CalloutRenderer;
 }
 
-function __pw_overlap_area__(first: CalloutTargetBox, second: CalloutTargetBox): number {
-	const horizontal = Math.max(0, Math.min(first.x + first.width, second.x + second.width) - Math.max(first.x, second.x));
-	const vertical = Math.max(0, Math.min(first.y + first.height, second.y + second.height) - Math.max(first.y, second.y));
-	return horizontal * vertical;
-}
-
-function __pw_rect_center_distance__(first: CalloutTargetBox, second: CalloutTargetBox): number {
-	const firstCenterX = first.x + first.width / 2;
-	const firstCenterY = first.y + first.height / 2;
-	const secondCenterX = second.x + second.width / 2;
-	const secondCenterY = second.y + second.height / 2;
-	return Math.hypot(firstCenterX - secondCenterX, firstCenterY - secondCenterY);
-}
-
-function __pw_rect_gap__(first: CalloutTargetBox, second: CalloutTargetBox): number {
-	const horizontalGap = Math.max(0, Math.max(second.x - (first.x + first.width), first.x - (second.x + second.width)));
-	const verticalGap = Math.max(0, Math.max(second.y - (first.y + first.height), first.y - (second.y + second.height)));
-	return Math.max(horizontalGap, verticalGap);
-}
-
-function __pw_expand_rect__(rect: CalloutTargetBox, padding: number): CalloutTargetBox {
+export function measureCalloutBubble(text: string): { bubbleHeight: number; bubbleWidth: number } {
 	return {
-		height: rect.height + (padding * 2),
-		width: rect.width + (padding * 2),
-		x: rect.x - padding,
-		y: rect.y - padding,
+		bubbleWidth: Math.min(
+			POINTER_CALLOUT_THEME.maxWidth,
+			Math.max(
+				POINTER_CALLOUT_THEME.minWidth,
+				Math.min(text.length, POINTER_CALLOUT_THEME.charsPerLine) * 7 + 44,
+			),
+		),
+		bubbleHeight: Math.max(
+			POINTER_CALLOUT_THEME.minHeight,
+			Math.ceil(Math.max(text.length, 1) / POINTER_CALLOUT_THEME.charsPerLine) * 20 + 24,
+		),
 	};
 }
 
-function __pw_parse_placement__(placement: Placement): {
-	align: "center" | "end" | "start";
-	side: "bottom" | "left" | "right" | "top";
-} {
-	const [side, align] = placement.split("-") as [Placement extends `${infer Side}-${string}` ? Side : never, "end" | "start" | undefined];
-	return {
-		align: align ?? "center",
-		side,
-	};
-}
-
-function __pw_to_client_rect__(rect: CalloutTargetBox) {
-	return {
-		bottom: rect.y + rect.height,
-		height: rect.height,
-		left: rect.x,
-		right: rect.x + rect.width,
-		top: rect.y,
-		width: rect.width,
-		x: rect.x,
-		y: rect.y,
-	};
-}
-
-function __pw_create_virtual_element__(rect: CalloutTargetBox, kind: FloatingVirtualElement["kind"]): FloatingVirtualElement {
-	return {
-		height: rect.height,
-		kind,
-		width: rect.width,
-		x: rect.x,
-		y: rect.y,
-	};
-}
-
-function __pw_create_platform__(viewportWidth: number, viewportHeight: number) {
-	const offsetParent = {
-		clientHeight: viewportHeight,
-		clientLeft: 0,
-		clientTop: 0,
-		clientWidth: viewportWidth,
-	};
-
-	return {
-		convertOffsetParentRelativeRectToViewportRelativeRect: ({ rect }: { rect: CalloutTargetBox }) => rect,
-		getClientRects: (element: FloatingVirtualElement) => [__pw_to_client_rect__(element)],
-		getClippingRect: () => ({
-			height: viewportHeight,
-			width: viewportWidth,
-			x: 0,
-			y: 0,
-		}),
-		getDimensions: (element: FloatingVirtualElement) => ({
-			height: element.height,
-			width: element.width,
-		}),
-		getDocumentElement: () => ({
-			clientHeight: viewportHeight,
-			clientWidth: viewportWidth,
-		}),
-		getElementRects: ({
-			floating,
-			reference,
-		}: {
-			floating: FloatingVirtualElement;
-			reference: FloatingVirtualElement;
-			strategy: string;
-		}) => ({
-			floating: {
-				height: floating.height,
-				width: floating.width,
-				x: 0,
-				y: 0,
-			},
-			reference: {
-				height: reference.height,
-				width: reference.width,
-				x: reference.x,
-				y: reference.y,
-			},
-		}),
-		getOffsetParent: () => offsetParent,
-		getScale: () => ({ x: 1, y: 1 }),
-		isElement: () => false,
-		isRTL: () => false,
-	};
-}
-
-function __pw_finalize_callout_position__(
-	referenceRect: CalloutTargetBox,
-	floatingRect: CalloutTargetBox,
-	protectedRects: CalloutTargetBox[],
-	viewportWidth: number,
-	viewportHeight: number,
-	resolvedPlacement: Placement,
-	rawX: number,
-	rawY: number,
-	baseArrowData?: { x?: number; y?: number },
-): CalloutPositionResult {
-	const { side } = __pw_parse_placement__(resolvedPlacement);
-	let x = Math.round(rawX);
-	let y = Math.round(rawY);
-	const baseX = x;
-	const baseY = y;
-	let layoutAdjustedForProtectedRect = false;
-
-	for (const protectedRect of protectedRects) {
-		const horizontalOverlap = x < protectedRect.x + protectedRect.width && x + floatingRect.width > protectedRect.x;
-		const verticalOverlap = y < protectedRect.y + protectedRect.height && y + floatingRect.height > protectedRect.y;
-
-		if ((side === "top" || side === "bottom") && horizontalOverlap) {
-			if (side === "top" && verticalOverlap) {
-				y = Math.min(y, protectedRect.y - floatingRect.height);
-				layoutAdjustedForProtectedRect = true;
-			}
-			if (side === "bottom" && verticalOverlap) {
-				y = Math.max(y, protectedRect.y + protectedRect.height);
-				layoutAdjustedForProtectedRect = true;
-			}
-		}
-
-		if ((side === "left" || side === "right") && verticalOverlap) {
-			if (side === "left" && horizontalOverlap) {
-				x = Math.min(x, protectedRect.x - floatingRect.width);
-				layoutAdjustedForProtectedRect = true;
-			}
-			if (side === "right" && horizontalOverlap) {
-				x = Math.max(x, protectedRect.x + protectedRect.width);
-				layoutAdjustedForProtectedRect = true;
-			}
-		}
-	}
-
-	x = Math.min(
-		Math.max(x, __PW_POINTER_CALLOUT_MARGIN__),
-		Math.max(__PW_POINTER_CALLOUT_MARGIN__, viewportWidth - floatingRect.width - __PW_POINTER_CALLOUT_MARGIN__),
-	);
-	y = Math.min(
-		Math.max(y, __PW_POINTER_CALLOUT_MARGIN__),
-		Math.max(__PW_POINTER_CALLOUT_MARGIN__, viewportHeight - floatingRect.height - __PW_POINTER_CALLOUT_MARGIN__),
-	);
-	const adjustmentDistance = Math.abs(x - baseX) + Math.abs(y - baseY);
-	const referenceCenterX = referenceRect.x + referenceRect.width / 2;
-	const referenceCenterY = referenceRect.y + referenceRect.height / 2;
-	const arrowHalf = __PW_POINTER_CALLOUT_ARROW_SIZE__ / 2;
-	const arrowX = side === "top" || side === "bottom"
-		? !layoutAdjustedForProtectedRect && typeof baseArrowData?.x === "number"
-			? Math.round(baseArrowData.x)
-			: Math.min(
-				Math.max(referenceCenterX - x - arrowHalf, __PW_POINTER_CALLOUT_ARROW_PADDING__),
-				Math.max(__PW_POINTER_CALLOUT_ARROW_PADDING__, floatingRect.width - __PW_POINTER_CALLOUT_ARROW_SIZE__ - __PW_POINTER_CALLOUT_ARROW_PADDING__),
-			)
-		: null;
-	const arrowY = side === "left" || side === "right"
-		? !layoutAdjustedForProtectedRect && typeof baseArrowData?.y === "number"
-			? Math.round(baseArrowData.y)
-			: Math.min(
-				Math.max(referenceCenterY - y - arrowHalf, __PW_POINTER_CALLOUT_ARROW_PADDING__),
-				Math.max(__PW_POINTER_CALLOUT_ARROW_PADDING__, floatingRect.height - __PW_POINTER_CALLOUT_ARROW_SIZE__ - __PW_POINTER_CALLOUT_ARROW_PADDING__),
-			)
-		: null;
-
-	return {
-		adjustmentDistance,
-		arrowX,
-		arrowY,
-		placement: resolvedPlacement,
-		x,
-		y,
-	};
-}
-
-async function __pw_compute_shifted_position__(
-	referenceRect: CalloutTargetBox,
-	floatingRect: CalloutTargetBox,
-	placement: Placement,
-	protectedRects: CalloutTargetBox[],
-	viewportWidth: number,
-	viewportHeight: number,
-): Promise<CalloutPositionResult> {
-	const platform = __pw_create_platform__(viewportWidth, viewportHeight);
-	const floatingElement = __pw_create_virtual_element__(floatingRect, "floating");
-	const referenceElement = __pw_create_virtual_element__(referenceRect, "reference");
-	const arrowElement = __pw_create_virtual_element__(
-		{ x: 0, y: 0, width: __PW_POINTER_CALLOUT_ARROW_SIZE__, height: __PW_POINTER_CALLOUT_ARROW_SIZE__ },
-		"arrow",
-	);
-	const result = await computePosition(referenceElement, floatingElement, {
-		middleware: [
-			offset(__PW_POINTER_CALLOUT_GAP__),
-			shift({
-				limiter: limitShift({}),
-				padding: __PW_POINTER_CALLOUT_MARGIN__,
-			}),
-			arrow({
-				element: arrowElement,
-				padding: __PW_POINTER_CALLOUT_ARROW_PADDING__,
-			}),
-		],
-		placement,
-		platform,
-		strategy: "fixed",
-	});
-	return __pw_finalize_callout_position__(
-		referenceRect,
-		floatingRect,
-		protectedRects,
-		viewportWidth,
-		viewportHeight,
-		result.placement as Placement,
-		result.x,
-		result.y,
-		(result.middlewareData as { arrow?: { x?: number; y?: number } }).arrow,
-	);
-}
-
-async function __pw_compute_callout_layout__(
-	targetRect: CalloutTargetBox,
-	floatingRect: CalloutTargetBox,
-	context: CalloutContext,
-): Promise<CalloutLayout> {
-	const referenceRect = targetRect;
-	let bestLayout: (CalloutLayout & { score: number }) | null = null;
-	const orderedPlacements = context.preferredPosition
-		? __PW_POINTER_ORDERED_PLACEMENTS__[context.preferredPosition.placement]
-		: __PW_POINTER_ALLOWED_PLACEMENTS__;
-
-	for (const placement of orderedPlacements) {
-		const result = context.preferredPosition && placement === context.preferredPosition.placement
-			? context.preferredPosition
-			: await __pw_compute_shifted_position__(
-				referenceRect,
-				floatingRect,
-				placement,
-				context.protectedTargetRects,
-				context.viewportWidth,
-				context.viewportHeight,
-			);
-
-		const positionedRect: CalloutTargetBox = {
-			x: result.x,
-			y: result.y,
-			width: floatingRect.width,
-			height: floatingRect.height,
-		};
-		const protectedOverlap = context.protectedTargetRects.reduce(
-			(sum, avoidRect) => sum + __pw_overlap_area__(positionedRect, avoidRect),
-			0,
-		);
-		const avoidOverlap = context.avoidRects.reduce(
-			(sum, avoidRect) => sum + __pw_overlap_area__(positionedRect, __pw_expand_rect__(avoidRect, __PW_POINTER_CALLOUT_AVOID_PADDING__)),
-			0,
-		);
-		const targetGap = __pw_rect_gap__(positionedRect, targetRect);
-		const score = (protectedOverlap * 10)
-			+ (avoidOverlap * 8)
-			+ (result.adjustmentDistance * 60)
-			+ (targetGap * 40)
-			+ (__pw_rect_center_distance__(positionedRect, referenceRect) * 0.08);
-
-		if (!bestLayout || score < bestLayout.score) {
-			bestLayout = {
-				arrowX: result.arrowX,
-				arrowY: result.arrowY,
-				placement: result.placement,
-				score,
-				staticSide: (() => {
-					const side = __pw_parse_placement__(result.placement).side;
-					if (side === "bottom") return "top";
-					if (side === "left") return "right";
-					if (side === "right") return "left";
-					return "bottom";
-				})(),
-				x: result.x,
-				y: result.y,
-			};
-		}
-	}
-
-	if (!bestLayout) {
-		return {
-			arrowX: null,
-			arrowY: null,
-			placement: "bottom",
-			staticSide: "top",
-			x: targetRect.x,
-			y: targetRect.y,
-		};
-	}
-
-	return bestLayout;
-}
-
-function __pw_get_callout_dimensions__(annotationText: string): { bubbleHeight: number; bubbleWidth: number } {
-	const charsPerLine = 28;
-	return {
-		bubbleWidth: Math.min(320, Math.max(180, Math.min(annotationText.length, charsPerLine) * 7 + 44)),
-		bubbleHeight: Math.max(52, Math.ceil(Math.max(annotationText.length, 1) / charsPerLine) * 20 + 24),
-	};
-}
-
-async function __pw_get_preferred_callout_position__(
-	targetRect: CalloutTargetBox,
-	floatingRect: CalloutTargetBox,
-	protectedRects: CalloutTargetBox[],
-	viewportWidth: number,
-	viewportHeight: number,
-): Promise<CalloutPositionResult> {
-	const platform = __pw_create_platform__(viewportWidth, viewportHeight);
-	const floatingElement = __pw_create_virtual_element__(floatingRect, "floating");
-	const referenceElement = __pw_create_virtual_element__(targetRect, "reference");
-	const arrowElement = __pw_create_virtual_element__(
-		{ x: 0, y: 0, width: __PW_POINTER_CALLOUT_ARROW_SIZE__, height: __PW_POINTER_CALLOUT_ARROW_SIZE__ },
-		"arrow",
-	);
-	const result = await computePosition(referenceElement, floatingElement, {
-		middleware: [
-			offset(__PW_POINTER_CALLOUT_GAP__),
-			autoPlacement({
-				allowedPlacements: __PW_POINTER_ALLOWED_PLACEMENTS__,
-				padding: __PW_POINTER_CALLOUT_MARGIN__,
-			}),
-			shift({
-				limiter: limitShift({}),
-				padding: __PW_POINTER_CALLOUT_MARGIN__,
-			}),
-			arrow({
-				element: arrowElement,
-				padding: __PW_POINTER_CALLOUT_ARROW_PADDING__,
-			}),
-		],
-		placement: "top",
-		platform,
-		strategy: "fixed",
-	});
-	return __pw_finalize_callout_position__(
-		targetRect,
-		floatingRect,
-		protectedRects,
-		viewportWidth,
-		viewportHeight,
-		result.placement as Placement,
-		result.x,
-		result.y,
-		(result.middlewareData as { arrow?: { x?: number; y?: number } }).arrow,
-	);
-}
-
-async function __pw_ensure_callout__(page: PwPage): Promise<void> {
-	const exists = await page.evaluate(
-		({ contentId, annotationId, arrowId }: { contentId: string; annotationId: string; arrowId: string }) =>
-			document.getElementById(annotationId) != null
-				&& document.getElementById(contentId) != null
-				&& document.getElementById(arrowId) != null,
-		{
-			arrowId: __PW_POINTER_CALLOUT_ARROW_ID__,
-			contentId: __PW_POINTER_CALLOUT_CONTENT_ID__,
-			annotationId: __PW_POINTER_CALLOUT_ID__,
-		},
-	);
-	if (exists) return;
-
+async function __pw_ensure_simple_callout__(page: PwPage): Promise<void> {
 	await page.evaluate(
 		({
 			annotationId,
 			contentId,
-			arrowId,
-			arrowSize,
 			background,
 			border,
 			borderRadius,
@@ -546,16 +84,23 @@ async function __pw_ensure_callout__(page: PwPage): Promise<void> {
 		}: {
 			annotationId: string;
 			contentId: string;
-			arrowId: string;
-			arrowSize: number;
 			background: string;
 			border: string;
 			borderRadius: number;
 			boxShadow: string;
 			textColor: string;
 		}) => {
-			const annotation = document.createElement("div");
-			annotation.setAttribute("id", annotationId);
+			const ensureElement = <T extends HTMLElement>(id: string, tagName: keyof HTMLElementTagNameMap): T => {
+				const existing = document.getElementById(id);
+				if (existing instanceof HTMLElement) {
+					return existing as T;
+				}
+				const created = document.createElement(tagName);
+				created.id = id;
+				return created as T;
+			};
+
+			const annotation = ensureElement<HTMLDivElement>(annotationId, "div");
 			annotation.setAttribute(
 				"style",
 				[
@@ -578,56 +123,36 @@ async function __pw_ensure_callout__(page: PwPage): Promise<void> {
 					"white-space:normal",
 					"transform:translate3d(0,0,0)",
 					"transform-origin:center",
-					"isolation:isolate",
 				].join(";"),
 			);
 
-			const contentEl = document.createElement("div");
-			contentEl.setAttribute("id", contentId);
-			contentEl.setAttribute("style", "position:relative;z-index:1;");
+			const content = ensureElement<HTMLDivElement>(contentId, "div");
+			content.setAttribute("style", "position:relative;z-index:1;");
 
-			const arrowEl = document.createElement("div");
-			arrowEl.setAttribute("id", arrowId);
-			arrowEl.setAttribute(
-				"style",
-				[
-					"position:absolute",
-					"width:" + arrowSize + "px",
-					"height:" + arrowSize + "px",
-					"background:" + background,
-					"transform:rotate(45deg)",
-					"pointer-events:none",
-					"left:0",
-					"top:0",
-					"box-shadow:0 12px 24px rgba(15,23,42,0.18)",
-					"z-index:-1",
-					"opacity:0",
-				].join(";"),
-			);
-
-			annotation.appendChild(contentEl);
-			annotation.appendChild(arrowEl);
-			document.body.appendChild(annotation);
+			if (!annotation.isConnected) {
+				document.body.appendChild(annotation);
+			}
+			if (content.parentElement !== annotation) {
+				annotation.appendChild(content);
+			}
 		},
 		{
-			annotationId: __PW_POINTER_CALLOUT_ID__,
-			contentId: __PW_POINTER_CALLOUT_CONTENT_ID__,
-			arrowId: __PW_POINTER_CALLOUT_ARROW_ID__,
-			arrowSize: __PW_POINTER_CALLOUT_ARROW_SIZE__,
-			background: __PW_POINTER_CALLOUT_BACKGROUND__,
-			border: __PW_POINTER_CALLOUT_BORDER__,
-			borderRadius: __PW_POINTER_CALLOUT_RADIUS__,
-			boxShadow: __PW_POINTER_CALLOUT_BOX_SHADOW__,
-			textColor: __PW_POINTER_CALLOUT_TEXT_COLOR__,
+			annotationId: POINTER_CALLOUT_IDS.annotation,
+			contentId: POINTER_CALLOUT_IDS.content,
+			background: POINTER_CALLOUT_THEME.background,
+			border: POINTER_CALLOUT_THEME.border,
+			borderRadius: POINTER_CALLOUT_THEME.borderRadius,
+			boxShadow: POINTER_CALLOUT_THEME.boxShadow,
+			textColor: POINTER_CALLOUT_THEME.textColor,
 		},
 	);
 }
 
 const __pw_default_callout_renderer__: CalloutRenderer = {
 	overlayIds: [
-		__PW_POINTER_CALLOUT_ID__,
-		__PW_POINTER_CALLOUT_CONTENT_ID__,
-		__PW_POINTER_CALLOUT_ARROW_ID__,
+		POINTER_CALLOUT_IDS.annotation,
+		POINTER_CALLOUT_IDS.content,
+		POINTER_CALLOUT_IDS.arrow,
 	],
 	async hide(page) {
 		await page.evaluate(
@@ -656,49 +181,94 @@ const __pw_default_callout_renderer__: CalloutRenderer = {
 				}
 			},
 			{
-				annotationId: __PW_POINTER_CALLOUT_ID__,
-				contentId: __PW_POINTER_CALLOUT_CONTENT_ID__,
-				arrowId: __PW_POINTER_CALLOUT_ARROW_ID__,
+				annotationId: POINTER_CALLOUT_IDS.annotation,
+				contentId: POINTER_CALLOUT_IDS.content,
+				arrowId: POINTER_CALLOUT_IDS.arrow,
 			},
 		);
 	},
 	async show(page, request) {
-		await __pw_ensure_callout__(page);
+		await __pw_ensure_simple_callout__(page);
+		const { bubbleHeight, bubbleWidth } = measureCalloutBubble(request.text);
 		await page.evaluate(
 			({
 				annotationId,
+				contentId,
 				arrowId,
-				arrowSize,
-				background,
-				border,
-				borderRadius,
 				bubbleHeight,
 				bubbleWidth,
-				contentId,
-				fallbackX,
-				fallbackY,
-				layout,
+				border,
+				borderRadius,
+				background,
+				gap,
 				text,
+				targetBox,
+				margin,
 			}: {
 				annotationId: string;
+				contentId: string;
 				arrowId: string;
-				arrowSize: number;
-				background: string;
-				border: string;
-				borderRadius: number;
 				bubbleHeight: number;
 				bubbleWidth: number;
-				contentId: string;
-				fallbackX: number;
-				fallbackY: number;
-				layout: CalloutLayout | null;
+				border: string;
+				borderRadius: number;
+				background: string;
+				gap: number;
 				text: string;
+				targetBox: CalloutTargetBox;
+				margin: number;
 			}) => {
 				const annotation = document.getElementById(annotationId) as HTMLDivElement | null;
 				const content = document.getElementById(contentId) as HTMLDivElement | null;
 				const arrow = document.getElementById(arrowId) as HTMLDivElement | null;
 				if (!annotation || !content) {
 					return;
+				}
+
+				const viewportWidth = Math.max(window.innerWidth || 0, document.documentElement.clientWidth, 1280);
+				const viewportHeight = Math.max(window.innerHeight || 0, document.documentElement.clientHeight, 720);
+				const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+				const targetCenterX = targetBox.x + targetBox.width / 2;
+				const targetCenterY = targetBox.y + targetBox.height / 2;
+				const maxX = Math.max(margin, viewportWidth - bubbleWidth - margin);
+				const maxY = Math.max(margin, viewportHeight - bubbleHeight - margin);
+				const candidates = [
+					{
+						placement: "right",
+						x: targetBox.x + targetBox.width + gap,
+						y: targetCenterY - bubbleHeight / 2,
+					},
+					{
+						placement: "bottom",
+						x: targetCenterX - bubbleWidth / 2,
+						y: targetBox.y + targetBox.height + gap,
+					},
+					{
+						placement: "left",
+						x: targetBox.x - bubbleWidth - gap,
+						y: targetCenterY - bubbleHeight / 2,
+					},
+					{
+						placement: "top",
+						x: targetCenterX - bubbleWidth / 2,
+						y: targetBox.y - bubbleHeight - gap,
+					},
+				] as const;
+
+				let placement = "center";
+				let resolvedX = clamp(targetCenterX - bubbleWidth / 2, margin, maxX);
+				let resolvedY = clamp(targetCenterY - bubbleHeight / 2, margin, maxY);
+
+				for (const candidate of candidates) {
+					const clampedX = clamp(candidate.x, margin, maxX);
+					const clampedY = clamp(candidate.y, margin, maxY);
+					const fitsWithoutShift = Math.abs(clampedX - candidate.x) < 1 && Math.abs(clampedY - candidate.y) < 1;
+					if (fitsWithoutShift) {
+						placement = candidate.placement;
+						resolvedX = candidate.x;
+						resolvedY = candidate.y;
+						break;
+					}
 				}
 
 				content.textContent = text;
@@ -709,46 +279,38 @@ const __pw_default_callout_renderer__: CalloutRenderer = {
 				annotation.style.borderRadius = `${borderRadius}px`;
 				annotation.style.transition = "opacity 120ms ease-in-out, transform 160ms ease-in-out";
 				annotation.style.willChange = "left, top, opacity, transform";
-				annotation.style.left = `${layout?.x ?? fallbackX}px`;
-				annotation.style.top = `${layout?.y ?? fallbackY}px`;
+				annotation.style.left = `${Math.round(resolvedX)}px`;
+				annotation.style.top = `${Math.round(resolvedY)}px`;
 				annotation.style.opacity = "1";
 				annotation.style.transform = "scale(1)";
-				annotation.setAttribute("data-placement", layout?.placement ?? "hidden");
-
-				if (arrow && layout) {
+				annotation.setAttribute("data-placement", placement);
+				if (arrow) {
+					arrow.style.opacity = "0";
 					arrow.style.left = "";
 					arrow.style.top = "";
 					arrow.style.right = "";
 					arrow.style.bottom = "";
-					arrow.style.transform = "rotate(45deg)";
-					if (layout.arrowX !== null) {
-						arrow.style.left = `${layout.arrowX}px`;
-					}
-					if (layout.arrowY !== null) {
-						arrow.style.top = `${layout.arrowY}px`;
-					}
-					arrow.style.setProperty(layout.staticSide, `${Math.round(arrowSize / -2)}px`);
-					arrow.style.opacity = "1";
 				}
 			},
 			{
-				annotationId: __PW_POINTER_CALLOUT_ID__,
-				arrowId: __PW_POINTER_CALLOUT_ARROW_ID__,
-				arrowSize: __PW_POINTER_CALLOUT_ARROW_SIZE__,
-				background: __PW_POINTER_CALLOUT_BACKGROUND__,
-				border: __PW_POINTER_CALLOUT_BORDER__,
-				borderRadius: __PW_POINTER_CALLOUT_RADIUS__,
-				bubbleHeight: request.bubbleHeight,
-				bubbleWidth: request.bubbleWidth,
-				contentId: __PW_POINTER_CALLOUT_CONTENT_ID__,
-				fallbackX: request.fallbackX,
-				fallbackY: request.fallbackY,
-				layout: request.layout,
+				annotationId: POINTER_CALLOUT_IDS.annotation,
+				contentId: POINTER_CALLOUT_IDS.content,
+				arrowId: POINTER_CALLOUT_IDS.arrow,
+				bubbleHeight,
+				bubbleWidth,
+				border: POINTER_CALLOUT_THEME.border,
+				borderRadius: POINTER_CALLOUT_THEME.borderRadius,
+				background: POINTER_CALLOUT_THEME.background,
+				gap: POINTER_CALLOUT_THEME.gap,
 				text: request.text,
+				targetBox: request.targetBox,
+				margin: POINTER_CALLOUT_THEME.margin,
 			},
 		);
 	},
 };
+
+export const simpleCalloutRenderer = __pw_default_callout_renderer__;
 
 export class Callout {
 	private readonly page: PwPage;
@@ -795,180 +357,20 @@ export class Callout {
 			throw new Error("Callout.showForElement: target has no bounding box");
 		}
 
-		const { bubbleHeight, bubbleWidth } = __pw_get_callout_dimensions__(text);
-		const context = await this.page.evaluate(
-			({
-				avoidSelector,
-				ex,
-				ey,
-				overlayIds,
-			}: {
-				avoidSelector: string;
-				ex: number;
-				ey: number;
-				overlayIds: string[];
-			}) => {
-				type BrowserRect = { x: number; y: number; width: number; height: number };
+		const overlayIds = Array.from(new Set([
+			...(this.renderer.overlayIds ?? []),
+			...this.extraOverlayIds,
+		]));
 
-				const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-				const viewportWidth = Math.max(window.innerWidth || 0, document.documentElement.clientWidth, 1280);
-				const viewportHeight = Math.max(window.innerHeight || 0, document.documentElement.clientHeight, 720);
-				const viewportArea = viewportWidth * viewportHeight;
-				const overlayIdSet = new Set(overlayIds);
-
-				const toViewportRect = (candidateRect: { left: number; top: number; right: number; bottom: number } | DOMRect): BrowserRect | null => {
-					const left = clamp(candidateRect.left, 0, viewportWidth);
-					const top = clamp(candidateRect.top, 0, viewportHeight);
-					const right = clamp(candidateRect.right, 0, viewportWidth);
-					const bottom = clamp(candidateRect.bottom, 0, viewportHeight);
-					const width = right - left;
-					const height = bottom - top;
-					if (width < 24 || height < 24) {
-						return null;
-					}
-
-					return { x: left, y: top, width, height };
-				};
-
-				const pushUniqueRect = (rects: BrowserRect[], rect: BrowserRect | null) => {
-					if (!rect) {
-						return;
-					}
-
-					const duplicate = rects.some((existing) =>
-						Math.abs(existing.x - rect.x) < 1
-						&& Math.abs(existing.y - rect.y) < 1
-						&& Math.abs(existing.width - rect.width) < 1
-						&& Math.abs(existing.height - rect.height) < 1,
-					);
-					if (!duplicate) {
-						rects.push(rect);
-					}
-				};
-
-				const collectAvoidRects = (): BrowserRect[] =>
-					Array.from(document.querySelectorAll<HTMLElement>(avoidSelector))
-						.filter((candidate) => !overlayIdSet.has(candidate.id))
-						.flatMap((candidate) => {
-							const computedStyle = window.getComputedStyle(candidate);
-							if (
-								computedStyle.display === "none"
-								|| computedStyle.visibility === "hidden"
-								|| Number.parseFloat(computedStyle.opacity || "1") <= 0.05
-							) {
-								return [];
-							}
-
-							const normalizedRect = toViewportRect(candidate.getBoundingClientRect());
-							if (!normalizedRect) {
-								return [];
-							}
-
-							if (!candidate.hasAttribute("data-callout-avoid") && normalizedRect.width * normalizedRect.height > viewportArea * 0.35) {
-								return [];
-							}
-
-							return [normalizedRect];
-						});
-
-				const collectProtectedTargetRects = (): BrowserRect[] => {
-					const protectedRects: BrowserRect[] = [];
-					if (typeof document.elementFromPoint !== "function") {
-						return protectedRects;
-					}
-
-					const targetElement = document.elementFromPoint(ex, ey);
-					if (!(targetElement instanceof HTMLElement)) {
-						return protectedRects;
-					}
-
-					const targetRect = toViewportRect(targetElement.getBoundingClientRect());
-					pushUniqueRect(protectedRects, targetRect);
-					if (!targetRect) {
-						return protectedRects;
-					}
-
-					const targetArea = targetRect.width * targetRect.height;
-					let ancestor = targetElement.parentElement;
-					while (ancestor && ancestor !== document.body) {
-						const computedStyle = window.getComputedStyle(ancestor);
-						if (
-							computedStyle.display === "none"
-							|| computedStyle.visibility === "hidden"
-							|| Number.parseFloat(computedStyle.opacity || "1") <= 0.05
-						) {
-							ancestor = ancestor.parentElement;
-							continue;
-						}
-
-						const ancestorRect = toViewportRect(ancestor.getBoundingClientRect());
-						if (!ancestorRect) {
-							ancestor = ancestor.parentElement;
-							continue;
-						}
-
-						const ancestorArea = ancestorRect.width * ancestorRect.height;
-						const clearlyBiggerThanTarget = ancestorArea >= Math.max(targetArea * 1.75, 18_000);
-						const stillReasonablyLocal = ancestorArea <= viewportArea * 0.28;
-						const containsTarget = ancestorRect.x <= targetRect.x
-							&& ancestorRect.y <= targetRect.y
-							&& ancestorRect.x + ancestorRect.width >= targetRect.x + targetRect.width
-							&& ancestorRect.y + ancestorRect.height >= targetRect.y + targetRect.height;
-						if (clearlyBiggerThanTarget && stillReasonablyLocal && containsTarget) {
-							pushUniqueRect(protectedRects, ancestorRect);
-						}
-
-						if (protectedRects.length >= 3) {
-							break;
-						}
-
-						ancestor = ancestor.parentElement;
-					}
-
-					return protectedRects;
-				};
-
-				return {
-					avoidRects: collectAvoidRects(),
-					protectedTargetRects: collectProtectedTargetRects(),
-					viewportHeight,
-					viewportWidth,
-				};
-			},
-			{
-				avoidSelector: __PW_POINTER_CALLOUT_AVOID_SELECTOR__,
-				ex: targetBox.x + targetBox.width / 2,
-				ey: targetBox.y + targetBox.height / 2,
-				overlayIds: [
-					...(this.renderer.overlayIds ?? []),
-					__PW_POINTER_ID__,
-					...this.extraOverlayIds,
-				],
-			},
-		);
-		const preferredPosition = await __pw_get_preferred_callout_position__(
-			{ x: targetBox.x, y: targetBox.y, width: targetBox.width, height: targetBox.height },
-			{ x: 0, y: 0, width: bubbleWidth, height: bubbleHeight },
-			context.protectedTargetRects,
-			context.viewportWidth,
-			context.viewportHeight,
-		);
-		const layout = await __pw_compute_callout_layout__(
-			{ x: targetBox.x, y: targetBox.y, width: targetBox.width, height: targetBox.height },
-			{ x: 0, y: 0, width: bubbleWidth, height: bubbleHeight },
-			{
-				...context,
-				preferredPosition,
-			},
-		);
 		await this.renderer.show(this.page, {
-			bubbleHeight,
-			bubbleWidth,
-			fallbackX: targetBox.x + (targetBox.width / 2) + __PW_POINTER_CALLOUT_GAP__,
-			fallbackY: targetBox.y + (targetBox.height / 2) + __PW_POINTER_CALLOUT_GAP__,
-			layout,
+			overlayIds,
 			target,
-			targetBox,
+			targetBox: {
+				height: targetBox.height,
+				width: targetBox.width,
+				x: targetBox.x,
+				y: targetBox.y,
+			},
 			text,
 		});
 	}

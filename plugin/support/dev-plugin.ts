@@ -421,6 +421,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         basePageClassPath,
         path.resolve(runtimeDir, "pointer.ts"),
         path.resolve(runtimeDir, "callout.ts"),
+        path.resolve(runtimeDir, "floating-ui-callout.ts"),
       ]);
 
       scheduleVueFileRegenLocal = (filePath: string, source: "hmr" | "fs") => {

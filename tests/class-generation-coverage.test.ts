@@ -157,6 +157,7 @@ describe("class-generation coverage", () => {
       const runtimeClassGenGitAttributesContent = readFile(runtimeClassGenGitAttributesPath);
       expect(runtimeClassGenGitAttributesContent).toContain("base-page.ts linguist-generated");
       expect(runtimeClassGenGitAttributesContent).toContain("callout.ts linguist-generated");
+      expect(runtimeClassGenGitAttributesContent).toContain("floating-ui-callout.ts linguist-generated");
       expect(runtimeClassGenGitAttributesContent).toContain("floating-ui.ts linguist-generated");
       expect(runtimeClassGenGitAttributesContent).toContain("pointer.ts linguist-generated");
       expect(runtimeClassGenGitAttributesContent).toContain("playwright-types.ts linguist-generated");

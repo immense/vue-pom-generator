@@ -592,7 +592,7 @@ What it gives you:
 - lower-camel-case fixtures for component classes too
 - `pomFactory.create(Ctor)` for ad-hoc page-object construction inside tests
 - an `animation` option that wires the generated runtime's pointer settings
-- per-page `renderers` overrides so you can swap the default pointer / callout overlay implementation
+- per-page `renderers` overrides so you can keep the simple default callout or swap in a custom pointer / callout overlay implementation such as the bundled `floating-ui-callout.ts` renderer
 
 Current caveats:
 
@@ -601,7 +601,9 @@ Current caveats:
 - component fixtures are skipped when their lower-camel-case name would collide with reserved Playwright fixture names such as `page`, `context`, `browser`, or `request`
 - an override class still needs a `new (page)`-compatible constructor because that is what fixtures call
 
-Example pointer-callout sequence captured from the Playwright fixture coverage:
+By default the runtime uses a simple red fallback bubble. The example below uses the optional floating-ui renderer so the callout can auto-place around nearby UI and point back to the target with an arrow.
+
+Example floating-ui callout sequence captured from the Playwright fixture coverage:
 
 ![Pointer callout sequence](./docs/assets/pointer-callout-sequence.gif)
 

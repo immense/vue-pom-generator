@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { Callout } from "../../class-generation/callout";
+import { createFloatingUiCalloutRenderer } from "../../class-generation/floating-ui-callout";
 import { Pointer, setPlaywrightAnimationOptions } from "../../class-generation/pointer";
 
 interface Box {
@@ -65,7 +66,10 @@ test.describe("pointer callout", () => {
       },
     });
 
-    const pointer = new Pointer(page as never, "data-testid");
+    const callout = new Callout(page as never, {
+      renderer: createFloatingUiCalloutRenderer(),
+    });
+    const pointer = new Pointer(page as never, "data-testid", callout);
     await pointer.animateCursorToElement(
       target as never,
       false,
@@ -117,7 +121,7 @@ test.describe("pointer callout", () => {
     expect(annotationStyle.borderRadius).toBe("0px");
   });
 
-  test("shows a callout without creating the pointer overlay", async ({ page }) => {
+  test("shows the simple fallback callout without creating the pointer overlay", async ({ page }) => {
     await page.goto("/tests/playwright/fixtures/pointer-callout/index.html");
 
     const target = page.getByTestId("callout-target");
@@ -135,28 +139,23 @@ test.describe("pointer callout", () => {
     await expect(annotation).toHaveCSS("background-color", "rgb(220, 38, 38)");
   });
 
-  test("cycles through multiple callouts in one video", async ({ page }) => {
+  test("cycles through two floating-ui callouts in one video", async ({ page }) => {
     await page.goto("/tests/playwright/fixtures/pointer-callout/index.html");
 
     const annotation = page.locator("#__pw_pointer_callout__");
+    const arrow = page.locator("#__pw_pointer_callout_arrow__");
     const pointerOverlay = page.locator("#__pw_pointer__");
-    const callout = new Callout(page as never);
+    const callout = new Callout(page as never, {
+      renderer: createFloatingUiCalloutRenderer(),
+    });
     const steps = [
       {
         message: "Start with the release notes action in the top-right card.",
         target: page.getByTestId("north-east-card").getByRole("button"),
       },
       {
-        message: "Move to the primary publish action in the focused panel.",
+        message: "Then move to the primary publish action in the focused panel.",
         target: page.getByTestId("callout-target"),
-      },
-      {
-        message: "Then highlight the validation checks action on the right.",
-        target: page.getByTestId("south-east-card").getByRole("button"),
-      },
-      {
-        message: "Finish with the deployment options action in the lower-left card.",
-        target: page.getByTestId("south-west-card").getByRole("button"),
       },
     ] as const;
 
@@ -165,6 +164,7 @@ test.describe("pointer callout", () => {
     for (const step of steps) {
       await callout.showForElement(step.target as never, step.message);
       await expect(annotation).toBeVisible();
+      await expect(arrow).toBeVisible();
       await expect(annotation).toContainText(step.message);
       await page.waitForTimeout(1000);
     }

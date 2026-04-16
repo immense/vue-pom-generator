@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { JSDOM } from "jsdom";
 
 import { Callout, type CalloutRenderer } from "../class-generation/callout";
+import { createFloatingUiCalloutRenderer } from "../class-generation/floating-ui-callout";
 import { Pointer, type PointerRenderer, setPlaywrightAnimationOptions } from "../class-generation/pointer";
 
 interface BoundingBox {
@@ -256,7 +257,7 @@ describe("pointer", () => {
     expect(input.fills).toEqual(["Acme"]);
   });
 
-  it("renders a red square annotation bubble", async () => {
+  it("renders the simple red fallback bubble by default", async () => {
     const page = new FakePage();
     const target = new FakeLocator(
       { tagName: "BUTTON" },
@@ -284,6 +285,35 @@ describe("pointer", () => {
     expect(annotation?.style.background).toBe("rgb(220, 38, 38)");
     expect(annotation?.style.borderRadius).toBe("0px");
     expect(annotationStyle).toContain("border: 0px solid transparent");
+    expect(annotation?.getAttribute("data-placement")).toBeTruthy();
+    expect(arrowEl?.style.opacity ?? "0").toBe("0");
+  });
+
+  it("renders a floating-ui callout with an arrow when configured", async () => {
+    const page = new FakePage();
+    const target = new FakeLocator(
+      { tagName: "BUTTON" },
+      {
+        boundingBox: { x: 0, y: 0, width: 10, height: 10 },
+        testId: "AdministrationTemplatesIndex-521-TogglePreview-button",
+      },
+    );
+
+    const callout = new Callout(page as never, {
+      renderer: createFloatingUiCalloutRenderer(),
+    });
+    const pointer = new Pointer(page as never, "data-testid", callout);
+    await pointer.animateCursorToElement(
+      target as never,
+      false,
+      0,
+      "Choose the Motion to Set Divorce Trial saved answer set",
+    );
+
+    const annotation = page.dom.window.document.getElementById("__pw_pointer_callout__") as HTMLDivElement | null;
+    const arrowEl = page.dom.window.document.getElementById("__pw_pointer_callout_arrow__") as HTMLDivElement | null;
+
+    expect(annotation?.style.opacity).toBe("1");
     expect(annotation?.getAttribute("data-placement")).toBeTruthy();
     expect(arrowEl).not.toBeNull();
     expect(arrowEl?.style.transform).toContain("rotate(45deg)");
@@ -332,7 +362,10 @@ describe("pointer", () => {
       },
     );
 
-    const pointer = new Pointer(page as never, "data-testid");
+    const callout = new Callout(page as never, {
+      renderer: createFloatingUiCalloutRenderer(),
+    });
+    const pointer = new Pointer(page as never, "data-testid", callout);
     await pointer.animateCursorToElement(target as never, false, 0, "Keep the nearby controls visible while pointing here");
 
     const annotation = page.dom.window.document.getElementById("__pw_pointer_callout__") as HTMLDivElement | null;
@@ -380,7 +413,10 @@ describe("pointer", () => {
       },
     );
 
-    const pointer = new Pointer(page as never, "data-testid");
+    const callout = new Callout(page as never, {
+      renderer: createFloatingUiCalloutRenderer(),
+    });
+    const pointer = new Pointer(page as never, "data-testid", callout);
     await pointer.animateCursorToElement(target as never, false, 0, "Keep the nearby controls visible while pointing here");
 
     const annotation = page.dom.window.document.getElementById("__pw_pointer_callout__") as HTMLDivElement | null;
@@ -449,7 +485,7 @@ describe("pointer", () => {
         calloutCalls.push("hide");
       },
       async show(_page, request) {
-        calloutCalls.push(`${request.text}:${request.layout?.placement ?? "none"}`);
+        calloutCalls.push(`${request.text}:${request.targetBox.x}`);
       },
     };
 
