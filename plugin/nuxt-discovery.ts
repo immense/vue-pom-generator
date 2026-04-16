@@ -49,6 +49,19 @@ interface NuxtPathContext {
   alias?: Record<string, string>;
 }
 
+interface NuxtLike {
+  options: LoadedNuxtOptionsLike;
+}
+
+interface NuxtLayerDirectoriesLike {
+  root: string;
+  app: string;
+  appPages: string;
+  appLayouts: string;
+}
+
+type GetLayerDirectoriesLike = (nuxt: NuxtLike) => NuxtLayerDirectoriesLike[];
+
 export interface NuxtResolvedDiscovery {
   rootDir: string;
   srcDir: string;
@@ -139,6 +152,7 @@ function normalizeNuxtComponentDirs(
 
 export function resolveNuxtProjectDiscovery(
   nuxtOptions: LoadedNuxtOptionsLike,
+  getLayerDirectories: GetLayerDirectoriesLike,
   cwd: string = process.cwd(),
 ): NuxtResolvedDiscovery {
   const rootDir = path.resolve(nuxtOptions.rootDir ?? cwd);
@@ -154,14 +168,20 @@ export function resolveNuxtProjectDiscovery(
     },
   };
   const layers = nuxtOptions._layers?.length ? nuxtOptions._layers : [fallbackLayer];
+  const normalizedNuxtOptions: LoadedNuxtOptionsLike = {
+    ...nuxtOptions,
+    _layers: layers,
+  };
+  const layerDirectories = getLayerDirectories({ options: normalizedNuxtOptions });
 
-  const pageDirs: string[] = [];
-  const layoutDirs: string[] = [];
+  const pageDirs = layerDirectories.map(layer => layer.appPages);
+  const layoutDirs = layerDirectories.map(layer => layer.appLayouts);
   const componentDirs: string[] = [];
 
-  for (const layer of layers) {
-    const layerRootDir = path.resolve(layer.config?.rootDir ?? layer.cwd ?? rootDir);
-    const layerSrcDir = path.resolve(layer.config?.srcDir ?? layer.cwd ?? srcDir);
+  for (const [index, layer] of layers.entries()) {
+    const layerDirectory = layerDirectories[index];
+    const layerRootDir = path.resolve(layerDirectory?.root ?? layer.config?.rootDir ?? layer.cwd ?? rootDir);
+    const layerSrcDir = path.resolve(layerDirectory?.app ?? layer.config?.srcDir ?? layer.cwd ?? srcDir);
     const context: NuxtPathContext = {
       rootDir: layerRootDir,
       srcDir: layerSrcDir,
@@ -171,8 +191,6 @@ export function resolveNuxtProjectDiscovery(
       },
     };
 
-    pageDirs.push(resolveNuxtPath(layer.config?.dir?.pages ?? "pages", layerSrcDir, context));
-    layoutDirs.push(resolveNuxtPath(layer.config?.dir?.layouts ?? "layouts", layerSrcDir, context));
     componentDirs.push(...normalizeNuxtComponentDirs(layer.config?.components, layerSrcDir, context));
   }
 
@@ -192,10 +210,14 @@ export function resolveNuxtProjectDiscovery(
 
 export async function loadNuxtProjectDiscovery(cwd: string = process.cwd()): Promise<NuxtResolvedDiscovery> {
   let loadNuxtConfig: ((options: { cwd: string }) => Promise<LoadedNuxtOptionsLike>) | undefined;
+  let getLayerDirectories: GetLayerDirectoriesLike | undefined;
 
   try {
     const nuxtKitEntry = requireFromModule.resolve("@nuxt/kit");
-    ({ loadNuxtConfig } = await import(pathToFileURL(nuxtKitEntry).href) as { loadNuxtConfig?: (options: { cwd: string }) => Promise<LoadedNuxtOptionsLike> });
+    ({ loadNuxtConfig, getLayerDirectories } = await import(pathToFileURL(nuxtKitEntry).href) as {
+      loadNuxtConfig?: (options: { cwd: string }) => Promise<LoadedNuxtOptionsLike>;
+      getLayerDirectories?: GetLayerDirectoriesLike;
+    });
   }
   catch (error) {
     throw new TypeError(
@@ -206,7 +228,10 @@ export async function loadNuxtProjectDiscovery(cwd: string = process.cwd()): Pro
   if (typeof loadNuxtConfig !== "function") {
     throw new TypeError("[vue-pom-generator] Nuxt mode requires @nuxt/kit.loadNuxtConfig().");
   }
+  if (typeof getLayerDirectories !== "function") {
+    throw new TypeError("[vue-pom-generator] Nuxt mode requires @nuxt/kit.getLayerDirectories().");
+  }
 
   const nuxtOptions = await loadNuxtConfig({ cwd });
-  return resolveNuxtProjectDiscovery(nuxtOptions, cwd);
+  return resolveNuxtProjectDiscovery(nuxtOptions, getLayerDirectories, cwd);
 }

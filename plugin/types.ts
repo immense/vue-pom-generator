@@ -23,8 +23,6 @@ export type RouterModuleShimFunction = (...args: Array<object | RouterModuleShim
 export type RouterModuleShimDefinition = string[] | Record<string, RouterModuleShimFunction>;
 
 export interface VuePomGeneratorPluginOptions {
-  /** Explicit framework mode. Defaults to `"vue"` when omitted. */
-  framework?: "vue";
   /** Options forwarded to @vitejs/plugin-vue */
   vueOptions?: VuePluginOptions;
 
@@ -232,18 +230,15 @@ export interface VuePomGeneratorPluginOptions {
        * The entry point for router introspection.
        *
        * For standard Vue apps, this is usually `src/router/index.ts`.
-       *
-       * For Nuxt projects, this can be omitted if `type` is set to `"nuxt"`.
        */
       entry?: string;
 
       /**
-       * The type of router introspection to perform.
+       * The router introspection strategy for standard Vue apps.
        *
        * - `"vue-router"` (default): loads the router entry via Vite SSR and enumerates routes.
-       * - `"nuxt"`: infers routes from the directory structure (e.g. `app/pages` or `pages`).
        */
-      type?: "vue-router" | "nuxt";
+      type?: "vue-router";
 
       /**
        * Optional module-source -> shim definition map used only while SSR-loading the router entry.
@@ -320,8 +315,7 @@ type VuePomGeneratorInjectionOptions = NonNullable<VuePomGeneratorPluginOptions[
 type VuePomGeneratorGenerationOptions = Exclude<VuePomGeneratorPluginOptions["generation"], false>;
 
 export interface NuxtPomGeneratorPluginOptions
-  extends Omit<VuePomGeneratorPluginOptions, "framework" | "vuePluginOwnership" | "injection" | "generation"> {
-  framework: "nuxt";
+  extends Omit<VuePomGeneratorPluginOptions, "vuePluginOwnership" | "injection" | "generation"> {
   vuePluginOwnership?: never;
   injection?: VuePomGeneratorInjectionOptions & {
     viewsDir?: never;

@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
@@ -13,6 +14,30 @@ import { createVuePluginWithTestIds } from "./vue-plugin";
 
 import type { ElementMetadata } from "../metadata-collector";
 import type { IComponentDependencies, NativeWrappersMap } from "../utils";
+
+const nuxtConfigMarker = Symbol.for("@immense/vue-pom-generator.nuxt");
+const nuxtConfigFileNames = [
+  "nuxt.config.ts",
+  "nuxt.config.js",
+  "nuxt.config.mjs",
+  "nuxt.config.cjs",
+  "nuxt.config.mts",
+  "nuxt.config.cts",
+  ".nuxtrc",
+] as const;
+const nuxtSourceMarkers = [
+  "app.vue",
+  "app",
+  "pages",
+  "layouts",
+  "components",
+  "layers",
+  ".nuxt",
+] as const;
+
+interface NuxtMarkedOptions {
+  [nuxtConfigMarker]?: true;
+}
 
 function assertNonEmptyString(value: string | undefined | null, name: string): asserts value is string {
   if (!value || !value.trim()) {
@@ -77,6 +102,77 @@ function resolveMissingSemanticNameBehavior(
 
   return value.missingSemanticNameBehavior ?? "ignore";
 }
+
+function readPackageJson(projectRoot: string): Record<string, unknown> | null {
+  const packageJsonPath = path.join(projectRoot, "package.json");
+  if (!fs.existsSync(packageJsonPath)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(packageJsonPath, "utf8")) as Record<string, unknown>;
+  }
+  catch {
+    return null;
+  }
+}
+
+function recordHasOwnStringKey(value: object | null | undefined, key: string): boolean {
+  return value !== null
+    && value !== undefined
+    && !Array.isArray(value)
+    && Object.prototype.hasOwnProperty.call(value, key)
+    && typeof (value as Record<string, string | undefined>)[key] === "string";
+}
+
+function projectPackageLooksNuxt(projectRoot: string): boolean {
+  const packageJson = readPackageJson(projectRoot);
+  if (!packageJson) {
+    return false;
+  }
+
+  const dependencyGroups = [
+    packageJson.dependencies,
+    packageJson.devDependencies,
+    packageJson.peerDependencies,
+    packageJson.optionalDependencies,
+  ];
+  if (dependencyGroups.some((group) => {
+    const dependencyGroup = typeof group === "object" && group !== null ? group : undefined;
+    return recordHasOwnStringKey(dependencyGroup, "nuxt") || recordHasOwnStringKey(dependencyGroup, "nuxt-nightly");
+  })) {
+    return true;
+  }
+
+  if (typeof packageJson.scripts !== "object" || packageJson.scripts === null || Array.isArray(packageJson.scripts)) {
+    return false;
+  }
+
+  return Object.values(packageJson.scripts).some((script) => {
+    if (typeof script !== "string") {
+      return false;
+    }
+    const normalizedScript = script.trim();
+    return normalizedScript === "nuxt"
+      || normalizedScript.startsWith("nuxt ")
+      || normalizedScript === "nuxi"
+      || normalizedScript.startsWith("nuxi ");
+  });
+}
+
+function detectNuxtProject(options: PomGeneratorPluginOptions, projectRoot: string): boolean {
+  if ((options as NuxtMarkedOptions)[nuxtConfigMarker] === true) {
+    return true;
+  }
+
+  if (nuxtConfigFileNames.some(fileName => fs.existsSync(path.join(projectRoot, fileName)))) {
+    return true;
+  }
+
+  return projectPackageLooksNuxt(projectRoot)
+    && nuxtSourceMarkers.some(entry => fs.existsSync(path.join(projectRoot, entry)));
+}
+
 function assertRouterModuleShims(
   value: Record<string, RouterModuleShimDefinition> | undefined,
   name: string,
@@ -239,8 +335,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
 
   const injection = options.injection ?? {};
   type GenerationConfig = NonNullable<Exclude<PomGeneratorPluginOptions["generation"], false>>;
-  const framework = options.framework ?? "vue";
-  const isNuxt = framework === "nuxt";
+  const isNuxt = detectNuxtProject(options, process.cwd());
 
   const generationSetting = options.generation;
   const generationOptions: GenerationConfig | null = generationSetting === false ? null : (generationSetting ?? {});
@@ -299,7 +394,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
   const getWrapperSearchRoots = () => wrapperSearchRootsRef.current;
   const sharedStateKey = JSON.stringify({
     cwd: process.cwd(),
-    framework,
+    mode: isNuxt ? "nuxt" : "vue",
     pageDirs: isNuxt ? null : getPageDirs(),
     componentDirs: isNuxt ? null : getComponentDirs(),
     layoutDirs: isNuxt ? null : getLayoutDirs(),
@@ -325,8 +420,8 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
       projectRootRef.current = config.root;
       loggerRef.current = createLogger({ verbosity, viteLogger: config.logger });
 
-      if (!isNuxt && vueGenerationOptions?.router?.type === "nuxt") {
-        throw new Error("[vue-pom-generator] Use defineNuxtPomGeneratorConfig(...) or set framework: \"nuxt\" for Nuxt projects.");
+      if ((vueGenerationOptions?.router?.type as string | undefined) === "nuxt") {
+        throw new Error("[vue-pom-generator] Remove generation.router.type=\"nuxt\". Nuxt projects are auto-detected.");
       }
 
       if (isNuxt) {

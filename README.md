@@ -284,7 +284,7 @@ export default defineNuxtConfig({
 });
 ```
 
-Nuxt mode resolves pages/layouts/components from Nuxt's own resolved config. That means custom page directories such as `dir.pages = "views"` come from `nuxt.config`, while component directories are picked up automatically from Nuxt conventions/config.
+Nuxt projects are auto-detected from standard project artifacts, and their pages/layouts/components are resolved from Nuxt's own config. That means custom page directories such as `dir.pages = "views"` come from `nuxt.config`, while component directories are picked up automatically from Nuxt conventions/config. `defineNuxtPomGeneratorConfig(...)` is optional, but it keeps the config surface Nuxt-specific at type-check time.
 
 ### Important Vite ownership rule
 
@@ -314,7 +314,7 @@ export default defineConfig({
 });
 ```
 
-Nuxt-style routing also uses the resolved app-owned Vue plugin. In practice, use `defineNuxtPomGeneratorConfig(...)` and think in terms of external Vue plugin ownership.
+Nuxt-style routing also uses the resolved app-owned Vue plugin. In practice, Nuxt projects are auto-detected and use external Vue plugin ownership automatically.
 
 ## What gets generated
 
@@ -1054,7 +1054,7 @@ If omitted, router introspection is off.
 - **Why it exists:** some Vue apps want router introspection without any Nuxt integration.
 - **Benefit:** keeps Vue-router discovery explicit.
 - **Without it:** defaults to `"vue-router"`.
-- **Nuxt note:** use `defineNuxtPomGeneratorConfig(...)` instead of `generation.router.type: "nuxt"`.
+- **Nuxt note:** Nuxt projects are auto-detected. Do not set `generation.router.type: "nuxt"`.
 - **Current options:**
   - `"vue-router"`
 
