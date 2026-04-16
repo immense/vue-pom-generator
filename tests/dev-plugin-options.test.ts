@@ -190,8 +190,11 @@ describe("dev processor option plumbing", () => {
       const plugin = createDevProcessorPlugin({
         nativeWrappers: {},
         excludedComponents: [],
-        viewsDir: "src/views",
-        scanDirs: ["src"],
+        getPageDirs: () => ["src/views"],
+        getComponentDirs: () => ["src/components"],
+        getLayoutDirs: () => ["src/layouts"],
+        getViewsDir: () => "src/views",
+        getSourceDirs: () => ["src/views", "src/components", "src/layouts"],
         getWrapperSearchRoots: () => [],
         projectRootRef: { current: projectRoot },
         normalizedBasePagePath: path.posix.normalize(path.join(projectRoot, "base-page.ts")),
@@ -200,6 +203,7 @@ describe("dev processor option plumbing", () => {
         nameCollisionBehavior: "error",
         testIdAttribute: "data-testid",
         routerAwarePoms: false,
+        getResolvedRouterEntry: () => undefined,
         loggerRef: {
           current: {
             info() {},
