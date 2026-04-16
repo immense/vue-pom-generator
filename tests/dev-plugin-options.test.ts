@@ -31,7 +31,7 @@ type GenerateFilesCall = [
   Map<string, IComponentDependencies>,
   Map<string, string>,
   string,
-  { viewsDir?: string; scanDirs?: string[]; typescriptOutputStructure?: PlaywrightOutputStructure },
+  { pageDirs?: string[]; componentDirs?: string[]; layoutDirs?: string[]; typescriptOutputStructure?: PlaywrightOutputStructure },
 ];
 
 interface DevServerStub {
@@ -103,8 +103,11 @@ describe("dev processor option plumbing", () => {
       const plugin = createDevProcessorPlugin({
         nativeWrappers: {},
         excludedComponents: [],
-        viewsDir: "src/views",
-        scanDirs: ["src"],
+        getPageDirs: () => ["src/views"],
+        getComponentDirs: () => ["src/components"],
+        getLayoutDirs: () => ["src/layouts"],
+        getViewsDir: () => "src/views",
+        getSourceDirs: () => ["src/views", "src/components", "src/layouts"],
         getWrapperSearchRoots: () => wrapperSearchRoots,
         projectRootRef: { current: projectRoot },
         normalizedBasePagePath: path.posix.normalize(basePageClassPath),
@@ -115,6 +118,7 @@ describe("dev processor option plumbing", () => {
         typescriptOutputStructure: "split",
         testIdAttribute: "data-testid",
         routerAwarePoms: false,
+        getResolvedRouterEntry: () => undefined,
         loggerRef: {
           current: {
             info() {},
@@ -161,8 +165,9 @@ describe("dev processor option plumbing", () => {
       const generateOptions = generateCall[3];
 
       expect(generateOptions).toMatchObject({
-        viewsDir: "src/views",
-        scanDirs: ["src"],
+        pageDirs: ["src/views"],
+        componentDirs: ["src/components"],
+        layoutDirs: ["src/layouts"],
         typescriptOutputStructure: "split",
       });
     }
@@ -245,8 +250,11 @@ describe("dev processor option plumbing", () => {
       const plugin = createDevProcessorPlugin({
         nativeWrappers: {},
         excludedComponents: [],
-        viewsDir: "src/views",
-        scanDirs: ["src"],
+        getPageDirs: () => ["src/views"],
+        getComponentDirs: () => ["src/components"],
+        getLayoutDirs: () => ["src/layouts"],
+        getViewsDir: () => "src/views",
+        getSourceDirs: () => ["src/views", "src/components", "src/layouts"],
         getWrapperSearchRoots: () => [],
         projectRootRef: { current: projectRoot },
         normalizedBasePagePath: path.posix.normalize(path.join(projectRoot, "base-page.ts")),
@@ -255,6 +263,7 @@ describe("dev processor option plumbing", () => {
         nameCollisionBehavior: "error",
         testIdAttribute: "data-testid",
         routerAwarePoms: false,
+        getResolvedRouterEntry: () => undefined,
         loggerRef: {
           current: {
             info() {},

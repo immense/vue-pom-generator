@@ -48,7 +48,7 @@ export interface RouterIntrospectionOptions {
   componentNaming?: {
     projectRoot: string;
     viewsDirAbs: string;
-    scanDirs: string[];
+    sourceDirs: string[];
     extraRoots?: string[];
   };
 }
@@ -575,7 +575,7 @@ function resolveIntrospectedComponentName(
       filename: componentInfo.filePath,
       projectRoot: componentNaming.projectRoot,
       viewsDirAbs: componentNaming.viewsDirAbs,
-      scanDirs: componentNaming.scanDirs,
+      sourceDirs: componentNaming.sourceDirs,
       extraRoots: componentNaming.extraRoots,
     });
   }
@@ -873,87 +873,129 @@ async function ensureDomShim() {
     g.requestAnimationFrame = (cb: (time: number) => void) => setTimeout(() => cb(Date.now()), 16);
 }
 
-export async function introspectNuxtPages(projectRoot: string): Promise<RouterIntrospectionResult> {
-  const possiblePagesDirs = ["app/pages", "pages"];
-  let pagesDir = "";
+interface NuxtPageSegmentResolution {
+  pathPart: string;
+  params: Array<{ name: string; optional: boolean }>;
+}
 
-  for (const dir of possiblePagesDirs) {
-    const abs = path.resolve(projectRoot, dir);
-    if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) {
-      pagesDir = abs;
-      break;
-    }
+function unwrapNuxtPageSegment(segment: string, prefix: string, suffix: string): string | null {
+  if (!segment.startsWith(prefix) || !segment.endsWith(suffix))
+    return null;
+
+  const value = segment.slice(prefix.length, segment.length - suffix.length);
+  return value.length > 0 ? value : null;
+}
+
+function resolveNuxtPageSegment(segment: string): NuxtPageSegmentResolution {
+  if (segment === "index") {
+    return { pathPart: "", params: [] };
   }
 
-  if (!pagesDir) {
+  const optionalParamName = unwrapNuxtPageSegment(segment, "[[", "]]");
+  if (optionalParamName) {
+    return {
+      pathPart: `:${optionalParamName}?`,
+      params: [{ name: optionalParamName, optional: true }],
+    };
+  }
+
+  const catchAllParamName = unwrapNuxtPageSegment(segment, "[...", "]");
+  if (catchAllParamName) {
+    return {
+      pathPart: `:${catchAllParamName}(.*)*`,
+      params: [{ name: catchAllParamName, optional: false }],
+    };
+  }
+
+  const requiredParamName = unwrapNuxtPageSegment(segment, "[", "]");
+  if (requiredParamName) {
+    return {
+      pathPart: `:${requiredParamName}`,
+      params: [{ name: requiredParamName, optional: false }],
+    };
+  }
+
+  return { pathPart: segment, params: [] };
+}
+
+function toPathSegments(value: string): string[] {
+  const segments: string[] = [];
+  let current = path.normalize(value);
+
+  while (current && current !== "." && current !== path.sep) {
+    const parsed = path.parse(current);
+    if (!parsed.base || parsed.base === ".")
+      break;
+    segments.unshift(parsed.base);
+    if (!parsed.dir || parsed.dir === "." || parsed.dir === current)
+      break;
+    current = parsed.dir;
+  }
+
+  return segments;
+}
+
+export async function introspectNuxtPages(
+  projectRoot: string,
+  options: { pageDirs?: string[] } = {},
+): Promise<RouterIntrospectionResult> {
+  const possiblePageDirs = options.pageDirs?.length
+    ? options.pageDirs
+    : ["app/pages", "pages"].map(dir => path.resolve(projectRoot, dir));
+  const pageDirs = possiblePageDirs
+    .map(dir => path.resolve(projectRoot, dir))
+    .filter((dir) => {
+      try {
+        return fs.existsSync(dir) && fs.statSync(dir).isDirectory();
+      }
+      catch {
+        return false;
+      }
+    });
+
+  if (!pageDirs.length) {
     debugLog(`[router-introspection][nuxt] Could not find pages directory in ${projectRoot}`);
     return { routeNameMap: new Map(), routePathMap: new Map(), routeMetaEntries: [] };
   }
 
+  const routePathMap = new Map<string, string>();
   const routeMetaEntries: RouterIntrospectionResult["routeMetaEntries"] = [];
 
-  const walk = (dir: string, baseRoute: string) => {
+  const walk = (pagesDir: string, dir: string) => {
     const files = fs.readdirSync(dir);
     for (const file of files) {
       const fullPath = path.join(dir, file);
       const stat = fs.statSync(fullPath);
 
       if (stat.isDirectory()) {
-        walk(fullPath, `${baseRoute}/${file}`);
+        walk(pagesDir, fullPath);
         continue;
       }
 
       if (!file.endsWith(".vue"))
         continue;
 
-      // Extract component name (basename without extension).
-      const componentName = file.slice(0, -4);
-      if (componentName === "index" && baseRoute === "") {
-        // Root index.vue
-        routeMetaEntries.push({
-          componentName: "index",
-          pathTemplate: "/",
-          params: [],
-          query: [],
-        });
-        continue;
-      }
+      const componentName = resolveComponentNameFromPath({
+        filename: fullPath,
+        projectRoot,
+        viewsDirAbs: pagesDir,
+        sourceDirs: [pagesDir],
+        extraRoots: [process.cwd()],
+      });
 
-      let routePath = componentName === "index" ? baseRoute : `${baseRoute}/${componentName}`;
-      if (!routePath.startsWith("/"))
-        routePath = `/${routePath}`;
+      const relativePath = path.relative(pagesDir, fullPath);
+      const parsed = path.parse(relativePath);
+      const routeSegments = toPathSegments(path.join(parsed.dir, parsed.name));
 
-      // Convert Nuxt dynamic params: [id].vue -> :id
       const params: Array<{ name: string; optional: boolean }> = [];
-      let pathTemplate = "";
-      for (let i = 0; i < routePath.length; i++) {
-        const ch = routePath[i];
-        if (ch !== "[") {
-          pathTemplate += ch;
-          continue;
-        }
+      const pathParts = routeSegments.flatMap((segment) => {
+        const resolution = resolveNuxtPageSegment(segment);
+        params.push(...resolution.params);
+        return resolution.pathPart ? [resolution.pathPart] : [];
+      });
+      const pathTemplate = pathParts.length ? `/${pathParts.join("/")}` : "/";
 
-        // Collect name until closing bracket.
-        let name = "";
-        i++;
-        while (i < routePath.length) {
-          const c = routePath[i];
-          if (c === "]")
-            break;
-          name += c;
-          i++;
-        }
-
-        if (name) {
-          params.push({ name, optional: false });
-          pathTemplate += `:${name}`;
-        }
-        else {
-          // Malformed: preserve as-is.
-          pathTemplate += "[]";
-        }
-      }
-
+      routePathMap.set(pathTemplate, componentName);
       routeMetaEntries.push({
         componentName,
         pathTemplate,
@@ -963,11 +1005,13 @@ export async function introspectNuxtPages(projectRoot: string): Promise<RouterIn
     }
   };
 
-  walk(pagesDir, "");
+  for (const pageDir of pageDirs) {
+    walk(pageDir, pageDir);
+  }
 
   return {
     routeNameMap: new Map(),
-    routePathMap: new Map(),
+    routePathMap,
     routeMetaEntries,
   };
 }

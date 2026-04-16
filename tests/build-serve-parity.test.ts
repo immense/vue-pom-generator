@@ -10,8 +10,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import type { CompilerOptions } from "@vue/compiler-dom";
 import * as compilerDom from "@vue/compiler-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { generateFiles } from "../class-generation";
 import { createDevProcessorPlugin } from "../plugin/support/dev-plugin";
 
 // Mock generateFiles so the dev plugin doesn't try to write real files
@@ -53,6 +55,12 @@ function createDevServerStub(): DevServerStub {
   };
 }
 
+function getWatcherHandler(server: DevServerStub, event: string) {
+  const call = server.watcher.on.mock.calls.find(([name]) => name === event);
+  expect(call).toBeTruthy();
+  return call![1] as (path: string) => void;
+}
+
 function createTmpProjectWithSfc(
   fixture: string,
   filename: string,
@@ -82,8 +90,11 @@ function makeDevPlugin(
   return createDevProcessorPlugin({
     nativeWrappers: {},
     excludedComponents: [],
-    viewsDir: "src/views",
-    scanDirs: ["src"],
+    getPageDirs: () => ["src/views"],
+    getComponentDirs: () => ["src/components"],
+    getLayoutDirs: () => ["src/layouts"],
+    getViewsDir: () => "src/views",
+    getSourceDirs: () => ["src/views", "src/components", "src/layouts"],
     getWrapperSearchRoots: () => [],
     projectRootRef: { current: projectRoot },
     normalizedBasePagePath: path.posix.normalize(basePageClassPath),
@@ -92,6 +103,7 @@ function makeDevPlugin(
     nameCollisionBehavior: "error",
     testIdAttribute: "data-testid",
     routerAwarePoms: false,
+    getResolvedRouterEntry: () => undefined,
     loggerRef: {
       current: {
         info() {},
@@ -110,9 +122,12 @@ function makeDevPlugin(
 
 describe("build–serve parity: dev plugin integration", () => {
   let compileSpy: ReturnType<typeof vi.spyOn>;
+  const realCompile = compilerDom.compile;
 
   beforeEach(() => {
     compileSpy = vi.spyOn(compilerDom, "compile");
+    vi.mocked(generateFiles).mockReset();
+    vi.mocked(generateFiles).mockImplementation(async () => undefined);
   });
 
   afterEach(() => {
@@ -279,6 +294,197 @@ export default defineComponent({
       await (plugin as any).configureServer!(server);
     } finally {
       cleanup();
+    }
+  });
+
+  it("removes deleted components from the regenerated snapshot", async () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pom-parity-delete-"));
+    fs.mkdirSync(path.join(projectRoot, "src", "components"), { recursive: true });
+    fs.mkdirSync(path.join(projectRoot, "src", "views"), { recursive: true });
+
+    const alphaPath = path.join(projectRoot, "src", "components", "Alpha.vue");
+    const betaPath = path.join(projectRoot, "src", "components", "Beta.vue");
+    fs.writeFileSync(alphaPath, '<template><button @click="save()">Alpha</button></template>');
+    fs.writeFileSync(betaPath, '<template><button @click="save()">Beta</button></template>');
+
+    try {
+      const plugin = makeDevPlugin(projectRoot);
+      const server = createDevServerStub();
+      await (plugin as any).configureServer!(server);
+
+      const initialSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, unknown>;
+      expect(initialSnapshot.size).toBe(2);
+
+      fs.rmSync(betaPath);
+      const unlink = getWatcherHandler(server, "unlink");
+      unlink(betaPath);
+
+      await new Promise(resolve => setTimeout(resolve, 900));
+
+      const finalSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, unknown>;
+      expect(finalSnapshot.size).toBe(1);
+      expect(finalSnapshot.has("Alpha")).toBe(true);
+      expect(finalSnapshot.has("Beta")).toBe(false);
+    } finally {
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves the previous component snapshot when incremental recompilation throws", async () => {
+    const { projectRoot, cleanup } = createTmpProjectWithSfc(
+      '<template><button @click="save()">Recover</button></template>',
+      "Recoverable.vue",
+    );
+
+    try {
+      const plugin = makeDevPlugin(projectRoot);
+      const server = createDevServerStub();
+      await (plugin as any).configureServer!(server);
+
+      const initialSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, any>;
+      expect(initialSnapshot.size).toBe(1);
+      expect(initialSnapshot.has("Recoverable")).toBe(true);
+
+      let intercepted = false;
+      compileSpy.mockImplementation((template: string, options?: CompilerOptions) => {
+        if (!intercepted && (options as any)?.filename?.includes("Recoverable.vue")) {
+          intercepted = true;
+          throw new Error("transient compile failure");
+        }
+
+        return realCompile(template, options as any);
+      });
+
+      await (plugin as any).handleHotUpdate({ file: path.join(projectRoot, "src", "components", "Recoverable.vue") });
+      await new Promise(resolve => setTimeout(resolve, 900));
+
+      const finalSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, any>;
+      expect(finalSnapshot.size).toBe(1);
+      expect(finalSnapshot.has("Recoverable")).toBe(true);
+      expect(finalSnapshot.get("Recoverable")?.dataTestIdSet?.size ?? 0).toBeGreaterThan(0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("keeps a template-less component entry during incremental rebuilds", async () => {
+    const { projectRoot, cleanup } = createTmpProjectWithSfc(
+      '<template><button @click="save()">TemplateLess</button></template>',
+      "TemplateLess.vue",
+    );
+
+    const componentPath = path.join(projectRoot, "src", "components", "TemplateLess.vue");
+
+    try {
+      const plugin = makeDevPlugin(projectRoot);
+      const server = createDevServerStub();
+      await (plugin as any).configureServer!(server);
+
+      const initialSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, any>;
+      expect(initialSnapshot.size).toBe(1);
+      expect(initialSnapshot.has("TemplateLess")).toBe(true);
+
+      fs.writeFileSync(
+        componentPath,
+        `<script setup lang="ts">
+const count = 1
+</script>`,
+      );
+
+      await (plugin as any).handleHotUpdate({ file: componentPath });
+      await new Promise(resolve => setTimeout(resolve, 900));
+
+      const finalSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, any>;
+      expect(finalSnapshot.size).toBe(1);
+      expect(finalSnapshot.has("TemplateLess")).toBe(true);
+      expect(finalSnapshot.get("TemplateLess")?.dataTestIdSet?.size ?? 0).toBe(0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("serializes dev generation so hot updates cannot overlap startup writes", async () => {
+    const { projectRoot, cleanup } = createTmpProjectWithSfc(
+      '<template><button @click="save()">Serialize</button></template>',
+      "Serialize.vue",
+    );
+
+    const componentPath = path.join(projectRoot, "src", "components", "Serialize.vue");
+
+    try {
+      let inFlight = 0;
+      let maxInFlight = 0;
+      const releases: Array<() => void> = [];
+
+      vi.mocked(generateFiles).mockImplementation(async () => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise<void>(resolve => releases.push(resolve));
+        inFlight -= 1;
+      });
+
+      const plugin = makeDevPlugin(projectRoot);
+      const server = createDevServerStub();
+      const configurePromise = (plugin as any).configureServer!(server);
+
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(vi.mocked(generateFiles).mock.calls.length).toBe(1);
+      expect(inFlight).toBe(1);
+
+      await (plugin as any).handleHotUpdate({ file: componentPath });
+      await new Promise(resolve => setTimeout(resolve, 900));
+
+      expect(maxInFlight).toBe(1);
+      expect(vi.mocked(generateFiles).mock.calls.length).toBe(1);
+
+      releases.shift()?.();
+      await configurePromise;
+
+      await new Promise(resolve => setTimeout(resolve, 900));
+      expect(vi.mocked(generateFiles).mock.calls.length).toBe(2);
+      expect(maxInFlight).toBe(1);
+
+      releases.shift()?.();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("scans configured source dirs relative to cwd when Nuxt serve resolves config.root to the app subdirectory", async () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pom-parity-nuxt-root-"));
+    fs.mkdirSync(path.join(projectRoot, "app", "components"), { recursive: true });
+    fs.writeFileSync(
+      path.join(projectRoot, "app", "components", "NuxtRooted.vue"),
+      '<template><button @click="save()">NuxtRooted</button></template>',
+    );
+
+    const originalCwd = process.cwd();
+
+    try {
+      process.chdir(projectRoot);
+
+      const appRoot = path.join(projectRoot, "app");
+      const basePageClassPath = path.join(appRoot, "base-page.ts");
+      const plugin = makeDevPlugin(appRoot, {
+        getPageDirs: () => ["app/pages"],
+        getComponentDirs: () => ["app/components"],
+        getLayoutDirs: () => ["app/layouts"],
+        getViewsDir: () => "views",
+        getSourceDirs: () => ["app/pages", "app/components", "app/layouts"],
+        projectRootRef: { current: appRoot },
+        normalizedBasePagePath: path.posix.normalize(basePageClassPath),
+        basePageClassPath,
+      });
+
+      const server = createDevServerStub();
+      await (plugin as any).configureServer!(server);
+
+      const snapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, any>;
+      expect(snapshot.size).toBe(1);
+      expect(snapshot.has("NuxtRooted")).toBe(true);
+    } finally {
+      process.chdir(originalCwd);
+      fs.rmSync(projectRoot, { recursive: true, force: true });
     }
   });
 });

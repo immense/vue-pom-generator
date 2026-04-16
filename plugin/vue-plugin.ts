@@ -29,7 +29,7 @@ interface InternalFactoryOptions {
   getViewsDirAbs: () => string;
   testIdAttribute: string;
   loggerRef: { current: VuePomGeneratorLogger };
-  scanDirs?: string[];
+  getSourceDirs: () => string[];
   getWrapperSearchRoots: () => string[];
   getProjectRoot: () => string;
 }
@@ -114,7 +114,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     getViewsDirAbs,
     testIdAttribute,
     loggerRef,
-    scanDirs = ["src"],
+    getSourceDirs,
     getWrapperSearchRoots,
     getProjectRoot,
   } = options;
@@ -124,7 +124,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
       filename,
       projectRoot: getProjectRoot(),
       viewsDirAbs: getViewsDirAbs(),
-      scanDirs,
+      sourceDirs: getSourceDirs(),
       extraRoots: [process.cwd()],
     });
   };
@@ -142,7 +142,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     if (absFilename.includes(`${path.sep}node_modules${path.sep}`) || absFilename.includes("/node_modules/"))
       return false;
 
-    // Must be in one of the scanDirs or viewsDir
+    // Must be in one of the configured page/component/layout dirs.
     const viewsDirAbs = getViewsDirAbs();
     if (absFilename.startsWith(viewsDirAbs + path.sep) || absFilename === viewsDirAbs)
       return true;
@@ -150,7 +150,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     // Root paths to check against.
     const rootsToTry = [projectRoot, process.cwd()];
 
-    const matched = scanDirs.some((dir) => {
+    const matched = getSourceDirs().some((dir) => {
       return rootsToTry.some((root) => {
         const absDir = path.resolve(root, dir);
         if (absFilename.startsWith(absDir + path.sep) || absFilename === absDir)

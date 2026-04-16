@@ -1,9 +1,30 @@
 // @vitest-environment node
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import process from "node:process";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createVuePomGeneratorPlugins, defineNuxtPomGeneratorConfig, defineVuePomGeneratorConfig, vuePomGenerator } from "../index";
 
-import { createVuePomGeneratorPlugins, defineVuePomGeneratorConfig, vuePomGenerator } from "../index";
+vi.mock("../plugin/nuxt-discovery", () => ({
+  loadNuxtProjectDiscovery: vi.fn(async () => ({
+    rootDir: "/project",
+    srcDir: "/project/app",
+    pageDirs: ["/project/app/views"],
+    layoutDirs: ["/project/app/layouts"],
+    componentDirs: ["/project/app/components"],
+    wrapperSearchRoots: [],
+  })),
+}));
 
 describe("createVuePomGeneratorPlugins options", () => {
+  const originalCwd = process.cwd();
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    vi.clearAllMocks();
+  });
+
   interface TestViteLogger {
     info: () => void;
     warn: () => void;
@@ -12,10 +33,27 @@ describe("createVuePomGeneratorPlugins options", () => {
 
   interface ConfigPlugin {
     name?: string;
-    configResolved?: (config: { root: string; logger: TestViteLogger; plugins?: Array<{ name?: string; api?: { options?: unknown } }> }) => void;
+    configResolved?: (config: {
+      root: string;
+      logger: TestViteLogger;
+      plugins?: Array<{
+        name?: string;
+        api?: {
+          options?: {
+            template?: {
+              compilerOptions?: {
+                nodeTransforms?: object[];
+                expressionPlugins?: string[];
+                prefixIdentifiers?: boolean;
+              };
+            };
+          };
+        };
+      }>;
+    }) => void | Promise<void>;
   }
 
-  const runConfigResolved = (plugins: unknown[], root: string = "/project") => {
+  const runConfigResolved = async (plugins: Array<object | null | undefined | false>, root: string = "/project") => {
     const configPlugin = plugins
       .map((p) => {
         if (typeof p !== "object" || !p || !("name" in p))
@@ -33,11 +71,31 @@ describe("createVuePomGeneratorPlugins options", () => {
       error() {},
     };
 
-    configPlugin.configResolved({
+    await configPlugin.configResolved({
       root,
       logger,
     });
   };
+
+  async function withTempProject(
+    files: Record<string, string>,
+    run: (projectRoot: string) => Promise<void>,
+  ) {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-options-"));
+    try {
+      for (const [relativePath, contents] of Object.entries(files)) {
+        const absolutePath = path.join(projectRoot, relativePath);
+        fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+        fs.writeFileSync(absolutePath, contents);
+      }
+      process.chdir(projectRoot);
+      await run(projectRoot);
+    }
+    finally {
+      process.chdir(originalCwd);
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+  }
 
   it("returns only vue + virtual modules when generation is disabled", () => {
     const plugins = createVuePomGeneratorPlugins({ generation: false });
@@ -54,7 +112,7 @@ describe("createVuePomGeneratorPlugins options", () => {
     expect(names).toContain("vue-pom-generator-config");
   });
 
-  it("patches the resolved vite:vue plugin when vuePluginOwnership is external", () => {
+  it("patches the resolved vite:vue plugin when vuePluginOwnership is external", async () => {
     const plugins = createVuePomGeneratorPlugins({
       vuePluginOwnership: "external",
       generation: false,
@@ -92,7 +150,7 @@ describe("createVuePomGeneratorPlugins options", () => {
       },
     };
 
-    configPlugin.configResolved({
+    await configPlugin.configResolved({
       root: "/project",
       logger: {
         info() {},
@@ -110,13 +168,13 @@ describe("createVuePomGeneratorPlugins options", () => {
     expect(compilerOptions?.prefixIdentifiers).toBe(true);
   });
 
-  it("fails fast when vuePluginOwnership is external but no resolved vite:vue plugin exists", () => {
+  it("fails fast when vuePluginOwnership is external but no resolved vite:vue plugin exists", async () => {
     const plugins = createVuePomGeneratorPlugins({
       vuePluginOwnership: "external",
       generation: false,
     });
 
-    expect(() => runConfigResolved(plugins)).toThrow("vuePluginOwnership=\"external\"");
+    await expect(runConfigResolved(plugins)).rejects.toThrow("vuePluginOwnership=\"external\"");
   });
 
   it("includes build/serve support plugins when generation is enabled", () => {
@@ -135,7 +193,7 @@ describe("createVuePomGeneratorPlugins options", () => {
     expect(names).toContain("vue-pom-generator-dev");
   });
 
-  it("accepts root-level errorBehavior as a string", () => {
+  it("accepts root-level errorBehavior as a string", async () => {
     const plugins = createVuePomGeneratorPlugins({
       errorBehavior: "error",
       generation: {
@@ -143,10 +201,10 @@ describe("createVuePomGeneratorPlugins options", () => {
       },
     });
 
-    expect(() => runConfigResolved(plugins)).not.toThrow();
+    await expect(runConfigResolved(plugins)).resolves.toBeUndefined();
   });
 
-  it("accepts root-level errorBehavior as an object", () => {
+  it("accepts root-level errorBehavior as an object", async () => {
     const plugins = createVuePomGeneratorPlugins({
       errorBehavior: {
         missingSemanticNameBehavior: "error",
@@ -156,10 +214,10 @@ describe("createVuePomGeneratorPlugins options", () => {
       },
     });
 
-    expect(() => runConfigResolved(plugins)).not.toThrow();
+    await expect(runConfigResolved(plugins)).resolves.toBeUndefined();
   });
 
-  it("accepts split Playwright output structure", () => {
+  it("accepts split Playwright output structure", async () => {
     const plugins = createVuePomGeneratorPlugins({
       generation: {
         outDir: "./tests/playwright/generated",
@@ -169,26 +227,35 @@ describe("createVuePomGeneratorPlugins options", () => {
       },
     });
 
-    expect(() => runConfigResolved(plugins)).not.toThrow();
+    await expect(runConfigResolved(plugins)).resolves.toBeUndefined();
   });
-  it("fails fast for invalid injection.viewsDir", () => {
+  it("fails fast for invalid injection.viewsDir", async () => {
     const plugins = createVuePomGeneratorPlugins({
       injection: { viewsDir: "   " },
       generation: false,
     });
 
-    expect(() => runConfigResolved(plugins)).toThrow("injection.viewsDir");
+    await expect(runConfigResolved(plugins)).rejects.toThrow("injection.viewsDir");
   });
 
-  it("fails fast for invalid generation.outDir", () => {
+  it("fails fast for invalid injection.componentDirs entries", async () => {
+    const plugins = createVuePomGeneratorPlugins({
+      injection: { componentDirs: ["src/components", "   "] },
+      generation: false,
+    });
+
+    await expect(runConfigResolved(plugins)).rejects.toThrow("injection.componentDirs");
+  });
+
+  it("fails fast for invalid generation.outDir", async () => {
     const plugins = createVuePomGeneratorPlugins({
       generation: { outDir: "   " },
     });
 
-    expect(() => runConfigResolved(plugins)).toThrow("generation.outDir");
+    await expect(runConfigResolved(plugins)).rejects.toThrow("generation.outDir");
   });
 
-  it("fails fast when generation.router is present but router.entry is empty", () => {
+  it("fails fast when generation.router is present but router.entry is empty", async () => {
     const plugins = createVuePomGeneratorPlugins({
       generation: {
         outDir: "tests/playwright/generated",
@@ -196,10 +263,10 @@ describe("createVuePomGeneratorPlugins options", () => {
       },
     });
 
-    expect(() => runConfigResolved(plugins)).toThrow("generation.router.entry");
+    await expect(runConfigResolved(plugins)).rejects.toThrow("generation.router.entry");
   });
 
-  it("fails fast for invalid root-level errorBehavior string", () => {
+  it("fails fast for invalid root-level errorBehavior string", async () => {
     const plugins = createVuePomGeneratorPlugins({
       errorBehavior: "strict" as "ignore",
       generation: {
@@ -207,10 +274,10 @@ describe("createVuePomGeneratorPlugins options", () => {
       },
     });
 
-    expect(() => runConfigResolved(plugins)).toThrow("errorBehavior");
+    await expect(runConfigResolved(plugins)).rejects.toThrow("errorBehavior");
   });
 
-  it("fails fast for invalid root-level errorBehavior object", () => {
+  it("fails fast for invalid root-level errorBehavior object", async () => {
     const plugins = createVuePomGeneratorPlugins({
       errorBehavior: {
         missingSemanticNameBehavior: "strict" as "ignore",
@@ -220,10 +287,10 @@ describe("createVuePomGeneratorPlugins options", () => {
       },
     });
 
-    expect(() => runConfigResolved(plugins)).toThrow("errorBehavior.missingSemanticNameBehavior");
+    await expect(runConfigResolved(plugins)).rejects.toThrow("errorBehavior.missingSemanticNameBehavior");
   });
 
-  it("fails fast for invalid generation.playwright.outputStructure", () => {
+  it("fails fast for invalid generation.playwright.outputStructure", async () => {
     const plugins = createVuePomGeneratorPlugins({
       generation: {
         outDir: "tests/playwright/generated",
@@ -233,9 +300,9 @@ describe("createVuePomGeneratorPlugins options", () => {
       },
     });
 
-    expect(() => runConfigResolved(plugins)).toThrow("generation.playwright.outputStructure");
+    await expect(runConfigResolved(plugins)).rejects.toThrow("generation.playwright.outputStructure");
   });
-  it("fails fast when generation.router.moduleShims has an empty export list", () => {
+  it("fails fast when generation.router.moduleShims has an empty export list", async () => {
     const plugins = createVuePomGeneratorPlugins({
       generation: {
         outDir: "tests/playwright/generated",
@@ -243,10 +310,10 @@ describe("createVuePomGeneratorPlugins options", () => {
       },
     });
 
-    expect(() => runConfigResolved(plugins)).toThrow("generation.router.moduleShims");
+    await expect(runConfigResolved(plugins)).rejects.toThrow("generation.router.moduleShims");
   });
 
-  it("fails fast when generation.router.moduleShims uses '*' wildcard export names", () => {
+  it("fails fast when generation.router.moduleShims uses '*' wildcard export names", async () => {
     const plugins = createVuePomGeneratorPlugins({
       generation: {
         outDir: "tests/playwright/generated",
@@ -254,7 +321,7 @@ describe("createVuePomGeneratorPlugins options", () => {
       },
     });
 
-    expect(() => runConfigResolved(plugins)).toThrow("generation.router.moduleShims");
+    await expect(runConfigResolved(plugins)).rejects.toThrow("generation.router.moduleShims");
   });
 
   it("throws a helpful error when plugin-like options are passed", () => {
@@ -283,55 +350,79 @@ describe("createVuePomGeneratorPlugins options", () => {
     expect(config.errorBehavior).toEqual({
       missingSemanticNameBehavior: "error",
     });
+
+    const nuxtConfig = defineNuxtPomGeneratorConfig({
+      generation: false,
+    });
+    expect("framework" in nuxtConfig).toBe(false);
   });
 
-  it("patches the resolved vite:vue plugin for Nuxt projects", () => {
+  it("fails fast when generation.router.type=\"nuxt\" is used", async () => {
     const plugins = createVuePomGeneratorPlugins({
       generation: {
         outDir: "tests/playwright/generated",
-        router: { type: "nuxt" },
+        router: { type: "nuxt" as "vue-router" },
       },
     });
 
-    const configPlugin = plugins
-      .map((p) => {
-        if (typeof p !== "object" || !p || !("name" in p))
-          return null;
-        return p as ConfigPlugin;
-      })
-      .find(p => p?.name === "vue-pom-generator-config");
+    await expect(runConfigResolved(plugins)).rejects.toThrow("Remove generation.router.type=\"nuxt\"");
+  });
 
-    if (!configPlugin?.configResolved)
-      throw new Error("config plugin not found");
+  it("patches the resolved vite:vue plugin for auto-detected Nuxt projects", async () => {
+    await withTempProject({
+      "package.json": JSON.stringify({
+        devDependencies: {
+          nuxt: "^4.0.0",
+        },
+      }),
+      "app.vue": "<template><div /></template>",
+    }, async () => {
+      const plugins = createVuePomGeneratorPlugins({
+        generation: {
+          outDir: "tests/playwright/generated",
+        },
+      });
 
-    const viteVuePlugin = {
-      name: "vite:vue",
-      api: {
-        options: {
-          template: {
-            compilerOptions: {
-              expressionPlugins: ["typescript"],
+      const configPlugin = plugins
+        .map((p) => {
+          if (typeof p !== "object" || !p || !("name" in p))
+            return null;
+          return p as ConfigPlugin;
+        })
+        .find(p => p?.name === "vue-pom-generator-config");
+
+      if (!configPlugin?.configResolved)
+        throw new Error("config plugin not found");
+
+      const viteVuePlugin = {
+        name: "vite:vue",
+        api: {
+          options: {
+            template: {
+              compilerOptions: {
+                expressionPlugins: ["typescript"],
+              },
             },
           },
         },
-      },
-    };
+      };
 
-    configPlugin.configResolved({
-      root: "/project",
-      logger: {
-        info() {},
-        warn() {},
-        error() {},
-      },
-      plugins: [viteVuePlugin],
+      await configPlugin.configResolved({
+        root: "/project",
+        logger: {
+          info() {},
+          warn() {},
+          error() {},
+        },
+        plugins: [viteVuePlugin],
+      });
+
+      const compilerOptions = (viteVuePlugin.api.options as { template?: { compilerOptions?: { nodeTransforms?: unknown[]; expressionPlugins?: string[]; prefixIdentifiers?: boolean } } })
+        .template?.compilerOptions;
+
+      expect(compilerOptions?.nodeTransforms?.length).toBeGreaterThan(0);
+      expect(compilerOptions?.expressionPlugins).toContain("typescript");
+      expect(compilerOptions?.prefixIdentifiers).toBe(true);
     });
-
-    const compilerOptions = (viteVuePlugin.api.options as { template?: { compilerOptions?: { nodeTransforms?: unknown[]; expressionPlugins?: string[]; prefixIdentifiers?: boolean } } })
-      .template?.compilerOptions;
-
-    expect(compilerOptions?.nodeTransforms?.length).toBeGreaterThan(0);
-    expect(compilerOptions?.expressionPlugins).toContain("typescript");
-    expect(compilerOptions?.prefixIdentifiers).toBe(true);
   });
 });

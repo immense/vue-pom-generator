@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { parseRouterFileFromCwd } from "../router-introspection";
+import { introspectNuxtPages, parseRouterFileFromCwd } from "../router-introspection";
 import { renderTypeScriptLines } from "../typescript-codegen";
 
 const fixturesDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
@@ -40,11 +40,11 @@ function ensureTempNodeModules(tempRoot: string) {
   }
 }
 
-function getComponentNamingOptions(tempRoot: string, scanDirs: string[]) {
+function getComponentNamingOptions(tempRoot: string, sourceDirs: string[]) {
   return {
     projectRoot: tempRoot,
     viewsDirAbs: path.join(tempRoot, "src", "views"),
-    scanDirs,
+    sourceDirs: ["src/views", ...sourceDirs],
   };
 }
 
@@ -263,4 +263,29 @@ describe("parseRouterFileFromCwd", () => {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
   }, 120_000);
+
+  it("uses custom Nuxt page directories when deriving route metadata", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-router-nuxt-pages-"));
+
+    try {
+      const stubViewContent = readFixture("StubView.vue");
+      const pageDir = path.join(tempRoot, "app", "views");
+      writeFile(path.join(pageDir, "administration", "users", "index.vue"), stubViewContent);
+      writeFile(path.join(pageDir, "reports", "[id].vue"), stubViewContent);
+
+      const result = await introspectNuxtPages(tempRoot, {
+        pageDirs: [pageDir],
+      });
+
+      expect(result.routePathMap.get("/administration/users")).toBe("AdministrationUsersIndex");
+
+      const usersMeta = result.routeMetaEntries.find(entry => entry.componentName === "AdministrationUsersIndex");
+      expect(usersMeta?.pathTemplate).toBe("/administration/users");
+
+      const reportMeta = result.routeMetaEntries.find(entry => entry.pathTemplate === "/reports/:id");
+      expect(reportMeta?.params).toEqual([{ name: "id", optional: false }]);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
 });
