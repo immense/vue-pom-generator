@@ -336,23 +336,29 @@ async function getRouteMetaByComponent(
   routerEntry?: string,
   routerType?: "vue-router" | "nuxt",
   options: {
-    viewsDir?: string;
-    scanDirs?: string[];
+    pageDirs?: string[];
+    componentDirs?: string[];
+    layoutDirs?: string[];
   } = {},
 ): Promise<Record<string, RouteMeta>> {
   const root = projectRoot ?? process.cwd();
-  const viewsDir = options.viewsDir ?? "src/views";
-  const viewsDirAbs = path.isAbsolute(viewsDir) ? viewsDir : path.resolve(root, viewsDir);
-  const scanDirs = options.scanDirs?.length ? options.scanDirs : ["src"];
+  const pageDirs = options.pageDirs?.length ? options.pageDirs : ["src/views"];
+  const pageDirsAbs = pageDirs.map(dir => path.isAbsolute(dir) ? dir : path.resolve(root, dir));
+  const primaryPageDirAbs = pageDirsAbs[0] ?? path.resolve(root, "src/views");
+  const sourceDirs = [
+    ...pageDirs,
+    ...(options.componentDirs?.length ? options.componentDirs : ["src/components"]),
+    ...(options.layoutDirs?.length ? options.layoutDirs : ["src/layouts"]),
+  ];
   const extraRoots = process.cwd() !== root ? [process.cwd()] : [];
 
   const { routeMetaEntries } = routerType === "nuxt"
-    ? await introspectNuxtPages(root)
+    ? await introspectNuxtPages(root, { pageDirs: pageDirsAbs })
     : await parseRouterFileFromCwd(resolveRouterEntry(root, routerEntry), {
       componentNaming: {
         projectRoot: root,
-        viewsDirAbs,
-        scanDirs,
+        viewsDirAbs: primaryPageDirAbs,
+        sourceDirs,
         extraRoots,
       },
     });
@@ -687,8 +693,9 @@ export interface GenerateFilesOptions {
   /** The type of router introspection to perform. */
   routerType?: "vue-router" | "nuxt";
 
-  viewsDir?: string;
-  scanDirs?: string[];
+  pageDirs?: string[];
+  componentDirs?: string[];
+  layoutDirs?: string[];
 
   routeMetaByComponent?: Record<string, RouteMeta>;
 }
@@ -749,8 +756,9 @@ export async function generateFiles(
     vueRouterFluentChaining,
     routerEntry,
     routerType,
-    viewsDir,
-    scanDirs,
+    pageDirs,
+    componentDirs,
+    layoutDirs,
     routeMetaByComponent: routeMetaByComponentOverride,
   } = options;
 
@@ -763,8 +771,9 @@ export async function generateFiles(
   const routeMetaByComponent = routeMetaByComponentOverride
     ?? (vueRouterFluentChaining
       ? await getRouteMetaByComponent(projectRoot, routerEntry, routerType, {
-        viewsDir,
-        scanDirs,
+        pageDirs,
+        componentDirs,
+        layoutDirs,
       })
       : undefined);
   const generatedFilePaths: string[] = [];

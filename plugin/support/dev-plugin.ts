@@ -20,8 +20,11 @@ import type { PlaywrightOutputStructure, PomNameCollisionBehavior, RouterModuleS
 interface DevProcessorOptions {
   nativeWrappers: NativeWrappersMap;
   excludedComponents: string[];
-  viewsDir: string;
-  scanDirs: string[];
+  getPageDirs: () => string[];
+  getComponentDirs: () => string[];
+  getLayoutDirs: () => string[];
+  getViewsDir: () => string;
+  getSourceDirs: () => string[];
   getWrapperSearchRoots: () => string[];
 
   projectRootRef: { current: string };
@@ -46,7 +49,7 @@ interface DevProcessorOptions {
   testIdAttribute: string;
 
   routerAwarePoms: boolean;
-  resolvedRouterEntry?: string;
+  getResolvedRouterEntry: () => string | undefined;
   routerType?: "vue-router" | "nuxt";
   routerModuleShims?: Record<string, RouterModuleShimDefinition>;
 
@@ -57,8 +60,11 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
   const {
     nativeWrappers,
     excludedComponents,
-    viewsDir,
-    scanDirs,
+    getPageDirs,
+    getComponentDirs,
+    getLayoutDirs,
+    getViewsDir,
+    getSourceDirs,
     getWrapperSearchRoots,
     projectRootRef,
     normalizedBasePagePath,
@@ -77,7 +83,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     existingIdBehavior,
     testIdAttribute,
     routerAwarePoms,
-    resolvedRouterEntry,
+    getResolvedRouterEntry,
     routerType,
     routerModuleShims,
     loggerRef,
@@ -96,12 +102,12 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     const candidates = getProjectRootCandidates().map(root => path.resolve(root, maybePath));
     return candidates.find(candidate => fs.existsSync(candidate)) ?? candidates[0]!;
   };
-  const getScanDirRoots = () => Array.from(new Set(
-    getProjectRootCandidates().flatMap(root => scanDirs.map(dir => path.resolve(root, dir))),
+  const getSourceDirRoots = () => Array.from(new Set(
+    getProjectRootCandidates().flatMap(root => getSourceDirs().map(dir => path.resolve(root, dir))),
   ));
   const isContainedInScanDirs = (filePath: string) => {
     const absolutePath = path.resolve(filePath);
-    return getScanDirRoots().some(scanDirAbs => isPathWithinDir(absolutePath, scanDirAbs));
+    return getSourceDirRoots().some(scanDirAbs => isPathWithinDir(absolutePath, scanDirAbs));
   };
 
   return {
@@ -123,7 +129,8 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     },
 
     async configureServer(server: ViteDevServer) {
-      const getViewsDirAbs = () => resolveProjectPath(viewsDir);
+      const getViewsDirAbs = () => resolveProjectPath(getViewsDir());
+      const getPageDirsAbs = () => getPageDirs().map(dir => resolveProjectPath(dir));
 
       // Router introspection (dev-server): mirror the buildStart behavior.
       const routerInitPromise = (async () => {
@@ -136,9 +143,10 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         let result: RouterIntrospectionResult;
 
         if (routerType === "nuxt") {
-          result = await introspectNuxtPages(projectRootRef.current);
+          result = await introspectNuxtPages(projectRootRef.current, { pageDirs: getPageDirsAbs() });
         }
         else {
+          const resolvedRouterEntry = getResolvedRouterEntry();
           if (!resolvedRouterEntry)
             throw new Error("[vue-pom-generator] router.entry is required when router introspection is enabled.");
           result = await parseRouterFileFromCwd(resolvedRouterEntry, {
@@ -146,7 +154,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
             componentNaming: {
               projectRoot: projectRootRef.current,
               viewsDirAbs: getViewsDirAbs(),
-              scanDirs,
+              sourceDirs: getSourceDirs(),
               extraRoots: [process.cwd()],
             },
           });
@@ -256,7 +264,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
           filename: normalized,
           projectRoot: projectRootRef.current,
           viewsDirAbs: getViewsDirAbs(),
-          scanDirs,
+          sourceDirs: getSourceDirs(),
           extraRoots: [process.cwd()],
         });
         filePathToComponentName.set(normalized, name);
@@ -342,7 +350,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         let totalVueFiles = 0;
         let compiledCount = 0;
 
-        for (const absDir of getScanDirRoots()) {
+        for (const absDir of getSourceDirRoots()) {
           if (!fs.existsSync(absDir))
             continue;
 
@@ -360,7 +368,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         snapshotVuePathMap = nextVuePathMap;
 
         const t1 = performance.now();
-        logInfo(`scan(${logLabel}): found ${totalVueFiles} .vue files in ${scanDirs.join(", ")}`);
+        logInfo(`scan(${logLabel}): found ${totalVueFiles} .vue files in ${getSourceDirs().join(", ")}`);
         logInfo(`compile(${logLabel}): ${compiledCount}/${totalVueFiles} files in ${formatMs(t1 - t0)} (components=${snapshotHierarchy.size})`);
       };
 
@@ -377,11 +385,12 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
           customPomDir,
           customPomImportAliases,
           customPomImportNameCollisionBehavior,
-          viewsDir,
-          scanDirs,
+          pageDirs: getPageDirs(),
+          componentDirs: getComponentDirs(),
+          layoutDirs: getLayoutDirs(),
           testIdAttribute,
           vueRouterFluentChaining: routerAwarePoms,
-          routerEntry: resolvedRouterEntry,
+          routerEntry: getResolvedRouterEntry(),
           routerType,
         });
         const t1 = performance.now();
@@ -455,7 +464,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         return currentRun;
       };
 
-      const watchedVueGlobs = getScanDirRoots().map(scanDirAbs => path.resolve(scanDirAbs, "**", "*.vue"));
+      const watchedVueGlobs = getSourceDirRoots().map(scanDirAbs => path.resolve(scanDirAbs, "**", "*.vue"));
       const watchedPluginGlob = path.resolve(projectRootRef.current, "vite-plugins", "vue-pom-generator", "**", "*.ts");
       const runtimeDir = path.dirname(basePageClassPath);
       server.watcher.add([

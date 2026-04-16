@@ -23,6 +23,8 @@ export type RouterModuleShimFunction = (...args: Array<object | RouterModuleShim
 export type RouterModuleShimDefinition = string[] | Record<string, RouterModuleShimFunction>;
 
 export interface VuePomGeneratorPluginOptions {
+  /** Explicit framework mode. Defaults to `"vue"` when omitted. */
+  framework?: "vue";
   /** Options forwarded to @vitejs/plugin-vue */
   vueOptions?: VuePluginOptions;
 
@@ -95,28 +97,33 @@ export interface VuePomGeneratorPluginOptions {
     viewsDir?: string;
 
     /**
-     * Wrapper component configuration.
-     */
+      * Directories containing reusable Vue components.
+      *
+      * Defaults to `["src/components"]`.
+      */
+    componentDirs?: string[];
+
+    /**
+      * Directories containing layout-style Vue components.
+      *
+      * Defaults to `["src/layouts"]`.
+      */
+    layoutDirs?: string[];
+
+    /**
+      * Wrapper component configuration.
+      */
     nativeWrappers?: NativeWrappersMap;
 
     /** Components to exclude from test id injection/collection. */
     excludeComponents?: string[];
 
     /**
-      * Directories to scan for Vue files when building the POM library.
-      *
-      * Defaults to `["src"]`.
-      *
-      * For Nuxt projects, you might want to include `["app", "components", "pages", "layouts"]`.
-      */
-    scanDirs?: string[];
-
-    /**
       * Additional directories to search recursively when inferring wrapper-component roles from
       * SFC templates.
       *
-      * Use this for shared wrapper libraries that live outside `scanDirs`, such as sibling
-      * packages in a monorepo.
+      * Use this for shared wrapper libraries that live outside the configured page/component/layout
+      * directories, such as sibling packages in a monorepo.
       *
       * Behavior:
       * - Resolved relative to the Vite project root (resolved `config.root`) when not absolute.
@@ -308,3 +315,21 @@ export interface VuePomGeneratorPluginOptions {
     };
   };
 }
+
+type VuePomGeneratorInjectionOptions = NonNullable<VuePomGeneratorPluginOptions["injection"]>;
+type VuePomGeneratorGenerationOptions = Exclude<VuePomGeneratorPluginOptions["generation"], false>;
+
+export interface NuxtPomGeneratorPluginOptions
+  extends Omit<VuePomGeneratorPluginOptions, "framework" | "vuePluginOwnership" | "injection" | "generation"> {
+  framework: "nuxt";
+  vuePluginOwnership?: never;
+  injection?: VuePomGeneratorInjectionOptions & {
+    viewsDir?: never;
+    componentDirs?: never;
+    layoutDirs?: never;
+    wrapperSearchRoots?: never;
+  };
+  generation?: false | (VuePomGeneratorGenerationOptions & { router?: never });
+}
+
+export type PomGeneratorPluginOptions = VuePomGeneratorPluginOptions | NuxtPomGeneratorPluginOptions;

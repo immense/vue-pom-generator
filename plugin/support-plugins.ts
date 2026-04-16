@@ -15,8 +15,11 @@ interface SupportFactoryOptions {
   vueFilesPathMap: Map<string, string>;
   nativeWrappers: NativeWrappersMap;
   excludedComponents: string[];
-  viewsDir: string;
-  scanDirs: string[];
+  getPageDirs: () => string[];
+  getComponentDirs: () => string[];
+  getLayoutDirs: () => string[];
+  getViewsDir: () => string;
+  getSourceDirs: () => string[];
   getWrapperSearchRoots: () => string[];
   nameCollisionBehavior?: PomNameCollisionBehavior;
   missingSemanticNameBehavior?: "ignore" | "error";
@@ -59,8 +62,11 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     vueFilesPathMap,
     nativeWrappers,
     excludedComponents,
-    viewsDir,
-    scanDirs,
+    getPageDirs,
+    getComponentDirs,
+    getLayoutDirs,
+    getViewsDir,
+    getSourceDirs,
     getWrapperSearchRoots,
     nameCollisionBehavior = "suffix",
     missingSemanticNameBehavior,
@@ -94,8 +100,6 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     return path.isAbsolute(routerEntry) ? routerEntry : path.resolve(projectRootRef.current, routerEntry);
   };
 
-  const resolvedRouterEntry = resolveRouterEntry();
-
   const getDefaultBasePageClassPath = () => {
     // Prefer resolving relative to this package so consumers don't need a repo-specific layout.
     // Works in ESM output.
@@ -116,8 +120,11 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
   const tsProcessor = createBuildProcessorPlugin({
     componentHierarchyMap,
     vueFilesPathMap,
-    viewsDir,
-    scanDirs,
+    getPageDirs,
+    getComponentDirs,
+    getLayoutDirs,
+    getViewsDir,
+    getSourceDirs,
     basePageClassPath,
     normalizedBasePagePath,
     outDir,
@@ -139,7 +146,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     getWrapperSearchRoots,
     routerAwarePoms,
     routerType,
-    resolvedRouterEntry,
+    getResolvedRouterEntry: resolveRouterEntry,
     routerModuleShims,
     loggerRef,
   });
@@ -147,8 +154,11 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
   const devProcessor = createDevProcessorPlugin({
     nativeWrappers,
     excludedComponents,
-    viewsDir,
-    scanDirs,
+    getPageDirs,
+    getComponentDirs,
+    getLayoutDirs,
+    getViewsDir,
+    getSourceDirs,
     getWrapperSearchRoots,
     projectRootRef,
     normalizedBasePagePath,
@@ -168,7 +178,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     testIdAttribute,
     routerAwarePoms,
     routerType,
-    resolvedRouterEntry,
+    getResolvedRouterEntry: resolveRouterEntry,
     routerModuleShims,
     loggerRef,
   });

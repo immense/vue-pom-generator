@@ -90,8 +90,11 @@ function makeDevPlugin(
   return createDevProcessorPlugin({
     nativeWrappers: {},
     excludedComponents: [],
-    viewsDir: "src/views",
-    scanDirs: ["src"],
+    getPageDirs: () => ["src/views"],
+    getComponentDirs: () => ["src/components"],
+    getLayoutDirs: () => ["src/layouts"],
+    getViewsDir: () => "src/views",
+    getSourceDirs: () => ["src/views", "src/components", "src/layouts"],
     getWrapperSearchRoots: () => [],
     projectRootRef: { current: projectRoot },
     normalizedBasePagePath: path.posix.normalize(basePageClassPath),
@@ -100,6 +103,7 @@ function makeDevPlugin(
     nameCollisionBehavior: "error",
     testIdAttribute: "data-testid",
     routerAwarePoms: false,
+    getResolvedRouterEntry: () => undefined,
     loggerRef: {
       current: {
         info() {},
@@ -446,7 +450,7 @@ const count = 1
     }
   });
 
-  it("scans scanDirs relative to cwd when Nuxt serve resolves config.root to the app subdirectory", async () => {
+  it("scans configured source dirs relative to cwd when Nuxt serve resolves config.root to the app subdirectory", async () => {
     const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pom-parity-nuxt-root-"));
     fs.mkdirSync(path.join(projectRoot, "app", "components"), { recursive: true });
     fs.writeFileSync(
@@ -462,8 +466,11 @@ const count = 1
       const appRoot = path.join(projectRoot, "app");
       const basePageClassPath = path.join(appRoot, "base-page.ts");
       const plugin = makeDevPlugin(appRoot, {
-        viewsDir: "views",
-        scanDirs: ["app"],
+        getPageDirs: () => ["app/pages"],
+        getComponentDirs: () => ["app/components"],
+        getLayoutDirs: () => ["app/layouts"],
+        getViewsDir: () => "views",
+        getSourceDirs: () => ["app/pages", "app/components", "app/layouts"],
         projectRootRef: { current: appRoot },
         normalizedBasePagePath: path.posix.normalize(basePageClassPath),
         basePageClassPath,
