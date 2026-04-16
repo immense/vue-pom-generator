@@ -16,6 +16,14 @@ describe("resolveNuxtProjectDiscovery", () => {
         { path: "~/components" },
         { path: "../shared/components" },
       ],
+    }, ({ options }) => {
+      expect(options.rootDir).toBe("/project");
+      return [{
+        root: "/project/",
+        app: "/project/app/",
+        appPages: "/project/app/views/",
+        appLayouts: "/project/app/shells/",
+      }];
     }, "/project");
 
     expect(discovery.rootDir).toBe("/project");

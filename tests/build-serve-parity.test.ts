@@ -297,7 +297,7 @@ export default defineComponent({
     }
   });
 
-  it("regenerates with fewer components when a vue file is legitimately deleted", async () => {
+  it("removes deleted components from the regenerated snapshot", async () => {
     const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pom-parity-delete-"));
     fs.mkdirSync(path.join(projectRoot, "src", "components"), { recursive: true });
     fs.mkdirSync(path.join(projectRoot, "src", "views"), { recursive: true });
