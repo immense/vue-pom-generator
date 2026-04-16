@@ -28,7 +28,7 @@ function createMetadataCollector(nativeWrappers: NativeWrappersMap = {}) {
         warn() {},
       },
     },
-    scanDirs: ['.'],
+    getSourceDirs: () => ['.'],
     getWrapperSearchRoots: () => [],
     getProjectRoot: () => process.cwd(),
   })

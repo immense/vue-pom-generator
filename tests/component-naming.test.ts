@@ -29,7 +29,11 @@ describe("resolveComponentNameFromPath", () => {
       filename,
       projectRoot: tmpDir,
       viewsDirAbs: path.join(tmpDir, "src", "views"),
-      scanDirs: ["app"],
+      sourceDirs: [
+        "app/pages",
+        "app/components",
+        "app/layouts",
+      ],
     });
 
   it("gives index.vue files a unique name derived from the full page path", () => {
@@ -64,14 +68,19 @@ describe("resolveComponentNameFromPath", () => {
 
   describe("Nuxt 4 compat — projectRoot is the app/ subdir (config.root = app/)", () => {
     // In Nuxt 4, Vite sets config.root to the app/ subdirectory.
-    // scanDirs: ['app'] is configured relative to the web/ project root (process.cwd()),
-    // so resolveComponentNameFromPath must try extraRoots when projectRoot alone fails.
+    // Explicit page/component/layout dirs are configured relative to the web/ project root
+    // (process.cwd()), so resolveComponentNameFromPath must try extraRoots when projectRoot
+    // alone fails.
     const resolveNuxt4 = (filename: string) =>
       resolveComponentNameFromPath({
         filename,
         projectRoot: path.join(tmpDir, "app"), // Simulates config.root = web/app
         viewsDirAbs: path.join(tmpDir, "app", "src", "views"),
-        scanDirs: ["app"],
+        sourceDirs: [
+          "app/pages",
+          "app/components",
+          "app/layouts",
+        ],
         extraRoots: [tmpDir], // Simulates process.cwd() = web/
       });
 

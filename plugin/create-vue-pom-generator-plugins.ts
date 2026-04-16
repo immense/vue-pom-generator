@@ -5,9 +5,10 @@ import type { PluginOption, ResolvedConfig } from "vite";
 
 import type { VuePomGeneratorLogger, VuePomGeneratorVerbosity } from "./logger";
 import { createLogger } from "./logger";
+import { loadNuxtProjectDiscovery } from "./nuxt-discovery";
 import { createSupportPlugins } from "./support-plugins";
 import { createTestIdsVirtualModulesPlugin } from "./support/virtual-modules";
-import type { ErrorBehavior, ErrorBehaviorOptions, ExistingIdBehavior, MissingSemanticNameBehavior, PlaywrightOutputStructure, PomNameCollisionBehavior, RouterModuleShimDefinition, VuePluginOwnership, VuePomGeneratorPluginOptions } from "./types";
+import type { ErrorBehavior, ErrorBehaviorOptions, ExistingIdBehavior, MissingSemanticNameBehavior, PlaywrightOutputStructure, PomGeneratorPluginOptions, PomNameCollisionBehavior, RouterModuleShimDefinition, VuePluginOwnership, VuePomGeneratorPluginOptions } from "./types";
 import { createVuePluginWithTestIds } from "./vue-plugin";
 
 import type { ElementMetadata } from "../metadata-collector";
@@ -207,7 +208,7 @@ function applyTemplateCompilerOptionsToResolvedVuePlugin(
   };
 }
 
-function assertNotVitePluginInstance(options: VuePomGeneratorPluginOptions): void {
+function assertNotVitePluginInstance(options: PomGeneratorPluginOptions): void {
   const candidate = options as Record<string, unknown>;
   const pluginLikeKeys = [
     "name",
@@ -233,23 +234,28 @@ function assertNotVitePluginInstance(options: VuePomGeneratorPluginOptions): voi
   );
 }
 
-export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptions = {}): PluginOption[] {
+export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions = {}): PluginOption[] {
   assertNotVitePluginInstance(options);
 
   const injection = options.injection ?? {};
-  type GenerationConfig = NonNullable<Exclude<VuePomGeneratorPluginOptions["generation"], false>>;
+  type GenerationConfig = NonNullable<Exclude<PomGeneratorPluginOptions["generation"], false>>;
+  const framework = options.framework ?? "vue";
+  const isNuxt = framework === "nuxt";
 
   const generationSetting = options.generation;
   const generationOptions: GenerationConfig | null = generationSetting === false ? null : (generationSetting ?? {});
   const generationEnabled = generationOptions !== null;
+  const vueGenerationOptions = generationOptions as NonNullable<Exclude<VuePomGeneratorPluginOptions["generation"], false>> | null;
 
   const verbosity: VuePomGeneratorVerbosity = options.logging?.verbosity ?? "warn";
 
   const vueOptions = options.vueOptions;
 
-  const viewsDir = injection.viewsDir ?? "src/views";
-  const scanDirs = injection.scanDirs ?? ["src"];
-  const wrapperSearchRoots = injection.wrapperSearchRoots ?? [];
+  const legacyVueOptions = options as VuePomGeneratorPluginOptions;
+  const pageDirsRef = { current: (!isNuxt ? [legacyVueOptions.injection?.viewsDir ?? "src/views"] : ["app/pages"]) };
+  const componentDirsRef = { current: (!isNuxt ? (legacyVueOptions.injection?.componentDirs ?? ["src/components"]) : ["app/components"]) };
+  const layoutDirsRef = { current: (!isNuxt ? (legacyVueOptions.injection?.layoutDirs ?? ["src/layouts"]) : ["app/layouts"]) };
+  const wrapperSearchRootsRef = { current: (!isNuxt ? (legacyVueOptions.injection?.wrapperSearchRoots ?? []) : []) };
   const nativeWrappers = (injection.nativeWrappers ?? {}) as NativeWrappersMap;
   const excludedComponents = injection.excludeComponents ?? [];
   const testIdAttribute = (injection.attribute ?? "data-testid").trim() || "data-testid";
@@ -260,10 +266,9 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     ? generationOptions.emit
     : ["ts"];
   const nameCollisionBehavior: PomNameCollisionBehavior = generationOptions?.nameCollisionBehavior ?? "suffix";
-  const routerEntry = generationOptions?.router?.entry;
-  const routerType = generationOptions?.router?.type ?? "vue-router";
-  const routerModuleShims = generationOptions?.router?.moduleShims;
-  const isNuxt = routerType === "nuxt";
+  const routerEntry = !isNuxt ? vueGenerationOptions?.router?.entry : undefined;
+  const routerType = isNuxt ? "nuxt" : (vueGenerationOptions?.router?.type ?? "vue-router");
+  const routerModuleShims = !isNuxt ? vueGenerationOptions?.router?.moduleShims : undefined;
   if (isNuxt && options.vuePluginOwnership === "internal") {
     throw new Error("[vue-pom-generator] Nuxt projects must use the resolved app-owned vite:vue plugin. Omit vuePluginOwnership or set it to \"external\".");
   }
@@ -282,17 +287,30 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
   const resolvedCustomPomImportCollisionBehavior = customPoms?.importNameCollisionBehavior ?? "error";
 
   const basePageClassPathOverride = generationOptions?.basePageClassPath;
+  const getPageDirs = () => pageDirsRef.current;
+  const getViewsDir = () => getPageDirs()[0] ?? "src/views";
+  const getComponentDirs = () => componentDirsRef.current;
+  const getLayoutDirs = () => layoutDirsRef.current;
+  const getSourceDirs = () => Array.from(new Set([
+    ...getPageDirs(),
+    ...getComponentDirs(),
+    ...getLayoutDirs(),
+  ]));
+  const getWrapperSearchRoots = () => wrapperSearchRootsRef.current;
   const sharedStateKey = JSON.stringify({
     cwd: process.cwd(),
-    viewsDir,
-    scanDirs,
-    wrapperSearchRoots,
+    framework,
+    pageDirs: isNuxt ? null : getPageDirs(),
+    componentDirs: isNuxt ? null : getComponentDirs(),
+    layoutDirs: isNuxt ? null : getLayoutDirs(),
+    wrapperSearchRoots: isNuxt ? null : getWrapperSearchRoots(),
     outDir,
     testIdAttribute,
     routerType,
     vuePluginOwnership,
   });
   const sharedState = getSharedGeneratorState(sharedStateKey);
+  let templateCompilerOptionsForResolvedPlugin: ReturnType<typeof createVuePluginWithTestIds>["templateCompilerOptions"];
 
   // Shared state: initialized with process.cwd(), then updated in configResolved.
   const projectRootRef = { current: process.cwd() };
@@ -300,8 +318,65 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     current: createLogger({ verbosity }),
   };
 
-  const getViewsDirAbs = () => resolveFromProjectRoot(projectRootRef.current, viewsDir);
-  const getWrapperSearchRootsAbs = () => wrapperSearchRoots.map(root => resolveFromProjectRoot(projectRootRef.current, root));
+  const configPlugin: PluginOption = {
+    name: "vue-pom-generator-config",
+    enforce: "pre",
+    async configResolved(config: ResolvedConfig) {
+      projectRootRef.current = config.root;
+      loggerRef.current = createLogger({ verbosity, viteLogger: config.logger });
+
+      if (!isNuxt && vueGenerationOptions?.router?.type === "nuxt") {
+        throw new Error("[vue-pom-generator] Use defineNuxtPomGeneratorConfig(...) or set framework: \"nuxt\" for Nuxt projects.");
+      }
+
+      if (isNuxt) {
+        const nuxtDiscovery = await loadNuxtProjectDiscovery(process.cwd());
+        projectRootRef.current = nuxtDiscovery.rootDir;
+        pageDirsRef.current = nuxtDiscovery.pageDirs.length
+          ? nuxtDiscovery.pageDirs
+          : [path.resolve(nuxtDiscovery.srcDir, "pages")];
+        componentDirsRef.current = nuxtDiscovery.componentDirs;
+        layoutDirsRef.current = nuxtDiscovery.layoutDirs;
+        wrapperSearchRootsRef.current = nuxtDiscovery.wrapperSearchRoots;
+      }
+
+      // Fail-fast validation.
+      assertNonEmptyString(testIdAttribute, "[vue-pom-generator] injection.attribute");
+      assertNonEmptyString(getViewsDir(), "[vue-pom-generator] injection.viewsDir");
+      assertNonEmptyStringArray(getComponentDirs(), "[vue-pom-generator] injection.componentDirs");
+      assertNonEmptyStringArray(getLayoutDirs(), "[vue-pom-generator] injection.layoutDirs");
+      assertNonEmptyStringArray(getWrapperSearchRoots(), "[vue-pom-generator] injection.wrapperSearchRoots");
+      assertErrorBehavior(errorBehavior, "[vue-pom-generator] errorBehavior");
+
+      if (generationEnabled) {
+        assertNonEmptyString(outDir, "[vue-pom-generator] generation.outDir");
+        assertOneOf(typescriptOutputStructure, ["aggregated", "split"], "[vue-pom-generator] generation.playwright.outputStructure");
+        assertRouterModuleShims(routerModuleShims, "[vue-pom-generator] generation.router.moduleShims");
+
+        if (!isNuxt && vueGenerationOptions?.router && routerType === "vue-router") {
+          assertNonEmptyString(routerEntry, "[vue-pom-generator] generation.router.entry");
+        }
+      }
+
+      if (usesExternalVuePlugin) {
+        applyTemplateCompilerOptionsToResolvedVuePlugin(
+          config,
+          templateCompilerOptionsForResolvedPlugin,
+          isNuxt ? "nuxt" : vuePluginOwnership,
+        );
+      }
+
+      // Small but helpful diagnostics.
+      loggerRef.current.info(`projectRoot=${projectRootRef.current}`);
+      loggerRef.current.info(`viewsDir=${getViewsDir()}`);
+      loggerRef.current.info(`componentDirs=${getComponentDirs().join(", ")}`);
+      loggerRef.current.info(`layoutDirs=${getLayoutDirs().join(", ")}`);
+      loggerRef.current.info(`Active plugins: ${(config.plugins ?? []).map(p => p.name).filter(n => n.includes("vue-pom")).join(", ")}`);
+    },
+  };
+
+  const getViewsDirAbs = () => resolveFromProjectRoot(projectRootRef.current, getViewsDir());
+  const getWrapperSearchRootsAbs = () => getWrapperSearchRoots().map(root => resolveFromProjectRoot(projectRootRef.current, root));
 
   const { componentTestIds, elementMetadata, semanticNameMap, componentHierarchyMap, vueFilesPathMap } = sharedState;
 
@@ -318,43 +393,11 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     getViewsDirAbs,
     testIdAttribute,
     loggerRef,
-    scanDirs,
+    getSourceDirs,
     getWrapperSearchRoots: getWrapperSearchRootsAbs,
     getProjectRoot: () => projectRootRef.current,
   });
-
-  const configPlugin: PluginOption = {
-    name: "vue-pom-generator-config",
-    enforce: "pre",
-    configResolved(config: ResolvedConfig) {
-      projectRootRef.current = config.root;
-      loggerRef.current = createLogger({ verbosity, viteLogger: config.logger });
-
-      // Fail-fast validation.
-      assertNonEmptyString(testIdAttribute, "[vue-pom-generator] injection.attribute");
-      assertNonEmptyString(viewsDir, "[vue-pom-generator] injection.viewsDir");
-      assertNonEmptyStringArray(wrapperSearchRoots, "[vue-pom-generator] injection.wrapperSearchRoots");
-      assertErrorBehavior(errorBehavior, "[vue-pom-generator] errorBehavior");
-
-      if (generationEnabled) {
-        assertNonEmptyString(outDir, "[vue-pom-generator] generation.outDir");
-        assertOneOf(typescriptOutputStructure, ["aggregated", "split"], "[vue-pom-generator] generation.playwright.outputStructure");
-        assertRouterModuleShims(routerModuleShims, "[vue-pom-generator] generation.router.moduleShims");
-
-        if (generationOptions?.router && routerType === "vue-router") {
-          assertNonEmptyString(routerEntry, "[vue-pom-generator] generation.router.entry");
-        }
-      }
-
-      if (usesExternalVuePlugin) {
-        applyTemplateCompilerOptionsToResolvedVuePlugin(config, templateCompilerOptions, isNuxt ? "nuxt" : vuePluginOwnership);
-      }
-
-      // Small but helpful diagnostics.
-      loggerRef.current.info(`projectRoot=${projectRootRef.current}`);
-      loggerRef.current.info(`Active plugins: ${(config.plugins ?? []).map(p => p.name).filter(n => n.includes("vue-pom")).join(", ")}`);
-    },
-  };
+  templateCompilerOptionsForResolvedPlugin = templateCompilerOptions;
 
   const routerAwarePoms = (typeof routerEntry === "string" && routerEntry.trim().length > 0) || routerType === "nuxt";
 
@@ -364,8 +407,11 @@ export function createVuePomGeneratorPlugins(options: VuePomGeneratorPluginOptio
     vueFilesPathMap,
     nativeWrappers,
     excludedComponents,
-    viewsDir,
-    scanDirs,
+    getPageDirs,
+    getComponentDirs,
+    getLayoutDirs,
+    getViewsDir,
+    getSourceDirs,
     getWrapperSearchRoots: getWrapperSearchRootsAbs,
     nameCollisionBehavior,
     missingSemanticNameBehavior,

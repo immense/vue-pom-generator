@@ -191,9 +191,10 @@ Exports:
 - `createVuePomGeneratorPlugins()`
 - `vuePomGenerator()` (alias)
 - `defineVuePomGeneratorConfig()`
+- `defineNuxtPomGeneratorConfig()`
 - `@immense/vue-pom-generator/eslint`
 
-## Basic Vite setup
+## Basic Vue/Vite setup
 
 ```ts
 import { defineConfig } from "vite";
@@ -208,7 +209,8 @@ const pomConfig = defineVuePomGeneratorConfig({
   injection: {
     attribute: "data-testid",
     viewsDir: "src/views",
-    scanDirs: ["src"],
+    componentDirs: ["src/components"],
+    layoutDirs: ["src/layouts"],
     wrapperSearchRoots: ["../shared-ui/src/components"],
     nativeWrappers: {
       AppButton: { role: "button" },
@@ -261,6 +263,29 @@ export default defineConfig({
 });
 ```
 
+## Basic Nuxt setup
+
+```ts
+import { defineNuxtConfig } from "nuxt/config";
+import { defineNuxtPomGeneratorConfig, vuePomGenerator } from "@immense/vue-pom-generator";
+
+const pomConfig = defineNuxtPomGeneratorConfig({
+  generation: {
+    outDir: "tests/playwright/__generated__",
+  },
+});
+
+export default defineNuxtConfig({
+  vite: {
+    plugins: [
+      ...vuePomGenerator(pomConfig),
+    ],
+  },
+});
+```
+
+Nuxt mode resolves pages/layouts/components from Nuxt's own resolved config. That means custom page directories such as `dir.pages = "views"` come from `nuxt.config`, while component directories are picked up automatically from Nuxt conventions/config.
+
 ### Important Vite ownership rule
 
 By default, this package creates and returns its own `@vitejs/plugin-vue` instance.
@@ -289,7 +314,7 @@ export default defineConfig({
 });
 ```
 
-Nuxt-style routing also uses the resolved app-owned Vue plugin. In practice, if you use `generation.router.type: "nuxt"`, think in terms of external Vue plugin ownership.
+Nuxt-style routing also uses the resolved app-owned Vue plugin. In practice, use `defineNuxtPomGeneratorConfig(...)` and think in terms of external Vue plugin ownership.
 
 ## What gets generated
 
@@ -320,7 +345,7 @@ If you emit outside a `__generated__` path, the generator also manages `.gitattr
 
 This is important if you are deciding whether the tool will fit into a real codebase.
 
-- **Dev server:** on startup, it scans the configured `scanDirs`, compiles each `.vue` file into a snapshot, writes the configured TypeScript outputs once, then batches add/change/delete events and regenerates incrementally.
+- **Dev server:** on startup, it scans the configured Vue page/component/layout directories (or the directories resolved from Nuxt config in Nuxt mode), compiles each `.vue` file into a snapshot, writes the configured TypeScript outputs once, then batches add/change/delete events and regenerates incrementally.
 - **Build:** it generates from the richest build pass it sees, which matters because Vite can run multiple passes (for example SSR plus client). The generator avoids letting a thinner pass clobber a richer one.
 - **Always-on virtual module:** `virtual:testids` is registered whether generation is enabled or disabled.
 - **Generation can be disabled:** `generation: false` still keeps compile-time test-id injection and the virtual module, but skips emitted POM files.
@@ -857,6 +882,30 @@ The sections below follow the actual `VuePomGeneratorPluginOptions` shape from `
   injection: { viewsDir: "app/pages" }
   ```
 
+#### `injection.componentDirs`
+
+- **What it does:** Lists the directories that should be treated as reusable component roots.
+- **Why it exists:** Vue apps often keep components outside a single catch-all tree, and the generator needs explicit component roots now that generic scan lists are gone.
+- **Benefit:** component naming and filesystem supplementation stay aligned with the directories you actually consider components.
+- **Without it:** the generator uses `["src/components"]`.
+- **Example:**
+
+  ```ts
+  injection: { componentDirs: ["src/components", "../shared-ui/src/components"] }
+  ```
+
+#### `injection.layoutDirs`
+
+- **What it does:** Lists layout-style Vue directories that should be included in generation and naming.
+- **Why it exists:** some Vue apps keep shell components outside `views` and `components`, but still want them in the generated POM graph.
+- **Benefit:** layouts participate explicitly without falling back to a generic scan of unrelated folders.
+- **Without it:** the generator uses `["src/layouts"]`.
+- **Example:**
+
+  ```ts
+  injection: { layoutDirs: ["src/layouts"] }
+  ```
+
 #### `injection.nativeWrappers`
 
 - **What it does:** Describes wrapper components so the generator can treat them like native controls.
@@ -910,24 +959,12 @@ The sections below follow the actual `VuePomGeneratorPluginOptions` shape from `
   injection: { excludeComponents: ["LegacyWidget"] }
   ```
 
-#### `injection.scanDirs`
-
-- **What it does:** Sets which directories are scanned for `.vue` files when building the POM graph.
-- **Why it exists:** real projects rarely keep all SFCs under one folder, especially in Nuxt or monorepos.
-- **Benefit:** generation sees the same files your app actually uses.
-- **Without it:** the generator scans `src`.
-- **Example:**
-
-  ```ts
-  injection: { scanDirs: ["src", "components", "layouts"] }
-  ```
-
 #### `injection.wrapperSearchRoots`
 
-- **What it does:** Adds extra roots for wrapper inference outside `scanDirs`.
+- **What it does:** Adds extra roots for wrapper inference outside the configured page/component/layout directories.
 - **Why it exists:** wrapper components often live in sibling packages or shared UI workspaces.
 - **Benefit:** local wrapper inference can still work across package boundaries.
-- **Without it:** no extra wrapper lookup is done outside the scanned app directories.
+- **Without it:** no extra wrapper lookup is done outside the configured app directories.
 - **Example:**
 
   ```ts
@@ -1013,13 +1050,13 @@ If omitted, router introspection is off.
 
 #### `generation.router.type`
 
-- **What it does:** Chooses the router discovery strategy.
-- **Why it exists:** standard Vue-router apps and Nuxt file-based routing need different discovery paths.
-- **Benefit:** one config field covers both app styles.
+- **What it does:** Chooses the Vue-router discovery strategy for standard Vue apps.
+- **Why it exists:** some Vue apps want router introspection without any Nuxt integration.
+- **Benefit:** keeps Vue-router discovery explicit.
 - **Without it:** defaults to `"vue-router"`.
+- **Nuxt note:** use `defineNuxtPomGeneratorConfig(...)` instead of `generation.router.type: "nuxt"`.
 - **Current options:**
   - `"vue-router"`
-  - `"nuxt"`
 
 #### `generation.router.moduleShims`
 

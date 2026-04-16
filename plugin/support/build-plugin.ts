@@ -19,8 +19,11 @@ import type { PlaywrightOutputStructure, PomNameCollisionBehavior, RouterModuleS
 interface BuildProcessorOptions {
   componentHierarchyMap: Map<string, IComponentDependencies>;
   vueFilesPathMap: Map<string, string>;
-  viewsDir: string;
-  scanDirs: string[];
+  getPageDirs: () => string[];
+  getComponentDirs: () => string[];
+  getLayoutDirs: () => string[];
+  getViewsDir: () => string;
+  getSourceDirs: () => string[];
 
   basePageClassPath: string;
   normalizedBasePagePath: string;
@@ -52,7 +55,7 @@ interface BuildProcessorOptions {
   getWrapperSearchRoots: () => string[];
 
   routerAwarePoms: boolean;
-  resolvedRouterEntry?: string;
+  getResolvedRouterEntry: () => string | undefined;
   routerType?: "vue-router" | "nuxt";
   routerModuleShims?: Record<string, RouterModuleShimDefinition>;
 
@@ -100,8 +103,11 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
   const {
     componentHierarchyMap,
     vueFilesPathMap,
-    viewsDir,
-    scanDirs,
+    getPageDirs,
+    getComponentDirs,
+    getLayoutDirs,
+    getViewsDir,
+    getSourceDirs,
     basePageClassPath,
     normalizedBasePagePath,
     outDir,
@@ -122,7 +128,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     excludedComponents,
     getWrapperSearchRoots,
     routerAwarePoms,
-    resolvedRouterEntry,
+    getResolvedRouterEntry,
     routerType,
     routerModuleShims,
     loggerRef,
@@ -141,7 +147,8 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
   };
 
   const getViewsDirAbs = () =>
-    path.isAbsolute(viewsDir) ? viewsDir : path.resolve(projectRootRef.current, viewsDir);
+    path.isAbsolute(getViewsDir()) ? getViewsDir() : path.resolve(projectRootRef.current, getViewsDir());
+  const getPageDirsAbs = () => getPageDirs().map(dir => path.isAbsolute(dir) ? dir : path.resolve(projectRootRef.current, dir));
 
   const getScriptInfo = (source: string, filename: string): { bindings?: BindingMetadata; isScriptSetup: boolean } => {
     try {
@@ -157,8 +164,8 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
   };
 
   /**
-   * Walk scanDirs and compile any .vue files not already in the hierarchy map.
-   * This ensures build output includes all components in scanDirs, matching the
+   * Walk configured source directories and compile any .vue files not already in the hierarchy map.
+   * This ensures build output includes all configured pages/components/layouts, matching the
    * dev-server behavior (which does its own filesystem walk).
    */
   const supplementHierarchyFromFilesystem = () => {
@@ -191,7 +198,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     };
 
     let supplemented = 0;
-    for (const dir of scanDirs) {
+    for (const dir of getSourceDirs()) {
       const absDir = path.resolve(projectRootRef.current, dir);
       if (!fs.existsSync(absDir))
         continue;
@@ -202,7 +209,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
           filename: absolutePath,
           projectRoot: projectRootRef.current,
           viewsDirAbs: getViewsDirAbs(),
-          scanDirs,
+          sourceDirs: getSourceDirs(),
           extraRoots: [process.cwd()],
         });
 
@@ -295,17 +302,18 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
       let result: RouterIntrospectionResult;
 
       if (routerType === "nuxt") {
-        result = await introspectNuxtPages(projectRootRef.current);
+        result = await introspectNuxtPages(projectRootRef.current, { pageDirs: getPageDirsAbs() });
       }
       else {
+        const resolvedRouterEntry = getResolvedRouterEntry();
         if (!resolvedRouterEntry)
           throw new Error("[vue-pom-generator] router.entry is required when router introspection is enabled.");
         result = await parseRouterFileFromCwd(resolvedRouterEntry, {
           moduleShims: routerModuleShims,
           componentNaming: {
             projectRoot: projectRootRef.current,
-            viewsDirAbs: path.isAbsolute(viewsDir) ? viewsDir : path.resolve(projectRootRef.current, viewsDir),
-            scanDirs,
+            viewsDirAbs: getViewsDirAbs(),
+            sourceDirs: getSourceDirs(),
           },
         });
       }
@@ -354,7 +362,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
         return;
       }
 
-      // Supplement the hierarchy with any .vue files in scanDirs that were not
+      // Supplement the hierarchy with any .vue files in configured source dirs that were not
       // part of the Vite build graph (e.g. unused components, dynamic-only imports).
       supplementHierarchyFromFilesystem();
 
@@ -382,10 +390,11 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
         customPomImportNameCollisionBehavior,
         testIdAttribute,
         vueRouterFluentChaining: routerAwarePoms,
-        routerEntry: resolvedRouterEntry,
+        routerEntry: getResolvedRouterEntry(),
         routerType,
-        viewsDir,
-        scanDirs,
+        pageDirs: getPageDirs(),
+        componentDirs: getComponentDirs(),
+        layoutDirs: getLayoutDirs(),
       });
       lastGeneratedMetrics = metrics;
       loggerRef.current.info(`generated POMs (${metrics.entryCount} entries, ${metrics.interactiveComponentCount} interactive components, ${metrics.dataTestIdCount} selectors)`);

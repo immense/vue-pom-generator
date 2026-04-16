@@ -485,7 +485,7 @@ describe("class-generation coverage", () => {
     }
   }, 120_000);
 
-  it("supports lazy route components when route naming depends on scanDirs", async () => {
+  it("supports lazy route components when route naming depends on explicit page directories", async () => {
     const tempRoot = makeTempRoot("vue-pom-router-lazy-generated-");
 
     try {
@@ -540,8 +540,9 @@ describe("class-generation coverage", () => {
         projectRoot: tempRoot,
         vueRouterFluentChaining: true,
         routerEntry: "./src/router.ts",
-        viewsDir: "src/views",
-        scanDirs: ["src/views/msp-instances"],
+        pageDirs: ["src/views/msp-instances"],
+        componentDirs: ["src/components"],
+        layoutDirs: ["src/layouts"],
       });
 
       const aggregatedFile = path.join(outDir, "page-object-models.g.ts");

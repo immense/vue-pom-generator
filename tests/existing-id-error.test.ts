@@ -9,7 +9,7 @@ describe("existingIdBehavior: 'error'", () => {
     const plugins = createVuePomGeneratorPlugins({
       injection: {
         existingIdBehavior: "error",
-        scanDirs: ["."],
+        componentDirs: ["."],
       },
       generation: false,
     });
@@ -38,7 +38,7 @@ describe("existingIdBehavior: 'preserve'", () => {
     const plugins = createVuePomGeneratorPlugins({
       injection: {
         existingIdBehavior: "preserve",
-        scanDirs: ["."],
+        componentDirs: ["."],
         nativeWrappers: {
           ImmyRadioGroup: {
             role: "radio",
