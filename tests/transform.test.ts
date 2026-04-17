@@ -769,6 +769,27 @@ describe('createTestIdTransform', () => {
     }).not.toThrow()
   })
 
+  it('keeps permissive wrapper handler fallback by default', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const nativeWrappers: NativeWrappersMap = {
+      LoadButton: { role: 'button' },
+    }
+
+    expect(() => {
+      compileAndCaptureAst(
+        `
+          <LoadButton :handler="() => person && impersonateUser(person.userId!)">
+            Impersonate
+          </LoadButton>
+        `,
+        {
+          filename: '/src/views/RbacUserDetailsPage.vue',
+          nodeTransforms: [createTestIdTransform('RbacUserDetailsPage', componentHierarchyMap, nativeWrappers, [], '/src/views')],
+        },
+      )
+    }).not.toThrow()
+  })
+
   it('emits per-key click methods when v-for iterates a static literal list', () => {
     const componentHierarchyMap = new Map()
 
