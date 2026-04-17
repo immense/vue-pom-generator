@@ -2,8 +2,8 @@ import type { PwLocator, PwPage } from "./playwright-types";
 import { TESTID_CLICK_EVENT_NAME, TESTID_CLICK_EVENT_STRICT_FLAG } from "../click-instrumentation";
 import type { TestIdClickEventDetail } from "../click-instrumentation";
 import { Callout } from "./callout";
-import { Pointer } from "./pointer";
-import type { AfterPointerClick, AfterPointerClickInfo } from "./pointer";
+import type { CalloutRenderer } from "./callout";
+import { Pointer, type AfterPointerClick, type AfterPointerClickInfo, type PointerRenderer } from "./pointer";
 
 // Click instrumentation is optional for generated POMs.
 //
@@ -55,6 +55,14 @@ export type Fluent<T extends object> = DeepFluent<T, T> & PromiseLike<T>;
 
 export type ValueFluent<T> = DeepValueFluent<T> & PromiseLike<T>;
 
+export interface BasePageOptions {
+  renderers?: {
+    callout?: CalloutRenderer;
+    pointer?: PointerRenderer;
+  };
+  testIdAttribute?: string;
+}
+
 export class ObjectId {
   private readonly raw: string;
 
@@ -99,11 +107,15 @@ export class BasePage {
   /**
    * @param {Page} page - Playwright page object
    */
-  constructor(protected page: PwPage, options?: { testIdAttribute?: string }) {
+  public constructor(protected page: PwPage, options?: BasePageOptions) {
     this.testIdAttribute = (options?.testIdAttribute || "data-testid").trim() || "data-testid";
 
-    this.callout = new Callout(this.page);
-    this.pointer = new Pointer(this.page, this.testIdAttribute, this.callout);
+    const pointerRenderer = options?.renderers?.pointer;
+    this.callout = new Callout(this.page, {
+      extraOverlayIds: pointerRenderer?.overlayIds,
+      renderer: options?.renderers?.callout,
+    });
+    this.pointer = new Pointer(this.page, this.testIdAttribute, this.callout, pointerRenderer);
   }
 
   private async waitForTestIdClickEventAfter(testId: string, options?: { timeoutMs?: number }): Promise<void> {
@@ -237,7 +249,7 @@ export class BasePage {
   }
 
   /**
-   * Animates the cursor to an element.
+   * Animates the pointer to an element.
    */
   protected async animateCursorToElement(
     target: string | PwLocator,

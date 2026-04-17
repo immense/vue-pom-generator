@@ -59,8 +59,8 @@ export interface VuePomGeneratorPluginOptions {
   /**
    * Controls strict/error behavior for generator checks.
    *
-   * - `"ignore"` (default): keep current permissive defaults for all supported strictness checks
-   * - `"error"`: enable error-on-failure behavior for all supported strictness checks
+   * - `"ignore"`: keep permissive fallback behavior for all supported strictness checks
+   * - `"error"` (default): enable error-on-failure behavior for all supported strictness checks
    * - `{ ... }`: override individual checks without enabling all of them
    *
    * Current scope: this first pass is intentionally narrow. The object form currently supports

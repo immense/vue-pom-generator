@@ -69,7 +69,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     getSourceDirs,
     getWrapperSearchRoots,
     nameCollisionBehavior = "suffix",
-    missingSemanticNameBehavior,
+    missingSemanticNameBehavior = "error",
     existingIdBehavior,
     outDir,
     emitLanguages,

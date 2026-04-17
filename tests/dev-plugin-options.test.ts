@@ -176,6 +176,64 @@ describe("dev processor option plumbing", () => {
     }
   });
 
+  it("defaults missingSemanticNameBehavior to error when strictness is not overridden", async () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-dev-default-strict-"));
+
+    try {
+      fs.mkdirSync(path.join(projectRoot, "src", "views"), { recursive: true });
+      fs.writeFileSync(
+        path.join(projectRoot, "src", "views", "MyPage.vue"),
+        "<template><button>Save</button></template>",
+        "utf8",
+      );
+
+      const plugin = createDevProcessorPlugin({
+        nativeWrappers: {},
+        excludedComponents: [],
+        getPageDirs: () => ["src/views"],
+        getComponentDirs: () => ["src/components"],
+        getLayoutDirs: () => ["src/layouts"],
+        getViewsDir: () => "src/views",
+        getSourceDirs: () => ["src/views", "src/components", "src/layouts"],
+        getWrapperSearchRoots: () => [],
+        projectRootRef: { current: projectRoot },
+        normalizedBasePagePath: path.posix.normalize(path.join(projectRoot, "base-page.ts")),
+        basePageClassPath: path.join(projectRoot, "base-page.ts"),
+        customPomAttachments: [],
+        nameCollisionBehavior: "error",
+        testIdAttribute: "data-testid",
+        routerAwarePoms: false,
+        getResolvedRouterEntry: () => undefined,
+        loggerRef: {
+          current: {
+            info() {},
+            debug() {},
+            warn() {},
+          },
+        },
+      });
+
+      const devPlugin = plugin as { configureServer?: (server: DevServerStub) => void | Promise<void> };
+      const configureServer = devPlugin.configureServer;
+      if (!configureServer) {
+        throw new Error("Expected configureServer to exist");
+      }
+
+      await configureServer(createDevServerStub());
+      await waitForCallCount(() => mocks.createTestIdTransform.mock.calls.length > 0);
+
+      const transformCall = mocks.createTestIdTransform.mock.calls[0];
+      if (!transformCall) {
+        throw new Error("Expected createTestIdTransform to be called");
+      }
+
+      expect(transformCall[5]?.missingSemanticNameBehavior).toBe("error");
+    }
+    finally {
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   it("fails startup generation when snapshot compilation hits a strict collision", async () => {
     const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-dev-collision-"));
 

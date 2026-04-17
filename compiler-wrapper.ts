@@ -12,7 +12,7 @@ import type { CompilerOptions } from "@vue/compiler-dom";
 import type { ElementMetadata } from "./metadata-collector";
 import { NodeTypes } from "@vue/compiler-core";
 import { compile } from "@vue/compiler-dom";
-import { extend } from "@vue/shared";
+
 import { findDataTestIdProp, tryCreateElementMetadata } from "./compiler-metadata-utils";
 
 /**
@@ -125,7 +125,7 @@ export function compileWithMetadataExtractionManual(
   // metadata from the fully transformed AST.
   const result = compile(
     source,
-    extend({}, options, {
+    Object.assign({}, options, {
       nodeTransforms: [
         ...(options.nodeTransforms || []),
         (node: RootNode | TemplateChildNode, _context: TransformContext) => {

@@ -122,7 +122,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     customPomImportNameCollisionBehavior,
     testIdAttribute,
     nameCollisionBehavior,
-    missingSemanticNameBehavior,
+    missingSemanticNameBehavior = "error",
     existingIdBehavior,
     nativeWrappers,
     excludedComponents,
@@ -356,6 +356,11 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
         this.error(`callout.ts not found at ${calloutPath}. Ensure it is included in the build.`);
       }
       this.addWatchFile(calloutPath);
+
+      const floatingUiCalloutPath = path.resolve(path.dirname(basePageClassPath), "floating-ui-callout.ts");
+      if (fs.existsSync(floatingUiCalloutPath)) {
+        this.addWatchFile(floatingUiCalloutPath);
+      }
     },
     async buildEnd(error) {
       if (error) {

@@ -1,4 +1,3 @@
-import { JSDOM } from "jsdom";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -340,10 +339,6 @@ interface GlobalDomShim {
   | ((...args: never[]) => object);
 }
 
-type DocumentWithQueryCommandSupported = Document & {
-  queryCommandSupported?: (commandId: string) => boolean;
-};
-
 interface VueComponentLike {
   __file?: string;
   __name?: string;
@@ -588,27 +583,248 @@ function resolveIntrospectedComponentName(
   return componentInfo.componentName;
 }
 
-async function ensureDomShim() {
-  const domShimHtml = "<!doctype html><html><head></head><body><div id='app'></div></body></html>";
-  const domShimUrl = "https://example.test/";
+interface MinimalRect {
+  top: number;
+  left: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+  x: number;
+  y: number;
+  toJSON: () => object;
+}
 
-  // NOTE: JSDOM's DOMWindow is not assignable to the TS lib.dom Window, but at runtime it behaves well enough
-  // for our use (router creation + route enumeration).
+interface MinimalTextNode {
+  nodeType: 3;
+  textContent: string;
+}
+
+interface MinimalCommentNode {
+  nodeType: 8;
+  textContent: string;
+}
+
+interface MinimalElement {
+  nodeType: 1;
+  tagName: string;
+  id?: string;
+  childNodes: MinimalNode[];
+  children: MinimalElement[];
+  style: Record<string, string>;
+  dataset: Record<string, string>;
+  setAttribute: (name: string, value: string) => void;
+  getAttribute: (name: string) => string | null;
+  removeAttribute: (name: string) => void;
+  addEventListener: () => void;
+  removeEventListener: () => void;
+  appendChild: (child: MinimalNode) => MinimalNode;
+  removeChild: (child: MinimalNode) => MinimalNode;
+  insertBefore: (child: MinimalNode) => MinimalNode;
+  querySelector: (selector: string) => null;
+  querySelectorAll: (selector: string) => MinimalElement[];
+  contains: (child: MinimalNode) => boolean;
+  matches: (selector: string) => boolean;
+  closest: (selector: string) => null;
+  getBoundingClientRect: () => MinimalRect;
+  cloneNode: () => MinimalElement;
+}
+
+interface MinimalDocumentFragment {
+  nodeType: 11;
+  childNodes: MinimalNode[];
+  appendChild: (child: MinimalNode) => MinimalNode;
+}
+
+type MinimalNode = MinimalElement | MinimalTextNode | MinimalCommentNode | MinimalDocumentFragment;
+
+interface MinimalDocumentShape {
+  nodeType: 9;
+  documentElement: MinimalElement | null;
+  head: MinimalElement | null;
+  body: MinimalElement | null;
+  createElement: (tag: string) => MinimalElement;
+  createTextNode: (text: string) => MinimalTextNode;
+  createComment: (text: string) => MinimalCommentNode;
+  createDocumentFragment: () => MinimalDocumentFragment;
+  getElementById: (id: string) => null;
+  querySelector: (selector: string) => null;
+  querySelectorAll: (selector: string) => MinimalElement[];
+  addEventListener: () => void;
+  removeEventListener: () => void;
+  createEvent: (type: string) => { initEvent: () => void };
+  queryCommandSupported: (commandId: string) => boolean;
+}
+
+type MinimalParentNode = { childNodes: MinimalNode[] };
+type MinimalElementParent = MinimalParentNode & { children: MinimalElement[] };
+
+function hasChildren(parent: MinimalParentNode | MinimalElementParent): parent is MinimalElementParent {
+  return "children" in parent;
+}
+
+function appendNode(parent: MinimalParentNode | MinimalElementParent, child: MinimalNode) {
+  parent.childNodes.push(child);
+  if (hasChildren(parent) && child.nodeType === 1)
+    parent.children.push(child);
+  return child;
+}
+
+function removeNode(parent: MinimalParentNode | MinimalElementParent, child: MinimalNode) {
+  const idx = parent.childNodes.indexOf(child);
+  if (idx >= 0)
+    parent.childNodes.splice(idx, 1);
+  if (hasChildren(parent) && child.nodeType === 1) {
+    const childIdx = parent.children.indexOf(child);
+    if (childIdx >= 0)
+      parent.children.splice(childIdx, 1);
+  }
+  return child;
+}
+
+function createMinimalDocument(): Document {
+  // Minimal DOM tree: <!doctype html><html><head></head><body><div id="app"></div></body></html>
+  // We build this by hand — the only consumer is Vue Router's createWebHistory / createMemoryHistory
+  // which probes document, location, and a handful of DOM globals during SSR route enumeration.
+  const doc: MinimalDocumentShape = {
+    nodeType: 9, // DOCUMENT_NODE
+    documentElement: null,
+    head: null,
+    body: null,
+    createElement(tag: string) {
+      const element: MinimalElement = {
+        nodeType: 1,
+        tagName: tag.toUpperCase(),
+        childNodes: [],
+        children: [],
+        style: {},
+        dataset: {},
+        setAttribute() { },
+        getAttribute() { return null; },
+        removeAttribute() { },
+        addEventListener() { },
+        removeEventListener() { },
+        appendChild(child) { return appendNode(this, child); },
+        removeChild(child) { return removeNode(this, child); },
+        insertBefore(child) { return appendNode(this, child); },
+        querySelector() { return null; },
+        querySelectorAll() { return []; },
+        contains() { return false; },
+        matches() { return false; },
+        closest() { return null; },
+        getBoundingClientRect() {
+          return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, toJSON() { return {}; } };
+        },
+        cloneNode() { return this; },
+      };
+      return element;
+    },
+    createTextNode(text: string) {
+      return { nodeType: 3, textContent: text };
+    },
+    createComment(text: string) {
+      return { nodeType: 8, textContent: text };
+    },
+    createDocumentFragment() {
+      return {
+        nodeType: 11,
+        childNodes: [],
+        appendChild(child: MinimalNode) { return appendNode(this, child); },
+      };
+    },
+    getElementById() { return null; },
+    querySelector() { return null; },
+    querySelectorAll() { return []; },
+    addEventListener() { },
+    removeEventListener() { },
+    createEvent() {
+      return {
+        initEvent() { },
+      };
+    },
+    queryCommandSupported() { return false; },
+  };
+
+  const html = doc.createElement("html");
+  const head = doc.createElement("head");
+  const body = doc.createElement("body");
+  const app = doc.createElement("div");
+  app.id = "app";
+  html.appendChild(head);
+  html.appendChild(body);
+  body.appendChild(app);
+  doc.documentElement = html;
+  doc.head = head;
+  doc.body = body;
+
+  return Object.assign({} as Document, doc);
+}
+
+function createMinimalLocation(): Location {
+  const url = new URL("https://example.test/");
+  return {
+    get href() { return url.href; },
+    set href(v: string) { try { Object.assign(url, new URL(v)); } catch { /* ignore */ } },
+    get origin() { return url.origin; },
+    get protocol() { return url.protocol; },
+    get host() { return url.host; },
+    get hostname() { return url.hostname; },
+    get port() { return url.port; },
+    get pathname() { return url.pathname; },
+    set pathname(v: string) { url.pathname = v; },
+    get search() { return url.search; },
+    set search(v: string) { url.search = v; },
+    get hash() { return url.hash; },
+    set hash(v: string) { url.hash = v; },
+    assign() { },
+    reload() { },
+    replace() { },
+    toString() { return url.href; },
+    ancestorOrigins: { length: 0, contains: () => false, item: () => null, [Symbol.iterator]: [][Symbol.iterator] },
+  } as Location;
+}
+
+async function ensureDomShim() {
   const g = globalThis as GlobalDomShim;
   if (typeof document !== "undefined" && typeof window !== "undefined")
     return;
 
-  const dom = new JSDOM(domShimHtml, { url: domShimUrl });
+  const minimalDoc = createMinimalDocument();
+  const minimalLocation = createMinimalLocation();
 
-  g.window = dom.window;
-  g.document = dom.window.document;
-  g.location = dom.window.location;
+  // Build a window-like object with the minimal surface area Vue Router probes.
+  const win: Record<string, unknown> = {
+    document: minimalDoc,
+    location: minimalLocation,
+    navigator: { userAgent: "node" },
+    history: { pushState() { }, replaceState() { }, go() { }, back() { }, forward() { }, state: null, length: 0, scrollRestoration: "auto" },
+    addEventListener() { },
+    removeEventListener() { },
+    dispatchEvent() { return true; },
+    getComputedStyle() { return {}; },
+    scrollTo() { },
+    scroll() { },
+    scrollBy() { },
+    matchMedia() { return { matches: false, media: "", onchange: null, addListener() { }, removeListener() { }, addEventListener() { }, removeEventListener() { }, dispatchEvent() { return true; } }; },
+    requestAnimationFrame: (cb: (time: number) => void) => setTimeout(() => cb(Date.now()), 16),
+    cancelAnimationFrame: (id: number) => clearTimeout(id),
+    setTimeout,
+    clearTimeout,
+    setInterval,
+    clearInterval,
+    queueMicrotask,
+    performance: globalThis.performance,
+  };
+
+  g.window = win;
+  g.document = minimalDoc;
+  g.location = minimalLocation;
   if (!g.self)
-    g.self = dom.window;
+    g.self = win;
   if (!g.navigator)
-    g.navigator = dom.window.navigator;
+    g.navigator = win.navigator as object;
   if (!g.history)
-    g.history = { pushState() { }, replaceState() { } };
+    g.history = win.history as HistoryLike;
 
   if (!g.MutationObserver) {
     g.MutationObserver = class {
@@ -635,12 +851,6 @@ async function ensureDomShim() {
   if (!g.requestIdleCallback) {
     g.requestIdleCallback = cb => setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 0 }), 1);
   }
-
-  // Some editor / rich text libs probe this legacy API.
-  const doc = g.document as DocumentWithQueryCommandSupported | undefined;
-  if (doc && typeof doc.queryCommandSupported !== "function") {
-    doc.queryCommandSupported = () => false;
-  }
   if (!g.localStorage || !g.sessionStorage) {
     const storageFactory = () => {
       const store = new Map<string, string>();
@@ -659,32 +869,8 @@ async function ensureDomShim() {
       g.sessionStorage = storageFactory();
   }
 
-  // Copy common DOM constructor globals onto globalThis. Many browser-oriented libs assume these
-  // exist as globals (e.g. HTMLAnchorElement, UIEvent) even when running under Node.
-  const names = Object.getOwnPropertyNames(dom.window);
-  const shouldCopyGlobal = (name: string) => {
-    if (name === "Node" || name === "Element" || name === "Document" || name === "Event" || name === "EventTarget")
-      return true;
-    if (name.endsWith("Event"))
-      return true;
-    if (name.startsWith("HTML") && name.endsWith("Element"))
-      return true;
-    if (name.startsWith("SVG") && name.endsWith("Element"))
-      return true;
-    return false;
-  };
-
-  for (const name of names) {
-    if (!shouldCopyGlobal(name) || g[name])
-      continue;
-
-    const value = Reflect.get(dom.window, name);
-    if (value)
-      g[name] = value;
-  }
-
   if (!g.requestAnimationFrame)
-    g.requestAnimationFrame = cb => setTimeout(() => cb(Date.now()), 16);
+    g.requestAnimationFrame = (cb: (time: number) => void) => setTimeout(() => cb(Date.now()), 16);
 }
 
 interface NuxtPageSegmentResolution {

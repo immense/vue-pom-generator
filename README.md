@@ -74,7 +74,7 @@ The generator does not use one naming trick. It layers several signals.
 - **Router links / `:to` bindings** can contribute route-based naming and typed navigation return types when the target can be resolved.
 - **Wrapper components** can be explicit (`nativeWrappers`) or inferred from simple local SFC templates.
 - **Fallback naming exists, but it is intentionally conservative.** That is why `generation.nameCollisionBehavior` exists.
-- **You can opt into stricter wrapper-action generation.** `errorBehavior: "error"` blocks button-like wrapper `:handler` expressions that the generator cannot turn into a semantic action name.
+- **Wrapper-action generation fails fast by default.** The generator blocks button-like wrapper `:handler` expressions that it cannot turn into a semantic action name; set `errorBehavior: "ignore"` if you explicitly want the old permissive fallback.
 
 Important limit: wrapper inference is helpful, not magical. The current implementation recursively inspects simple local SFC templates for the first inferable primitive (`input`, `textarea`, `select`, `button`, `vselect`, radio/checkbox inputs). It also recognizes some naming patterns like `*Button`. For anything more complex, configure `nativeWrappers` explicitly.
 
@@ -617,6 +617,7 @@ What it gives you:
 - lower-camel-case fixtures for component classes too
 - `pomFactory.create(Ctor)` for ad-hoc page-object construction inside tests
 - an `animation` option that wires the generated runtime's pointer settings
+- per-page `renderers` overrides so you can keep the simple default callout or swap in a custom pointer / callout overlay implementation such as the bundled `floating-ui-callout.ts` renderer
 
 Current caveats:
 
@@ -624,6 +625,12 @@ Current caveats:
 - override preference only affects fixture construction
 - component fixtures are skipped when their lower-camel-case name would collide with reserved Playwright fixture names such as `page`, `context`, `browser`, or `request`
 - an override class still needs a `new (page)`-compatible constructor because that is what fixtures call
+
+By default the runtime uses a simple red fallback bubble. The example below uses the optional floating-ui renderer so the callout can auto-place around nearby UI and point back to the target with an arrow.
+
+Example floating-ui callout sequence captured from the Playwright fixture coverage:
+
+![Pointer callout sequence](./docs/assets/pointer-callout-sequence.gif)
 
 ## TypeScript vs C# output
 
@@ -846,12 +853,12 @@ The sections below follow the actual `VuePomGeneratorPluginOptions` shape from `
 
 - **What it does:** Controls strict/error behavior for generator checks.
 - **Why it exists:** complex inline handlers can otherwise fall through to generic naming, which makes generated APIs harder to discover and review.
-- **Benefit:** `"error"` lets you opt into fail-fast behavior globally, while the object form lets you turn on only the checks you care about.
-- **Without it:** the default is `"ignore"`, so existing permissive fallback behavior remains in place.
+- **Benefit:** fail-fast behavior is the default, while `"ignore"` or the object form let you opt back into only the permissive checks you want.
+- **Without it:** the default is `"error"`, so unsupported button-wrapper handlers stop generation instead of silently falling back.
 - **Accepted values:**
   - `"ignore"` — keep permissive defaults for all supported checks
-  - `"error"` — enable error-on-failure behavior for all supported checks
-  - `{ missingSemanticNameBehavior: "error" }` — enable only the button-wrapper semantic-name check
+  - `"error"` — enable error-on-failure behavior for all supported checks (default)
+  - `{ missingSemanticNameBehavior: "ignore" }` — opt out only of the button-wrapper semantic-name check
 - **Current scope:** this first pass is intentionally narrow. The object form currently supports `missingSemanticNameBehavior`, which targets button-like wrappers with `:handler`; value/model-driven wrappers still use their existing naming flow.
 
 ### `injection`

@@ -895,7 +895,7 @@ export function createTestIdTransform(
   const existingIdBehavior = options.existingIdBehavior ?? "preserve";
   const testIdAttribute = (options.testIdAttribute || "data-testid").trim() || "data-testid";
   const nameCollisionBehavior = options.nameCollisionBehavior ?? "suffix";
-  const missingSemanticNameBehavior = options.missingSemanticNameBehavior ?? "ignore";
+  const missingSemanticNameBehavior = options.missingSemanticNameBehavior ?? "error";
   const warn = options.warn;
   const vueFilesPathMap = options.vueFilesPathMap;
   const wrapperSearchRoots = options.wrapperSearchRoots ?? [];

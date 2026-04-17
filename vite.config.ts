@@ -14,16 +14,13 @@ export default defineConfig({
       },
       external: (() => {
         const externals = new Set<string>([
-          "vite",
+          "@babel/parser",
+          "@babel/types",
           "@vitejs/plugin-vue",
-          "jsdom",
-          "vue",
           "@vue/compiler-core",
           "@vue/compiler-dom",
           "@vue/compiler-sfc",
-          "@vue/shared",
-          "@babel/types",
-          "vite-plugin-virtual",
+          "vite",
         ]);
 
         return (id: string) => id.startsWith("node:") || externals.has(id);
