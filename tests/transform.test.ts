@@ -725,6 +725,31 @@ describe('createTestIdTransform', () => {
     expect(deps?.generatedMethods?.has('clickRunDeploymentActionAssign')).toBe(true)
   })
 
+  it('accepts async await wrapper handlers in strict mode', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const nativeWrappers: NativeWrappersMap = {
+      LoadButton: { role: 'button' },
+    }
+
+    expect(() => {
+      compileAndCaptureAst(
+        `
+          <LoadButton :handler="async () => await refreshOauthAccessToken(data.id)">
+            Refresh now
+          </LoadButton>
+        `,
+        {
+          filename: '/src/views/OauthAccessTokensListPage.vue',
+          nodeTransforms: [createTestIdTransform('OauthAccessTokensListPage', componentHierarchyMap, nativeWrappers, [], '/src/views')],
+        },
+      )
+    }).not.toThrow()
+
+    const deps = componentHierarchyMap.get('OauthAccessTokensListPage') as IComponentDependencies | undefined
+    expect(deps).toBeTruthy()
+    expect(deps?.generatedMethods?.has('clickRefreshOauthAccessToken')).toBe(true)
+  })
+
   it('fails fast for button-like wrapper handlers that cannot produce a semantic name by default', () => {
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
     const nativeWrappers: NativeWrappersMap = {

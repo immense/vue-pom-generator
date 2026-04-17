@@ -911,6 +911,12 @@ export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInf
     const n = node as { callee?: object; arguments?: object[] };
     return typeof n.callee === "object" && n.callee !== null && Array.isArray(n.arguments);
   };
+  const isAwaitExpressionNode = (node: object | null): node is { type: "AwaitExpression"; argument: object } => {
+    if (!isNodeType(node, "AwaitExpression"))
+      return false;
+    const n = node as { argument?: object };
+    return typeof n.argument === "object" && n.argument !== null;
+  };
   const isAssignmentExpressionNode = (node: object | null): node is { type: "AssignmentExpression"; left: object; right: object } => {
     if (!isNodeType(node, "AssignmentExpression"))
       return false;
@@ -1175,14 +1181,17 @@ export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInf
     const body = expr.body;
 
     const tryFromCallExpression = (call: object | null) => {
-      if (!isCallExpressionNode(call)) {
+      const resolvedCall = isAwaitExpressionNode(call)
+        ? call.argument
+        : call;
+      if (!isCallExpressionNode(resolvedCall)) {
         return null;
       }
-      const name = getLastIdentifierFromMemberChain(call.callee);
+      const name = getLastIdentifierFromMemberChain(resolvedCall.callee);
       if (!name) {
         return null;
       }
-      const suffix = getStableSuffixFromCall(call);
+      const suffix = getStableSuffixFromCall(resolvedCall);
       const semanticNameHint = suffix
         ? `${toPascalCase(name)}${suffix}`
         : toPascalCase(name);
