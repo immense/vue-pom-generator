@@ -314,6 +314,15 @@ interface HistoryLike {
   replaceState: (...args: never[]) => void;
 }
 
+type GlobalDomShimValue
+  = object
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | ((...args: Array<object | string | number | boolean | null | undefined>) => object | string | number | boolean | null | undefined);
+
 interface GlobalDomShim {
   // JSDOM's DOMWindow is not assignable to TS lib.dom Window, so keep this structural.
   window?: object;
@@ -336,7 +345,74 @@ interface GlobalDomShim {
   | boolean
   | null
   | undefined
-  | ((...args: never[]) => object);
+  | ((...args: Array<object | string | number | boolean | null | undefined>) => object | string | number | boolean | null | undefined);
+}
+
+interface GlobalSnapshot {
+  descriptor: PropertyDescriptor | undefined;
+  value: GlobalDomShimValue;
+}
+
+function snapshotGlobalValue(name: string): GlobalSnapshot {
+  const g = globalThis as GlobalDomShim;
+  return {
+    descriptor: Object.getOwnPropertyDescriptor(globalThis, name),
+    value: g[name],
+  };
+}
+
+function setTemporaryGlobal(name: string, value: GlobalDomShimValue, snapshots: Map<string, GlobalSnapshot>) {
+  if (!snapshots.has(name))
+    snapshots.set(name, snapshotGlobalValue(name));
+
+  const snapshot = snapshots.get(name);
+  if (!snapshot)
+    return false;
+
+  if (!snapshot.descriptor || snapshot.descriptor.configurable) {
+    Object.defineProperty(globalThis, name, {
+      configurable: true,
+      enumerable: snapshot.descriptor?.enumerable ?? true,
+      writable: true,
+      value,
+    });
+    return true;
+  }
+
+  if ("writable" in snapshot.descriptor && snapshot.descriptor.writable) {
+    Reflect.set(globalThis, name, value);
+    return true;
+  }
+
+  if (snapshot.descriptor.set) {
+    snapshot.descriptor.set.call(globalThis, value);
+    return true;
+  }
+
+  return false;
+}
+
+function restoreTemporaryGlobals(snapshots: Map<string, GlobalSnapshot>) {
+  for (const [name, snapshot] of Array.from(snapshots.entries()).reverse()) {
+    const { descriptor, value } = snapshot;
+
+    if (!descriptor) {
+      Reflect.deleteProperty(globalThis, name);
+      continue;
+    }
+
+    if (descriptor.configurable) {
+      Object.defineProperty(globalThis, name, descriptor);
+      continue;
+    }
+
+    if ("writable" in descriptor && descriptor.writable) {
+      Reflect.set(globalThis, name, value);
+      continue;
+    }
+
+    descriptor.set?.call(globalThis, value);
+  }
 }
 
 interface VueComponentLike {
@@ -784,16 +860,21 @@ function createMinimalLocation(): Location {
   } as Location;
 }
 
-async function ensureDomShim() {
+function ensureDomShim() {
   const g = globalThis as GlobalDomShim;
   if (typeof document !== "undefined" && typeof window !== "undefined")
-    return;
+    return () => {};
 
   const minimalDoc = createMinimalDocument();
   const minimalLocation = createMinimalLocation();
+  const snapshots = new Map<string, GlobalSnapshot>();
+  const setGlobal = (name: string, value: GlobalDomShimValue) => {
+    if (!setTemporaryGlobal(name, value, snapshots))
+      debugLog(`could not temporarily install global ${name}`);
+  };
 
   // Build a window-like object with the minimal surface area Vue Router probes.
-  const win: Record<string, unknown> = {
+  const win: Record<string, GlobalDomShimValue> = {
     document: minimalDoc,
     location: minimalLocation,
     navigator: { userAgent: "node" },
@@ -816,40 +897,40 @@ async function ensureDomShim() {
     performance: globalThis.performance,
   };
 
-  g.window = win;
-  g.document = minimalDoc;
-  g.location = minimalLocation;
+  setGlobal("window", win);
+  setGlobal("document", minimalDoc);
+  setGlobal("location", minimalLocation);
   if (!g.self)
-    g.self = win;
+    setGlobal("self", win);
   if (!g.navigator)
-    g.navigator = win.navigator as object;
+    setGlobal("navigator", win.navigator as object);
   if (!g.history)
-    g.history = win.history as HistoryLike;
+    setGlobal("history", win.history as HistoryLike);
 
   if (!g.MutationObserver) {
-    g.MutationObserver = class {
+    setGlobal("MutationObserver", class {
       disconnect() { }
       observe() { }
       takeRecords() { return []; }
-    };
+    });
   }
   if (!g.ResizeObserver) {
-    g.ResizeObserver = class {
+    setGlobal("ResizeObserver", class {
       disconnect() { }
       observe() { }
       unobserve() { }
-    };
+    });
   }
   if (!g.IntersectionObserver) {
-    g.IntersectionObserver = class {
+    setGlobal("IntersectionObserver", class {
       disconnect() { }
       observe() { }
       unobserve() { }
       takeRecords() { return []; }
-    };
+    });
   }
   if (!g.requestIdleCallback) {
-    g.requestIdleCallback = cb => setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 0 }), 1);
+    setGlobal("requestIdleCallback", (cb: (deadline: { didTimeout: boolean; timeRemaining: () => number }) => void) => setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 0 }), 1));
   }
   if (!g.localStorage || !g.sessionStorage) {
     const storageFactory = () => {
@@ -864,13 +945,17 @@ async function ensureDomShim() {
       } as Storage;
     };
     if (!g.localStorage)
-      g.localStorage = storageFactory();
+      setGlobal("localStorage", storageFactory());
     if (!g.sessionStorage)
-      g.sessionStorage = storageFactory();
+      setGlobal("sessionStorage", storageFactory());
   }
 
   if (!g.requestAnimationFrame)
-    g.requestAnimationFrame = (cb: (time: number) => void) => setTimeout(() => cb(Date.now()), 16);
+    setGlobal("requestAnimationFrame", (cb: (time: number) => void) => setTimeout(() => cb(Date.now()), 16));
+
+  return () => {
+    restoreTemporaryGlobals(snapshots);
+  };
 }
 
 interface NuxtPageSegmentResolution {
@@ -1036,108 +1121,113 @@ export async function parseRouterFileFromCwd(
     const cwd = path.dirname(routerEntry);
     const moduleShims = normalizeRouterIntrospectionModuleShims(options.moduleShims);
 
-    await ensureDomShim();
-
-    debugLog(`parseRouterFileFromCwd cwd=${cwd}`);
-
-    // Dynamically import Vite to keep this file Node-only and avoid bundling Vite into consumers.
-    const vite = await import("vite") as { createServer: typeof import("vite")["createServer"] };
-
-    // IMPORTANT:
-    // When vue-pom-generator is included as a plugin inside the frontend Vite config, calling
-    // Vite's `createServer()` with the default behavior will read `vite.config.ts` again.
-    // Since `vite.config.ts` imports this plugin, that can create a recursive config-load loop.
-    //
-    // We avoid that by setting `configFile: false` and providing the minimal config we need to
-    // SSR-load `src/router.ts` (mainly alias + Vue SFC plugin).
-    const server = await vite.createServer({
-      root: cwd,
-      configFile: false,
-      logLevel: "error",
-      // This server is created only to SSR-load the router module. Disable HMR/WebSocket
-      // to avoid port conflicts in dev/test environments.
-      server: { middlewareMode: true, hmr: false, ws: false },
-      appType: "custom",
-      // IMPORTANT:
-      // This internal, short-lived Vite server exists only to `ssrLoadModule()` the router entry.
-      // We close it immediately after reading routes.
-      //
-      // Vite's dependency optimizer (vite:dep-scan / optimizeDeps) runs asynchronously and can
-      // still have pending resolve requests when we call `server.close()`, which surfaces as:
-      //   "The server is being restarted or closed. Request is outdated [plugin vite:dep-scan]"
-      //
-      // Disable optimizeDeps entirely for this internal server to avoid that race.
-      optimizeDeps: {
-        disabled: true,
-      },
-      resolve: {
-        alias: {
-          "@": cwd,
-        },
-      },
-      // Important: Do NOT include @vitejs/plugin-vue here.
-      // We stub all `.vue` imports ourselves, and including the Vue plugin would attempt to parse
-      // those stubbed modules as real SFCs (and fail).
-      plugins: [createRouterIntrospectionVueStubPlugin({ routerEntryAbs: routerEntry, moduleShims })],
-    });
+    const restoreDomShim = ensureDomShim();
 
     try {
-      // Use a file URL so we don't depend on platform-specific path separators.
-      // Vite can SSR-load file URLs and will treat this as an absolute module id.
-      const moduleId = pathToFileURL(routerEntry).href;
+      debugLog(`parseRouterFileFromCwd cwd=${cwd}`);
 
-      debugLog(`ssrLoadModule(${moduleId}) start`);
-      const mod = await server.ssrLoadModule(moduleId) as { default?: () => Router };
-      debugLog(`ssrLoadModule(${moduleId}) done; hasDefault=${typeof mod?.default === "function"}`);
-      const makeRouter = mod?.default;
-      if (typeof makeRouter !== "function") {
-        throw new TypeError(`[vue-pom-generator] ${routerEntry} must export a default router factory function (export default makeRouter).`);
-      }
+      // Dynamically import Vite to keep this file Node-only and avoid bundling Vite into consumers.
+      const vite = await import("vite") as { createServer: typeof import("vite")["createServer"] };
 
-      let router: Router;
+      // IMPORTANT:
+      // When vue-pom-generator is included as a plugin inside the frontend Vite config, calling
+      // Vite's `createServer()` with the default behavior will read `vite.config.ts` again.
+      // Since `vite.config.ts` imports this plugin, that can create a recursive config-load loop.
+      //
+      // We avoid that by setting `configFile: false` and providing the minimal config we need to
+      // SSR-load `src/router.ts` (mainly alias + Vue SFC plugin).
+      const server = await vite.createServer({
+        root: cwd,
+        configFile: false,
+        logLevel: "error",
+        // This server is created only to SSR-load the router module. Disable HMR/WebSocket
+        // to avoid port conflicts in dev/test environments.
+        server: { middlewareMode: true, hmr: false, ws: false },
+        appType: "custom",
+        // IMPORTANT:
+        // This internal, short-lived Vite server exists only to `ssrLoadModule()` the router entry.
+        // We close it immediately after reading routes.
+        //
+        // Vite's dependency optimizer (vite:dep-scan / optimizeDeps) runs asynchronously and can
+        // still have pending resolve requests when we call `server.close()`, which surfaces as:
+        //   "The server is being restarted or closed. Request is outdated [plugin vite:dep-scan]"
+        //
+        // Disable optimizeDeps entirely for this internal server to avoid that race.
+        optimizeDeps: {
+          disabled: true,
+        },
+        resolve: {
+          alias: {
+            "@": cwd,
+          },
+        },
+        // Important: Do NOT include @vitejs/plugin-vue here.
+        // We stub all `.vue` imports ourselves, and including the Vue plugin would attempt to parse
+        // those stubbed modules as real SFCs (and fail).
+        plugins: [createRouterIntrospectionVueStubPlugin({ routerEntryAbs: routerEntry, moduleShims })],
+      });
+
       try {
-        router = makeRouter();
-      }
-      catch (err) {
-        throw new Error(`[vue-pom-generator] makeRouter() invocation failed: ${String(err)}`);
-      }
-      const routeNameMap = new Map<string, string>();
-      const routePathMap = new Map<string, string>();
-      const routeMetaEntries: RouterIntrospectionResult["routeMetaEntries"] = [];
+        // Use a file URL so we don't depend on platform-specific path separators.
+        // Vite can SSR-load file URLs and will treat this as an absolute module id.
+        const moduleId = pathToFileURL(routerEntry).href;
 
-      for (const r of router.getRoutes()) {
-        const componentInfo = await getComponentInfoFromRouteRecord(r, { rootDir: cwd });
-        const componentName = resolveIntrospectedComponentName(componentInfo, options.componentNaming);
-        if (!componentName)
-          continue;
-
-        if (typeof r.path === "string" && r.path.length) {
-          routePathMap.set(r.path, componentName);
+        debugLog(`ssrLoadModule(${moduleId}) start`);
+        const mod = await server.ssrLoadModule(moduleId) as { default?: () => Router };
+        debugLog(`ssrLoadModule(${moduleId}) done; hasDefault=${typeof mod?.default === "function"}`);
+        const makeRouter = mod?.default;
+        if (typeof makeRouter !== "function") {
+          throw new TypeError(`[vue-pom-generator] ${routerEntry} must export a default router factory function (export default makeRouter).`);
         }
 
-        if (typeof r.name === "string" && r.name.length) {
-          const key = toPascalCase(r.name);
-          routeNameMap.set(key, componentName);
+        let router: Router;
+        try {
+          router = makeRouter();
+        }
+        catch (err) {
+          throw new Error(`[vue-pom-generator] makeRouter() invocation failed: ${String(err)}`);
+        }
+        const routeNameMap = new Map<string, string>();
+        const routePathMap = new Map<string, string>();
+        const routeMetaEntries: RouterIntrospectionResult["routeMetaEntries"] = [];
+
+        for (const r of router.getRoutes()) {
+          const componentInfo = await getComponentInfoFromRouteRecord(r, { rootDir: cwd });
+          const componentName = resolveIntrospectedComponentName(componentInfo, options.componentNaming);
+          if (!componentName)
+            continue;
+
+          if (typeof r.path === "string" && r.path.length) {
+            routePathMap.set(r.path, componentName);
+          }
+
+          if (typeof r.name === "string" && r.name.length) {
+            const key = toPascalCase(r.name);
+            routeNameMap.set(key, componentName);
+          }
+
+          const { paramKeys, queryKeys } = getRoutePropsKeys(r);
+          const paramsMeta = getRouteParamMeta(router, r, paramKeys);
+          const pathTemplate = buildRouteTemplate(router, r, paramsMeta.map((p) => p.name));
+          if (typeof pathTemplate === "string" && pathTemplate.length) {
+            routeMetaEntries.push({
+              componentName,
+              pathTemplate,
+              params: paramsMeta,
+              query: queryKeys,
+            });
+          }
         }
 
-        const { paramKeys, queryKeys } = getRoutePropsKeys(r);
-        const paramsMeta = getRouteParamMeta(router, r, paramKeys);
-        const pathTemplate = buildRouteTemplate(router, r, paramsMeta.map((p) => p.name));
-        if (typeof pathTemplate === "string" && pathTemplate.length) {
-          routeMetaEntries.push({
-            componentName,
-            pathTemplate,
-            params: paramsMeta,
-            query: queryKeys,
-          });
-        }
+        return { routeNameMap, routePathMap, routeMetaEntries };
       }
-
-      return { routeNameMap, routePathMap, routeMetaEntries };
+      finally {
+        debugLog("closing internal vite server");
+        await server.close();
+      }
     }
     finally {
-      debugLog("closing internal vite server");
-      await server.close();
+      restoreDomShim();
     }
   });
 }

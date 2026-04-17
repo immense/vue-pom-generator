@@ -48,6 +48,48 @@ function getComponentNamingOptions(tempRoot: string, sourceDirs: string[]) {
   };
 }
 
+const domShimGlobalNames = [
+  "window",
+  "document",
+  "location",
+  "self",
+  "navigator",
+  "history",
+  "MutationObserver",
+  "ResizeObserver",
+  "IntersectionObserver",
+  "requestIdleCallback",
+  "requestAnimationFrame",
+  "localStorage",
+  "sessionStorage",
+  "HTMLAnchorElement",
+] as const;
+
+type GlobalSnapshot = {
+  descriptor: PropertyDescriptor | undefined;
+  value: unknown;
+  hasOwnProperty: boolean;
+};
+
+function captureGlobalSnapshot(names: readonly string[]) {
+  return new Map<string, GlobalSnapshot>(names.map(name => [
+    name,
+    {
+      descriptor: Object.getOwnPropertyDescriptor(globalThis, name),
+      value: Reflect.get(globalThis, name),
+      hasOwnProperty: Object.prototype.hasOwnProperty.call(globalThis, name),
+    },
+  ]));
+}
+
+function expectGlobalSnapshotRestored(snapshot: Map<string, GlobalSnapshot>) {
+  for (const [name, expected] of snapshot.entries()) {
+    expect(Object.getOwnPropertyDescriptor(globalThis, name)).toEqual(expected.descriptor);
+    expect(Reflect.get(globalThis, name)).toBe(expected.value);
+    expect(Object.prototype.hasOwnProperty.call(globalThis, name)).toBe(expected.hasOwnProperty);
+  }
+}
+
 describe("parseRouterFileFromCwd", () => {
   it("extracts route name/path maps and route meta (params/query)", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-router-"));
@@ -110,6 +152,47 @@ describe("parseRouterFileFromCwd", () => {
       const thingsMeta = result.routeMetaEntries.find(e => e.componentName === "ThingsView");
       expect(thingsMeta).toBeTruthy();
       expect(thingsMeta!.params).toEqual([{ name: "thingId", optional: true }]);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("restores temporary DOM globals after router introspection", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-router-globals-"));
+
+    try {
+      ensureTempNodeModules(tempRoot);
+
+      const stubViewContent = readFixture("StubView.vue");
+      writeFile(path.join(tempRoot, "UsersView.vue"), stubViewContent);
+
+      const routerEntry = path.join(tempRoot, "router.ts");
+      writeTypeScriptFile(
+        routerEntry,
+        [
+          "import { createMemoryHistory, createRouter } from 'vue-router';",
+          "import UsersView from './UsersView.vue';",
+          "",
+          "export default function makeRouter() {",
+          "  return createRouter({",
+          "    history: createMemoryHistory(),",
+          "    routes: [",
+          "      { path: '/users', name: 'users', component: UsersView },",
+          "    ],",
+          "  });",
+          "}",
+          "",
+        ],
+      );
+
+      const snapshot = captureGlobalSnapshot(domShimGlobalNames);
+
+      try {
+        const result = await parseRouterFileFromCwd(routerEntry);
+        expect(result.routeNameMap.get("Users")).toBe("UsersView");
+      } finally {
+        expectGlobalSnapshotRestored(snapshot);
+      }
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
