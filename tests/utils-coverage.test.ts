@@ -338,6 +338,20 @@ describe("utils.ts coverage", () => {
     expect(info?.semanticNameHint).toBe("RunDeploymentActionAssignSuppress");
   });
 
+  it("derives :handler semanticNameHint from async await call lambdas", () => {
+    const root = parseTemplate(`
+      <LoadButton :handler="async () => await refreshOauthAccessToken(data.id)">
+        Refresh now
+      </LoadButton>
+    `);
+    const el = firstElement(root);
+
+    const info = nodeHandlerAttributeInfo(el);
+    expect(info).toBeTruthy();
+    expect(info?.semanticNameHint).toBe("RefreshOauthAccessToken");
+    expect(nodeHandlerAttributeValue(el)).toBe("RefreshOauthAccessToken");
+  });
+
   it("derives :handler semanticNameHint from assignment-bodied arrow functions", () => {
     const root = parseTemplate(`
       <LoadButton :handler="() => showResetLocalDatabaseModal = true">Reset</LoadButton>
