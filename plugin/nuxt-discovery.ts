@@ -5,6 +5,25 @@ import { pathToFileURL } from "node:url";
 
 const requireFromModule = createRequire(import.meta.url);
 
+function resolveNuxtKitEntry(cwd: string): string {
+  const attemptResolvers = [
+    createRequire(path.resolve(cwd, "package.json")),
+    requireFromModule,
+  ];
+  let lastError: Error | undefined;
+
+  for (const resolver of attemptResolvers) {
+    try {
+      return resolver.resolve("@nuxt/kit");
+    }
+    catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  throw lastError ?? new Error("Unknown module resolution error");
+}
+
 interface NuxtComponentDirLike {
   path?: string;
 }
@@ -213,7 +232,7 @@ export async function loadNuxtProjectDiscovery(cwd: string = process.cwd()): Pro
   let getLayerDirectories: GetLayerDirectoriesLike | undefined;
 
   try {
-    const nuxtKitEntry = requireFromModule.resolve("@nuxt/kit");
+    const nuxtKitEntry = resolveNuxtKitEntry(cwd);
     ({ loadNuxtConfig, getLayerDirectories } = await import(pathToFileURL(nuxtKitEntry).href) as {
       loadNuxtConfig?: (options: { cwd: string }) => Promise<LoadedNuxtOptionsLike>;
       getLayerDirectories?: GetLayerDirectoriesLike;

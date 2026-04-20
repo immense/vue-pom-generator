@@ -54,7 +54,7 @@ export class UserEditorPage extends BasePage {
   get SaveButton() { /* Playwright locator */ }
 
   async typeEmailAddress(text: string, annotationText = "") { /* ... */ }
-  async clickSave(wait: boolean = true) { /* ... */ }
+  async clickSave(wait: boolean = true, annotationText = "") { /* ... */ }
 }
 ```
 
