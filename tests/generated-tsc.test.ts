@@ -605,7 +605,7 @@ describe("generated output", () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set([childAEntry]),
-      generatedMethods: new Map([["clickOnlyInAButton", { params: "wait: boolean = true", argNames: ["wait"] }]]),
+      generatedMethods: new Map([["clickOnlyInAButton", { params: "wait: boolean = true, annotationText: string = \"\"", argNames: ["wait", "annotationText"] }]]),
       isView: false,
     };
 
@@ -614,7 +614,7 @@ describe("generated output", () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set([childBEntry]),
-      generatedMethods: new Map([["clickSomethingElseButton", { params: "wait: boolean = true", argNames: ["wait"] }]]),
+      generatedMethods: new Map([["clickSomethingElseButton", { params: "wait: boolean = true, annotationText: string = \"\"", argNames: ["wait", "annotationText"] }]]),
       isView: false,
     };
 

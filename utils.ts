@@ -3305,11 +3305,14 @@ export function applyResolvedDataTestId(args: {
           formattedDataTestId: formattedDataTestIdForPom,
         },
         keyLiteral: rawValue,
-        params: { wait: "boolean = true" },
+        params: { wait: "boolean = true", annotationText: "string = \"\"" },
       });
 
       if (added) {
-        registerGeneratedMethodSignature(generatedName, { params: `wait: boolean = true`, argNames: ["wait"] });
+        registerGeneratedMethodSignature(generatedName, {
+          params: `wait: boolean = true, annotationText: string = ""`,
+          argNames: ["wait", "annotationText"],
+        });
       }
     }
 

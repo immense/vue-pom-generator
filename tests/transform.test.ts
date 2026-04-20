@@ -623,7 +623,7 @@ describe('createTestIdTransform', () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set(),
-      generatedMethods: new Map([['clickShowMediaLibrary', { params: 'wait: boolean = true', argNames: ['wait'] }]]),
+      generatedMethods: new Map([['clickShowMediaLibrary', { params: 'wait: boolean = true, annotationText: string = ""', argNames: ['wait', 'annotationText'] }]]),
       reservedPomMemberNames: new Set(['ShowMediaLibraryButton', 'clickShowMediaLibrary']),
       isView: false,
     })
@@ -660,7 +660,7 @@ describe('createTestIdTransform', () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set(),
-      generatedMethods: new Map([['clickShowMediaLibrary', { params: 'wait: boolean = true', argNames: ['wait'] }]]),
+      generatedMethods: new Map([['clickShowMediaLibrary', { params: 'wait: boolean = true, annotationText: string = ""', argNames: ['wait', 'annotationText'] }]]),
       reservedPomMemberNames: new Set(['ShowMediaLibraryButton', 'clickShowMediaLibrary']),
       isView: false,
     })
@@ -701,7 +701,7 @@ describe('createTestIdTransform', () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set(),
-      generatedMethods: new Map([['clickRunDeploymentAction', { params: 'wait: boolean = true', argNames: ['wait'] }]]),
+      generatedMethods: new Map([['clickRunDeploymentAction', { params: 'wait: boolean = true, annotationText: string = ""', argNames: ['wait', 'annotationText'] }]]),
       reservedPomMemberNames: new Set(['RunDeploymentActionButton', 'clickRunDeploymentAction']),
       isView: false,
     })
@@ -809,12 +809,12 @@ describe('createTestIdTransform', () => {
     expect(deps).toBeTruthy()
 
     const sigOne = deps?.generatedMethods?.get('clickOneButton') as { params: string, argNames: string[] } | null | undefined
-    expect(sigOne?.params).toBe('wait: boolean = true')
-    expect(sigOne?.argNames).toEqual(['wait'])
+    expect(sigOne?.params).toBe('wait: boolean = true, annotationText: string = ""')
+    expect(sigOne?.argNames).toEqual(['wait', 'annotationText'])
 
     const sigTwo = deps?.generatedMethods?.get('clickTwoButton') as { params: string, argNames: string[] } | null | undefined
-    expect(sigTwo?.params).toBe('wait: boolean = true')
-    expect(sigTwo?.argNames).toEqual(['wait'])
+    expect(sigTwo?.params).toBe('wait: boolean = true, annotationText: string = ""')
+    expect(sigTwo?.argNames).toEqual(['wait', 'annotationText'])
 
     // With the IR-based generator, v-for static literal keys are represented as extra click method specs.
     const extras = deps?.pomExtraMethods ?? []
@@ -825,7 +825,7 @@ describe('createTestIdTransform', () => {
       kind: 'testId',
       formattedDataTestId: 'MyComp-${key}-Select-button',
     })
-    expect(one?.params).toEqual({ wait: 'boolean = true' })
+    expect(one?.params).toEqual({ wait: 'boolean = true', annotationText: 'string = ""' })
 
     const two = extras.find(m => m.kind === 'click' && m.name === 'clickTwoButton')
     expect(two).toBeTruthy()
@@ -834,7 +834,7 @@ describe('createTestIdTransform', () => {
       kind: 'testId',
       formattedDataTestId: 'MyComp-${key}-Select-button',
     })
-    expect(two?.params).toEqual({ wait: 'boolean = true' })
+    expect(two?.params).toEqual({ wait: 'boolean = true', annotationText: 'string = ""' })
   })
 
   it('treats v-for source with Math.random() as dynamic via constType', () => {
