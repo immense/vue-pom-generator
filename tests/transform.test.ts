@@ -1245,4 +1245,77 @@ describe('createTestIdTransform', () => {
       parameters: createPomParameters(['annotationText', 'string = ""']),
     })
   })
+
+  it('parses template expressions containing TypeScript type annotations when expressionPlugins: ["typescript"] is set', () => {
+    // Regression for a real-world Nuxt + Vue 3 pattern: inline arrow
+    // handlers that annotate their parameter with a TS type. Without the
+    // compiler option, Vue's internal processExpression falls back to a
+    // JS-only @babel/parser and throws "Unexpected token, expected ','".
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const template = `
+      <div>
+        <CommonDataTable @row-click="(row: PersonRow) => handleRow(row)" />
+      </div>
+    `
+
+    expect(() => {
+      compileAndCaptureAst(template, {
+        filename: '/src/pages/people/index.vue',
+        expressionPlugins: ['typescript'],
+        nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, {}, [], '/src/views')],
+      })
+    }).not.toThrow()
+  })
+
+  it('does not throw for a submit button with no derivable identity when missingSemanticNameBehavior is "ignore"', () => {
+    // Regression for forms that use a ternary submit-button label like
+    // {{ isNew ? 'Create' : 'Save' }}. Default behavior is to throw so
+    // authors fix the template; with missingSemanticNameBehavior: "ignore"
+    // the generator falls back to a generic "submit" identifier.
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const template = `
+      <form>
+        <button type="submit">{{ isNew ? 'Create' : 'Save' }}</button>
+      </form>
+    `
+
+    expect(() => {
+      compileAndCaptureAst(template, {
+        filename: '/src/components/Form.vue',
+        nodeTransforms: [
+          createTestIdTransform('Form', componentHierarchyMap, {}, [], '/src/views', {
+            missingSemanticNameBehavior: 'ignore',
+          }),
+        ],
+      })
+    }).not.toThrow()
+
+    // The injected attribute uses the fallback "submit" identifier.
+    const ast = compileAndCaptureAst(template, {
+      filename: '/src/components/Form.vue',
+      nodeTransforms: [
+        createTestIdTransform('Form', componentHierarchyMap, {}, [], '/src/views', {
+          missingSemanticNameBehavior: 'ignore',
+        }),
+      ],
+    })
+    const testId = findFirstDataTestId(ast)
+    expect(testId).toBe('Form-submit-button')
+  })
+
+  it('still throws for a submit button with no derivable identity under the default missingSemanticNameBehavior', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const template = `
+      <form>
+        <button type="submit">{{ isNew ? 'Create' : 'Save' }}</button>
+      </form>
+    `
+
+    expect(() => {
+      compileAndCaptureAst(template, {
+        filename: '/src/components/Form.vue',
+        nodeTransforms: [createTestIdTransform('Form', componentHierarchyMap, {}, [], '/src/views')],
+      })
+    }).toThrow(/no usable identity could be derived/)
+  })
 })

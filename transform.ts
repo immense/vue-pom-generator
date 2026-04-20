@@ -1566,14 +1566,24 @@ export function createTestIdTransform(
     const isSubmit = (element.props.find((p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === "type")?.value?.content === "submit");
     if (isSubmit) {
       // Prefer explicit identity (id/name), otherwise fall back to literal inner text.
-      const identifier = getStaticIdOrNameHint(element) || innerText;
+      // When neither is present (e.g. button text is a ternary expression like
+      // `{{ isNew ? 'Create' : 'Save' }}`), the behavior depends on
+      // `missingSemanticNameBehavior`:
+      //   - "error" (default): throw so authors fix the template
+      //   - "ignore": fall back to the generic "submit" identifier, producing
+      //     a `SubmitButton` / `clickSubmit()` surface on the generated POM
+      let identifier = getStaticIdOrNameHint(element) || innerText;
       if (!identifier) {
-        const loc = element.loc?.start;
-        const locationHint = loc ? `${loc.line}:${loc.column}` : "unknown";
-        throw new Error(
-          `[vue-pom-generator] submit button appears identifiable but no usable identity could be derived in ${componentName} (${context.filename ?? "unknown"}:${locationHint}) — `
-          + `id/name were missing/empty and innerText was also missing/invalid`,
-        );
+        if (missingSemanticNameBehavior === "error") {
+          const loc = element.loc?.start;
+          const locationHint = loc ? `${loc.line}:${loc.column}` : "unknown";
+          throw new Error(
+            `[vue-pom-generator] submit button appears identifiable but no usable identity could be derived in ${componentName} (${context.filename ?? "unknown"}:${locationHint}) — `
+            + `id/name were missing/empty and innerText was also missing/invalid. `
+            + `Fix: give the button a static id/name, a static inner text, or set missingSemanticNameBehavior = "ignore" to fall back to the generic "submit" identifier.`,
+          );
+        }
+        identifier = "submit";
       }
 
       const testId = getSubmitDataTestId(identifier);

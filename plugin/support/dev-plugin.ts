@@ -295,6 +295,12 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
           prefixIdentifiers: true,
           inline: isScriptSetup,
           bindingMetadata,
+          // Vue templates may contain TypeScript type annotations in expressions
+          // (e.g. `@row-click="(row: RowType) => navigateTo(...)"` in Nuxt + TS
+          // apps). Without this flag, Vue's internal processExpression step
+          // delegates to @babel/parser without the TS plugin and crashes on
+          // "Unexpected token, expected ','".
+          expressionPlugins: ["typescript"],
           nodeTransforms: [
             createTestIdTransform(
               componentName,

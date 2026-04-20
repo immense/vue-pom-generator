@@ -233,6 +233,9 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
             prefixIdentifiers: true,
             inline: isScriptSetup,
             bindingMetadata,
+            // See dev-plugin.ts — same rationale: enable TS in template
+            // expressions so `(row: RowType) => ...` handlers parse.
+            expressionPlugins: ["typescript"],
             nodeTransforms: [
               createTestIdTransform(
                 componentName,
