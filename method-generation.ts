@@ -13,7 +13,7 @@ import {
   type TypeScriptClassMember,
   type WriterFunction,
 } from "./typescript-codegen";
-import { inferPomPatternKindFromFormattedString, isParameterizedPomPattern, type PomPatternKind } from "./pom-patterns";
+import { isParameterizedPomPattern, uniquePomStringPatterns, type PomStringPattern } from "./pom-patterns";
 
 function upperFirst(value: string): string {
   if (!value) {
@@ -74,34 +74,14 @@ function removeByKeySegment(value: string): string {
   return value.slice(0, idx) + value.slice(idx + "ByKey".length);
 }
 
-function uniqueAlternates(primary: string, alternates: string[] | undefined): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  seen.add(primary);
-  for (const a of alternates ?? []) {
-    if (!a) {
-      continue;
-    }
-    if (seen.has(a)) {
-      continue;
-    }
-    seen.add(a);
-    out.push(a);
-  }
-  return out;
+function testIdExpression(pattern: PomStringPattern): string {
+  return isParameterizedPomPattern(pattern.patternKind)
+    ? `\`${pattern.formatted}\``
+    : JSON.stringify(pattern.formatted);
 }
 
-function testIdExpression(formattedDataTestId: string, patternKind?: PomPatternKind): string {
-  // Callers without structured metadata (currently alternate selector strings) only use this
-  // fallback to decide quote/backtick rendering. API shape comes from selectorPatternKind.
-  const needsTemplate = patternKind
-    ? isParameterizedPomPattern(patternKind)
-    : isParameterizedPomPattern(inferPomPatternKindFromFormattedString(formattedDataTestId));
-  return needsTemplate ? `\`${formattedDataTestId}\`` : JSON.stringify(formattedDataTestId);
-}
-
-function ensureSelectorParameters(params: Record<string, string>, selectorPatternKind: PomPatternKind): Record<string, string> {
-  if (!isParameterizedPomPattern(selectorPatternKind) || hasParam(params, "key")) {
+function ensureSelectorParameters(params: Record<string, string>, selector: PomStringPattern): Record<string, string> {
+  if (!isParameterizedPomPattern(selector.patternKind) || hasParam(params, "key")) {
     return params;
   }
 
@@ -123,18 +103,17 @@ function createAsyncMethod(
 
 function generateClickMethod(
   methodName: string,
-  formattedDataTestId: string,
-  alternateFormattedDataTestIds: string[] | undefined,
+  selector: PomStringPattern,
+  alternateSelectors: PomStringPattern[] | undefined,
   params: Record<string, string>,
-  selectorPatternKind: PomPatternKind,
 ): TypeScriptClassMember[] {
   const name = `click${methodName}`;
   const noWaitName = `${name}NoWait`;
-  const selectorParams = ensureSelectorParameters(params, selectorPatternKind);
+  const selectorParams = ensureSelectorParameters(params, selector);
   const baseParameters = createParameters(selectorParams);
   const argsForForward = Object.keys(selectorParams).join(", ");
-  const alternates = uniqueAlternates(formattedDataTestId, alternateFormattedDataTestIds);
-  const primaryTestIdExpr = testIdExpression(formattedDataTestId, selectorPatternKind);
+  const alternates = uniquePomStringPatterns(selector, alternateSelectors).slice(1);
+  const primaryTestIdExpr = testIdExpression(selector);
 
   if (alternates.length > 0) {
     const candidatesExpr = [primaryTestIdExpr, ...alternates.map(id => testIdExpression(id))].join(", ");
@@ -197,14 +176,13 @@ function generateClickMethod(
 
 function generateRadioMethod(
   methodName: string,
-  formattedDataTestId: string,
+  selector: PomStringPattern,
   params: Record<string, string>,
-  selectorPatternKind: PomPatternKind,
 ): TypeScriptClassMember[] {
   const name = `select${methodName}`;
-  const selectorParams = ensureSelectorParameters(params, selectorPatternKind);
+  const selectorParams = ensureSelectorParameters(params, selector);
   const parameters = createParameters(selectorParams);
-  const testIdExpr = testIdExpression(formattedDataTestId, selectorPatternKind);
+  const testIdExpr = testIdExpression(selector);
 
   return [
     createAsyncMethod(name, parameters, (writer) => {
@@ -215,13 +193,12 @@ function generateRadioMethod(
 
 function generateSelectMethod(
   methodName: string,
-  formattedDataTestId: string,
+  selector: PomStringPattern,
   params: Record<string, string>,
-  selectorPatternKind: PomPatternKind,
 ): TypeScriptClassMember[] {
   const name = `select${methodName}`;
-  const selectorParams = ensureSelectorParameters(params, selectorPatternKind);
-  const selectorExpr = `this.selectorForTestId(${testIdExpression(formattedDataTestId, selectorPatternKind)})`;
+  const selectorParams = ensureSelectorParameters(params, selector);
+  const selectorExpr = `this.selectorForTestId(${testIdExpression(selector)})`;
 
   return [
     createAsyncMethod(
@@ -238,19 +215,18 @@ function generateSelectMethod(
 
 function generateVSelectMethod(
   methodName: string,
-  formattedDataTestId: string,
+  selector: PomStringPattern,
   params: Record<string, string>,
-  selectorPatternKind: PomPatternKind,
 ): TypeScriptClassMember[] {
   const name = `select${methodName}`;
-  const selectorParams = ensureSelectorParameters(params, selectorPatternKind);
+  const selectorParams = ensureSelectorParameters(params, selector);
 
   return [
     createAsyncMethod(
       name,
       createParameters(selectorParams),
       (writer) => {
-        writer.writeLine(`await this.selectVSelectByTestId(${testIdExpression(formattedDataTestId, selectorPatternKind)}, value, timeOut, annotationText);`);
+        writer.writeLine(`await this.selectVSelectByTestId(${testIdExpression(selector)}, value, timeOut, annotationText);`);
       },
     ),
   ];
@@ -258,19 +234,18 @@ function generateVSelectMethod(
 
 function generateTypeMethod(
   methodName: string,
-  formattedDataTestId: string,
+  selector: PomStringPattern,
   params: Record<string, string>,
-  selectorPatternKind: PomPatternKind,
 ): TypeScriptClassMember[] {
   const name = `type${methodName}`;
-  const selectorParams = ensureSelectorParameters(params, selectorPatternKind);
+  const selectorParams = ensureSelectorParameters(params, selector);
 
   return [
     createAsyncMethod(
       name,
       createParameters(selectorParams),
       (writer) => {
-        writer.writeLine(`await this.fillInputByTestId(${testIdExpression(formattedDataTestId, selectorPatternKind)}, text, annotationText);`);
+        writer.writeLine(`await this.fillInputByTestId(${testIdExpression(selector)}, text, annotationText);`);
       },
     ),
   ];
@@ -290,19 +265,18 @@ function isAllDigits(value: string): boolean {
 function generateGetElementByDataTestId(
   methodName: string,
   nativeRole: string,
-  formattedDataTestId: string,
-  alternateFormattedDataTestIds: string[] | undefined,
+  selector: PomStringPattern,
+  alternateSelectors: PomStringPattern[] | undefined,
   getterNameOverride: string | undefined,
   params: Record<string, string>,
-  selectorPatternKind: PomPatternKind,
 ): TypeScriptClassMember[] {
   const roleSuffix = upperFirst(nativeRole || "Element");
   const baseName = upperFirst(methodName);
   const numericSuffix = baseName.startsWith(roleSuffix) ? baseName.slice(roleSuffix.length) : "";
   const hasRoleSuffix = baseName.endsWith(roleSuffix) || (baseName.startsWith(roleSuffix) && isAllDigits(numericSuffix));
   const propertyName = hasRoleSuffix ? `${baseName}` : `${baseName}${roleSuffix}`;
-  const selectorParams = ensureSelectorParameters(params, selectorPatternKind);
-  const needsKey = isParameterizedPomPattern(selectorPatternKind);
+  const selectorParams = ensureSelectorParameters(params, selector);
+  const needsKey = isParameterizedPomPattern(selector.patternKind);
 
   if (needsKey) {
     const keyType = selectorParams.key || "string";
@@ -311,16 +285,16 @@ function generateGetElementByDataTestId(
       createClassGetter({
         name: keyedPropertyName,
         statements: [
-          `return this.keyedLocators((key: ${keyType}) => this.locatorByTestId(${testIdExpression(formattedDataTestId, selectorPatternKind)}));`,
+          `return this.keyedLocators((key: ${keyType}) => this.locatorByTestId(${testIdExpression(selector)}));`,
         ],
       }),
     ];
   }
 
   const finalPropertyName = getterNameOverride ?? propertyName;
-  const alternates = uniqueAlternates(formattedDataTestId, alternateFormattedDataTestIds);
+  const alternates = uniquePomStringPatterns(selector, alternateSelectors).slice(1);
   if (alternates.length > 0) {
-    const all = [formattedDataTestId, ...alternates];
+    const all = [selector, ...alternates];
     const locatorExpr = all
       .map(id => `this.locatorByTestId(${testIdExpression(id)})`)
       .reduce((acc, next) => `${acc}.or(${next})`);
@@ -336,7 +310,7 @@ function generateGetElementByDataTestId(
   return [
     createClassGetter({
       name: finalPropertyName,
-      statements: [`return this.locatorByTestId("${formattedDataTestId}");`],
+      statements: [`return this.locatorByTestId(${testIdExpression(selector)});`],
     }),
   ];
 }
@@ -344,21 +318,20 @@ function generateGetElementByDataTestId(
 function generateNavigationMethod(args: {
   targetPageObjectModelClass: string;
   baseMethodName: string;
-  formattedDataTestId: string;
-  selectorPatternKind: PomPatternKind;
-  alternateFormattedDataTestIds?: string[];
+  selector: PomStringPattern;
+  alternateSelectors?: PomStringPattern[];
   params: Record<string, string>;
 }): TypeScriptClassMember[] {
-  const { targetPageObjectModelClass: target, baseMethodName, formattedDataTestId, selectorPatternKind, alternateFormattedDataTestIds, params } = args;
+  const { targetPageObjectModelClass: target, baseMethodName, selector, alternateSelectors, params } = args;
 
   const methodName = baseMethodName
     ? `goTo${upperFirst(baseMethodName)}`
     : `goTo${target.endsWith("Page") ? target.slice(0, -"Page".length) : target}`;
 
-  const selectorParams = ensureSelectorParameters(params, selectorPatternKind);
+  const selectorParams = ensureSelectorParameters(params, selector);
   const parameters = createParameters(selectorParams);
-  const alternates = uniqueAlternates(formattedDataTestId, alternateFormattedDataTestIds);
-  const candidatesExpr = [testIdExpression(formattedDataTestId, selectorPatternKind), ...alternates.map(id => testIdExpression(id))].join(", ");
+  const alternates = uniquePomStringPatterns(selector, alternateSelectors).slice(1);
+  const candidatesExpr = [testIdExpression(selector), ...alternates.map(id => testIdExpression(id))].join(", ");
 
   if (alternates.length > 0) {
     return [
@@ -397,7 +370,7 @@ function generateNavigationMethod(args: {
       returnType: `Fluent<${target}>`,
       statements: (writer) => {
         writer.write("return this.fluent(async () => ").block(() => {
-          writer.writeLine(`await this.clickByTestId(${testIdExpression(formattedDataTestId, selectorPatternKind)});`);
+          writer.writeLine(`await this.clickByTestId(${testIdExpression(selector)});`);
           writer.writeLine(`return new ${target}(this.page);`);
         });
         writer.writeLine(");");
@@ -410,9 +383,8 @@ export function generateViewObjectModelMembers(
   targetPageObjectModelClass: string | undefined,
   methodName: string,
   nativeRole: string,
-  selectorPatternKind: PomPatternKind,
-  formattedDataTestId: string,
-  alternateFormattedDataTestIds: string[] | undefined,
+  selector: PomStringPattern,
+  alternateSelectors: PomStringPattern[] | undefined,
   getterNameOverride: string | undefined,
   params: Record<string, string>,
 ): TypeScriptClassMember[] {
@@ -423,11 +395,10 @@ export function generateViewObjectModelMembers(
   const members = generateGetElementByDataTestId(
     baseMethodName,
     nativeRole,
-    formattedDataTestId,
-    alternateFormattedDataTestIds,
+    selector,
+    alternateSelectors,
     getterNameOverride,
     params,
-    selectorPatternKind,
   );
 
   if (targetPageObjectModelClass) {
@@ -436,37 +407,35 @@ export function generateViewObjectModelMembers(
       ...generateNavigationMethod({
         targetPageObjectModelClass,
         baseMethodName,
-        formattedDataTestId,
-        selectorPatternKind,
-        alternateFormattedDataTestIds,
+        selector,
+        alternateSelectors,
         params,
       }),
     ];
   }
 
   if (nativeRole === "select") {
-    return [...members, ...generateSelectMethod(baseMethodName, formattedDataTestId, params, selectorPatternKind)];
+    return [...members, ...generateSelectMethod(baseMethodName, selector, params)];
   }
   if (nativeRole === "vselect") {
-    return [...members, ...generateVSelectMethod(baseMethodName, formattedDataTestId, params, selectorPatternKind)];
+    return [...members, ...generateVSelectMethod(baseMethodName, selector, params)];
   }
   if (nativeRole === "input") {
-    return [...members, ...generateTypeMethod(baseMethodName, formattedDataTestId, params, selectorPatternKind)];
+    return [...members, ...generateTypeMethod(baseMethodName, selector, params)];
   }
   if (nativeRole === "radio") {
-    return [...members, ...generateRadioMethod(baseMethodName || "Radio", formattedDataTestId, params, selectorPatternKind)];
+    return [...members, ...generateRadioMethod(baseMethodName || "Radio", selector, params)];
   }
 
-  return [...members, ...generateClickMethod(baseMethodName, formattedDataTestId, alternateFormattedDataTestIds, params, selectorPatternKind)];
+  return [...members, ...generateClickMethod(baseMethodName, selector, alternateSelectors, params)];
 }
 
 export function generateViewObjectModelMethodContent(
   targetPageObjectModelClass: string | undefined,
   methodName: string,
   nativeRole: string,
-  selectorPatternKind: PomPatternKind,
-  formattedDataTestId: string,
-  alternateFormattedDataTestIds: string[] | undefined,
+  selector: PomStringPattern,
+  alternateSelectors: PomStringPattern[] | undefined,
   getterNameOverride: string | undefined,
   params: Record<string, string>,
 ) {
@@ -475,9 +444,8 @@ export function generateViewObjectModelMethodContent(
       targetPageObjectModelClass,
       methodName,
       nativeRole,
-      selectorPatternKind,
-      formattedDataTestId,
-      alternateFormattedDataTestIds,
+      selector,
+      alternateSelectors,
       getterNameOverride,
       params,
     ),

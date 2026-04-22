@@ -15,6 +15,7 @@ import { parse as parseSfc } from '@vue/compiler-sfc'
 
 
 import { describe, expect, it } from 'vitest'
+import { createPomStringPattern } from '../pom-patterns'
 import { createVuePluginWithTestIds } from '../plugin/vue-plugin'
 import { __internal, createTestIdTransform } from '../transform'
 
@@ -320,7 +321,7 @@ describe('createTestIdTransform', () => {
 
     const deps = componentHierarchyMap.get('MyComp')
     expect(deps).toBeTruthy()
-    expect(Array.from(deps!.dataTestIdSet).some(e => e.value === 'MyComp-Save-button')).toBe(true)
+    expect(Array.from(deps!.dataTestIdSet).some(e => e.selectorValue.formatted === 'MyComp-Save-button')).toBe(true)
   })
 
   it('preserves existing data-testid when existingIdBehavior is preserve', () => {
@@ -720,10 +721,10 @@ describe('createTestIdTransform', () => {
 
     const primary = fieldValuePoms.find(p => p.emitPrimary !== false)
     const mergedSecondary = fieldValuePoms.find(p => p.emitPrimary === false)
-    expect(primary?.formattedDataTestId).toBe('DynamicFormField-FieldValue-input')
+    expect(primary?.selector).toEqual(createPomStringPattern('DynamicFormField-FieldValue-input', 'static'))
     expect(primary?.mergeKey).toContain('wrapper:ifgroup:')
     expect(primary?.mergeKey).toContain(':model:FieldValue')
-    expect(primary?.alternateFormattedDataTestIds).toBeUndefined()
+    expect(primary?.alternateSelectors).toBeUndefined()
     expect(mergedSecondary?.emitPrimary).toBe(false)
   })
 
@@ -934,8 +935,7 @@ describe('createTestIdTransform', () => {
     expect(one?.keyLiteral).toBe('One')
     expect(one?.selector).toEqual({
       kind: 'testId',
-      patternKind: 'parameterized',
-      formattedDataTestId: 'MyComp-${key}-Select-button',
+      testId: createPomStringPattern('MyComp-${key}-Select-button', 'parameterized'),
     })
     expect(one?.params).toEqual({ wait: 'boolean = true' })
 
@@ -944,8 +944,7 @@ describe('createTestIdTransform', () => {
     expect(two?.keyLiteral).toBe('Two')
     expect(two?.selector).toEqual({
       kind: 'testId',
-      patternKind: 'parameterized',
-      formattedDataTestId: 'MyComp-${key}-Select-button',
+      testId: createPomStringPattern('MyComp-${key}-Select-button', 'parameterized'),
     })
     expect(two?.params).toEqual({ wait: 'boolean = true' })
   })
@@ -1106,10 +1105,8 @@ describe('createTestIdTransform', () => {
       name: 'selectDatabaseTypeCloud',
       selector: {
         kind: 'withinTestIdByLabel',
-        rootFormattedDataTestId: 'MyPage-DatabaseType-radio',
-        rootPatternKind: 'static',
-        formattedLabel: 'Cloud',
-        labelPatternKind: 'static',
+        rootTestId: createPomStringPattern('MyPage-DatabaseType-radio', 'static'),
+        label: createPomStringPattern('Cloud', 'static'),
         exact: true,
       },
       params: { annotationText: 'string = ""' },
@@ -1190,10 +1187,8 @@ describe('createTestIdTransform', () => {
       name: 'selectDatabaseTypeCloud',
       selector: {
         kind: 'withinTestIdByLabel',
-        rootFormattedDataTestId: 'MyPage-DatabaseType-radio',
-        rootPatternKind: 'static',
-        formattedLabel: 'Cloud',
-        labelPatternKind: 'static',
+        rootTestId: createPomStringPattern('MyPage-DatabaseType-radio', 'static'),
+        label: createPomStringPattern('Cloud', 'static'),
         exact: true,
       },
       params: { annotationText: 'string = ""' },

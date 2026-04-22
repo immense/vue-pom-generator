@@ -16,6 +16,7 @@ import { baseCompile, parse, parserOptions } from "@vue/compiler-dom";
 
 import { parseExpression } from "@babel/parser";
 
+import { createPomStringPattern } from "../pom-patterns";
 import {
   addComponentTestIds,
   applyResolvedDataTestId,
@@ -772,7 +773,7 @@ describe("utils.ts coverage", () => {
 
     const entries = Array.from(deps.dataTestIdSet);
     expect(entries.length).toBe(1);
-    expect(entries[0]?.pom?.formattedDataTestId).toBe("abc-${key}");
+    expect(entries[0]?.pom?.selector).toEqual(createPomStringPattern("abc-${key}", "parameterized"));
   });
 
   it("allows preserving an existing template when the required key fragment carries literal context", () => {
@@ -810,7 +811,7 @@ describe("utils.ts coverage", () => {
 
     const entries = Array.from(deps.dataTestIdSet);
     expect(entries.length).toBe(1);
-    expect(entries[0]?.pom?.formattedDataTestId).toBe("abc-line-${key}");
+    expect(entries[0]?.pom?.selector).toEqual(createPomStringPattern("abc-line-${key}", "parameterized"));
   });
 
   it("allows preserving an existing key-based template literal that uses a fallback branch access", () => {
@@ -848,7 +849,7 @@ describe("utils.ts coverage", () => {
 
     const entries = Array.from(deps.dataTestIdSet);
     expect(entries.length).toBe(1);
-    expect(entries[0]?.pom?.formattedDataTestId).toBe("abc-${key}");
+    expect(entries[0]?.pom?.selector).toEqual(createPomStringPattern("abc-${key}", "parameterized"));
   });
 
   it("allows preserving an existing simple member-expression data-testid", () => {
@@ -886,8 +887,8 @@ describe("utils.ts coverage", () => {
 
     const entries = Array.from(deps.dataTestIdSet);
     expect(entries.length).toBe(1);
-    expect(entries[0]?.value).toBe("${p.parameter.name}");
-    expect(entries[0]?.pom?.formattedDataTestId).toBe("${key}");
+    expect(entries[0]?.selectorValue).toEqual(createPomStringPattern("${p.parameter.name}", "parameterized"));
+    expect(entries[0]?.pom?.selector).toEqual(createPomStringPattern("${key}", "parameterized"));
   });
 
   it("drives applyResolvedDataTestId through option-driven radio handling and de-duping", () => {
@@ -919,7 +920,7 @@ describe("utils.ts coverage", () => {
       testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
       addHtmlAttribute: false,
-      entryOverrides: { value: "MyComp-Foo-radio" },
+      entryOverrides: { selectorValue: createPomStringPattern("MyComp-Foo-radio", "static") },
     });
 
     // Should have generated per-option extra click methods (IR), not raw emitted method strings.
@@ -928,8 +929,8 @@ describe("utils.ts coverage", () => {
     expect(extras.every(e => e.kind === "click")).toBe(true);
     expect(extras.some(e => e.name.startsWith("select"))).toBe(true);
     expect(extras.every(e => e.selector.kind === "withinTestIdByLabel")).toBe(true);
-    expect(extras.some(e => e.selector.kind === "withinTestIdByLabel" && e.selector.rootFormattedDataTestId === "MyComp-Foo-radio")).toBe(true);
-    expect(extras.some(e => e.selector.kind === "withinTestIdByLabel" && e.selector.formattedLabel === "One")).toBe(true);
+    expect(extras.some(e => e.selector.kind === "withinTestIdByLabel" && e.selector.rootTestId.formatted === "MyComp-Foo-radio")).toBe(true);
+    expect(extras.some(e => e.selector.kind === "withinTestIdByLabel" && e.selector.label.formatted === "One")).toBe(true);
 
     const prevCount = extras.length;
 
@@ -946,7 +947,7 @@ describe("utils.ts coverage", () => {
       testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
       addHtmlAttribute: false,
-      entryOverrides: { value: "MyComp-Foo-radio" },
+      entryOverrides: { selectorValue: createPomStringPattern("MyComp-Foo-radio", "static") },
     });
 
     // De-dupe: calling again should not add more extra methods.
@@ -1018,10 +1019,8 @@ describe("utils.ts coverage", () => {
     expect(method1).toBeTruthy();
     expect(method1?.selector).toEqual({
       kind: "withinTestIdByLabel",
-      rootFormattedDataTestId: "MyComp-radio",
-      rootPatternKind: "static",
-      formattedLabel: "${value}",
-      labelPatternKind: "parameterized",
+      rootTestId: createPomStringPattern("MyComp-radio", "static"),
+      label: createPomStringPattern("${value}", "parameterized"),
       exact: true,
     });
 
@@ -1029,10 +1028,8 @@ describe("utils.ts coverage", () => {
     expect(method2).toBeTruthy();
     expect(method2?.selector).toEqual({
       kind: "withinTestIdByLabel",
-      rootFormattedDataTestId: "MyComp2-radio",
-      rootPatternKind: "static",
-      formattedLabel: "${value}",
-      labelPatternKind: "parameterized",
+      rootTestId: createPomStringPattern("MyComp2-radio", "static"),
+      label: createPomStringPattern("${value}", "parameterized"),
       exact: true,
     });
   });
@@ -1281,8 +1278,8 @@ describe("utils.ts coverage", () => {
     }).not.toThrow();
 
     const entries = Array.from(deps.dataTestIdSet);
-    const selectEntry = entries.find(e => e.value === "MyComp-select");
-    const radioEntry = entries.find(e => e.value === "MyComp-radio");
+    const selectEntry = entries.find(e => e.selectorValue.formatted === "MyComp-select");
+    const radioEntry = entries.find(e => e.selectorValue.formatted === "MyComp-radio");
 
     expect(selectEntry?.pom?.methodName).toBe("ParameterDefaultValue");
     expect(radioEntry?.pom?.methodName).toBe("ParameterDefaultValueRadio");

@@ -9,7 +9,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { generateViewObjectModelMembers, generateViewObjectModelMethodContent } from "../method-generation";
-import { inferPomPatternKindFromFormattedString, isParameterizedPomPattern, type PomPatternKind } from "../pom-patterns";
+import { isParameterizedPomPattern, uniquePomStringPatterns, type PomStringPattern } from "../pom-patterns";
 import { introspectNuxtPages, parseRouterFileFromCwd } from "../router-introspection";
 import {
   addExportAll,
@@ -468,10 +468,10 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScr
   const waitArg = hasWait ? "wait" : "true";
 
   if (spec.selector.kind === "testId") {
-    const needsTemplate = isParameterizedPomPattern(spec.selector.patternKind);
+    const needsTemplate = isParameterizedPomPattern(spec.selector.testId.patternKind);
     const testIdExpr = needsTemplate
-      ? `\`${spec.selector.formattedDataTestId}\``
-      : JSON.stringify(spec.selector.formattedDataTestId);
+      ? `\`${spec.selector.testId.formatted}\``
+      : JSON.stringify(spec.selector.testId.formatted);
 
     if (needsTemplate) {
       // handled below
@@ -505,14 +505,14 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScr
     ];
   }
 
-  const rootNeedsTemplate = isParameterizedPomPattern(spec.selector.rootPatternKind);
-  const labelNeedsTemplate = isParameterizedPomPattern(spec.selector.labelPatternKind);
+  const rootNeedsTemplate = isParameterizedPomPattern(spec.selector.rootTestId.patternKind);
+  const labelNeedsTemplate = isParameterizedPomPattern(spec.selector.label.patternKind);
   const rootExpr = rootNeedsTemplate
-    ? `\`${spec.selector.rootFormattedDataTestId}\``
-    : JSON.stringify(spec.selector.rootFormattedDataTestId);
+    ? `\`${spec.selector.rootTestId.formatted}\``
+    : JSON.stringify(spec.selector.rootTestId.formatted);
   const labelExpr = labelNeedsTemplate
-    ? `\`${spec.selector.formattedLabel}\``
-    : JSON.stringify(spec.selector.formattedLabel);
+    ? `\`${spec.selector.label.formatted}\``
+    : JSON.stringify(spec.selector.label.formatted);
 
   const rootArg = rootNeedsTemplate ? "rootTestId" : rootExpr;
   const labelArg = labelNeedsTemplate ? "label" : labelExpr;
@@ -546,9 +546,8 @@ function generateMethodMembersFromPom(primary: PomPrimarySpec, targetPageObjectM
     targetPageObjectModelClass,
     primary.methodName,
     primary.nativeRole,
-    primary.selectorPatternKind,
-    primary.formattedDataTestId,
-    primary.alternateFormattedDataTestIds,
+    primary.selector,
+    primary.alternateSelectors,
     primary.getterNameOverride,
     primary.params ?? {},
   );
@@ -570,15 +569,16 @@ function generateMethodsContentForDependencies(dependencies: IComponentDependenc
     const stableParams = pom.params
       ? Object.fromEntries(Object.entries(pom.params).sort((a, b) => a[0].localeCompare(b[0])))
       : undefined;
-    const alternates = (pom.alternateFormattedDataTestIds ?? []).slice().sort();
-      const key = JSON.stringify({
-        role: pom.nativeRole,
-        methodName: pom.methodName,
-        getterNameOverride: pom.getterNameOverride ?? null,
-        selectorPatternKind: pom.selectorPatternKind,
-        testId: pom.formattedDataTestId,
-        alternateTestIds: alternates.length ? alternates : undefined,
-        params: stableParams,
+    const alternates = (pom.alternateSelectors ?? [])
+      .slice()
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+    const key = JSON.stringify({
+      role: pom.nativeRole,
+      methodName: pom.methodName,
+      getterNameOverride: pom.getterNameOverride ?? null,
+      selector: pom.selector,
+      alternateSelectors: alternates.length ? alternates : undefined,
+      params: stableParams,
       target: target ?? null,
       emitPrimary: pom.emitPrimary ?? true,
     });
@@ -1074,14 +1074,14 @@ function buildGeneratedGitAttributesFiles(generatedFilePaths: string[]): Generat
     });
 }
 
-function toCSharpTestIdExpression(formattedDataTestId: string, patternKind: PomPatternKind): string {
+function toCSharpTestIdExpression(pattern: PomStringPattern): string {
   // Convert our `${var}` placeholder format into C# interpolated-string `{var}`.
-  const needsInterpolation = isParameterizedPomPattern(patternKind);
+  const needsInterpolation = isParameterizedPomPattern(pattern.patternKind);
   if (!needsInterpolation) {
-    return JSON.stringify(formattedDataTestId);
+    return JSON.stringify(pattern.formatted);
   }
 
-  const inner = formattedDataTestId.replace(/\$\{/g, "{");
+  const inner = pattern.formatted.replace(/\$\{/g, "{");
   // Use verbatim JSON escaping for quotes/backslashes, then adapt to C# string literal.
   // JSON.stringify gives us a JS string literal with escapes, which is close enough for a C# normal string.
   const quoted = JSON.stringify(inner);
@@ -1256,13 +1256,13 @@ function generateAggregatedCSharpFiles(
       const baseMethodName = upperFirst(pom.methodName);
       const baseGetterName = upperFirst(pom.getterNameOverride ?? pom.methodName);
       const locatorName = baseGetterName.endsWith(roleSuffix) ? baseGetterName : `${baseGetterName}${roleSuffix}`;
-      const selectorIsParameterized = isParameterizedPomPattern(pom.selectorPatternKind);
-      const testIdExpr = toCSharpTestIdExpression(pom.formattedDataTestId, pom.selectorPatternKind);
+      const selectorIsParameterized = isParameterizedPomPattern(pom.selector.patternKind);
+      const testIdExpr = toCSharpTestIdExpression(pom.selector);
 
       // Ensure all template variables referenced in formattedDataTestId (e.g. `${key}`)
       // appear in the C# method signature. Stale/manual IR can still omit `key` on
       // parameterized selectors, which would otherwise cause CS0103 compile errors.
-      const templateVarMatches = [...pom.formattedDataTestId.matchAll(/\$\{(\w+)\}/g)];
+      const templateVarMatches = [...pom.selector.formatted.matchAll(/\$\{(\w+)\}/g)];
       const templateVars = templateVarMatches.map(m => m[1]);
       const augmentedParams: Record<string, string> = { ...pom.params };
       for (const v of templateVars) {
@@ -1279,8 +1279,7 @@ function generateAggregatedCSharpFiles(
       const { signature, argNames } = formatCSharpParams(orderedParams);
       const args = argNames.join(", ");
 
-      const allTestIds = [pom.formattedDataTestId, ...(pom.alternateFormattedDataTestIds ?? [])]
-        .filter((v, idx, arr) => v && arr.indexOf(v) === idx);
+      const allTestIds = uniquePomStringPatterns(pom.selector, pom.alternateSelectors);
 
       if (selectorIsParameterized) {
         chunks.push(`    public ILocator ${locatorName}(${signature}) => LocatorByTestId(${testIdExpr});`);
@@ -1310,7 +1309,7 @@ function generateAggregatedCSharpFiles(
         }
         else {
           chunks.push("        Exception? lastError = null;");
-          chunks.push(`        foreach (var testId in new[] { ${allTestIds.map(testId => toCSharpTestIdExpression(testId, inferPomPatternKindFromFormattedString(testId))).join(", ")} })`);
+          chunks.push(`        foreach (var testId in new[] { ${allTestIds.map(testId => toCSharpTestIdExpression(testId)).join(", ")} })`);
           chunks.push("        {");
           chunks.push("            try");
           chunks.push("            {");
@@ -1357,7 +1356,7 @@ function generateAggregatedCSharpFiles(
 
       if (!selectorIsParameterized && allTestIds.length > 1) {
         chunks.push("        Exception? lastError = null;");
-        chunks.push(`        foreach (var testId in new[] { ${allTestIds.map(testId => toCSharpTestIdExpression(testId, inferPomPatternKindFromFormattedString(testId))).join(", ")} })`);
+        chunks.push(`        foreach (var testId in new[] { ${allTestIds.map(testId => toCSharpTestIdExpression(testId)).join(", ")} })`);
         chunks.push("        {");
         chunks.push("            try");
         chunks.push("            {");
@@ -1421,8 +1420,8 @@ function generateAggregatedCSharpFiles(
       }
 
       if (extra.selector.kind === "testId") {
-        const needsTemplate = isParameterizedPomPattern(extra.selector.patternKind);
-        const testIdExpr = toCSharpTestIdExpression(extra.selector.formattedDataTestId, extra.selector.patternKind);
+        const needsTemplate = isParameterizedPomPattern(extra.selector.testId.patternKind);
+        const testIdExpr = toCSharpTestIdExpression(extra.selector.testId);
         if (needsTemplate) {
           chunks.push(`        var testId = ${testIdExpr};`);
           chunks.push("        await LocatorByTestId(testId).ClickAsync();");
@@ -1432,10 +1431,10 @@ function generateAggregatedCSharpFiles(
         }
       }
       else {
-        const rootNeedsTemplate = isParameterizedPomPattern(extra.selector.rootPatternKind);
-        const labelNeedsTemplate = isParameterizedPomPattern(extra.selector.labelPatternKind);
-        const rootExpr = toCSharpTestIdExpression(extra.selector.rootFormattedDataTestId, extra.selector.rootPatternKind);
-        const labelExpr = toCSharpTestIdExpression(extra.selector.formattedLabel, extra.selector.labelPatternKind);
+        const rootNeedsTemplate = isParameterizedPomPattern(extra.selector.rootTestId.patternKind);
+        const labelNeedsTemplate = isParameterizedPomPattern(extra.selector.label.patternKind);
+        const rootExpr = toCSharpTestIdExpression(extra.selector.rootTestId);
+        const labelExpr = toCSharpTestIdExpression(extra.selector.label);
         const exactArg = extra.selector.exact === false ? "false" : "true";
 
         if (rootNeedsTemplate) {
@@ -2830,10 +2829,10 @@ function getWidgetInstancesForView(
   };
 
   for (const dt of dataTestIdSet) {
-    const raw = dt.value;
+    const raw = dt.selectorValue.formatted;
 
-    // Skip keyed/dynamic test ids; instance fields can't represent those ergonomically.
-    if (raw.includes("${")) {
+    // Skip parameterized test ids; instance fields can't represent those ergonomically.
+    if (isParameterizedPomPattern(dt.selectorValue.patternKind)) {
       continue;
     }
 

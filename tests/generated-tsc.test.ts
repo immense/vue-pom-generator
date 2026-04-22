@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import type { IComponentDependencies, IDataTestId } from "../utils";
 import { generateFiles } from "../class-generation";
+import { createPomStringPattern } from "../pom-patterns";
 import { renderTypeScriptLines } from "../typescript-codegen";
 
 function extractClassBlock(content: string, className: string): string {
@@ -81,12 +82,11 @@ describe("generated output", () => {
 
     const formattedDataTestId = "TestComponent-${key}-Save-button";
     const dataTestIdEntry: IDataTestId = {
-      value: formattedDataTestId,
+      selectorValue: createPomStringPattern(formattedDataTestId, "parameterized"),
       pom: {
         nativeRole: "button",
         methodName: "SaveButton",
-        selectorPatternKind: "parameterized",
-        formattedDataTestId,
+        selector: createPomStringPattern(formattedDataTestId, "parameterized"),
         params: { key: "string" },
       },
     };
@@ -102,10 +102,8 @@ describe("generated output", () => {
           name: "selectDatabaseTypeCloud",
           selector: {
             kind: "withinTestIdByLabel",
-            rootFormattedDataTestId: "TestComponent-databaseType-radio",
-            rootPatternKind: "static",
-            formattedLabel: "Cloud",
-            labelPatternKind: "static",
+            rootTestId: createPomStringPattern("TestComponent-databaseType-radio", "static"),
+            label: createPomStringPattern("Cloud", "static"),
             exact: true,
           },
           params: { annotationText: "string = \"\"" },
@@ -152,13 +150,12 @@ describe("generated output", () => {
 
     const componentName = "ItemsPage";
     const dataTestIdEntry: IDataTestId = {
-      value: "items-check-${key}",
+      selectorValue: createPomStringPattern("items-check-${key}", "parameterized"),
       pom: {
         nativeRole: "input",
         methodName: "ItemsCheckByKey",
-        selectorPatternKind: "parameterized",
-        formattedDataTestId: "items-check-${key}",
-        // Simulate stale IR that predates selectorPatternKind and forgot to carry `key`.
+        selector: createPomStringPattern("items-check-${key}", "parameterized"),
+        // Simulate stale IR that predates the structured selector object and forgot to carry `key`.
         params: { text: "string", annotationText: 'string = ""' },
       },
     };
@@ -205,13 +202,12 @@ describe("generated output", () => {
     );
 
     const navigationEntry: IDataTestId = {
-      value: "TenantListPage-NewTenant-routerlink",
+      selectorValue: createPomStringPattern("TenantListPage-NewTenant-routerlink", "static"),
       targetPageObjectModelClass: "NewTenantPage",
       pom: {
         nativeRole: "button",
         methodName: "NewTenant",
-        selectorPatternKind: "static",
-        formattedDataTestId: "TenantListPage-NewTenant-routerlink",
+        selector: createPomStringPattern("TenantListPage-NewTenant-routerlink", "static"),
         params: {},
       },
     };
@@ -230,12 +226,11 @@ describe("generated output", () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set([{
-        value: "TenantDetailsEditForm-Name-input",
+        selectorValue: createPomStringPattern("TenantDetailsEditForm-Name-input", "static"),
         pom: {
           nativeRole: "input",
           methodName: "TenantName",
-          selectorPatternKind: "static",
-          formattedDataTestId: "TenantDetailsEditForm-Name-input",
+          selector: createPomStringPattern("TenantDetailsEditForm-Name-input", "static"),
           params: { text: "string", annotationText: 'string = ""' },
         },
       }]),
@@ -451,7 +446,7 @@ describe("generated output", () => {
       usedComponentSet: new Set(["ImmyDxDataGrid"]),
       dataTestIdSet: new Set([
         {
-          value: "UsersTable-Refresh-button",
+          selectorValue: createPomStringPattern("UsersTable-Refresh-button", "static"),
         },
       ]),
       generatedMethods: new Map(),
@@ -520,7 +515,7 @@ describe("generated output", () => {
       usedComponentSet: new Set(["Page", "ImmyDxDataGrid"]),
       dataTestIdSet: new Set([
         {
-          value: "UsersView-EnableSessionEmails-toggle",
+          selectorValue: createPomStringPattern("UsersView-EnableSessionEmails-toggle", "static"),
         },
       ]),
       generatedMethods: new Map(),
@@ -626,23 +621,21 @@ describe("generated output", () => {
     const childB = "ChildB";
 
     const childAEntry: IDataTestId = {
-      value: "ChildA-OnlyInA-button",
+      selectorValue: createPomStringPattern("ChildA-OnlyInA-button", "static"),
       pom: {
         nativeRole: "button",
         methodName: "OnlyInAButton",
-        selectorPatternKind: "static",
-        formattedDataTestId: "ChildA-OnlyInA-button",
+        selector: createPomStringPattern("ChildA-OnlyInA-button", "static"),
         params: {},
       },
     };
 
     const childBEntry: IDataTestId = {
-      value: "ChildB-SomethingElse-button",
+      selectorValue: createPomStringPattern("ChildB-SomethingElse-button", "static"),
       pom: {
         nativeRole: "button",
         methodName: "SomethingElseButton",
-        selectorPatternKind: "static",
-        formattedDataTestId: "ChildB-SomethingElse-button",
+        selector: createPomStringPattern("ChildB-SomethingElse-button", "static"),
         params: {},
       },
     };

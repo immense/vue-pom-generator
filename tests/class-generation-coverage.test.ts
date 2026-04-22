@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import type { IComponentDependencies, IDataTestId } from "../utils";
 import { generateFiles } from "../class-generation";
+import { createPomStringPattern } from "../pom-patterns";
 import { renderTypeScriptLines } from "../typescript-codegen";
 
 function writeFile(filePath: string, content: string) {
@@ -253,7 +254,7 @@ describe("class-generation coverage", () => {
       );
 
       const dt: IDataTestId = {
-        value: "TenantListPage-NewTenant-routerlink",
+        selectorValue: createPomStringPattern("TenantListPage-NewTenant-routerlink", "static"),
         targetPageObjectModelClass: "NewTenantPage",
       };
 
@@ -266,7 +267,7 @@ describe("class-generation coverage", () => {
       const depsForm = makeDeps({
         filePath: path.join(tempRoot, "src", "components", "TenantDetailsEditForm.vue"),
         isView: false,
-        dataTestIdSet: new Set([{ value: "TenantDetailsEditForm-Name-input" }]),
+        dataTestIdSet: new Set([{ selectorValue: createPomStringPattern("TenantDetailsEditForm-Name-input", "static") }]),
         generatedMethods: new Map([
           ["typeTenantName", { params: "name: string", argNames: ["name"] }],
         ]),
@@ -318,7 +319,7 @@ describe("class-generation coverage", () => {
       );
 
       const navigationEntry: IDataTestId = {
-        value: "TenantListPage-NewTenant-routerlink",
+        selectorValue: createPomStringPattern("TenantListPage-NewTenant-routerlink", "static"),
         targetPageObjectModelClass: "NewTenantPage",
       };
 
@@ -332,7 +333,7 @@ describe("class-generation coverage", () => {
       const depsForm = makeDeps({
         filePath: path.join(tempRoot, "src", "components", "TenantDetailsEditForm.vue"),
         isView: false,
-        dataTestIdSet: new Set([{ value: "TenantDetailsEditForm-Name-input" }]),
+        dataTestIdSet: new Set([{ selectorValue: createPomStringPattern("TenantDetailsEditForm-Name-input", "static") }]),
         generatedMethods: new Map([
           ["typeTenantName", { params: "name: string", argNames: ["name"] }],
         ]),
@@ -438,7 +439,7 @@ describe("class-generation coverage", () => {
       const depsUsersView = makeDeps({
         filePath: path.join(tempRoot, "UsersView.vue"),
         isView: true,
-        dataTestIdSet: new Set([{ value: "UsersView-EnableSessionEmails-toggle" }]),
+        dataTestIdSet: new Set([{ selectorValue: createPomStringPattern("UsersView-EnableSessionEmails-toggle", "static") }]),
       });
 
       // Provide custom widget helpers so the generated file has imports for ToggleWidget.
@@ -529,7 +530,7 @@ describe("class-generation coverage", () => {
           makeDeps({
             filePath: viewPath,
             isView: true,
-            dataTestIdSet: new Set<IDataTestId>([{ value: "List-FetchData-button" }]),
+            dataTestIdSet: new Set<IDataTestId>([{ selectorValue: createPomStringPattern("List-FetchData-button", "static") }]),
           }),
         ],
       ]);
@@ -633,17 +634,16 @@ describe("class-generation coverage", () => {
     // `{key}` — causing a CS0103 compile error.  Both params must appear together.
     //
     // Simulate stale IR where params lacks `key` even though the selector is parameterized.
-    // The C# generator must add it when the formattedDataTestId contains `${key}`.
+    // The C# generator must add it when the structured selector is parameterized.
     const tempRoot = makeTempRoot("vue-pom-csharp-dyn-input-");
 
     try {
       const dt: IDataTestId = {
-        value: "items-check-${key}",
+        selectorValue: createPomStringPattern("items-check-${key}", "parameterized"),
         pom: {
           nativeRole: "input",
           methodName: "ItemsCheckByKey",
-          selectorPatternKind: "parameterized",
-          formattedDataTestId: "items-check-${key}",
+          selector: createPomStringPattern("items-check-${key}", "parameterized"),
           // Broken params as currently produced by utils.ts: key is absent
           params: { text: "string", annotationText: "string = \"\"" },
         },
@@ -690,12 +690,11 @@ describe("class-generation coverage", () => {
 
     try {
       const dt: IDataTestId = {
-        value: "TenantSelectBox-StateSelectedTenant-input",
+        selectorValue: createPomStringPattern("TenantSelectBox-StateSelectedTenant-input", "static"),
         pom: {
           nativeRole: "input",
           methodName: "StateSelectedTenant",
-          selectorPatternKind: "static",
-          formattedDataTestId: "TenantSelectBox-StateSelectedTenant-input",
+          selector: createPomStringPattern("TenantSelectBox-StateSelectedTenant-input", "static"),
           params: { text: "string", annotationText: "string = \"\"" },
         },
       };
@@ -734,25 +733,23 @@ describe("class-generation coverage", () => {
 
     try {
       const keyedNav: IDataTestId = {
-        value: "NavHost-${value}-immynavitem",
+        selectorValue: createPomStringPattern("NavHost-${value}-immynavitem", "parameterized"),
         pom: {
           nativeRole: "button",
           methodName: "ValueByKey",
-          selectorPatternKind: "parameterized",
-          formattedDataTestId: "NavHost-${key}-immynavitem",
+          selector: createPomStringPattern("NavHost-${key}-immynavitem", "parameterized"),
           params: { key: "string" },
         },
         targetPageObjectModelClass: "UsersPage",
       };
 
       const alternateNav: IDataTestId = {
-        value: "NavHost-SystemUpdate-routerlink",
+        selectorValue: createPomStringPattern("NavHost-SystemUpdate-routerlink", "static"),
         pom: {
           nativeRole: "button",
           methodName: "SystemUpdate",
-          selectorPatternKind: "static",
-          formattedDataTestId: "NavHost-SystemUpdate-routerlink",
-          alternateFormattedDataTestIds: ["NavHost-Update-routerlink"],
+          selector: createPomStringPattern("NavHost-SystemUpdate-routerlink", "static"),
+          alternateSelectors: [createPomStringPattern("NavHost-Update-routerlink", "static")],
           params: {},
         },
         targetPageObjectModelClass: "SystemUpdatePage",

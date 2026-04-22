@@ -53,7 +53,7 @@ import {
   isTemplateLiteral,
 } from "@babel/types";
 import { parse, parseExpression } from "@babel/parser";
-import type { PomPatternKind } from "./pom-patterns";
+import { createPomStringPattern, pomStringPatternEquals, type PomPatternKind, type PomStringPattern } from "./pom-patterns";
 import { createTypeScriptWriter } from "./typescript-codegen";
 
 export { isSimpleExpressionNode } from "./compiler/ast-guards";
@@ -2856,6 +2856,7 @@ export function applyResolvedDataTestId(args: {
     ? toPomKeyPattern(dataTestId)
     : dataTestId.value;
   const selectorPatternKind: PomPatternKind = dataTestId.kind === "template" ? "parameterized" : "static";
+  const selectorPattern = createPomStringPattern(formattedDataTestIdForPom, selectorPatternKind);
   const selectorIsParameterized = selectorPatternKind === "parameterized";
 
   const deriveBaseMethodNameFromHint = (hint: string | undefined) => {
@@ -3011,10 +3012,10 @@ export function applyResolvedDataTestId(args: {
     }
 
     const existingSelectors = [
-      existingPom.formattedDataTestId,
-      ...(existingPom.alternateFormattedDataTestIds ?? []),
+      existingPom.selector,
+      ...(existingPom.alternateSelectors ?? []),
     ];
-    const sharesSelectorIdentity = existingSelectors.includes(formattedDataTestIdForPom);
+    const sharesSelectorIdentity = existingSelectors.some(existingSelector => pomStringPatternEquals(existingSelector, selectorPattern));
 
     // Parameterized selectors are only safe to merge when both entries already resolve to the exact
     // same selector pattern. Distinct dynamic lists should still force authors to
@@ -3041,18 +3042,15 @@ export function applyResolvedDataTestId(args: {
     }
 
     // Merge the selector(s) into the existing primary.
-    if (existingPom.formattedDataTestId !== formattedDataTestIdForPom) {
-      existingPom.alternateFormattedDataTestIds ??= [];
-      if (!existingPom.alternateFormattedDataTestIds.includes(formattedDataTestIdForPom)) {
-        existingPom.alternateFormattedDataTestIds.push(formattedDataTestIdForPom);
+    if (!pomStringPatternEquals(existingPom.selector, selectorPattern)) {
+      existingPom.alternateSelectors ??= [];
+      if (!(existingPom.alternateSelectors ?? []).some(existingSelector => pomStringPatternEquals(existingSelector, selectorPattern))) {
+        existingPom.alternateSelectors.push(selectorPattern);
       }
     }
 
-    if (selectorIsParameterized) {
-      existingPom.selectorPatternKind = "parameterized";
-      if (!Object.prototype.hasOwnProperty.call(existingPom.params, "key")) {
-        existingPom.params.key = keyTypeFromValues;
-      }
+    if (selectorIsParameterized && !Object.prototype.hasOwnProperty.call(existingPom.params, "key")) {
+      existingPom.params.key = keyTypeFromValues;
     }
 
     return true;
@@ -3254,7 +3252,10 @@ export function applyResolvedDataTestId(args: {
 
   const childComponentName = args.element.tag;
   const dataTestIdEntry: IDataTestId = {
-    value: getAttributeValueText(dataTestId),
+    selectorValue: createPomStringPattern(
+      getAttributeValueText(dataTestId),
+      dataTestId.kind === "template" ? "parameterized" : "static",
+    ),
     templateLiteral: undefined,
     ...entryOverrides,
   };
@@ -3265,9 +3266,8 @@ export function applyResolvedDataTestId(args: {
     nativeRole: normalizedRole,
     methodName,
     getterNameOverride,
-    selectorPatternKind,
-    formattedDataTestId: formattedDataTestIdForPom,
-    alternateFormattedDataTestIds: undefined,
+    selector: selectorPattern,
+    alternateSelectors: undefined,
     mergeKey: args.pomMergeKey,
     params,
     keyValuesOverride: args.keyValuesOverride ?? null,
@@ -3349,20 +3349,21 @@ export function applyResolvedDataTestId(args: {
       ? Object.fromEntries(Object.entries(pom.params).sort((a, b) => a[0].localeCompare(b[0])))
       : undefined;
 
-    const alternates = (pom.alternateFormattedDataTestIds ?? []).slice().sort();
+    const alternates = (pom.alternateSelectors ?? [])
+      .slice()
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
 
     // Deduplicate by a stable key rather than by emitted code strings.
-    const key = JSON.stringify({
-      kind: "primary",
-      role: pom.nativeRole,
-      methodName: pom.methodName,
-      getterNameOverride: pom.getterNameOverride ?? null,
-      selectorPatternKind: pom.selectorPatternKind,
-      formattedDataTestId: pom.formattedDataTestId,
-      alternateFormattedDataTestIds: alternates.length ? alternates : undefined,
-      params: stableParams,
-      target: dataTestIdEntry.targetPageObjectModelClass ?? null,
-      emitPrimary: pom.emitPrimary ?? true,
+      const key = JSON.stringify({
+        kind: "primary",
+        role: pom.nativeRole,
+        methodName: pom.methodName,
+        getterNameOverride: pom.getterNameOverride ?? null,
+        selector: pom.selector,
+        alternateSelectors: alternates.length ? alternates : undefined,
+        params: stableParams,
+        target: dataTestIdEntry.targetPageObjectModelClass ?? null,
+        emitPrimary: pom.emitPrimary ?? true,
     });
 
     const seen = args.generatedMethodContentByComponent.get(args.parentComponentName) ?? new Set<string>();
@@ -3561,10 +3562,8 @@ export function applyResolvedDataTestId(args: {
           name: generatedName,
           selector: {
             kind: "withinTestIdByLabel",
-            rootFormattedDataTestId: wrapperTestId,
-            rootPatternKind: selectorPatternKind,
-            formattedLabel: label,
-            labelPatternKind: "static",
+            rootTestId: createPomStringPattern(wrapperTestId, selectorPatternKind),
+            label: createPomStringPattern(label, "static"),
             exact: true,
           },
           params: { annotationText: `string = ""` },
@@ -3593,10 +3592,8 @@ export function applyResolvedDataTestId(args: {
       name: generatedName,
       selector: {
         kind: "withinTestIdByLabel",
-        rootFormattedDataTestId: wrapperTestId,
-        rootPatternKind: selectorPatternKind,
-        formattedLabel: "${value}",
-        labelPatternKind: "parameterized",
+        rootTestId: createPomStringPattern(wrapperTestId, selectorPatternKind),
+        label: createPomStringPattern("${value}", "parameterized"),
         exact: true,
       },
       params: { value: "string", annotationText: `string = ""` },
@@ -3649,8 +3646,7 @@ export function applyResolvedDataTestId(args: {
         name: generatedName,
         selector: {
           kind: "testId",
-          formattedDataTestId: formattedDataTestIdForPom,
-          patternKind: selectorPatternKind,
+          testId: selectorPattern,
         },
         keyLiteral: rawValue,
         params: { wait: "boolean = true" },
@@ -3685,7 +3681,7 @@ export function applyResolvedDataTestId(args: {
 }
 
 export interface IDataTestId {
-  value: string;
+  selectorValue: PomStringPattern;
 
   /** Optional parsed/constructed template literal for AST-based formatting in codegen. */
   templateLiteral?: TemplateLiteral;
@@ -3704,7 +3700,7 @@ export interface IDataTestId {
 /**
  * Structured representation of a generated element for POM emission.
  *
- * - `selectorPatternKind` tells emitters whether this selector is static or parameterized.
+ * - `selector` carries both the rendered selector text and whether it is static or parameterized.
  * - `params` is TypeScript-flavored today because TS is our reference emitter;
  *   C# emission maps these params to C# types.
  */
@@ -3714,12 +3710,10 @@ export interface PomPrimarySpec {
   methodName: string;
   /** Optional override for the generated locator getter name (used for edge-case collision avoidance). */
   getterNameOverride?: string;
-  /** Whether the selector is a plain test id or a parameterized `${key}` template pattern. */
-  selectorPatternKind: PomPatternKind;
   /** Test id pattern used by generated POM methods. Parameterized patterns still render with `${key}`. */
-  formattedDataTestId: string;
-  /** Additional test id patterns that should be treated as equivalent to formattedDataTestId (merge-by-action). */
-  alternateFormattedDataTestIds?: string[];
+  selector: PomStringPattern;
+  /** Additional selector patterns that should be treated as equivalent to `selector` (merge-by-action). */
+  alternateSelectors?: PomStringPattern[];
 
   /** Optional key used to decide whether distinct elements should be merged into one POM member. */
   mergeKey?: string;
@@ -3735,18 +3729,15 @@ export interface PomPrimarySpec {
 export type PomSelectorSpec =
   | {
     kind: "testId";
-    patternKind: PomPatternKind;
     /** Static or parameterized test id; parameterized patterns render with `${key}`. */
-    formattedDataTestId: string;
+    testId: PomStringPattern;
   }
   | {
     kind: "withinTestIdByLabel";
-    rootPatternKind: PomPatternKind;
     /** Wrapper/root test id to scope the label search under. */
-    rootFormattedDataTestId: string;
-    labelPatternKind: PomPatternKind;
+    rootTestId: PomStringPattern;
     /** Visible label text; parameterized labels may contain `${value}`. */
-    formattedLabel: string;
+    label: PomStringPattern;
     exact?: boolean;
   };
 
