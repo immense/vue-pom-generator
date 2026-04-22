@@ -32,7 +32,7 @@ import {
   getContainedInVForDirectiveKeyValue,
   getContainedInVForDirectiveKeyRuntimeValue,
   getContainedInSlotDataKeyValue,
-  renderTemplateLiteralExpressionFromFragment,
+  renderTemplateLiteralExpression,
   tryGetContainedInStaticVForSourceLiteralValues,
   getKeyDirectiveValue,
   getKeyDirectiveRuntimeValue,
@@ -689,7 +689,7 @@ function tryWrapClickDirectiveForTestEvents(
     // Template AttributeValues keep only the fragment body (`line-${item.id}`), because most call sites
     // splice that fragment into a larger generated template. Click instrumentation needs a standalone
     // JavaScript template-literal expression again, so we rebuild it here from the parsed quasis/spans.
-    return `(${renderTemplateLiteralExpressionFromFragment(resolvedRuntimeTestId.template)})`;
+    return `(${renderTemplateLiteralExpression(resolvedRuntimeTestId)})`;
   };
 
   const testIdExpression = getTestIdExpressionForNode();
@@ -1114,13 +1114,17 @@ export function createTestIdTransform(
       return getContainedInSlotDataKeyValue(element, hierarchyMap);
     };
 
-    // `bestKeyPlaceholder` is the selector-side template fragment we splice into generated
-    // `data-testid` values. Expected shapes:
+    // `bestKeyPlaceholder` and `bestRuntimeKeyPlaceholder` are already-final template fragments
+    // that get concatenated directly into generated `data-testid` template literals later on.
+    // They are not string-replaced after the fact.
+    //
+    // Expected shapes:
     // - direct v-for key `item.id`        -> `${item.id}`
     // - template-literal key `line-${id}` -> `line-${id}`
     //
     // `bestKeyVariable` is only populated for raw expressions (typically slot-scope fallbacks)
-    // so downstream method generation can still expose a stable `key` parameter name.
+    // so downstream method generation can still expose a stable `key` parameter name instead of
+    // collapsing every keyed helper into a generic `...ByKey(key: string)` signature.
     const bestKeyTemplateFragment = toInterpolatedTemplateFragment(getBestAvailableKeyValue());
     const bestKeyPlaceholder = bestKeyTemplateFragment?.template ?? null;
     const bestKeyVariable = bestKeyTemplateFragment?.rawExpression ?? null;

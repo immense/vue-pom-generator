@@ -115,16 +115,26 @@ export interface NativeWrappersMap {
   }
 }
 
+interface ParsedTemplateFragment {
+  source: string;
+  templateLiteral: TemplateLiteral;
+}
+
 export type AttributeValue =
   | { kind: "static"; value: string }
-  | { kind: "template"; template: string };
+  | { kind: "template"; template: string; parsedTemplate: ParsedTemplateFragment };
 
 export function staticAttributeValue(value: string): AttributeValue {
   return { kind: "static", value };
 }
 
 export function templateAttributeValue(template: string): AttributeValue {
-  return { kind: "template", template };
+  const parsedTemplate = tryParseTemplateFragment(template);
+  if (!parsedTemplate) {
+    throw new Error(`[vue-pom-generator] Failed to parse generated template fragment: ${template}`);
+  }
+
+  return { kind: "template", template, parsedTemplate };
 }
 
 export function getAttributeValueText(value: AttributeValue): string {
@@ -529,39 +539,31 @@ function getKeyDirective(node: ElementNode): DirectiveNode | null {
 }
 
 /**
- * Attempts to unwrap a template-literal expression into its body text.
- *
- * Accepts either the original Vue `SimpleExpressionNode` or a raw expression string.
+ * Attempts to unwrap a full template-literal expression source into its body text.
  *
  * @example
- * tryUnwrapTemplateLiteralExpressionSource("`row-${item.id}`")
+ * tryUnwrapTemplateLiteralSource("`row-${item.id}`")
  * // => { template: "row-${item.id}", expressionCount: 1 }
  *
  * @example
- * tryUnwrapTemplateLiteralExpressionSource("item.id")
+ * tryUnwrapTemplateLiteralSource("item.id")
  * // => null
  */
-function tryUnwrapTemplateLiteralExpressionSource(expression: SimpleExpressionNode | string | null | undefined): { template: string; expressionCount: number } | null {
-  const rawSource = typeof expression === "string"
-    ? expression.trim()
-    : (expression?.content ?? "").trim();
+function tryUnwrapTemplateLiteralSource(source: string): { template: string; expressionCount: number } | null {
+  const rawSource = source.trim();
   if (!rawSource) {
     return null;
   }
 
-  let ast = typeof expression === "string"
-    ? null
-    : (expression?.ast as BabelNode | null | false | undefined);
-  if (!ast || !isTemplateLiteral(ast)) {
-    try {
-      ast = parseExpression(rawSource, { plugins: ["typescript"] }) as BabelNode;
-    }
-    catch {
-      return null;
-    }
+  let ast: BabelNode | null | false | undefined = null;
+  try {
+    ast = parseExpression(rawSource, { plugins: ["typescript"] }) as BabelNode;
+  }
+  catch {
+    return null;
   }
 
-  if (!isTemplateLiteral(ast)) {
+  if (!ast || !isTemplateLiteral(ast)) {
     return null;
   }
 
@@ -583,20 +585,45 @@ function tryUnwrapTemplateLiteralExpressionSource(expression: SimpleExpressionNo
 }
 
 /**
+ * Attempts to unwrap a template-literal expression node into its body text.
+ *
+ * Accepts the original Vue template-expression node so callers stay on the AST-driven path.
+ * Vue commonly represents template-literal bindings as `CompoundExpressionNode`s even when the
+ * attached Babel AST is a single `TemplateLiteral`, so this helper intentionally accepts both
+ * simple and compound expression nodes.
+ *
+ * @example
+ * const exp = findDirectiveByName(node, "bind", "key")?.exp as SimpleExpressionNode | CompoundExpressionNode;
+ * tryUnwrapTemplateLiteralExpressionSource(exp)
+ * // => { template: "row-${item.id}", expressionCount: 1 }
+ *
+ * @example
+ * const exp = findDirectiveByName(node, "bind", "key")?.exp as SimpleExpressionNode | CompoundExpressionNode;
+ * tryUnwrapTemplateLiteralExpressionSource(exp)
+ * // => null
+ */
+function tryUnwrapTemplateLiteralExpressionSource(expression: SimpleExpressionNode | CompoundExpressionNode | null): { template: string; expressionCount: number } | null {
+  const rawSource = expression
+    ? (expression.loc?.source ?? stringifyExpression(expression)).trim()
+    : "";
+  return rawSource ? tryUnwrapTemplateLiteralSource(rawSource) : null;
+}
+
+/**
  * Parses the inside of a template literal as a `TemplateLiteral` AST node.
  *
  * `parseExpression()` only accepts complete JavaScript expressions, so fragments like
  * `line-${item.id}` need synthetic backticks before they can be parsed.
  *
  * @example
- * tryParseTemplateFragment("line-${item.id}")?.expressions.length
+ * tryParseTemplateFragment("line-${item.id}")?.templateLiteral.expressions.length
  * // => 1
  *
  * @example
- * tryParseTemplateFragment("plain-text")?.expressions.length
+ * tryParseTemplateFragment("plain-text")?.templateLiteral.expressions.length
  * // => 0
  */
-function tryParseTemplateFragment(fragment: string): TemplateLiteral | null {
+function tryParseTemplateFragment(fragment: string): ParsedTemplateFragment | null {
   if (!fragment) {
     return null;
   }
@@ -604,8 +631,9 @@ function tryParseTemplateFragment(fragment: string): TemplateLiteral | null {
   try {
     // A fragment like `line-${item.id}` is the inside of a template literal, not a standalone
     // JavaScript expression, so we synthesize the surrounding backticks before parsing.
-    const ast = parseExpression(`\`${fragment}\``, { plugins: ["typescript"] }) as BabelNode;
-    return isTemplateLiteral(ast) ? ast : null;
+    const source = `\`${fragment}\``;
+    const ast = parseExpression(source, { plugins: ["typescript"] }) as BabelNode;
+    return isTemplateLiteral(ast) ? { source, templateLiteral: ast } : null;
   }
   catch {
     return null;
@@ -624,7 +652,7 @@ function tryParseTemplateFragment(fragment: string): TemplateLiteral | null {
  * // => false
  */
 export function hasTemplateInterpolationExpressions(fragment: string): boolean {
-  return (tryParseTemplateFragment(fragment)?.expressions.length ?? 0) > 0;
+  return (tryParseTemplateFragment(fragment)?.templateLiteral.expressions.length ?? 0) > 0;
 }
 
 export interface InterpolatedTemplateFragment {
@@ -662,22 +690,25 @@ export function toInterpolatedTemplateFragment(fragment: string | null): Interpo
 }
 
 /**
- * Reconstructs a full template-literal expression from a fragment using the parsed quasis/expressions.
+ * Reconstructs a full template-literal expression from a template AttributeValue using its parsed quasis/expressions.
  *
  * @example
- * renderTemplateLiteralExpressionFromFragment("line-${item.id}")
+ * const templateValue = templateAttributeValue("line-${item.id}");
+ * if (templateValue.kind === "template") {
+ *   renderTemplateLiteralExpression(templateValue)
+ * }
  * // => "`line-${item.id}`"
  *
  * @example
- * renderTemplateLiteralExpressionFromFragment("plain-text")
+ * const templateValue = templateAttributeValue("plain-text");
+ * if (templateValue.kind === "template") {
+ *   renderTemplateLiteralExpression(templateValue)
+ * }
  * // => "`plain-text`"
  */
-export function renderTemplateLiteralExpressionFromFragment(fragment: string): string {
-  const templateLiteralSource = `\`${fragment}\``;
-  const templateLiteral = tryParseTemplateFragment(fragment);
-  if (!templateLiteral) {
-    return templateLiteralSource;
-  }
+export function renderTemplateLiteralExpression(templateValue: Extract<AttributeValue, { kind: "template" }>): string {
+  const templateLiteralSource = templateValue.parsedTemplate.source;
+  const templateLiteral = templateValue.parsedTemplate.templateLiteral;
 
   // Render through the shared TypeScript writer so this codegen path follows the same
   // quoting/newline conventions as the rest of the repo's generated TypeScript output.
@@ -716,13 +747,20 @@ export function renderTemplateLiteralExpressionFromFragment(fragment: string): s
  */
 export function getKeyDirectiveValue(node: ElementNode, _context: TransformContext | null = null): string | null {
   const keyDirective = getKeyDirective(node);
-  if (keyDirective?.exp) {
-    const value = stringifyExpression(keyDirective.exp).trim();
+  const keyExpression = keyDirective?.exp && (
+    keyDirective.exp.type === NodeTypes.SIMPLE_EXPRESSION
+    || keyDirective.exp.type === NodeTypes.COMPOUND_EXPRESSION
+  )
+    ? keyDirective.exp as SimpleExpressionNode | CompoundExpressionNode
+    : null;
+
+  if (keyExpression) {
+    const value = stringifyExpression(keyExpression).trim();
     if (value) {
       // Inline template-literal keys directly into the generated data-testid template so the
       // resulting expression uses the compiler-prefixed component scope (`_ctx.*`) while still
       // preserving local v-for / slot bindings without nesting an extra template literal.
-      const templateLiteral = tryUnwrapTemplateLiteralExpressionSource(value);
+      const templateLiteral = tryUnwrapTemplateLiteralSource(value);
       if (templateLiteral) {
         return templateLiteral.template;
       }
@@ -731,9 +769,9 @@ export function getKeyDirectiveValue(node: ElementNode, _context: TransformConte
     }
   }
 
-  const rawSource = keyDirective?.exp?.loc.source?.trim();
+  const rawSource = keyExpression?.loc.source?.trim();
   if (rawSource) {
-    const templateLiteral = tryUnwrapTemplateLiteralExpressionSource(rawSource);
+    const templateLiteral = tryUnwrapTemplateLiteralExpressionSource(keyExpression);
     return templateLiteral ? templateLiteral.template : `\${${rawSource}}`;
   }
 
@@ -742,16 +780,22 @@ export function getKeyDirectiveValue(node: ElementNode, _context: TransformConte
 
 export function getKeyDirectiveRuntimeValue(node: ElementNode): string | null {
   const keyDirective = getKeyDirective(node);
-  const rawSource = keyDirective?.exp?.loc.source?.trim();
+  const keyExpression = keyDirective?.exp && (
+    keyDirective.exp.type === NodeTypes.SIMPLE_EXPRESSION
+    || keyDirective.exp.type === NodeTypes.COMPOUND_EXPRESSION
+  )
+    ? keyDirective.exp as SimpleExpressionNode | CompoundExpressionNode
+    : null;
+  const rawSource = keyExpression?.loc.source?.trim();
   if (rawSource) {
-    const templateLiteral = tryUnwrapTemplateLiteralExpressionSource(rawSource);
+    const templateLiteral = tryUnwrapTemplateLiteralExpressionSource(keyExpression);
     return templateLiteral ? templateLiteral.template : `\${${rawSource}}`;
   }
 
-  if (keyDirective?.exp) {
-    const value = stringifyExpression(keyDirective.exp).trim();
+  if (keyExpression) {
+    const value = stringifyExpression(keyExpression).trim();
     if (value) {
-      const templateLiteral = tryUnwrapTemplateLiteralExpressionSource(value);
+      const templateLiteral = tryUnwrapTemplateLiteralExpressionSource(keyExpression);
       return templateLiteral ? templateLiteral.template : `\${${value}}`;
     }
   }
@@ -2364,7 +2408,8 @@ export function tryGetExistingElementDataTestId(node: ElementNode, attributeName
 }
 
 function isTemplatePlaceholder(part: string) {
-  const templateLiteral = tryParseTemplateFragment(part);
+  const parsedTemplate = tryParseTemplateFragment(part);
+  const templateLiteral = parsedTemplate?.templateLiteral;
   return !!templateLiteral
     && templateLiteral.expressions.length === 1
     && templateLiteral.quasis.length === 2

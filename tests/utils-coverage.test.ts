@@ -39,7 +39,7 @@ import {
   nodeHandlerAttributeValue,
   nodeHasClickDirective,
   nodeHasToDirective,
-  renderTemplateLiteralExpressionFromFragment,
+  renderTemplateLiteralExpression,
   setResolveToComponentNameFn,
   setRouteNameToComponentNameMap,
   staticAttributeValue,
@@ -424,7 +424,11 @@ describe("utils.ts coverage", () => {
       template: "line-${item.id}",
       rawExpression: null,
     });
-    expect(renderTemplateLiteralExpressionFromFragment("line-${item.id}")).toBe("`line-${item.id}`");
+    const templateValue = templateAttributeValue("line-${item.id}");
+    expect(templateValue.kind).toBe("template");
+    if (templateValue.kind === "template") {
+      expect(renderTemplateLiteralExpression(templateValue)).toBe("`line-${item.id}`");
+    }
   });
 
   it("extracts id/name identifiers", () => {
