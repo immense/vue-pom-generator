@@ -187,6 +187,55 @@ describe("generated output", () => {
     }
   });
 
+  it("typechecks parameterized input methods when selector vars are not named key", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-selector-vars-"));
+
+    writePlaywrightTypeStub(tempRoot);
+
+    const basePagePath = path.join(tempRoot, "base-page.ts");
+    copyRepoFixture(tempRoot, "base-page.full.ts", "base-page.ts");
+    copyRepoFixture(tempRoot, "pointer.ts", "pointer.ts");
+
+    const componentName = "ItemsPage";
+    const dataTestIdEntry: IDataTestId = {
+      selectorValue: createPomStringPattern("items-check-${itemId}", "parameterized"),
+      pom: {
+        nativeRole: "input",
+        methodName: "ItemsCheckByKey",
+        selector: createPomStringPattern("items-check-${itemId}", "parameterized"),
+        // Simulate stale/manual IR that forgot to carry the selector variable name.
+        params: { text: "string", annotationText: 'string = ""' },
+      },
+    };
+
+    const deps: IComponentDependencies = {
+      filePath: path.join(tempRoot, `${componentName}.vue`),
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set([dataTestIdEntry]),
+      generatedMethods: new Map(),
+      isView: false,
+    };
+
+    const outDir = path.join(tempRoot, "out");
+    await generateFiles(new Map([[componentName, deps]]), new Map(), basePagePath, {
+      outDir,
+      projectRoot: tempRoot,
+    });
+
+    const generatedFilePath = path.join(outDir, "page-object-models.g.ts");
+    const generatedContent = fs.readFileSync(generatedFilePath, "utf8");
+    expect(generatedContent).toMatch(/async typeItemsCheckByKey\(itemId: string, text: string, annotationText: string = ""\)/);
+    expect(generatedContent).toContain("keyedLocators((itemId: string) => this.locatorByTestId(`items-check-${itemId}`))");
+
+    const result = runTscNoEmit([generatedFilePath, basePagePath], { cwd: tempRoot });
+    if (result.status !== 0) {
+      const stdout = (result.stdout || "").toString();
+      const stderr = (result.stderr || "").toString();
+      throw new Error(`tsc failed (exit ${result.status})\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`);
+    }
+  });
+
   it("typechecks split TypeScript output with barrel exports and stub targets", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-split-"));
 

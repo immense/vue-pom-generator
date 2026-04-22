@@ -685,6 +685,50 @@ describe("class-generation coverage", () => {
     }
   });
 
+  it("C#: parameterized selectors recover non-key template variables from structured metadata", async () => {
+    const tempRoot = makeTempRoot("vue-pom-csharp-selector-vars-");
+
+    try {
+      const dt: IDataTestId = {
+        selectorValue: createPomStringPattern("items-check-${itemId}", "parameterized"),
+        pom: {
+          nativeRole: "input",
+          methodName: "ItemsCheckByKey",
+          selector: createPomStringPattern("items-check-${itemId}", "parameterized"),
+          // Simulate stale/manual IR that forgot to carry the selector variable name.
+          params: { text: "string", annotationText: "string = \"\"" },
+        },
+      };
+
+      const componentHierarchyMap = new Map<string, IComponentDependencies>([
+        [
+          "ItemsPage",
+          makeDeps({
+            filePath: path.join(tempRoot, "src", "views", "ItemsPage.vue"),
+            isView: true,
+            dataTestIdSet: new Set([dt]),
+          }),
+        ],
+      ]);
+
+      const outDir = path.join(tempRoot, "pom");
+      await generateFiles(componentHierarchyMap, new Map(), null as any, {
+        outDir,
+        emitLanguages: ["csharp"],
+        csharp: { namespace: "Test.Generated" },
+      });
+
+      const csFile = path.join(outDir, "page-object-models.g.cs");
+      const cs = readFile(csFile);
+
+      expect(cs).toContain("string itemId");
+      expect(cs).toContain("items-check-{itemId}");
+      expect(cs).toMatch(/ItemsCheckByKeyInput\(string itemId/);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("C#: input actions resolve editable descendants before filling text", async () => {
     const tempRoot = makeTempRoot("vue-pom-csharp-editable-locator-");
 

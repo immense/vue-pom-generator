@@ -22,10 +22,6 @@ function upperFirst(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-function hasParam(params: Record<string, string>, name: string) {
-  return Object.prototype.hasOwnProperty.call(params, name);
-}
-
 function splitTypeAndInitializer(typeExpression: string): { type: string; initializer?: string } {
   const trimmed = typeExpression.trim();
   const initializerIndex = trimmed.lastIndexOf("=");
@@ -81,11 +77,39 @@ function testIdExpression(pattern: PomStringPattern): string {
 }
 
 function ensureSelectorParameters(params: Record<string, string>, selector: PomStringPattern): Record<string, string> {
-  if (!isParameterizedPomPattern(selector.patternKind) || hasParam(params, "key")) {
+  if (!isParameterizedPomPattern(selector.patternKind) || selector.templateVariables.length === 0) {
     return params;
   }
 
-  return { key: "string", ...params };
+  const orderedEntries: [string, string][] = [];
+  const seen = new Set<string>();
+  for (const variableName of selector.templateVariables) {
+    seen.add(variableName);
+    orderedEntries.push([variableName, params[variableName] ?? "string"]);
+  }
+  for (const [name, typeExpression] of Object.entries(params)) {
+    if (seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    orderedEntries.push([name, typeExpression]);
+  }
+  return Object.fromEntries(orderedEntries);
+}
+
+function getIndexedSelectorVariable(selector: PomStringPattern): string | null {
+  if (!isParameterizedPomPattern(selector.patternKind)) {
+    return null;
+  }
+
+  if (selector.templateVariables.length !== 1) {
+    throw new Error(
+      `[vue-pom-generator] Parameterized locator getters require exactly one template variable; `
+      + `got ${selector.templateVariables.length} in ${JSON.stringify(selector.formatted)}.`,
+    );
+  }
+
+  return selector.templateVariables[0];
 }
 
 function createAsyncMethod(
@@ -110,6 +134,7 @@ function generateClickMethod(
   const name = `click${methodName}`;
   const noWaitName = `${name}NoWait`;
   const selectorParams = ensureSelectorParameters(params, selector);
+  const hasSelectorVariables = selector.templateVariables.length > 0;
   const baseParameters = createParameters(selectorParams);
   const argsForForward = Object.keys(selectorParams).join(", ");
   const alternates = uniquePomStringPatterns(selector, alternateSelectors).slice(1);
@@ -119,7 +144,7 @@ function generateClickMethod(
     const candidatesExpr = [primaryTestIdExpr, ...alternates.map(id => testIdExpression(id))].join(", ");
     const clickMethod = createAsyncMethod(
       name,
-      hasParam(selectorParams, "key")
+      hasSelectorVariables
         ? [...baseParameters, createInlineParameter("wait", { type: "boolean", initializer: "true" })]
         : [createInlineParameter("wait", { type: "boolean", initializer: "true" })],
       (writer) => {
@@ -144,7 +169,7 @@ function generateClickMethod(
     const noWaitArgs = argsForForward ? `${argsForForward}, false` : "false";
     const noWaitMethod = createAsyncMethod(
       noWaitName,
-      hasParam(selectorParams, "key") ? baseParameters : [],
+      hasSelectorVariables ? baseParameters : [],
       (writer) => {
         writer.writeLine(`await this.${name}(${noWaitArgs});`);
       },
@@ -153,7 +178,7 @@ function generateClickMethod(
     return [clickMethod, noWaitMethod];
   }
 
-  if (hasParam(selectorParams, "key")) {
+  if (hasSelectorVariables) {
     return [
       createAsyncMethod(name, [...baseParameters, createInlineParameter("wait", { type: "boolean", initializer: "true" })], (writer) => {
         writer.writeLine(`await this.clickByTestId(${primaryTestIdExpr}, "", wait);`);
@@ -276,16 +301,16 @@ function generateGetElementByDataTestId(
   const hasRoleSuffix = baseName.endsWith(roleSuffix) || (baseName.startsWith(roleSuffix) && isAllDigits(numericSuffix));
   const propertyName = hasRoleSuffix ? `${baseName}` : `${baseName}${roleSuffix}`;
   const selectorParams = ensureSelectorParameters(params, selector);
-  const needsKey = isParameterizedPomPattern(selector.patternKind);
+  const indexedVariable = getIndexedSelectorVariable(selector);
 
-  if (needsKey) {
-    const keyType = selectorParams.key || "string";
+  if (indexedVariable) {
+    const keyType = selectorParams[indexedVariable] || "string";
     const keyedPropertyName = getterNameOverride ?? removeByKeySegment(propertyName);
     return [
       createClassGetter({
         name: keyedPropertyName,
         statements: [
-          `return this.keyedLocators((key: ${keyType}) => this.locatorByTestId(${testIdExpression(selector)}));`,
+          `return this.keyedLocators((${indexedVariable}: ${keyType}) => this.locatorByTestId(${testIdExpression(selector)}));`,
         ],
       }),
     ];

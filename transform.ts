@@ -11,7 +11,7 @@ import type {
   IfBranchNode,
   ForNode,
 } from "@vue/compiler-core";
-import type { AttributeValue, HierarchyMap, ResolvedKeyInfo } from "./utils";
+import type { AttributeValue, DataTestIdEntryOverrides, HierarchyMap, ResolvedKeyInfo } from "./utils";
 import { NodeTypes } from "@vue/compiler-core";
 import { parse as parseSfc } from "@vue/compiler-sfc";
 import { parse as parseTemplate } from "@vue/compiler-dom";
@@ -1251,7 +1251,7 @@ export function createTestIdTransform(
       preferredGeneratedValue: AttributeValue;
       preferredRuntimeValue?: AttributeValue;
       nativeRoleOverride?: string;
-      entryOverrides?: Partial<IDataTestId>;
+      entryOverrides?: DataTestIdEntryOverrides;
       addHtmlAttribute?: boolean;
       semanticNameHint?: string;
       semanticNameHintAlternates?: string[];

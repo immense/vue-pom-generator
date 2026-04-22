@@ -2647,7 +2647,7 @@ export function applyResolvedDataTestId(args: {
   keyInfo: ResolvedKeyInfo | null;
   /** Optional enumerable key values (e.g. derived from v-for="item in ['One','Two']"). */
   keyValuesOverride?: string[] | null;
-  entryOverrides?: Partial<IDataTestId>;
+  entryOverrides?: DataTestIdEntryOverrides;
   /**
    * Semantic naming hint used for generating method/property names.
    *
@@ -3252,12 +3252,12 @@ export function applyResolvedDataTestId(args: {
 
   const childComponentName = args.element.tag;
   const dataTestIdEntry: IDataTestId = {
-    selectorValue: createPomStringPattern(
+    selectorValue: entryOverrides.selectorValue ?? createPomStringPattern(
       getAttributeValueText(dataTestId),
       dataTestId.kind === "template" ? "parameterized" : "static",
     ),
-    templateLiteral: undefined,
-    ...entryOverrides,
+    templateLiteral: entryOverrides.templateLiteral,
+    targetPageObjectModelClass: entryOverrides.targetPageObjectModelClass,
   };
 
   // Store the primary POM spec so emitters can generate POMs for multiple languages.
@@ -3695,6 +3695,12 @@ export interface IDataTestId {
    * ever needing to parse the `data-testid` string itself.
    */
   pom?: PomPrimarySpec;
+}
+
+export interface DataTestIdEntryOverrides {
+  selectorValue?: PomStringPattern;
+  templateLiteral?: TemplateLiteral;
+  targetPageObjectModelClass?: string;
 }
 
 /**

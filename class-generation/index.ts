@@ -36,6 +36,7 @@ import {
   IDataTestId,
   PomExtraClickMethodSpec,
   PomPrimarySpec,
+  PomSelectorSpec,
   toPascalCase,
   upperFirst,
 } from "../utils";
@@ -434,23 +435,50 @@ function formatMethodParams(params: Record<string, string> | undefined): string 
   if (!params)
     return "";
 
-  // Keep output stable and somewhat intuitive.
-  const preferredOrder = ["key", "value", "text", "timeOut", "annotationText", "wait"];
-
   const entries = Object.entries(params);
   if (!entries.length)
     return "";
 
-  const score = (name: string) => {
-    const idx = preferredOrder.indexOf(name);
-    return idx < 0 ? 999 : idx;
-  };
-
   return entries
-    .slice()
-    .sort((a, b) => score(a[0]) - score(b[0]) || a[0].localeCompare(b[0]))
     .map(([name, typeExpr]) => `${name}: ${typeExpr}`)
     .join(", ");
+}
+
+function getSelectorPatterns(selector: PomSelectorSpec): PomStringPattern[] {
+  return selector.kind === "testId"
+    ? [selector.testId]
+    : [selector.rootTestId, selector.label];
+}
+
+function ensureRequiredPatternParams(
+  params: Record<string, string> | undefined,
+  patterns: readonly PomStringPattern[],
+  options: { omit?: readonly string[] } = {},
+): Record<string, string> {
+  const currentParams = params ?? {};
+  const omitted = new Set(options.omit ?? []);
+  const orderedEntries: [string, string][] = [];
+  const seen = new Set<string>();
+
+  for (const pattern of patterns) {
+    for (const variableName of pattern.templateVariables) {
+      if (omitted.has(variableName) || seen.has(variableName)) {
+        continue;
+      }
+      seen.add(variableName);
+      orderedEntries.push([variableName, currentParams[variableName] ?? "string"]);
+    }
+  }
+
+  for (const [name, typeExpr] of Object.entries(currentParams)) {
+    if (seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    orderedEntries.push([name, typeExpr]);
+  }
+
+  return Object.fromEntries(orderedEntries);
 }
 
 function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScriptClassMember[] {
@@ -458,7 +486,12 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScr
     return [];
   }
 
-  const params = spec.params ?? {};
+  const selectorPatterns = getSelectorPatterns(spec.selector);
+  const params = ensureRequiredPatternParams(
+    spec.params,
+    selectorPatterns,
+    { omit: spec.keyLiteral !== undefined ? ["key"] : [] },
+  );
   const signatureParams = formatMethodParams(params);
   const parameters = parseParameterSignatures(signatureParams);
 
@@ -1258,23 +1291,7 @@ function generateAggregatedCSharpFiles(
       const locatorName = baseGetterName.endsWith(roleSuffix) ? baseGetterName : `${baseGetterName}${roleSuffix}`;
       const selectorIsParameterized = isParameterizedPomPattern(pom.selector.patternKind);
       const testIdExpr = toCSharpTestIdExpression(pom.selector);
-
-      // Ensure all template variables referenced in formattedDataTestId (e.g. `${key}`)
-      // appear in the C# method signature. Stale/manual IR can still omit `key` on
-      // parameterized selectors, which would otherwise cause CS0103 compile errors.
-      const templateVarMatches = [...pom.selector.formatted.matchAll(/\$\{(\w+)\}/g)];
-      const templateVars = templateVarMatches.map(m => m[1]);
-      const augmentedParams: Record<string, string> = { ...pom.params };
-      for (const v of templateVars) {
-        if (!Object.prototype.hasOwnProperty.call(augmentedParams, v)) {
-          augmentedParams[v] = "string";
-        }
-      }
-      // Place template vars first so they precede text/value/annotationText.
-      const orderedParams: Record<string, string> = Object.fromEntries([
-        ...templateVars.map(v => [v, augmentedParams[v]] as [string, string]),
-        ...Object.entries(augmentedParams).filter(([k]) => !templateVars.includes(k)),
-      ]);
+      const orderedParams = ensureRequiredPatternParams(pom.params, [pom.selector]);
 
       const { signature, argNames } = formatCSharpParams(orderedParams);
       const args = argNames.join(", ");
@@ -1409,7 +1426,12 @@ function generateAggregatedCSharpFiles(
     for (const extra of extras) {
       if (extra.kind !== "click")
         continue;
-      const { signature } = formatCSharpParams(extra.params);
+      const extraParams = ensureRequiredPatternParams(
+        extra.params,
+        getSelectorPatterns(extra.selector),
+        { omit: extra.keyLiteral !== undefined ? ["key"] : [] },
+      );
+      const { signature } = formatCSharpParams(extraParams);
 
       const extraName = upperFirst(extra.name);
 
