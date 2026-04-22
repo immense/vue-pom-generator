@@ -53,6 +53,7 @@ import {
   isTemplateLiteral,
 } from "@babel/types";
 import { parse, parseExpression } from "@babel/parser";
+import type { PomPatternKind } from "./pom-patterns";
 import { createTypeScriptWriter } from "./typescript-codegen";
 
 export { isSimpleExpressionNode } from "./compiler/ast-guards";
@@ -2849,12 +2850,13 @@ export function applyResolvedDataTestId(args: {
   // It can be provided via entryOverrides (e.g. router-link :to resolution).
   const targetPageObjectModelClass = entryOverrides.targetPageObjectModelClass;
 
-  // Keyed-ness is represented in the selector pattern, not derived by parsing the test id.
+  // Parameterized selectors are represented explicitly in the POM spec instead of being re-inferred
+  // later from the formatted `${key}` placeholder convention.
   const formattedDataTestIdForPom = dataTestId.kind === "template"
     ? toPomKeyPattern(dataTestId)
     : dataTestId.value;
-
-  const isKeyed = formattedDataTestIdForPom.includes("${key}");
+  const selectorPatternKind: PomPatternKind = dataTestId.kind === "template" ? "parameterized" : "static";
+  const selectorIsParameterized = selectorPatternKind === "parameterized";
 
   const deriveBaseMethodNameFromHint = (hint: string | undefined) => {
     const hintRaw = (hint ?? "").trim();
@@ -2919,8 +2921,8 @@ export function applyResolvedDataTestId(args: {
     const roleSuffix = upperFirst(normalizedRole || "Element");
     const baseName = upperFirst(primaryMethodName);
     const propertyName = hasRoleSuffix(baseName, roleSuffix) ? baseName : `${baseName}${roleSuffix}`;
-    // Keep behavior aligned with TS emitter: keyed getters expose `Foo[key]` by removing `ByKey`.
-    return isKeyed ? removeByKeySegment(propertyName) : propertyName;
+    // Keep behavior aligned with TS emitter: parameterized getters expose `Foo[key]` by removing `ByKey`.
+    return selectorIsParameterized ? removeByKeySegment(propertyName) : propertyName;
   };
 
   const getPrimaryGetterNameCandidates = (primaryMethodName: string): { primary: string; alternate?: string } => {
@@ -2928,7 +2930,7 @@ export function applyResolvedDataTestId(args: {
     const baseName = upperFirst(primaryMethodName);
     const propertyName = hasRoleSuffix(baseName, roleSuffix) ? baseName : `${baseName}${roleSuffix}`;
 
-    if (!isKeyed) {
+    if (!selectorIsParameterized) {
       return { primary: propertyName };
     }
 
@@ -3014,10 +3016,10 @@ export function applyResolvedDataTestId(args: {
     ];
     const sharesSelectorIdentity = existingSelectors.includes(formattedDataTestIdForPom);
 
-    // Keyed selectors are only safe to merge when both entries already resolve to the exact
-    // same keyed selector pattern. Distinct keyed lists should still force authors to
+    // Parameterized selectors are only safe to merge when both entries already resolve to the exact
+    // same selector pattern. Distinct dynamic lists should still force authors to
     // disambiguate their semantic hints instead of collapsing to one API.
-    if (isKeyed && !sharesSelectorIdentity) {
+    if (selectorIsParameterized && !sharesSelectorIdentity) {
       return false;
     }
 
@@ -3046,6 +3048,13 @@ export function applyResolvedDataTestId(args: {
       }
     }
 
+    if (selectorIsParameterized) {
+      existingPom.selectorPatternKind = "parameterized";
+      if (!Object.prototype.hasOwnProperty.call(existingPom.params, "key")) {
+        existingPom.params.key = keyTypeFromValues;
+      }
+    }
+
     return true;
   };
 
@@ -3062,9 +3071,9 @@ export function applyResolvedDataTestId(args: {
 
     while (true) {
       const baseWithSuffix = suffix === 1 ? base : `${base}${suffix}`;
-      // Keep the ByKey segment at the end so downstream logic (and keyed getter naming)
+      // Keep the ByKey segment at the end so downstream logic (and parameterized getter naming)
       // can reliably strip it when needed.
-      const candidate = isKeyed ? `${baseWithSuffix}ByKey` : baseWithSuffix;
+      const candidate = selectorIsParameterized ? `${baseWithSuffix}ByKey` : baseWithSuffix;
 
       const actionName = getPrimaryActionMethodName(candidate);
 
@@ -3078,8 +3087,8 @@ export function applyResolvedDataTestId(args: {
 
       let conflicts = hasConflicts(chosenGetterName);
 
-      // Edge-case: keyed getter name (FooButton[key]) can collide with a non-keyed FooButton.
-      // When that happens, keep the ByKey segment on the keyed getter name.
+      // Edge-case: parameterized getter name (FooButton[key]) can collide with a non-parameterized
+      // FooButton. When that happens, keep the ByKey segment on the parameterized getter name.
       if (conflicts && getterCandidates.alternate) {
         const alt = getterCandidates.alternate;
         const altConflicts = hasConflicts(alt);
@@ -3112,7 +3121,7 @@ export function applyResolvedDataTestId(args: {
         // Only try role-suffixing when the base name isn't already role-suffixed.
         if (!hasRoleSuffix(baseNameUpper, roleSuffix)) {
           const baseWithRoleSuffix = `${baseWithSuffix}${roleSuffix}`;
-          const candidateWithRoleSuffix = isKeyed ? `${baseWithRoleSuffix}ByKey` : baseWithRoleSuffix;
+          const candidateWithRoleSuffix = selectorIsParameterized ? `${baseWithRoleSuffix}ByKey` : baseWithRoleSuffix;
           const actionNameWithRoleSuffix = getPrimaryActionMethodName(candidateWithRoleSuffix);
 
           const getterCandidatesWithRoleSuffix = getPrimaryGetterNameCandidates(candidateWithRoleSuffix);
@@ -3125,7 +3134,7 @@ export function applyResolvedDataTestId(args: {
 
           let conflictsWithRoleSuffix = hasConflictsWithRoleSuffix(chosenGetterNameWithRoleSuffix);
 
-          // Preserve keyed edge-case behavior: allow keeping ByKey segment on the getter.
+          // Preserve the parameterized edge-case behavior: allow keeping ByKey on the getter.
           if (conflictsWithRoleSuffix && getterCandidatesWithRoleSuffix.alternate) {
             const alt = getterCandidatesWithRoleSuffix.alternate;
             const altConflicts = hasConflictsWithRoleSuffix(alt);
@@ -3203,7 +3212,7 @@ export function applyResolvedDataTestId(args: {
   }
 
   const params: Record<string, string> = {};
-  if (isKeyed) {
+  if (selectorIsParameterized) {
     params.key = keyTypeFromValues;
   }
 
@@ -3211,21 +3220,21 @@ export function applyResolvedDataTestId(args: {
     case "input":
       params.text = "string";
       params.annotationText = "string = \"\"";
-      if (!isKeyed) delete params.key;
+      if (!selectorIsParameterized) delete params.key;
       break;
     case "select":
       params.value = "string";
       params.annotationText = "string = \"\"";
-      if (!isKeyed) delete params.key;
+      if (!selectorIsParameterized) delete params.key;
       break;
     case "vselect":
       params.value = "string";
       params.timeOut = "number = 500";
       params.annotationText = "string = \"\"";
-      if (!isKeyed) delete params.key;
+      if (!selectorIsParameterized) delete params.key;
       break;
     case "radio":
-      // radio can be keyed (e.g. `${key}` option ids) or not.
+      // radio selectors can be parameterized (for dynamic option ids) or static.
       params.annotationText = "string = \"\"";
       break;
     default:
@@ -3256,6 +3265,7 @@ export function applyResolvedDataTestId(args: {
     nativeRole: normalizedRole,
     methodName,
     getterNameOverride,
+    selectorPatternKind,
     formattedDataTestId: formattedDataTestIdForPom,
     alternateFormattedDataTestIds: undefined,
     mergeKey: args.pomMergeKey,
@@ -3347,6 +3357,7 @@ export function applyResolvedDataTestId(args: {
       role: pom.nativeRole,
       methodName: pom.methodName,
       getterNameOverride: pom.getterNameOverride ?? null,
+      selectorPatternKind: pom.selectorPatternKind,
       formattedDataTestId: pom.formattedDataTestId,
       alternateFormattedDataTestIds: alternates.length ? alternates : undefined,
       params: stableParams,
@@ -3551,7 +3562,9 @@ export function applyResolvedDataTestId(args: {
           selector: {
             kind: "withinTestIdByLabel",
             rootFormattedDataTestId: wrapperTestId,
+            rootPatternKind: selectorPatternKind,
             formattedLabel: label,
+            labelPatternKind: "static",
             exact: true,
           },
           params: { annotationText: `string = ""` },
@@ -3581,7 +3594,9 @@ export function applyResolvedDataTestId(args: {
       selector: {
         kind: "withinTestIdByLabel",
         rootFormattedDataTestId: wrapperTestId,
+        rootPatternKind: selectorPatternKind,
         formattedLabel: "${value}",
+        labelPatternKind: "parameterized",
         exact: true,
       },
       params: { value: "string", annotationText: `string = ""` },
@@ -3601,8 +3616,7 @@ export function applyResolvedDataTestId(args: {
   // This keeps the POM ergonomic and avoids pushing key plumbing into tests.
   const staticKeyValues = (args.keyValuesOverride ?? null);
   const needsKey = Object.prototype.hasOwnProperty.call(params, "key")
-    && typeof formattedDataTestIdForPom === "string"
-    && formattedDataTestIdForPom.includes("${key}");
+    && selectorIsParameterized;
   const isNavigation = !!dataTestIdEntry.targetPageObjectModelClass;
 
   if (
@@ -3636,6 +3650,7 @@ export function applyResolvedDataTestId(args: {
         selector: {
           kind: "testId",
           formattedDataTestId: formattedDataTestIdForPom,
+          patternKind: selectorPatternKind,
         },
         keyLiteral: rawValue,
         params: { wait: "boolean = true" },
@@ -3689,7 +3704,7 @@ export interface IDataTestId {
 /**
  * Structured representation of a generated element for POM emission.
  *
- * - `formattedDataTestId` may contain the placeholder `${key}` when keyed.
+ * - `selectorPatternKind` tells emitters whether this selector is static or parameterized.
  * - `params` is TypeScript-flavored today because TS is our reference emitter;
  *   C# emission maps these params to C# types.
  */
@@ -3699,7 +3714,9 @@ export interface PomPrimarySpec {
   methodName: string;
   /** Optional override for the generated locator getter name (used for edge-case collision avoidance). */
   getterNameOverride?: string;
-  /** Test id pattern used by generated POM methods (may include `${key}` placeholder). */
+  /** Whether the selector is a plain test id or a parameterized `${key}` template pattern. */
+  selectorPatternKind: PomPatternKind;
+  /** Test id pattern used by generated POM methods. Parameterized patterns still render with `${key}`. */
   formattedDataTestId: string;
   /** Additional test id patterns that should be treated as equivalent to formattedDataTestId (merge-by-action). */
   alternateFormattedDataTestIds?: string[];
@@ -3718,14 +3735,17 @@ export interface PomPrimarySpec {
 export type PomSelectorSpec =
   | {
     kind: "testId";
-    /** Static or keyed test id; keyed uses `${key}` placeholder. */
+    patternKind: PomPatternKind;
+    /** Static or parameterized test id; parameterized patterns render with `${key}`. */
     formattedDataTestId: string;
   }
   | {
     kind: "withinTestIdByLabel";
+    rootPatternKind: PomPatternKind;
     /** Wrapper/root test id to scope the label search under. */
     rootFormattedDataTestId: string;
-    /** Visible label text; may include `${value}` placeholder for dynamic methods. */
+    labelPatternKind: PomPatternKind;
+    /** Visible label text; parameterized labels may contain `${value}`. */
     formattedLabel: string;
     exact?: boolean;
   };

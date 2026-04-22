@@ -1019,7 +1019,9 @@ describe("utils.ts coverage", () => {
     expect(method1?.selector).toEqual({
       kind: "withinTestIdByLabel",
       rootFormattedDataTestId: "MyComp-radio",
+      rootPatternKind: "static",
       formattedLabel: "${value}",
+      labelPatternKind: "parameterized",
       exact: true,
     });
 
@@ -1028,7 +1030,9 @@ describe("utils.ts coverage", () => {
     expect(method2?.selector).toEqual({
       kind: "withinTestIdByLabel",
       rootFormattedDataTestId: "MyComp2-radio",
+      rootPatternKind: "static",
       formattedLabel: "${value}",
+      labelPatternKind: "parameterized",
       exact: true,
     });
   });

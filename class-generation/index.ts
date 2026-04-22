@@ -9,6 +9,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { generateViewObjectModelMembers, generateViewObjectModelMethodContent } from "../method-generation";
+import { inferPomPatternKindFromFormattedString, isParameterizedPomPattern, type PomPatternKind } from "../pom-patterns";
 import { introspectNuxtPages, parseRouterFileFromCwd } from "../router-introspection";
 import {
   addExportAll,
@@ -467,7 +468,7 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScr
   const waitArg = hasWait ? "wait" : "true";
 
   if (spec.selector.kind === "testId") {
-    const needsTemplate = spec.selector.formattedDataTestId.includes("${");
+    const needsTemplate = isParameterizedPomPattern(spec.selector.patternKind);
     const testIdExpr = needsTemplate
       ? `\`${spec.selector.formattedDataTestId}\``
       : JSON.stringify(spec.selector.formattedDataTestId);
@@ -504,8 +505,8 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScr
     ];
   }
 
-  const rootNeedsTemplate = spec.selector.rootFormattedDataTestId.includes("${");
-  const labelNeedsTemplate = spec.selector.formattedLabel.includes("${");
+  const rootNeedsTemplate = isParameterizedPomPattern(spec.selector.rootPatternKind);
+  const labelNeedsTemplate = isParameterizedPomPattern(spec.selector.labelPatternKind);
   const rootExpr = rootNeedsTemplate
     ? `\`${spec.selector.rootFormattedDataTestId}\``
     : JSON.stringify(spec.selector.rootFormattedDataTestId);
@@ -545,6 +546,7 @@ function generateMethodMembersFromPom(primary: PomPrimarySpec, targetPageObjectM
     targetPageObjectModelClass,
     primary.methodName,
     primary.nativeRole,
+    primary.selectorPatternKind,
     primary.formattedDataTestId,
     primary.alternateFormattedDataTestIds,
     primary.getterNameOverride,
@@ -569,13 +571,14 @@ function generateMethodsContentForDependencies(dependencies: IComponentDependenc
       ? Object.fromEntries(Object.entries(pom.params).sort((a, b) => a[0].localeCompare(b[0])))
       : undefined;
     const alternates = (pom.alternateFormattedDataTestIds ?? []).slice().sort();
-    const key = JSON.stringify({
-      role: pom.nativeRole,
-      methodName: pom.methodName,
-      getterNameOverride: pom.getterNameOverride ?? null,
-      testId: pom.formattedDataTestId,
-      alternateTestIds: alternates.length ? alternates : undefined,
-      params: stableParams,
+      const key = JSON.stringify({
+        role: pom.nativeRole,
+        methodName: pom.methodName,
+        getterNameOverride: pom.getterNameOverride ?? null,
+        selectorPatternKind: pom.selectorPatternKind,
+        testId: pom.formattedDataTestId,
+        alternateTestIds: alternates.length ? alternates : undefined,
+        params: stableParams,
       target: target ?? null,
       emitPrimary: pom.emitPrimary ?? true,
     });
@@ -1071,9 +1074,9 @@ function buildGeneratedGitAttributesFiles(generatedFilePaths: string[]): Generat
     });
 }
 
-function toCSharpTestIdExpression(formattedDataTestId: string): string {
+function toCSharpTestIdExpression(formattedDataTestId: string, patternKind: PomPatternKind): string {
   // Convert our `${var}` placeholder format into C# interpolated-string `{var}`.
-  const needsInterpolation = formattedDataTestId.includes("${");
+  const needsInterpolation = isParameterizedPomPattern(patternKind);
   if (!needsInterpolation) {
     return JSON.stringify(formattedDataTestId);
   }
@@ -1253,11 +1256,12 @@ function generateAggregatedCSharpFiles(
       const baseMethodName = upperFirst(pom.methodName);
       const baseGetterName = upperFirst(pom.getterNameOverride ?? pom.methodName);
       const locatorName = baseGetterName.endsWith(roleSuffix) ? baseGetterName : `${baseGetterName}${roleSuffix}`;
-      const testIdExpr = toCSharpTestIdExpression(pom.formattedDataTestId);
+      const selectorIsParameterized = isParameterizedPomPattern(pom.selectorPatternKind);
+      const testIdExpr = toCSharpTestIdExpression(pom.formattedDataTestId, pom.selectorPatternKind);
 
       // Ensure all template variables referenced in formattedDataTestId (e.g. `${key}`)
-      // appear in the C# method signature.  utils.ts may omit `key` for input/select
-      // elements even when the test ID is dynamic, causing CS0103 compile errors.
+      // appear in the C# method signature. Stale/manual IR can still omit `key` on
+      // parameterized selectors, which would otherwise cause CS0103 compile errors.
       const templateVarMatches = [...pom.formattedDataTestId.matchAll(/\$\{(\w+)\}/g)];
       const templateVars = templateVarMatches.map(m => m[1]);
       const augmentedParams: Record<string, string> = { ...pom.params };
@@ -1278,7 +1282,7 @@ function generateAggregatedCSharpFiles(
       const allTestIds = [pom.formattedDataTestId, ...(pom.alternateFormattedDataTestIds ?? [])]
         .filter((v, idx, arr) => v && arr.indexOf(v) === idx);
 
-      if (pom.formattedDataTestId.includes("${")) {
+      if (selectorIsParameterized) {
         chunks.push(`    public ILocator ${locatorName}(${signature}) => LocatorByTestId(${testIdExpr});`);
       }
       else {
@@ -1300,13 +1304,13 @@ function generateAggregatedCSharpFiles(
       if (target) {
         chunks.push(`    public async Task<${target}> ${actionName}(${sig})`);
         chunks.push("    {");
-        if (pom.formattedDataTestId.includes("${") || allTestIds.length <= 1) {
-          chunks.push(`        await ${locatorName}${pom.formattedDataTestId.includes("${") ? `(${args})` : ""}.ClickAsync();`);
+        if (selectorIsParameterized || allTestIds.length <= 1) {
+          chunks.push(`        await ${locatorName}${selectorIsParameterized ? `(${args})` : ""}.ClickAsync();`);
           chunks.push(`        return new ${target}(Page);`);
         }
         else {
           chunks.push("        Exception? lastError = null;");
-          chunks.push(`        foreach (var testId in new[] { ${allTestIds.map(toCSharpTestIdExpression).join(", ")} })`);
+          chunks.push(`        foreach (var testId in new[] { ${allTestIds.map(testId => toCSharpTestIdExpression(testId, inferPomPatternKindFromFormattedString(testId))).join(", ")} })`);
           chunks.push("        {");
           chunks.push("            try");
           chunks.push("            {");
@@ -1332,7 +1336,7 @@ function generateAggregatedCSharpFiles(
       chunks.push(`    public async Task ${actionName}(${sig})`);
       chunks.push("    {");
 
-      const callSuffix = pom.formattedDataTestId.includes("${") ? `(${args})` : "";
+      const callSuffix = selectorIsParameterized ? `(${args})` : "";
 
       const emitActionCall = (locatorAccess: string) => {
         if (pom.nativeRole === "input") {
@@ -1351,9 +1355,9 @@ function generateAggregatedCSharpFiles(
         }
       };
 
-      if (!pom.formattedDataTestId.includes("${") && allTestIds.length > 1) {
+      if (!selectorIsParameterized && allTestIds.length > 1) {
         chunks.push("        Exception? lastError = null;");
-        chunks.push(`        foreach (var testId in new[] { ${allTestIds.map(toCSharpTestIdExpression).join(", ")} })`);
+        chunks.push(`        foreach (var testId in new[] { ${allTestIds.map(testId => toCSharpTestIdExpression(testId, inferPomPatternKindFromFormattedString(testId))).join(", ")} })`);
         chunks.push("        {");
         chunks.push("            try");
         chunks.push("            {");
@@ -1417,8 +1421,8 @@ function generateAggregatedCSharpFiles(
       }
 
       if (extra.selector.kind === "testId") {
-        const needsTemplate = extra.selector.formattedDataTestId.includes("${");
-        const testIdExpr = toCSharpTestIdExpression(extra.selector.formattedDataTestId);
+        const needsTemplate = isParameterizedPomPattern(extra.selector.patternKind);
+        const testIdExpr = toCSharpTestIdExpression(extra.selector.formattedDataTestId, extra.selector.patternKind);
         if (needsTemplate) {
           chunks.push(`        var testId = ${testIdExpr};`);
           chunks.push("        await LocatorByTestId(testId).ClickAsync();");
@@ -1428,10 +1432,10 @@ function generateAggregatedCSharpFiles(
         }
       }
       else {
-        const rootNeedsTemplate = extra.selector.rootFormattedDataTestId.includes("${");
-        const labelNeedsTemplate = extra.selector.formattedLabel.includes("${");
-        const rootExpr = toCSharpTestIdExpression(extra.selector.rootFormattedDataTestId);
-        const labelExpr = toCSharpTestIdExpression(extra.selector.formattedLabel);
+        const rootNeedsTemplate = isParameterizedPomPattern(extra.selector.rootPatternKind);
+        const labelNeedsTemplate = isParameterizedPomPattern(extra.selector.labelPatternKind);
+        const rootExpr = toCSharpTestIdExpression(extra.selector.rootFormattedDataTestId, extra.selector.rootPatternKind);
+        const labelExpr = toCSharpTestIdExpression(extra.selector.formattedLabel, extra.selector.labelPatternKind);
         const exactArg = extra.selector.exact === false ? "false" : "true";
 
         if (rootNeedsTemplate) {

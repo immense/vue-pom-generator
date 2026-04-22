@@ -632,9 +632,8 @@ describe("class-generation coverage", () => {
     // emitting `(string text, string annotationText = "")` but the locator body referenced
     // `{key}` — causing a CS0103 compile error.  Both params must appear together.
     //
-    // Simulate the broken state: params lacks `key` (as utils.ts incorrectly deletes it
-    // for input elements with dynamic test IDs).  The C# generator must add it when the
-    // formattedDataTestId contains `${key}`.
+    // Simulate stale IR where params lacks `key` even though the selector is parameterized.
+    // The C# generator must add it when the formattedDataTestId contains `${key}`.
     const tempRoot = makeTempRoot("vue-pom-csharp-dyn-input-");
 
     try {
@@ -643,6 +642,7 @@ describe("class-generation coverage", () => {
         pom: {
           nativeRole: "input",
           methodName: "ItemsCheckByKey",
+          selectorPatternKind: "parameterized",
           formattedDataTestId: "items-check-${key}",
           // Broken params as currently produced by utils.ts: key is absent
           params: { text: "string", annotationText: "string = \"\"" },
@@ -694,6 +694,7 @@ describe("class-generation coverage", () => {
         pom: {
           nativeRole: "input",
           methodName: "StateSelectedTenant",
+          selectorPatternKind: "static",
           formattedDataTestId: "TenantSelectBox-StateSelectedTenant-input",
           params: { text: "string", annotationText: "string = \"\"" },
         },
@@ -737,6 +738,7 @@ describe("class-generation coverage", () => {
         pom: {
           nativeRole: "button",
           methodName: "ValueByKey",
+          selectorPatternKind: "parameterized",
           formattedDataTestId: "NavHost-${key}-immynavitem",
           params: { key: "string" },
         },
@@ -748,6 +750,7 @@ describe("class-generation coverage", () => {
         pom: {
           nativeRole: "button",
           methodName: "SystemUpdate",
+          selectorPatternKind: "static",
           formattedDataTestId: "NavHost-SystemUpdate-routerlink",
           alternateFormattedDataTestIds: ["NavHost-Update-routerlink"],
           params: {},

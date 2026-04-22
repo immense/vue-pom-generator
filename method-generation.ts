@@ -13,6 +13,7 @@ import {
   type TypeScriptClassMember,
   type WriterFunction,
 } from "./typescript-codegen";
+import { inferPomPatternKindFromFormattedString, isParameterizedPomPattern, type PomPatternKind } from "./pom-patterns";
 
 function upperFirst(value: string): string {
   if (!value) {
@@ -90,8 +91,21 @@ function uniqueAlternates(primary: string, alternates: string[] | undefined): st
   return out;
 }
 
-function testIdExpression(formattedDataTestId: string): string {
-  return formattedDataTestId.includes("${") ? `\`${formattedDataTestId}\`` : JSON.stringify(formattedDataTestId);
+function testIdExpression(formattedDataTestId: string, patternKind?: PomPatternKind): string {
+  // Callers without structured metadata (currently alternate selector strings) only use this
+  // fallback to decide quote/backtick rendering. API shape comes from selectorPatternKind.
+  const needsTemplate = patternKind
+    ? isParameterizedPomPattern(patternKind)
+    : isParameterizedPomPattern(inferPomPatternKindFromFormattedString(formattedDataTestId));
+  return needsTemplate ? `\`${formattedDataTestId}\`` : JSON.stringify(formattedDataTestId);
+}
+
+function ensureSelectorParameters(params: Record<string, string>, selectorPatternKind: PomPatternKind): Record<string, string> {
+  if (!isParameterizedPomPattern(selectorPatternKind) || hasParam(params, "key")) {
+    return params;
+  }
+
+  return { key: "string", ...params };
 }
 
 function createAsyncMethod(
@@ -112,18 +126,21 @@ function generateClickMethod(
   formattedDataTestId: string,
   alternateFormattedDataTestIds: string[] | undefined,
   params: Record<string, string>,
+  selectorPatternKind: PomPatternKind,
 ): TypeScriptClassMember[] {
   const name = `click${methodName}`;
   const noWaitName = `${name}NoWait`;
-  const baseParameters = createParameters(params);
-  const argsForForward = Object.keys(params).join(", ");
+  const selectorParams = ensureSelectorParameters(params, selectorPatternKind);
+  const baseParameters = createParameters(selectorParams);
+  const argsForForward = Object.keys(selectorParams).join(", ");
   const alternates = uniqueAlternates(formattedDataTestId, alternateFormattedDataTestIds);
+  const primaryTestIdExpr = testIdExpression(formattedDataTestId, selectorPatternKind);
 
   if (alternates.length > 0) {
-    const candidatesExpr = [formattedDataTestId, ...alternates].map(testIdExpression).join(", ");
+    const candidatesExpr = [primaryTestIdExpr, ...alternates.map(id => testIdExpression(id))].join(", ");
     const clickMethod = createAsyncMethod(
       name,
-      hasParam(params, "key")
+      hasParam(selectorParams, "key")
         ? [...baseParameters, createInlineParameter("wait", { type: "boolean", initializer: "true" })]
         : [createInlineParameter("wait", { type: "boolean", initializer: "true" })],
       (writer) => {
@@ -148,7 +165,7 @@ function generateClickMethod(
     const noWaitArgs = argsForForward ? `${argsForForward}, false` : "false";
     const noWaitMethod = createAsyncMethod(
       noWaitName,
-      hasParam(params, "key") ? baseParameters : [],
+      hasParam(selectorParams, "key") ? baseParameters : [],
       (writer) => {
         writer.writeLine(`await this.${name}(${noWaitArgs});`);
       },
@@ -157,10 +174,10 @@ function generateClickMethod(
     return [clickMethod, noWaitMethod];
   }
 
-  if (hasParam(params, "key")) {
+  if (hasParam(selectorParams, "key")) {
     return [
       createAsyncMethod(name, [...baseParameters, createInlineParameter("wait", { type: "boolean", initializer: "true" })], (writer) => {
-        writer.writeLine(`await this.clickByTestId(\`${formattedDataTestId}\`, "", wait);`);
+        writer.writeLine(`await this.clickByTestId(${primaryTestIdExpr}, "", wait);`);
       }),
       createAsyncMethod(noWaitName, baseParameters, (writer) => {
         writer.writeLine(`await this.${name}(${argsForForward}, false);`);
@@ -170,7 +187,7 @@ function generateClickMethod(
 
   return [
     createAsyncMethod(name, [createInlineParameter("wait", { type: "boolean", initializer: "true" })], (writer) => {
-      writer.writeLine(`await this.clickByTestId("${formattedDataTestId}", "", wait);`);
+      writer.writeLine(`await this.clickByTestId(${primaryTestIdExpr}, "", wait);`);
     }),
     createAsyncMethod(noWaitName, [], (writer) => {
       writer.writeLine(`await this.${name}(false);`);
@@ -178,16 +195,16 @@ function generateClickMethod(
   ];
 }
 
-function generateRadioMethod(methodName: string, formattedDataTestId: string): TypeScriptClassMember[] {
+function generateRadioMethod(
+  methodName: string,
+  formattedDataTestId: string,
+  params: Record<string, string>,
+  selectorPatternKind: PomPatternKind,
+): TypeScriptClassMember[] {
   const name = `select${methodName}`;
-  const hasKey = formattedDataTestId.includes("${key}");
-  const parameters = hasKey
-    ? [
-        createInlineParameter("key", { type: "string" }),
-        createInlineParameter("annotationText", { type: "string", initializer: "\"\"" }),
-      ]
-    : [createInlineParameter("annotationText", { type: "string", initializer: "\"\"" })];
-  const testIdExpr = hasKey ? `\`${formattedDataTestId}\`` : `"${formattedDataTestId}"`;
+  const selectorParams = ensureSelectorParameters(params, selectorPatternKind);
+  const parameters = createParameters(selectorParams);
+  const testIdExpr = testIdExpression(formattedDataTestId, selectorPatternKind);
 
   return [
     createAsyncMethod(name, parameters, (writer) => {
@@ -196,20 +213,20 @@ function generateRadioMethod(methodName: string, formattedDataTestId: string): T
   ];
 }
 
-function generateSelectMethod(methodName: string, formattedDataTestId: string): TypeScriptClassMember[] {
+function generateSelectMethod(
+  methodName: string,
+  formattedDataTestId: string,
+  params: Record<string, string>,
+  selectorPatternKind: PomPatternKind,
+): TypeScriptClassMember[] {
   const name = `select${methodName}`;
-  const needsKey = formattedDataTestId.includes("${key}");
-  const selectorExpr = needsKey
-    ? `this.selectorForTestId(\`${formattedDataTestId}\`)`
-    : `this.selectorForTestId("${formattedDataTestId}")`;
+  const selectorParams = ensureSelectorParameters(params, selectorPatternKind);
+  const selectorExpr = `this.selectorForTestId(${testIdExpression(formattedDataTestId, selectorPatternKind)})`;
 
   return [
     createAsyncMethod(
       name,
-      [
-        createInlineParameter("value", { type: "string" }),
-        createInlineParameter("annotationText", { type: "string", initializer: "\"\"" }),
-      ],
+      createParameters(selectorParams),
       (writer) => {
         writer.writeLine(`const selector = ${selectorExpr};`);
         writer.writeLine("await this.animateCursorToElement(selector, false, 500, annotationText);");
@@ -219,36 +236,41 @@ function generateSelectMethod(methodName: string, formattedDataTestId: string): 
   ];
 }
 
-function generateVSelectMethod(methodName: string, formattedDataTestId: string): TypeScriptClassMember[] {
+function generateVSelectMethod(
+  methodName: string,
+  formattedDataTestId: string,
+  params: Record<string, string>,
+  selectorPatternKind: PomPatternKind,
+): TypeScriptClassMember[] {
   const name = `select${methodName}`;
+  const selectorParams = ensureSelectorParameters(params, selectorPatternKind);
 
   return [
     createAsyncMethod(
       name,
-      [
-        createInlineParameter("value", { type: "string" }),
-        createInlineParameter("timeOut", { type: "number", initializer: "500" }),
-        createInlineParameter("annotationText", { type: "string", initializer: "\"\"" }),
-      ],
+      createParameters(selectorParams),
       (writer) => {
-        writer.writeLine(`await this.selectVSelectByTestId("${formattedDataTestId}", value, timeOut, annotationText);`);
+        writer.writeLine(`await this.selectVSelectByTestId(${testIdExpression(formattedDataTestId, selectorPatternKind)}, value, timeOut, annotationText);`);
       },
     ),
   ];
 }
 
-function generateTypeMethod(methodName: string, formattedDataTestId: string): TypeScriptClassMember[] {
+function generateTypeMethod(
+  methodName: string,
+  formattedDataTestId: string,
+  params: Record<string, string>,
+  selectorPatternKind: PomPatternKind,
+): TypeScriptClassMember[] {
   const name = `type${methodName}`;
+  const selectorParams = ensureSelectorParameters(params, selectorPatternKind);
 
   return [
     createAsyncMethod(
       name,
-      [
-        createInlineParameter("text", { type: "string" }),
-        createInlineParameter("annotationText", { type: "string", initializer: "\"\"" }),
-      ],
+      createParameters(selectorParams),
       (writer) => {
-        writer.writeLine(`await this.fillInputByTestId("${formattedDataTestId}", text, annotationText);`);
+        writer.writeLine(`await this.fillInputByTestId(${testIdExpression(formattedDataTestId, selectorPatternKind)}, text, annotationText);`);
       },
     ),
   ];
@@ -272,22 +294,24 @@ function generateGetElementByDataTestId(
   alternateFormattedDataTestIds: string[] | undefined,
   getterNameOverride: string | undefined,
   params: Record<string, string>,
+  selectorPatternKind: PomPatternKind,
 ): TypeScriptClassMember[] {
   const roleSuffix = upperFirst(nativeRole || "Element");
   const baseName = upperFirst(methodName);
   const numericSuffix = baseName.startsWith(roleSuffix) ? baseName.slice(roleSuffix.length) : "";
   const hasRoleSuffix = baseName.endsWith(roleSuffix) || (baseName.startsWith(roleSuffix) && isAllDigits(numericSuffix));
   const propertyName = hasRoleSuffix ? `${baseName}` : `${baseName}${roleSuffix}`;
-  const needsKey = hasParam(params, "key") || formattedDataTestId.includes("${key}");
+  const selectorParams = ensureSelectorParameters(params, selectorPatternKind);
+  const needsKey = isParameterizedPomPattern(selectorPatternKind);
 
   if (needsKey) {
-    const keyType = params.key || "string";
+    const keyType = selectorParams.key || "string";
     const keyedPropertyName = getterNameOverride ?? removeByKeySegment(propertyName);
     return [
       createClassGetter({
         name: keyedPropertyName,
         statements: [
-          `return this.keyedLocators((key: ${keyType}) => this.locatorByTestId(\`${formattedDataTestId}\`));`,
+          `return this.keyedLocators((key: ${keyType}) => this.locatorByTestId(${testIdExpression(formattedDataTestId, selectorPatternKind)}));`,
         ],
       }),
     ];
@@ -321,18 +345,20 @@ function generateNavigationMethod(args: {
   targetPageObjectModelClass: string;
   baseMethodName: string;
   formattedDataTestId: string;
+  selectorPatternKind: PomPatternKind;
   alternateFormattedDataTestIds?: string[];
   params: Record<string, string>;
 }): TypeScriptClassMember[] {
-  const { targetPageObjectModelClass: target, baseMethodName, formattedDataTestId, alternateFormattedDataTestIds, params } = args;
+  const { targetPageObjectModelClass: target, baseMethodName, formattedDataTestId, selectorPatternKind, alternateFormattedDataTestIds, params } = args;
 
   const methodName = baseMethodName
     ? `goTo${upperFirst(baseMethodName)}`
     : `goTo${target.endsWith("Page") ? target.slice(0, -"Page".length) : target}`;
 
-  const parameters = createParameters(params);
+  const selectorParams = ensureSelectorParameters(params, selectorPatternKind);
+  const parameters = createParameters(selectorParams);
   const alternates = uniqueAlternates(formattedDataTestId, alternateFormattedDataTestIds);
-  const candidatesExpr = [formattedDataTestId, ...alternates].map(testIdExpression).join(", ");
+  const candidatesExpr = [testIdExpression(formattedDataTestId, selectorPatternKind), ...alternates.map(id => testIdExpression(id))].join(", ");
 
   if (alternates.length > 0) {
     return [
@@ -371,7 +397,7 @@ function generateNavigationMethod(args: {
       returnType: `Fluent<${target}>`,
       statements: (writer) => {
         writer.write("return this.fluent(async () => ").block(() => {
-          writer.writeLine(`await this.clickByTestId(\`${formattedDataTestId}\`);`);
+          writer.writeLine(`await this.clickByTestId(${testIdExpression(formattedDataTestId, selectorPatternKind)});`);
           writer.writeLine(`return new ${target}(this.page);`);
         });
         writer.writeLine(");");
@@ -384,6 +410,7 @@ export function generateViewObjectModelMembers(
   targetPageObjectModelClass: string | undefined,
   methodName: string,
   nativeRole: string,
+  selectorPatternKind: PomPatternKind,
   formattedDataTestId: string,
   alternateFormattedDataTestIds: string[] | undefined,
   getterNameOverride: string | undefined,
@@ -400,6 +427,7 @@ export function generateViewObjectModelMembers(
     alternateFormattedDataTestIds,
     getterNameOverride,
     params,
+    selectorPatternKind,
   );
 
   if (targetPageObjectModelClass) {
@@ -409,6 +437,7 @@ export function generateViewObjectModelMembers(
         targetPageObjectModelClass,
         baseMethodName,
         formattedDataTestId,
+        selectorPatternKind,
         alternateFormattedDataTestIds,
         params,
       }),
@@ -416,25 +445,26 @@ export function generateViewObjectModelMembers(
   }
 
   if (nativeRole === "select") {
-    return [...members, ...generateSelectMethod(baseMethodName, formattedDataTestId)];
+    return [...members, ...generateSelectMethod(baseMethodName, formattedDataTestId, params, selectorPatternKind)];
   }
   if (nativeRole === "vselect") {
-    return [...members, ...generateVSelectMethod(baseMethodName, formattedDataTestId)];
+    return [...members, ...generateVSelectMethod(baseMethodName, formattedDataTestId, params, selectorPatternKind)];
   }
   if (nativeRole === "input") {
-    return [...members, ...generateTypeMethod(baseMethodName, formattedDataTestId)];
+    return [...members, ...generateTypeMethod(baseMethodName, formattedDataTestId, params, selectorPatternKind)];
   }
   if (nativeRole === "radio") {
-    return [...members, ...generateRadioMethod(baseMethodName || "Radio", formattedDataTestId)];
+    return [...members, ...generateRadioMethod(baseMethodName || "Radio", formattedDataTestId, params, selectorPatternKind)];
   }
 
-  return [...members, ...generateClickMethod(baseMethodName, formattedDataTestId, alternateFormattedDataTestIds, params)];
+  return [...members, ...generateClickMethod(baseMethodName, formattedDataTestId, alternateFormattedDataTestIds, params, selectorPatternKind)];
 }
 
 export function generateViewObjectModelMethodContent(
   targetPageObjectModelClass: string | undefined,
   methodName: string,
   nativeRole: string,
+  selectorPatternKind: PomPatternKind,
   formattedDataTestId: string,
   alternateFormattedDataTestIds: string[] | undefined,
   getterNameOverride: string | undefined,
@@ -445,6 +475,7 @@ export function generateViewObjectModelMethodContent(
       targetPageObjectModelClass,
       methodName,
       nativeRole,
+      selectorPatternKind,
       formattedDataTestId,
       alternateFormattedDataTestIds,
       getterNameOverride,

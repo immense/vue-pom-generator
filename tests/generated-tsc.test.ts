@@ -85,6 +85,7 @@ describe("generated output", () => {
       pom: {
         nativeRole: "button",
         methodName: "SaveButton",
+        selectorPatternKind: "parameterized",
         formattedDataTestId,
         params: { key: "string" },
       },
@@ -102,7 +103,9 @@ describe("generated output", () => {
           selector: {
             kind: "withinTestIdByLabel",
             rootFormattedDataTestId: "TestComponent-databaseType-radio",
+            rootPatternKind: "static",
             formattedLabel: "Cloud",
+            labelPatternKind: "static",
             exact: true,
           },
           params: { annotationText: "string = \"\"" },
@@ -138,6 +141,55 @@ describe("generated output", () => {
     }
   });
 
+  it("typechecks parameterized input methods even when stale IR omits key params", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-keyed-input-"));
+
+    writePlaywrightTypeStub(tempRoot);
+
+    const basePagePath = path.join(tempRoot, "base-page.ts");
+    copyRepoFixture(tempRoot, "base-page.full.ts", "base-page.ts");
+    copyRepoFixture(tempRoot, "pointer.ts", "pointer.ts");
+
+    const componentName = "ItemsPage";
+    const dataTestIdEntry: IDataTestId = {
+      value: "items-check-${key}",
+      pom: {
+        nativeRole: "input",
+        methodName: "ItemsCheckByKey",
+        selectorPatternKind: "parameterized",
+        formattedDataTestId: "items-check-${key}",
+        // Simulate stale IR that predates selectorPatternKind and forgot to carry `key`.
+        params: { text: "string", annotationText: 'string = ""' },
+      },
+    };
+
+    const deps: IComponentDependencies = {
+      filePath: path.join(tempRoot, `${componentName}.vue`),
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set([dataTestIdEntry]),
+      generatedMethods: new Map(),
+      isView: false,
+    };
+
+    const outDir = path.join(tempRoot, "out");
+    await generateFiles(new Map([[componentName, deps]]), new Map(), basePagePath, {
+      outDir,
+      projectRoot: tempRoot,
+    });
+
+    const generatedFilePath = path.join(outDir, "page-object-models.g.ts");
+    const generatedContent = fs.readFileSync(generatedFilePath, "utf8");
+    expect(generatedContent).toMatch(/async typeItemsCheckByKey\(key: string, text: string, annotationText: string = ""\)/);
+
+    const result = runTscNoEmit([generatedFilePath, basePagePath], { cwd: tempRoot });
+    if (result.status !== 0) {
+      const stdout = (result.stdout || "").toString();
+      const stderr = (result.stderr || "").toString();
+      throw new Error(`tsc failed (exit ${result.status})\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`);
+    }
+  });
+
   it("typechecks split TypeScript output with barrel exports and stub targets", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-split-"));
 
@@ -158,6 +210,7 @@ describe("generated output", () => {
       pom: {
         nativeRole: "button",
         methodName: "NewTenant",
+        selectorPatternKind: "static",
         formattedDataTestId: "TenantListPage-NewTenant-routerlink",
         params: {},
       },
@@ -181,6 +234,7 @@ describe("generated output", () => {
         pom: {
           nativeRole: "input",
           methodName: "TenantName",
+          selectorPatternKind: "static",
           formattedDataTestId: "TenantDetailsEditForm-Name-input",
           params: { text: "string", annotationText: 'string = ""' },
         },
@@ -576,6 +630,7 @@ describe("generated output", () => {
       pom: {
         nativeRole: "button",
         methodName: "OnlyInAButton",
+        selectorPatternKind: "static",
         formattedDataTestId: "ChildA-OnlyInA-button",
         params: {},
       },
@@ -586,6 +641,7 @@ describe("generated output", () => {
       pom: {
         nativeRole: "button",
         methodName: "SomethingElseButton",
+        selectorPatternKind: "static",
         formattedDataTestId: "ChildB-SomethingElse-button",
         params: {},
       },

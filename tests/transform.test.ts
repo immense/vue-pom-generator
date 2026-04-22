@@ -934,6 +934,7 @@ describe('createTestIdTransform', () => {
     expect(one?.keyLiteral).toBe('One')
     expect(one?.selector).toEqual({
       kind: 'testId',
+      patternKind: 'parameterized',
       formattedDataTestId: 'MyComp-${key}-Select-button',
     })
     expect(one?.params).toEqual({ wait: 'boolean = true' })
@@ -943,6 +944,7 @@ describe('createTestIdTransform', () => {
     expect(two?.keyLiteral).toBe('Two')
     expect(two?.selector).toEqual({
       kind: 'testId',
+      patternKind: 'parameterized',
       formattedDataTestId: 'MyComp-${key}-Select-button',
     })
     expect(two?.params).toEqual({ wait: 'boolean = true' })
@@ -1105,7 +1107,9 @@ describe('createTestIdTransform', () => {
       selector: {
         kind: 'withinTestIdByLabel',
         rootFormattedDataTestId: 'MyPage-DatabaseType-radio',
+        rootPatternKind: 'static',
         formattedLabel: 'Cloud',
+        labelPatternKind: 'static',
         exact: true,
       },
       params: { annotationText: 'string = ""' },
@@ -1187,7 +1191,9 @@ describe('createTestIdTransform', () => {
       selector: {
         kind: 'withinTestIdByLabel',
         rootFormattedDataTestId: 'MyPage-DatabaseType-radio',
+        rootPatternKind: 'static',
         formattedLabel: 'Cloud',
+        labelPatternKind: 'static',
         exact: true,
       },
       params: { annotationText: 'string = ""' },
