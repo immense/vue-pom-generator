@@ -42,6 +42,71 @@ export function inferPomStringPattern(formatted: string): PomStringPattern {
   return createPomStringPattern(formatted, inferPomPatternKindFromFormattedString(formatted));
 }
 
+export function getPomPatternVariables(
+  patterns: readonly PomStringPattern[],
+  options: { omit?: readonly string[] } = {},
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const omitted = new Set(options.omit ?? []);
+
+  for (const pattern of patterns) {
+    for (const variableName of pattern.templateVariables) {
+      if (omitted.has(variableName) || seen.has(variableName)) {
+        continue;
+      }
+      seen.add(variableName);
+      out.push(variableName);
+    }
+  }
+
+  return out;
+}
+
+export function ensurePomPatternParameters(
+  params: Record<string, string> | undefined,
+  patterns: readonly PomStringPattern[],
+  options: {
+    omit?: readonly string[];
+    defaultType?: string;
+  } = {},
+): Record<string, string> {
+  const currentParams = params ?? {};
+  const defaultType = options.defaultType ?? "string";
+  const orderedEntries: [string, string][] = [];
+  const seen = new Set<string>();
+
+  for (const variableName of getPomPatternVariables(patterns, options)) {
+    seen.add(variableName);
+    orderedEntries.push([variableName, currentParams[variableName] ?? defaultType]);
+  }
+
+  for (const [name, typeExpr] of Object.entries(currentParams)) {
+    if (seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    orderedEntries.push([name, typeExpr]);
+  }
+
+  return Object.fromEntries(orderedEntries);
+}
+
+export function getIndexedPomPatternVariable(pattern: PomStringPattern): string | null {
+  if (!isParameterizedPomPattern(pattern.patternKind)) {
+    return null;
+  }
+
+  if (pattern.templateVariables.length !== 1) {
+    throw new Error(
+      `[vue-pom-generator] Parameterized locator getters require exactly one template variable; `
+      + `got ${pattern.templateVariables.length} in ${JSON.stringify(pattern.formatted)}.`,
+    );
+  }
+
+  return pattern.templateVariables[0];
+}
+
 export function pomStringPatternEquals(left: PomStringPattern, right: PomStringPattern): boolean {
   return left.formatted === right.formatted && left.patternKind === right.patternKind;
 }

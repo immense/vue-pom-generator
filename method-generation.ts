@@ -13,7 +13,13 @@ import {
   type TypeScriptClassMember,
   type WriterFunction,
 } from "./typescript-codegen";
-import { isParameterizedPomPattern, uniquePomStringPatterns, type PomStringPattern } from "./pom-patterns";
+import {
+  ensurePomPatternParameters,
+  getIndexedPomPatternVariable,
+  isParameterizedPomPattern,
+  uniquePomStringPatterns,
+  type PomStringPattern,
+} from "./pom-patterns";
 
 function upperFirst(value: string): string {
   if (!value) {
@@ -76,42 +82,6 @@ function testIdExpression(pattern: PomStringPattern): string {
     : JSON.stringify(pattern.formatted);
 }
 
-function ensureSelectorParameters(params: Record<string, string>, selector: PomStringPattern): Record<string, string> {
-  if (!isParameterizedPomPattern(selector.patternKind) || selector.templateVariables.length === 0) {
-    return params;
-  }
-
-  const orderedEntries: [string, string][] = [];
-  const seen = new Set<string>();
-  for (const variableName of selector.templateVariables) {
-    seen.add(variableName);
-    orderedEntries.push([variableName, params[variableName] ?? "string"]);
-  }
-  for (const [name, typeExpression] of Object.entries(params)) {
-    if (seen.has(name)) {
-      continue;
-    }
-    seen.add(name);
-    orderedEntries.push([name, typeExpression]);
-  }
-  return Object.fromEntries(orderedEntries);
-}
-
-function getIndexedSelectorVariable(selector: PomStringPattern): string | null {
-  if (!isParameterizedPomPattern(selector.patternKind)) {
-    return null;
-  }
-
-  if (selector.templateVariables.length !== 1) {
-    throw new Error(
-      `[vue-pom-generator] Parameterized locator getters require exactly one template variable; `
-      + `got ${selector.templateVariables.length} in ${JSON.stringify(selector.formatted)}.`,
-    );
-  }
-
-  return selector.templateVariables[0];
-}
-
 function createAsyncMethod(
   name: string,
   parameters: OptionalKind<ParameterDeclarationStructure>[],
@@ -133,7 +103,7 @@ function generateClickMethod(
 ): TypeScriptClassMember[] {
   const name = `click${methodName}`;
   const noWaitName = `${name}NoWait`;
-  const selectorParams = ensureSelectorParameters(params, selector);
+  const selectorParams = ensurePomPatternParameters(params, [selector]);
   const hasSelectorVariables = selector.templateVariables.length > 0;
   const baseParameters = createParameters(selectorParams);
   const argsForForward = Object.keys(selectorParams).join(", ");
@@ -205,7 +175,7 @@ function generateRadioMethod(
   params: Record<string, string>,
 ): TypeScriptClassMember[] {
   const name = `select${methodName}`;
-  const selectorParams = ensureSelectorParameters(params, selector);
+  const selectorParams = ensurePomPatternParameters(params, [selector]);
   const parameters = createParameters(selectorParams);
   const testIdExpr = testIdExpression(selector);
 
@@ -222,7 +192,7 @@ function generateSelectMethod(
   params: Record<string, string>,
 ): TypeScriptClassMember[] {
   const name = `select${methodName}`;
-  const selectorParams = ensureSelectorParameters(params, selector);
+  const selectorParams = ensurePomPatternParameters(params, [selector]);
   const selectorExpr = `this.selectorForTestId(${testIdExpression(selector)})`;
 
   return [
@@ -244,7 +214,7 @@ function generateVSelectMethod(
   params: Record<string, string>,
 ): TypeScriptClassMember[] {
   const name = `select${methodName}`;
-  const selectorParams = ensureSelectorParameters(params, selector);
+  const selectorParams = ensurePomPatternParameters(params, [selector]);
 
   return [
     createAsyncMethod(
@@ -263,7 +233,7 @@ function generateTypeMethod(
   params: Record<string, string>,
 ): TypeScriptClassMember[] {
   const name = `type${methodName}`;
-  const selectorParams = ensureSelectorParameters(params, selector);
+  const selectorParams = ensurePomPatternParameters(params, [selector]);
 
   return [
     createAsyncMethod(
@@ -300,8 +270,8 @@ function generateGetElementByDataTestId(
   const numericSuffix = baseName.startsWith(roleSuffix) ? baseName.slice(roleSuffix.length) : "";
   const hasRoleSuffix = baseName.endsWith(roleSuffix) || (baseName.startsWith(roleSuffix) && isAllDigits(numericSuffix));
   const propertyName = hasRoleSuffix ? `${baseName}` : `${baseName}${roleSuffix}`;
-  const selectorParams = ensureSelectorParameters(params, selector);
-  const indexedVariable = getIndexedSelectorVariable(selector);
+  const selectorParams = ensurePomPatternParameters(params, [selector]);
+  const indexedVariable = getIndexedPomPatternVariable(selector);
 
   if (indexedVariable) {
     const keyType = selectorParams[indexedVariable] || "string";
@@ -353,7 +323,7 @@ function generateNavigationMethod(args: {
     ? `goTo${upperFirst(baseMethodName)}`
     : `goTo${target.endsWith("Page") ? target.slice(0, -"Page".length) : target}`;
 
-  const selectorParams = ensureSelectorParameters(params, selector);
+  const selectorParams = ensurePomPatternParameters(params, [selector]);
   const parameters = createParameters(selectorParams);
   const alternates = uniquePomStringPatterns(selector, alternateSelectors).slice(1);
   const candidatesExpr = [testIdExpression(selector), ...alternates.map(id => testIdExpression(id))].join(", ");

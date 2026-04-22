@@ -9,7 +9,12 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { generateViewObjectModelMembers, generateViewObjectModelMethodContent } from "../method-generation";
-import { isParameterizedPomPattern, uniquePomStringPatterns, type PomStringPattern } from "../pom-patterns";
+import {
+  ensurePomPatternParameters,
+  isParameterizedPomPattern,
+  uniquePomStringPatterns,
+  type PomStringPattern,
+} from "../pom-patterns";
 import { introspectNuxtPages, parseRouterFileFromCwd } from "../router-introspection";
 import {
   addExportAll,
@@ -450,44 +455,13 @@ function getSelectorPatterns(selector: PomSelectorSpec): PomStringPattern[] {
     : [selector.rootTestId, selector.label];
 }
 
-function ensureRequiredPatternParams(
-  params: Record<string, string> | undefined,
-  patterns: readonly PomStringPattern[],
-  options: { omit?: readonly string[] } = {},
-): Record<string, string> {
-  const currentParams = params ?? {};
-  const omitted = new Set(options.omit ?? []);
-  const orderedEntries: [string, string][] = [];
-  const seen = new Set<string>();
-
-  for (const pattern of patterns) {
-    for (const variableName of pattern.templateVariables) {
-      if (omitted.has(variableName) || seen.has(variableName)) {
-        continue;
-      }
-      seen.add(variableName);
-      orderedEntries.push([variableName, currentParams[variableName] ?? "string"]);
-    }
-  }
-
-  for (const [name, typeExpr] of Object.entries(currentParams)) {
-    if (seen.has(name)) {
-      continue;
-    }
-    seen.add(name);
-    orderedEntries.push([name, typeExpr]);
-  }
-
-  return Object.fromEntries(orderedEntries);
-}
-
 function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScriptClassMember[] {
   if (spec.kind !== "click") {
     return [];
   }
 
   const selectorPatterns = getSelectorPatterns(spec.selector);
-  const params = ensureRequiredPatternParams(
+  const params = ensurePomPatternParameters(
     spec.params,
     selectorPatterns,
     { omit: spec.keyLiteral !== undefined ? ["key"] : [] },
@@ -1291,7 +1265,7 @@ function generateAggregatedCSharpFiles(
       const locatorName = baseGetterName.endsWith(roleSuffix) ? baseGetterName : `${baseGetterName}${roleSuffix}`;
       const selectorIsParameterized = isParameterizedPomPattern(pom.selector.patternKind);
       const testIdExpr = toCSharpTestIdExpression(pom.selector);
-      const orderedParams = ensureRequiredPatternParams(pom.params, [pom.selector]);
+      const orderedParams = ensurePomPatternParameters(pom.params, [pom.selector]);
 
       const { signature, argNames } = formatCSharpParams(orderedParams);
       const args = argNames.join(", ");
@@ -1426,7 +1400,7 @@ function generateAggregatedCSharpFiles(
     for (const extra of extras) {
       if (extra.kind !== "click")
         continue;
-      const extraParams = ensureRequiredPatternParams(
+      const extraParams = ensurePomPatternParameters(
         extra.params,
         getSelectorPatterns(extra.selector),
         { omit: extra.keyLiteral !== undefined ? ["key"] : [] },
