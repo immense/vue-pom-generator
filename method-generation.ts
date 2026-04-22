@@ -16,6 +16,7 @@ import {
 import {
   ensurePomPatternParameters,
   getIndexedPomPatternVariable,
+  hasPomPatternVariables,
   isParameterizedPomPattern,
   toTypeScriptPomPatternExpression,
   uniquePomStringPatterns,
@@ -99,7 +100,7 @@ function generateClickMethod(
   const name = `click${methodName}`;
   const noWaitName = `${name}NoWait`;
   const selectorParams = ensurePomPatternParameters(params, [selector]);
-  const hasSelectorVariables = selector.templateVariables.length > 0;
+  const hasSelectorVariables = hasPomPatternVariables(selector);
   const baseParameters = createParameters(selectorParams);
   const argsForForward = Object.keys(selectorParams).join(", ");
   const alternates = uniquePomStringPatterns(selector, alternateSelectors).slice(1);

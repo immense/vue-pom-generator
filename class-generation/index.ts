@@ -10,6 +10,8 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { generateViewObjectModelMembers, generateViewObjectModelMethodContent } from "../method-generation";
 import {
+  bindCSharpPomPattern,
+  bindTypeScriptPomPattern,
   ensurePomPatternParameters,
   isParameterizedPomPattern,
   toCSharpPomPatternExpression,
@@ -477,11 +479,10 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScr
   const waitArg = hasWait ? "wait" : "true";
 
   if (spec.selector.kind === "testId") {
-    const needsTemplate = isParameterizedPomPattern(spec.selector.testId.patternKind);
-    const testIdExpr = toTypeScriptPomPatternExpression(spec.selector.testId);
+    const testIdBinding = bindTypeScriptPomPattern(spec.selector.testId, "testId");
 
     const clickArgs: string[] = [];
-    clickArgs.push(needsTemplate ? "testId" : testIdExpr);
+    clickArgs.push(testIdBinding.expression);
 
     if (hasAnnotationText || hasWait) {
       clickArgs.push(annotationArg);
@@ -499,8 +500,8 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScr
           if (spec.keyLiteral !== undefined) {
             writer.writeLine(`const key = ${JSON.stringify(spec.keyLiteral)};`);
           }
-          if (needsTemplate) {
-            writer.writeLine(`const testId = ${testIdExpr};`);
+          for (const statement of testIdBinding.setupStatements) {
+            writer.writeLine(statement);
           }
           writer.writeLine(`await this.clickByTestId(${clickArgs.join(", ")});`);
         },
@@ -508,13 +509,8 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScr
     ];
   }
 
-  const rootNeedsTemplate = isParameterizedPomPattern(spec.selector.rootTestId.patternKind);
-  const labelNeedsTemplate = isParameterizedPomPattern(spec.selector.label.patternKind);
-  const rootExpr = toTypeScriptPomPatternExpression(spec.selector.rootTestId);
-  const labelExpr = toTypeScriptPomPatternExpression(spec.selector.label);
-
-  const rootArg = rootNeedsTemplate ? "rootTestId" : rootExpr;
-  const labelArg = labelNeedsTemplate ? "label" : labelExpr;
+  const rootBinding = bindTypeScriptPomPattern(spec.selector.rootTestId, "rootTestId");
+  const labelBinding = bindTypeScriptPomPattern(spec.selector.label, "label");
   return [
     createClassMethod({
       name: spec.name,
@@ -524,13 +520,13 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScr
         if (spec.keyLiteral !== undefined) {
           writer.writeLine(`const key = ${JSON.stringify(spec.keyLiteral)};`);
         }
-        if (rootNeedsTemplate) {
-          writer.writeLine(`const rootTestId = ${rootExpr};`);
+        for (const statement of rootBinding.setupStatements) {
+          writer.writeLine(statement);
         }
-        if (labelNeedsTemplate) {
-          writer.writeLine(`const label = ${labelExpr};`);
+        for (const statement of labelBinding.setupStatements) {
+          writer.writeLine(statement);
         }
-        writer.writeLine(`await this.clickWithinTestIdByLabel(${rootArg}, ${labelArg}, ${annotationArg}, ${waitArg});`);
+        writer.writeLine(`await this.clickWithinTestIdByLabel(${rootBinding.expression}, ${labelBinding.expression}, ${annotationArg}, ${waitArg});`);
       },
     }),
   ];
@@ -1394,33 +1390,24 @@ function generateAggregatedCSharpFiles(
       }
 
       if (extra.selector.kind === "testId") {
-        const needsTemplate = isParameterizedPomPattern(extra.selector.testId.patternKind);
-        const testIdExpr = toCSharpPomPatternExpression(extra.selector.testId);
-        if (needsTemplate) {
-          chunks.push(`        var testId = ${testIdExpr};`);
-          chunks.push("        await LocatorByTestId(testId).ClickAsync();");
+        const testIdBinding = bindCSharpPomPattern(extra.selector.testId, "testId");
+        for (const statement of testIdBinding.setupStatements) {
+          chunks.push(`        ${statement}`);
         }
-        else {
-          chunks.push(`        await LocatorByTestId(${testIdExpr}).ClickAsync();`);
-        }
+        chunks.push(`        await LocatorByTestId(${testIdBinding.expression}).ClickAsync();`);
       }
       else {
-        const rootNeedsTemplate = isParameterizedPomPattern(extra.selector.rootTestId.patternKind);
-        const labelNeedsTemplate = isParameterizedPomPattern(extra.selector.label.patternKind);
-        const rootExpr = toCSharpPomPatternExpression(extra.selector.rootTestId);
-        const labelExpr = toCSharpPomPatternExpression(extra.selector.label);
+        const rootBinding = bindCSharpPomPattern(extra.selector.rootTestId, "rootTestId");
+        const labelBinding = bindCSharpPomPattern(extra.selector.label, "label");
         const exactArg = extra.selector.exact === false ? "false" : "true";
 
-        if (rootNeedsTemplate) {
-          chunks.push(`        var rootTestId = ${rootExpr};`);
+        for (const statement of rootBinding.setupStatements) {
+          chunks.push(`        ${statement}`);
         }
-        if (labelNeedsTemplate) {
-          chunks.push(`        var label = ${labelExpr};`);
+        for (const statement of labelBinding.setupStatements) {
+          chunks.push(`        ${statement}`);
         }
-
-        const rootArg = rootNeedsTemplate ? "rootTestId" : rootExpr;
-        const labelArg = labelNeedsTemplate ? "label" : labelExpr;
-        chunks.push(`        await ClickWithinTestIdByLabelAsync(${rootArg}, ${labelArg}, ${exactArg});`);
+        chunks.push(`        await ClickWithinTestIdByLabelAsync(${rootBinding.expression}, ${labelBinding.expression}, ${exactArg});`);
       }
       chunks.push("    }");
       chunks.push("");

@@ -11,6 +11,11 @@ export interface PomStringPattern {
   templateVariables: string[];
 }
 
+export interface PomPatternBinding {
+  expression: string;
+  setupStatements: string[];
+}
+
 export function inferPomPatternKindFromFormattedString(value: string): PomPatternKind {
   return value.includes("${") ? "parameterized" : "static";
 }
@@ -107,6 +112,10 @@ export function getIndexedPomPatternVariable(pattern: PomStringPattern): string 
   return pattern.templateVariables[0];
 }
 
+export function hasPomPatternVariables(pattern: PomStringPattern): boolean {
+  return pattern.templateVariables.length > 0;
+}
+
 export function toTypeScriptPomPatternExpression(pattern: PomStringPattern): string {
   return isParameterizedPomPattern(pattern.patternKind)
     ? `\`${pattern.formatted}\``
@@ -123,6 +132,30 @@ export function toCSharpPomPatternExpression(pattern: PomStringPattern): string 
   // JSON.stringify gives us a normal quoted string literal with escaping that is close
   // enough for the C# interpolated-string wrapper we emit.
   return `$${JSON.stringify(inner)}`;
+}
+
+export function bindTypeScriptPomPattern(pattern: PomStringPattern, variableName: string): PomPatternBinding {
+  const expression = toTypeScriptPomPatternExpression(pattern);
+  if (!isParameterizedPomPattern(pattern.patternKind)) {
+    return { expression, setupStatements: [] };
+  }
+
+  return {
+    expression: variableName,
+    setupStatements: [`const ${variableName} = ${expression};`],
+  };
+}
+
+export function bindCSharpPomPattern(pattern: PomStringPattern, variableName: string): PomPatternBinding {
+  const expression = toCSharpPomPatternExpression(pattern);
+  if (!isParameterizedPomPattern(pattern.patternKind)) {
+    return { expression, setupStatements: [] };
+  }
+
+  return {
+    expression: variableName,
+    setupStatements: [`var ${variableName} = ${expression};`],
+  };
 }
 
 export function pomStringPatternEquals(left: PomStringPattern, right: PomStringPattern): boolean {
