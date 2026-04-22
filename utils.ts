@@ -125,6 +125,8 @@ export type AttributeValue =
   | { kind: "template"; template: string; parsedTemplate: ParsedTemplateFragment };
 
 type VueExpressionNode = SimpleExpressionNode | CompoundExpressionNode;
+type VueExpressionSourceView = "content" | "loc" | "compiled";
+type BabelParserPluginName = "typescript" | "jsx";
 
 export interface ResolvedKeyInfo {
   selectorFragment: string;
@@ -158,7 +160,7 @@ export function getAttributeValueText(value: AttributeValue): string {
  */
 export function getVueExpressionSource(
   expression: VueExpressionNode | null | undefined,
-  ...preferredViews: Array<"content" | "loc" | "compiled">
+  ...preferredViews: VueExpressionSourceView[]
 ): string {
   if (!expression) {
     return "";
@@ -193,6 +195,69 @@ export function getVueExpressionSource(
   }
 
   return "";
+}
+
+function tryGetExistingVueExpressionAst(expression: VueExpressionNode | null | undefined): BabelNode | null {
+  if (!expression) {
+    return null;
+  }
+
+  const ast = ("ast" in expression ? expression.ast : null) as object | null | false | undefined;
+  return ast && "type" in ast ? ast as BabelNode : null;
+}
+
+function tryParseBabelExpressionFromSource(source: string, plugins: BabelParserPluginName[]): BabelNode | null {
+  const trimmed = source.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    return parseExpression(trimmed, { plugins }) as BabelNode;
+  }
+  catch {
+    return null;
+  }
+}
+
+function tryGetVueExpressionAst(
+  expression: VueExpressionNode | null | undefined,
+  options?: {
+    preferredViews?: VueExpressionSourceView[];
+    plugins?: BabelParserPluginName[];
+    preferExistingAst?: boolean;
+  },
+): BabelNode | null {
+  if (!expression) {
+    return null;
+  }
+
+  if (options?.preferExistingAst !== false) {
+    const existingAst = tryGetExistingVueExpressionAst(expression);
+    if (existingAst) {
+      return existingAst;
+    }
+  }
+
+  const source = getVueExpressionSource(expression, ...(options?.preferredViews ?? ["content", "loc", "compiled"]));
+  return source ? tryParseBabelExpressionFromSource(source, options?.plugins ?? ["typescript"]) : null;
+}
+
+function tryGetDirectiveBabelAst(
+  directive: DirectiveNode,
+  options?: {
+    preferredViews?: VueExpressionSourceView[];
+    plugins?: BabelParserPluginName[];
+    preferExistingAst?: boolean;
+  },
+): BabelNode | null {
+  const exp = directive.exp && (
+    directive.exp.type === NodeTypes.SIMPLE_EXPRESSION
+    || directive.exp.type === NodeTypes.COMPOUND_EXPRESSION
+  )
+    ? directive.exp as VueExpressionNode
+    : null;
+  return tryGetVueExpressionAst(exp, options);
 }
 
 /**
@@ -489,7 +554,7 @@ function tryGetSlotScopeKeyCandidate(node: BabelNode | null | undefined): SlotSc
 }
 
 function tryGetTemplateSlotScopeBindingNode(expression: VueExpressionNode): BabelNode | null {
-  const ast = ("ast" in expression ? expression.ast : null) as BabelNode | null | false | undefined;
+  const ast = tryGetExistingVueExpressionAst(expression);
   if (ast) {
     if (isArrowFunctionExpression(ast)) {
       return ast.params[0] as BabelNode | undefined ?? null;
@@ -886,14 +951,6 @@ export function getKeyDirectiveInfo(node: ElementNode): ResolvedKeyInfo | null {
   return toResolvedKeyInfo(selectorSource, runtimeSource);
 }
 
-export function getKeyDirectiveValue(node: ElementNode, _context: TransformContext | null = null): string | null {
-  return getKeyDirectiveInfo(node)?.selectorFragment ?? null;
-}
-
-export function getKeyDirectiveRuntimeValue(node: ElementNode): string | null {
-  return getKeyDirectiveInfo(node)?.runtimeFragment ?? null;
-}
-
 /**
  * Gets both v-model and :model-value directive values in a single pass
  * Consolidates the previous getVModelDirectiveValue and getModelValueValue helpers
@@ -911,8 +968,15 @@ export function getModelBindingValues(node: ElementNode): { vModel: string; mode
   let modelValue: string | null = null;
   const modelValueDirective = findDirectiveByName(node, "bind", "modelValue");
 
-  if (modelValueDirective?.exp?.ast) {
-    const { name: mv } = getClickHandlerNameFromAst(modelValueDirective.exp.ast as BabelNode);
+  const modelValueAst = modelValueDirective
+    ? tryGetDirectiveBabelAst(modelValueDirective, {
+      preferredViews: ["loc", "compiled"],
+      plugins: ["typescript"],
+      preferExistingAst: false,
+    })
+    : null;
+  if (modelValueAst) {
+    const { name: mv } = getClickHandlerNameFromAst(modelValueAst);
     modelValue = mv;
   }
 
@@ -1004,18 +1068,6 @@ export function isNodeContainedInTemplateWithData(node: ElementNode, hierarchyMa
   return false;
 }
 
-/**
- * Extracts a key placeholder from a parent <template> with slot scope data.
- *
- * If the node is within a slot that has scope variables (e.g. #item="{ data }"),
- * returns a placeholder derived from that scope.
- *
- * @internal
- */
-export function getContainedInSlotDataKeyValue(node: ElementNode, hierarchyMap: HierarchyMap): string | null {
-  return getContainedInSlotDataKeyInfo(node, hierarchyMap)?.selectorFragment ?? null;
-}
-
 export function getContainedInSlotDataKeyInfo(node: ElementNode, hierarchyMap: HierarchyMap): ResolvedKeyInfo | null {
   let parent = getParent(hierarchyMap, node);
   while (parent) {
@@ -1028,18 +1080,6 @@ export function getContainedInSlotDataKeyInfo(node: ElementNode, hierarchyMap: H
     parent = getParent(hierarchyMap, parent);
   }
   return null;
-}
-
-/**
- * Extracts the key value expression from a v-for directive on a parent element
- *
- * If the node is within a v-for that has a :key directive, returns the key expression.
- *
- * @internal
- */
-export function getContainedInVForDirectiveKeyValue(context: TransformContext, node: ElementNode, hierarchyMap: HierarchyMap): string | null {
-  const keyFragments = getContainedInVForDirectiveKeyInfo(context, node, hierarchyMap);
-  return keyFragments?.selectorFragment ?? null;
 }
 
 export function getContainedInVForDirectiveKeyInfo(context: TransformContext, node: ElementNode, hierarchyMap: HierarchyMap): ResolvedKeyInfo | null {
@@ -1060,11 +1100,6 @@ export function getContainedInVForDirectiveKeyInfo(context: TransformContext, no
     parent = getParent(hierarchyMap, parent);
   }
   return null;
-}
-
-export function getContainedInVForDirectiveKeyRuntimeValue(context: TransformContext, node: ElementNode, hierarchyMap: HierarchyMap): string | null {
-  const keyFragments = getContainedInVForDirectiveKeyInfo(context, node, hierarchyMap);
-  return keyFragments?.runtimeFragment ?? null;
 }
 
 /**
@@ -1214,11 +1249,14 @@ export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInf
   // NOTE: We intentionally do not normalize via regex/string parsing helpers in this package.
   const mergeKey = `handler:expr:${source}`;
 
-  let expr: object;
-  try {
-    expr = parseExpression(source, { plugins: ["typescript", "jsx"] });
-  }
-  catch {
+  const expr = tryGetDirectiveBabelAst(handlerDirective, {
+    preferredViews: ["content", "compiled"],
+    plugins: ["typescript", "jsx"],
+    // Vue's compiler AST can encode `_ctx.foo` as an Identifier name instead of a MemberExpression.
+    // That is fine for Vue codegen, but our semantic-name extraction needs a normal Babel parse tree.
+    preferExistingAst: false,
+  });
+  if (!expr) {
     // Even if parsing fails, still provide a merge identity.
     return null;
   }
@@ -1692,15 +1730,22 @@ function getDataTestIdValueFromValueAttribute(
   }
 
   const attrDynamic = findDirectiveByName(node, "bind", attributeKey);
-  if (attrDynamic && 'exp' in attrDynamic && attrDynamic.exp && 'ast' in attrDynamic.exp && attrDynamic.exp.ast) {
+  const attrDynamicAst = attrDynamic
+    ? tryGetDirectiveBabelAst(attrDynamic, {
+      preferredViews: ["loc", "compiled"],
+      plugins: ["typescript"],
+      preferExistingAst: false,
+    })
+    : null;
+  if (attrDynamic?.exp && attrDynamicAst) {
     let value = getVueExpressionSource(attrDynamic.exp as VueExpressionNode, "loc", "compiled");
 
-    if (attrDynamic.exp.ast?.type === "MemberExpression") {
+    if (isMemberExpression(attrDynamicAst) || isOptionalMemberExpression(attrDynamicAst)) {
       // eslint-disable-next-line no-restricted-syntax
       return staticAttributeValue(`${actualFileName}-${value.replaceAll(".", "")}-${role}`);
     }
 
-    if (attrDynamic.exp.ast?.type === "CallExpression") {
+    if (isCallExpression(attrDynamicAst) || isOptionalCallExpression(attrDynamicAst)) {
       value = getVueExpressionSource(attrDynamic.exp as VueExpressionNode, "compiled", "loc");
       return templateAttributeValue(`${actualFileName}-\${${value}}-${role}`);
     }
@@ -1710,9 +1755,9 @@ function getDataTestIdValueFromValueAttribute(
 }
 
 export function generateToDirectiveDataTestId(componentName: string, node: ElementNode, toDirective: DirectiveNode, context: TransformContext, hierarchyMap: HierarchyMap, nativeWrappers: NativeWrappersMap): AttributeValue | null {
-  const key = getKeyDirectiveValue(node, context) || getSelfClosingForDirectiveKeyAttrValue(node) || getContainedInVForDirectiveKeyValue(context, node, hierarchyMap);
-  if (key) {
-    return templateAttributeValue(`${componentName}-${key}-${formatTagName(node, nativeWrappers)}`);
+  const keyInfo = getKeyDirectiveInfo(node) || getContainedInVForDirectiveKeyInfo(context, node, hierarchyMap);
+  if (keyInfo) {
+    return templateAttributeValue(`${componentName}-${keyInfo.selectorFragment}-${formatTagName(node, nativeWrappers)}`);
   } else {
     let name = toDirectiveObjectFieldNameValue(toDirective);
     if (!name) {
@@ -1764,48 +1809,49 @@ export function toDirectiveObjectFieldNameValue(node: DirectiveNode): string | n
     return null;
   }
 
-  const source = (node.exp as CompoundExpressionNode).loc.source.trim();
-  try {
-    const expr = parseExpression(source, { plugins: ["typescript"] }) as object;
-
-    const isNodeType = (n: object | null, type: string): n is { type: string } => {
-      return n !== null && (n as { type?: string }).type === type;
-    };
-    const isStringLiteralNode = (n: object | null): n is { type: "StringLiteral"; value: string } => {
-      return isNodeType(n, "StringLiteral") && typeof (n as { value?: string }).value === "string";
-    };
-    const isIdentifierNode = (n: object | null): n is { type: "Identifier"; name: string } => {
-      return isNodeType(n, "Identifier") && typeof (n as { name?: string }).name === "string";
-    };
-    const isObjectPropertyNode = (n: object | null): n is { type: "ObjectProperty"; key: object; value: object } => {
-      if (!isNodeType(n, "ObjectProperty"))
-        return false;
-      const nn = n as { key?: object; value?: object };
-      return typeof nn.key === "object" && nn.key !== null && typeof nn.value === "object" && nn.value !== null;
-    };
-    const isObjectExpressionNode = (n: object | null): n is { type: "ObjectExpression"; properties: object[] } => {
-      if (!isNodeType(n, "ObjectExpression"))
-        return false;
-      const nn = n as { properties?: object[] };
-      return Array.isArray(nn.properties);
-    };
-
-    if (!isObjectExpressionNode(expr))
-      return null;
-
-    const nameProp = (expr as { properties: object[] }).properties.find((p) => {
-      if (!isObjectPropertyNode(p))
-        return false;
-      const key = p.key as object;
-      return (isIdentifierNode(key) && key.name === "name") || (isStringLiteralNode(key) && key.value === "name");
-    });
-    if (!nameProp || !isObjectPropertyNode(nameProp) || !isStringLiteralNode(nameProp.value as object))
-      return null;
-    return toPascalCase((nameProp.value as { value: string }).value);
-  }
-  catch {
+  const expr = tryGetDirectiveBabelAst(node, {
+    preferredViews: ["loc", "compiled"],
+    plugins: ["typescript"],
+    preferExistingAst: false,
+  }) as object | null;
+  if (!expr) {
     return null;
   }
+
+  const isNodeType = (n: object | null, type: string): n is { type: string } => {
+    return n !== null && (n as { type?: string }).type === type;
+  };
+  const isStringLiteralNode = (n: object | null): n is { type: "StringLiteral"; value: string } => {
+    return isNodeType(n, "StringLiteral") && typeof (n as { value?: string }).value === "string";
+  };
+  const isIdentifierNode = (n: object | null): n is { type: "Identifier"; name: string } => {
+    return isNodeType(n, "Identifier") && typeof (n as { name?: string }).name === "string";
+  };
+  const isObjectPropertyNode = (n: object | null): n is { type: "ObjectProperty"; key: object; value: object } => {
+    if (!isNodeType(n, "ObjectProperty"))
+      return false;
+    const nn = n as { key?: object; value?: object };
+    return typeof nn.key === "object" && nn.key !== null && typeof nn.value === "object" && nn.value !== null;
+  };
+  const isObjectExpressionNode = (n: object | null): n is { type: "ObjectExpression"; properties: object[] } => {
+    if (!isNodeType(n, "ObjectExpression"))
+      return false;
+    const nn = n as { properties?: object[] };
+    return Array.isArray(nn.properties);
+  };
+
+  if (!isObjectExpressionNode(expr))
+    return null;
+
+  const nameProp = (expr as { properties: object[] }).properties.find((p) => {
+    if (!isObjectPropertyNode(p))
+      return false;
+    const key = p.key as object;
+    return (isIdentifierNode(key) && key.name === "name") || (isStringLiteralNode(key) && key.value === "name");
+  });
+  if (!nameProp || !isObjectPropertyNode(nameProp) || !isStringLiteralNode(nameProp.value as object))
+    return null;
+  return toPascalCase((nameProp.value as { value: string }).value);
 }
 
 export function addComponentTestIds(componentName: string, componentTestIds: Map<string, Set<string>>, desiredTestId: string) {
@@ -1872,12 +1918,12 @@ function tryParseBabelAstFromHandlerSource(source: string): object | null {
     return null;
 
   // Most handlers are expression-shaped; parse that first.
-  try {
-    return parseExpression(trimmed, { plugins: ["typescript", "jsx"] }) as object;
+  const expressionAst = tryParseBabelExpressionFromSource(trimmed, ["typescript", "jsx"]);
+  if (expressionAst) {
+    return expressionAst as object;
   }
-  catch {
-    // Handlers can also be statement-shaped (e.g. `a(); b()` or `if (...) ...`). Parse as a file.
-  }
+
+  // Handlers can also be statement-shaped (e.g. `a(); b()` or `if (...) ...`). Parse as a file.
 
   try {
     return parse(trimmed, { sourceType: "module", plugins: ["typescript", "jsx"] }) as object;
@@ -2459,15 +2505,8 @@ export function tryGetExistingElementDataTestId(node: ElementNode, attributeName
     return null;
   }
 
-  let fallbackAst = ast as BabelNode | null | false | undefined;
-  if (!fallbackAst) {
-    try {
-      fallbackAst = parseExpression(raw, { plugins: ["typescript"] }) as BabelNode;
-    }
-    catch {
-      fallbackAst = null;
-    }
-  }
+  const fallbackAst = (ast as BabelNode | null | false | undefined)
+    ?? tryGetVueExpressionAst(simpleExp, { preferredViews: ["content", "loc", "compiled"], plugins: ["typescript"] });
 
   if (fallbackAst && typeof fallbackAst === "object" && "type" in fallbackAst && (fallbackAst as { type: string }).type === "StringLiteral") {
     const sl = fallbackAst as { value?: string };
@@ -3379,32 +3418,10 @@ export function applyResolvedDataTestId(args: {
   };
 
   const tryGetDirectiveExpressionAst = (dir: DirectiveNode): BabelNode | null => {
-    const exp = dir.exp;
-    if (!exp) {
-      return null;
-    }
-
-    // Prefer Vue-populated `exp.ast` when present.
-    if (exp.type === NodeTypes.SIMPLE_EXPRESSION) {
-      const simple = exp as SimpleExpressionNode;
-      const ast = simple.ast as object | null;
-      if (ast && "type" in ast) {
-        return ast as BabelNode;
-      }
-    }
-
-    // Fallback: parse the expression source.
-    try {
-      const raw = getVueExpressionSource(
-        exp as VueExpressionNode,
-        args.context ? "compiled" : "loc",
-        args.context ? "loc" : "compiled",
-      );
-      return parseExpression(raw, { plugins: ["typescript"] }) as BabelNode;
-    }
-    catch {
-      return null;
-    }
+    return tryGetDirectiveBabelAst(dir, {
+      preferredViews: args.context ? ["compiled", "loc"] : ["loc", "compiled"],
+      plugins: ["typescript"],
+    });
   };
 
   const tryGetStaticStringFromBabel = (node: BabelNode | null): string | null => {

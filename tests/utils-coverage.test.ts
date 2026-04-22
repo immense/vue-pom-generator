@@ -26,10 +26,9 @@ import {
   getAttributeValueText,
   getComposedClickHandlerContent,
   getContainedInSlotDataKeyInfo,
-  getContainedInVForDirectiveKeyValue,
+  getContainedInVForDirectiveKeyInfo,
   getStaticIdOrNameHint,
-  getKeyDirectiveValue,
-  getKeyDirectiveRuntimeValue,
+  getKeyDirectiveInfo,
   getNativeWrapperTransformInfo,
   getRouteNameKeyFromToDirective,
   getSelfClosingForDirectiveKeyAttrValue,
@@ -396,10 +395,11 @@ describe("utils.ts coverage", () => {
   it("handles :key extraction paths", () => {
     const ast = parseTemplate("<div :key=\"item.id\" />");
     const el = firstElement(ast);
-    expect(getKeyDirectiveValue(el)).toBe("${item.id}");
-    // The selector-facing helper still produces the same placeholder even though key resolution
-    // now flows through the shared key-info object rather than a context-sensitive branch.
-    expect(getKeyDirectiveValue(el, {} as TransformContext)).toBe("${item.id}");
+    expect(getKeyDirectiveInfo(el)).toEqual({
+      selectorFragment: "${item.id}",
+      runtimeFragment: "${item.id}",
+      rawExpression: "item.id",
+    });
 
     const ast2 = parseTemplate("<Foo v-for=\"x in xs\" :key=\"x.id\" />");
     const foo = firstElement(ast2);
@@ -413,8 +413,11 @@ describe("utils.ts coverage", () => {
 
     const ast4 = parseTemplate("<div :key=\"`line-${item.id}`\" />");
     const el4 = firstElement(ast4);
-    expect(getKeyDirectiveValue(el4)).toBe("line-${item.id}");
-    expect(getKeyDirectiveRuntimeValue(el4)).toBe("line-${item.id}");
+    expect(getKeyDirectiveInfo(el4)).toEqual({
+      selectorFragment: "line-${item.id}",
+      runtimeFragment: "line-${item.id}",
+      rawExpression: null,
+    });
   });
 
   it("normalizes key fragments into template-safe output", () => {
@@ -490,8 +493,12 @@ describe("utils.ts coverage", () => {
     const span = findFirstTag(ast, "span");
     const map = buildHierarchyMap(ast);
 
-    expect(getContainedInVForDirectiveKeyValue({ scopes: { vFor: 0 } } as TransformContext, span, map)).toBeNull();
-    expect(getContainedInVForDirectiveKeyValue({ scopes: { vFor: 1 } } as TransformContext, span, map)).toBe("${item.id}");
+    expect(getContainedInVForDirectiveKeyInfo({ scopes: { vFor: 0 } } as TransformContext, span, map)).toBeNull();
+    expect(getContainedInVForDirectiveKeyInfo({ scopes: { vFor: 1 } } as TransformContext, span, map)).toEqual({
+      selectorFragment: "${item.id}",
+      runtimeFragment: "${item.id}",
+      rawExpression: "item.id",
+    });
 
     const astStatic = compileAndCaptureAst(
       "<div v-for=\"item in ['One','Two']\" :key=\"item\"><span /></div>",

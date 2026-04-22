@@ -83,14 +83,14 @@ sequenceDiagram
                 Transform->>Generators: getSelfClosingForDirectiveKeyAttrValue(node)
                 Generators-->>Transform: return key value or null
             else Not in for directive
-                Transform->>Generators: getContainedInVForDirectiveKeyValue(context)
-                Generators-->>Transform: return key value or null
+                Transform->>Generators: getContainedInVForDirectiveKeyInfo(context)
+                Generators-->>Transform: return selector/runtime key info or null
             end
         end
 
         alt No key found
-            Transform->>Generators: getKeyDirectiveValue(node)
-            Generators-->>Transform: return key placeholder or null
+            Transform->>Generators: getKeyDirectiveInfo(node)
+            Generators-->>Transform: return selector/runtime key info or null
         end
 
         alt keyAttributeValue contains placeholder
