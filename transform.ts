@@ -12,7 +12,7 @@ import type {
   ForNode,
 } from "@vue/compiler-core";
 import type { AttributeValue, HierarchyMap } from "./utils";
-import { NodeTypes, stringifyExpression } from "@vue/compiler-core";
+import { NodeTypes } from "@vue/compiler-core";
 import { parse as parseSfc } from "@vue/compiler-sfc";
 import { parse as parseTemplate } from "@vue/compiler-dom";
 import { parseExpression } from "@babel/parser";
@@ -32,6 +32,7 @@ import {
   getContainedInVForDirectiveKeyValue,
   getContainedInVForDirectiveKeyRuntimeValue,
   getContainedInSlotDataKeyValue,
+  getVueExpressionSource,
   renderTemplateLiteralExpression,
   tryGetContainedInStaticVForSourceLiteralValues,
   getKeyDirectiveValue,
@@ -398,9 +399,7 @@ function getConditionalDirectiveInfo(element: ElementNode): { kind: "if" | "else
   if (directive.name === "else") {
     const exp = directive.exp;
     if (exp && (exp.type === NodeTypes.SIMPLE_EXPRESSION || exp.type === NodeTypes.COMPOUND_EXPRESSION)) {
-      const source = (exp.type === NodeTypes.SIMPLE_EXPRESSION
-        ? (exp as SimpleExpressionNode).content
-        : stringifyExpression(exp)).trim();
+      const source = getVueExpressionSource(exp as SimpleExpressionNode | CompoundExpressionNode, "content", "compiled");
       return { kind: "else-if", source };
     }
     return { kind: "else", source: "" };
@@ -411,9 +410,7 @@ function getConditionalDirectiveInfo(element: ElementNode): { kind: "if" | "else
     const exp = directive.exp;
     if (!exp || (exp.type !== NodeTypes.SIMPLE_EXPRESSION && exp.type !== NodeTypes.COMPOUND_EXPRESSION))
       return null;
-    const source = (exp.type === NodeTypes.SIMPLE_EXPRESSION
-      ? (exp as SimpleExpressionNode).content
-      : stringifyExpression(exp)).trim();
+    const source = getVueExpressionSource(exp as SimpleExpressionNode | CompoundExpressionNode, "content", "compiled");
     return { kind: "else-if", source };
   }
 
@@ -421,9 +418,7 @@ function getConditionalDirectiveInfo(element: ElementNode): { kind: "if" | "else
   if (!exp || (exp.type !== NodeTypes.SIMPLE_EXPRESSION && exp.type !== NodeTypes.COMPOUND_EXPRESSION))
     return null;
 
-  const source = (exp.type === NodeTypes.SIMPLE_EXPRESSION
-    ? (exp as SimpleExpressionNode).content
-    : stringifyExpression(exp)).trim();
+  const source = getVueExpressionSource(exp as SimpleExpressionNode | CompoundExpressionNode, "content", "compiled");
   return { kind: directive.name as "if" | "else-if", source };
 }
 
@@ -713,13 +708,13 @@ function tryWrapClickDirectiveForTestEvents(
     return;
 
   // Avoid double-wrapping if transform runs multiple times (SSR + client passes).
-  const existingSource = (exp.loc?.source ?? (exp.type === NodeTypes.SIMPLE_EXPRESSION ? exp.content : "")).trim();
+  const existingSource = getVueExpressionSource(exp as SimpleExpressionNode | CompoundExpressionNode, "loc", "content");
   if (existingSource.includes(CLICK_EVENT_NAME))
     return;
 
   // Best-effort extract of the original handler expression.
   // For SIMPLE_EXPRESSION, prefer content; otherwise fall back to loc.source.
-  const originalExpression = (exp.type === NodeTypes.SIMPLE_EXPRESSION ? exp.content : exp.loc?.source ?? "").trim();
+  const originalExpression = getVueExpressionSource(exp as SimpleExpressionNode | CompoundExpressionNode, "content", "loc");
   if (!originalExpression)
     return;
 
@@ -990,9 +985,7 @@ export function createTestIdTransform(
           continue;
         }
 
-        const condSource = (cond.type === NodeTypes.SIMPLE_EXPRESSION
-          ? (cond as SimpleExpressionNode).content
-          : stringifyExpression(cond)).trim();
+        const condSource = getVueExpressionSource(cond, "content", "compiled");
         const stable = tryExtractStableHintFromConditionalExpressionSource(condSource);
 
         if (stable) {
@@ -1092,27 +1085,33 @@ export function createTestIdTransform(
       }
     }
 
-    const getBestAvailableKeyValue = () => {
-      const parentNode = (context.parent && typeof context.parent === "object") ? context.parent as { type?: number } : null;
-      const isDirectVForChild = parentNode?.type === NodeTypes.FOR;
+      const getBestAvailableKeyInfo = () => {
+        const parentNode = (context.parent && typeof context.parent === "object") ? context.parent as { type?: number } : null;
+        const isDirectVForChild = parentNode?.type === NodeTypes.FOR;
 
-      const vForKey = (isDirectVForChild ? getKeyDirectiveValue(element, context) : null)
-        || getContainedInVForDirectiveKeyValue(context, element, hierarchyMap);
-      if (vForKey) return vForKey;
+        const selectorFragment = (isDirectVForChild ? getKeyDirectiveValue(element, context) : null)
+          || getContainedInVForDirectiveKeyValue(context, element, hierarchyMap);
+        const runtimeFragment = (isDirectVForChild ? getKeyDirectiveRuntimeValue(element) : null)
+          || getContainedInVForDirectiveKeyRuntimeValue(context, element, hierarchyMap);
+        if (selectorFragment || runtimeFragment) {
+          return {
+            selectorFragment: selectorFragment ?? runtimeFragment,
+            runtimeFragment: runtimeFragment ?? selectorFragment,
+            rawExpression: null,
+          };
+        }
 
-      return getContainedInSlotDataKeyValue(element, hierarchyMap);
-    };
+        const slotKeyFragment = toInterpolatedTemplateFragment(getContainedInSlotDataKeyValue(element, hierarchyMap));
+        if (!slotKeyFragment) {
+          return null;
+        }
 
-    const getBestAvailableRuntimeKeyValue = () => {
-      const parentNode = (context.parent && typeof context.parent === "object") ? context.parent as { type?: number } : null;
-      const isDirectVForChild = parentNode?.type === NodeTypes.FOR;
-
-      const vForKey = (isDirectVForChild ? getKeyDirectiveRuntimeValue(element) : null)
-        || getContainedInVForDirectiveKeyRuntimeValue(context, element, hierarchyMap);
-      if (vForKey) return vForKey;
-
-      return getContainedInSlotDataKeyValue(element, hierarchyMap);
-    };
+        return {
+          selectorFragment: slotKeyFragment.template,
+          runtimeFragment: slotKeyFragment.template,
+          rawExpression: slotKeyFragment.rawExpression,
+        };
+      };
 
     // `bestKeyPlaceholder` and `bestRuntimeKeyPlaceholder` are already-final template fragments
     // that get concatenated directly into generated `data-testid` template literals later on.
@@ -1125,12 +1124,12 @@ export function createTestIdTransform(
     // `bestKeyVariable` is only populated for raw expressions (typically slot-scope fallbacks)
     // so downstream method generation can still expose a stable `key` parameter name instead of
     // collapsing every keyed helper into a generic `...ByKey(key: string)` signature.
-    const bestKeyTemplateFragment = toInterpolatedTemplateFragment(getBestAvailableKeyValue());
-    const bestKeyPlaceholder = bestKeyTemplateFragment?.template ?? null;
-    const bestKeyVariable = bestKeyTemplateFragment?.rawExpression ?? null;
+      const bestKeyInfo = getBestAvailableKeyInfo();
+      const bestKeyPlaceholder = bestKeyInfo?.selectorFragment ?? null;
+      const bestKeyVariable = bestKeyInfo?.rawExpression ?? null;
 
-    // Runtime click wrappers use the same normalization, but only need the template fragment itself.
-    const bestRuntimeKeyPlaceholder = toInterpolatedTemplateFragment(getBestAvailableRuntimeKeyValue())?.template ?? null;
+      // Runtime click wrappers use the same normalization, but only need the runtime fragment itself.
+      const bestRuntimeKeyPlaceholder = bestKeyInfo?.runtimeFragment ?? null;
 
     // If we can prove the v-for iterable is a static literal list, capture the concrete
     // values (e.g. ['One', 'Two']). Downstream codegen can use this to:
@@ -1197,9 +1196,7 @@ export function createTestIdTransform(
         if (!cond) {
           conditionalHint = "else";
         } else {
-          const condSource = (cond.type === NodeTypes.SIMPLE_EXPRESSION
-            ? (cond as SimpleExpressionNode).content
-            : stringifyExpression(cond)).trim();
+          const condSource = getVueExpressionSource(cond, "content", "compiled");
           conditionalHint = tryExtractStableHintFromConditionalExpressionSource(condSource) ?? "if";
         }
       }
@@ -1212,9 +1209,7 @@ export function createTestIdTransform(
     });
     if (showDirective?.exp && (showDirective.exp.type === NodeTypes.SIMPLE_EXPRESSION || showDirective.exp.type === NodeTypes.COMPOUND_EXPRESSION)) {
       const exp = showDirective.exp as SimpleExpressionNode | CompoundExpressionNode;
-      const source = (exp.type === NodeTypes.SIMPLE_EXPRESSION
-        ? (exp as SimpleExpressionNode).content
-        : stringifyExpression(exp)).trim();
+      const source = getVueExpressionSource(exp, "content", "compiled");
       const showHint = tryExtractStableHintFromConditionalExpressionSource(source);
       if (showHint) {
         conditionalHint = conditionalHint ? `${conditionalHint} ${showHint}` : showHint;

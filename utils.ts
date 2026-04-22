@@ -124,6 +124,8 @@ export type AttributeValue =
   | { kind: "static"; value: string }
   | { kind: "template"; template: string; parsedTemplate: ParsedTemplateFragment };
 
+type VueExpressionNode = SimpleExpressionNode | CompoundExpressionNode;
+
 export function staticAttributeValue(value: string): AttributeValue {
   return { kind: "static", value };
 }
@@ -139,6 +141,52 @@ export function templateAttributeValue(template: string): Extract<AttributeValue
 
 export function getAttributeValueText(value: AttributeValue): string {
   return value.kind === "static" ? value.value : value.template;
+}
+
+/**
+ * Reads source text from a Vue compiler expression using the preferred view order.
+ *
+ * - `content`: original SIMPLE_EXPRESSION content
+ * - `loc`: author-written template source from `loc.source`
+ * - `compiled`: compiler-rewritten source from `stringifyExpression()`
+ */
+export function getVueExpressionSource(
+  expression: VueExpressionNode | null | undefined,
+  ...preferredViews: Array<"content" | "loc" | "compiled">
+): string {
+  if (!expression) {
+    return "";
+  }
+
+  for (const view of preferredViews) {
+    let value = "";
+    switch (view) {
+      case "content":
+        value = expression.type === NodeTypes.SIMPLE_EXPRESSION ? expression.content : "";
+        break;
+      case "loc":
+        value = expression.loc?.source ?? "";
+        break;
+      case "compiled":
+        try {
+          value = stringifyExpression(expression);
+        }
+        catch {
+          value = "";
+        }
+        break;
+      default:
+        value = "";
+        break;
+    }
+
+    const trimmed = value.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+
+  return "";
 }
 
 /**
@@ -264,13 +312,8 @@ function getTemplateSlotScope(node: ElementNode): string | null {
     return prop.type === NodeTypes.DIRECTIVE && prop.name === "slot";
   });
 
-  if (slotProp?.exp) {
-    if (slotProp.exp.type === NodeTypes.SIMPLE_EXPRESSION) {
-      return slotProp.exp.content;
-    }
-    if (slotProp.exp.type === NodeTypes.COMPOUND_EXPRESSION) {
-      return stringifyExpression(slotProp.exp);
-    }
+  if (slotProp?.exp && (slotProp.exp.type === NodeTypes.SIMPLE_EXPRESSION || slotProp.exp.type === NodeTypes.COMPOUND_EXPRESSION)) {
+    return getVueExpressionSource(slotProp.exp as VueExpressionNode, "content", "compiled") || null;
   }
 
   return null;
@@ -612,9 +655,7 @@ function tryUnwrapTemplateLiteralSource(source: string): { template: string; exp
  * // => null
  */
 function tryUnwrapTemplateLiteralExpressionSource(expression: SimpleExpressionNode | CompoundExpressionNode | null): { template: string; expressionCount: number } | null {
-  const rawSource = expression
-    ? (expression.loc?.source ?? stringifyExpression(expression)).trim()
-    : "";
+  const rawSource = getVueExpressionSource(expression, "loc", "compiled");
   return rawSource ? tryUnwrapTemplateLiteralSource(rawSource) : null;
 }
 
@@ -803,62 +844,54 @@ export function renderTemplateLiteralExpression(templateValue: Extract<Attribute
  *
  * @internal
  */
-export function getKeyDirectiveValue(node: ElementNode, _context: TransformContext | null = null): string | null {
+interface KeyDirectiveFragments {
+  selectorFragment: string;
+  runtimeFragment: string;
+}
+
+function getKeyDirectiveExpression(node: ElementNode): VueExpressionNode | null {
   const keyDirective = getKeyDirective(node);
-  const keyExpression = keyDirective?.exp && (
+  return keyDirective?.exp && (
     keyDirective.exp.type === NodeTypes.SIMPLE_EXPRESSION
     || keyDirective.exp.type === NodeTypes.COMPOUND_EXPRESSION
   )
     ? keyDirective.exp as SimpleExpressionNode | CompoundExpressionNode
     : null;
+}
 
-  if (keyExpression) {
-    const value = stringifyExpression(keyExpression).trim();
-    if (value) {
-      // Inline template-literal keys directly into the generated data-testid template so the
-      // resulting expression uses the compiler-prefixed component scope (`_ctx.*`) while still
-      // preserving local v-for / slot bindings without nesting an extra template literal.
-      const templateLiteral = tryUnwrapTemplateLiteralSource(value);
-      if (templateLiteral) {
-        return templateLiteral.template;
-      }
+function toTemplateInterpolationFragment(source: string): string {
+  const templateLiteral = tryUnwrapTemplateLiteralSource(source);
+  return templateLiteral ? templateLiteral.template : `\${${source}}`;
+}
 
-      return `\${${value}}`;
-    }
+function getKeyDirectiveFragments(node: ElementNode): KeyDirectiveFragments | null {
+  const keyExpression = getKeyDirectiveExpression(node);
+  if (!keyExpression) {
+    return null;
   }
 
-  const rawSource = keyExpression?.loc.source?.trim();
-  if (rawSource) {
-    const templateLiteral = tryUnwrapTemplateLiteralExpressionSource(keyExpression);
-    return templateLiteral ? templateLiteral.template : `\${${rawSource}}`;
+  const selectorSource = getVueExpressionSource(keyExpression, "compiled", "loc");
+  const runtimeSource = getVueExpressionSource(keyExpression, "loc", "compiled");
+  if (!selectorSource && !runtimeSource) {
+    return null;
   }
 
-  return null;
+  return {
+    // Selector-side generation lives inside Vue-compiled output, so it prefers the compiler
+    // rewritten source when available (`_ctx.*`) and falls back to author-written source.
+    selectorFragment: toTemplateInterpolationFragment(selectorSource || runtimeSource),
+    // Runtime-side matching needs the author-visible/local-scope form first so v-for/slot
+    // locals like `item.id` stay intact for comparisons and preserve-mode checks.
+    runtimeFragment: toTemplateInterpolationFragment(runtimeSource || selectorSource),
+  };
+}
+
+export function getKeyDirectiveValue(node: ElementNode, _context: TransformContext | null = null): string | null {
+  return getKeyDirectiveFragments(node)?.selectorFragment ?? null;
 }
 
 export function getKeyDirectiveRuntimeValue(node: ElementNode): string | null {
-  const keyDirective = getKeyDirective(node);
-  const keyExpression = keyDirective?.exp && (
-    keyDirective.exp.type === NodeTypes.SIMPLE_EXPRESSION
-    || keyDirective.exp.type === NodeTypes.COMPOUND_EXPRESSION
-  )
-    ? keyDirective.exp as SimpleExpressionNode | CompoundExpressionNode
-    : null;
-  const rawSource = keyExpression?.loc.source?.trim();
-  if (rawSource) {
-    const templateLiteral = tryUnwrapTemplateLiteralExpressionSource(keyExpression);
-    return templateLiteral ? templateLiteral.template : `\${${rawSource}}`;
-  }
-
-  if (keyExpression) {
-    const value = stringifyExpression(keyExpression).trim();
-    if (value) {
-      const templateLiteral = tryUnwrapTemplateLiteralExpressionSource(keyExpression);
-      return templateLiteral ? templateLiteral.template : `\${${value}}`;
-    }
-  }
-
-  return null;
+  return getKeyDirectiveFragments(node)?.runtimeFragment ?? null;
 }
 
 /**
@@ -871,8 +904,8 @@ export function getModelBindingValues(node: ElementNode): { vModel: string; mode
   let vModel = "";
   const vModelDirective = findDirectiveByName(node, "model");
 
-  if (vModelDirective?.exp?.loc.source) {
-    vModel = toPascalCase(vModelDirective.exp.loc.source);
+  if (vModelDirective?.exp && (vModelDirective.exp.type === NodeTypes.SIMPLE_EXPRESSION || vModelDirective.exp.type === NodeTypes.COMPOUND_EXPRESSION)) {
+    vModel = toPascalCase(getVueExpressionSource(vModelDirective.exp as VueExpressionNode, "loc", "content"));
   }
 
   let modelValue: string | null = null;
@@ -908,8 +941,10 @@ export function getSelfClosingForDirectiveKeyAttrValue(node: ElementNode): strin
 /**
  * Gets the id or name attribute value from a node
  *
- * Returns the identifier, converting dashes and underscores to PascalCase
- * Returns a placeholder if a dynamic :id is found
+ * Returns the identifier, converting dashes and underscores to PascalCase.
+ *
+ * Dynamic `:id` / `:name` bindings are intentionally ignored here because they are not stable
+ * semantic hints for generated POM member names.
  *
  * @internal
  */
@@ -922,12 +957,12 @@ export function getIdOrName(node: ElementNode): string {
 
   let identifier = idAttr?.value?.content ?? "";
 
-  // If no static id or name attribute is found, check for a dynamic v-bind:id directive
+  // Dynamic id/name bindings are not stable identifiers for naming hints, so treat them as absent.
   if (!identifier) {
     const dynamicIdAttr = findDirectiveByName(node, "bind", "id");
-    if (dynamicIdAttr?.exp) {
-      // TODO: Make sure this is still necessary and if so maybe pick a better name
-      identifier = `\${someUniqueValueToDifferentiateInstanceFromOthersOnPageUsuallyAnId}`;
+    const dynamicNameAttr = findDirectiveByName(node, "bind", "name");
+    if (dynamicIdAttr?.exp || dynamicNameAttr?.exp) {
+      return "";
     }
   }
 
@@ -999,6 +1034,11 @@ export function getContainedInSlotDataKeyValue(node: ElementNode, hierarchyMap: 
  * @internal
  */
 export function getContainedInVForDirectiveKeyValue(context: TransformContext, node: ElementNode, hierarchyMap: HierarchyMap): string | null {
+  const keyFragments = getContainedInVForDirectiveKeyFragments(context, node, hierarchyMap);
+  return keyFragments?.selectorFragment ?? null;
+}
+
+function getContainedInVForDirectiveKeyFragments(context: TransformContext, node: ElementNode, hierarchyMap: HierarchyMap): KeyDirectiveFragments | null {
   // Check if we're in a v-for scope
   if (!context.scopes.vFor || context.scopes.vFor === 0) {
     return null;
@@ -1010,9 +1050,7 @@ export function getContainedInVForDirectiveKeyValue(context: TransformContext, n
     if (parent.type === NodeTypes.ELEMENT) {
       const forDirective = findDirectiveByName(parent as ElementNode, "for");
       if (forDirective) {
-        // Found the v-for element, now look for :key
-        const keyValue = getKeyDirectiveValue(parent as ElementNode);
-        return keyValue;
+        return getKeyDirectiveFragments(parent as ElementNode);
       }
     }
     parent = getParent(hierarchyMap, parent);
@@ -1021,21 +1059,8 @@ export function getContainedInVForDirectiveKeyValue(context: TransformContext, n
 }
 
 export function getContainedInVForDirectiveKeyRuntimeValue(context: TransformContext, node: ElementNode, hierarchyMap: HierarchyMap): string | null {
-  if (!context.scopes.vFor || context.scopes.vFor === 0) {
-    return null;
-  }
-
-  let parent = getParent(hierarchyMap, node);
-  while (parent) {
-    if (parent.type === NodeTypes.ELEMENT) {
-      const forDirective = findDirectiveByName(parent as ElementNode, "for");
-      if (forDirective) {
-        return getKeyDirectiveRuntimeValue(parent as ElementNode);
-      }
-    }
-    parent = getParent(hierarchyMap, parent);
-  }
-  return null;
+  const keyFragments = getContainedInVForDirectiveKeyFragments(context, node, hierarchyMap);
+  return keyFragments?.runtimeFragment ?? null;
 }
 
 /**
@@ -1084,14 +1109,7 @@ export function tryGetContainedInStaticVForSourceLiteralValues(
     return null;
   }
 
-  const iterableRaw = (() => {
-    try {
-      return stringifyExpression(simpleSourceExp).trim();
-    }
-    catch {
-      return (simpleSourceExp.loc?.source ?? "").trim();
-    }
-  })();
+  const iterableRaw = getVueExpressionSource(simpleSourceExp, "compiled", "loc");
 
   if (!iterableRaw) {
     return null;
@@ -1183,9 +1201,7 @@ export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInf
   }
 
   const exp = handlerDirective.exp as SimpleExpressionNode | CompoundExpressionNode;
-  const source = (exp.type === NodeTypes.SIMPLE_EXPRESSION
-    ? (exp as SimpleExpressionNode).content
-    : stringifyExpression(exp)).trim();
+  const source = getVueExpressionSource(exp, "content", "compiled");
   if (!source) {
     return null;
   }
@@ -1673,7 +1689,7 @@ function getDataTestIdValueFromValueAttribute(
 
   const attrDynamic = findDirectiveByName(node, "bind", attributeKey);
   if (attrDynamic && 'exp' in attrDynamic && attrDynamic.exp && 'ast' in attrDynamic.exp && attrDynamic.exp.ast) {
-    let value = attrDynamic.exp.loc.source;
+    let value = getVueExpressionSource(attrDynamic.exp as VueExpressionNode, "loc", "compiled");
 
     if (attrDynamic.exp.ast?.type === "MemberExpression") {
       // eslint-disable-next-line no-restricted-syntax
@@ -1681,7 +1697,7 @@ function getDataTestIdValueFromValueAttribute(
     }
 
     if (attrDynamic.exp.ast?.type === "CallExpression") {
-      value = stringifyExpression(attrDynamic.exp);
+      value = getVueExpressionSource(attrDynamic.exp as VueExpressionNode, "compiled", "loc");
       return templateAttributeValue(`${actualFileName}-\${${value}}-${role}`);
     }
     return staticAttributeValue(`${actualFileName}-${value}-${role}`);
@@ -1700,7 +1716,7 @@ export function generateToDirectiveDataTestId(componentName: string, node: Eleme
         return null;
       }
 
-      const source = stringifyExpression(toDirective.exp);
+      const source = getVueExpressionSource(toDirective.exp as VueExpressionNode, "compiled", "loc");
 
       const toAst = toDirective.exp.ast;
       const interpolated = (toAst !== undefined && toAst !== null && toAst !== false) && isTemplateLiteral(toAst as BabelNode);
@@ -1817,9 +1833,7 @@ export function getComposedClickHandlerContent(
 
   if (click.exp) {
     const exp = click.exp as SimpleExpressionNode | CompoundExpressionNode;
-    const source = (exp.type === NodeTypes.SIMPLE_EXPRESSION
-      ? (exp as SimpleExpressionNode).content
-      : stringifyExpression(exp)).trim();
+    const source = getVueExpressionSource(exp, "content", "compiled");
 
     if (source) {
       const parsed = tryParseBabelAstFromHandlerSource(source);
@@ -2544,13 +2558,13 @@ function safeMethodNameFromParts(parts: string[]) {
 }
 
 /**
- * Replaces any `${...}` interpolation in a template string with the stable placeholder `${key}`.
+ * Replaces any `${...}` interpolation in a template string with the stable POM placeholder `${key}`.
  *
  * This is only for the generated POM selector shape. Runtime/test-id generation keeps the real
  * interpolation expressions; the POM layer just needs to know that a keyed slot exists and where
  * it sits relative to the surrounding literal text.
  */
-function replaceAllTemplateExpressionsWithKey(templateValue: Extract<AttributeValue, { kind: "template" }>): string {
+function toPomKeyPattern(templateValue: Extract<AttributeValue, { kind: "template" }>): string {
   const { templateLiteral } = templateValue.parsedTemplate;
   let out = "";
   for (let i = 0; i < templateLiteral.quasis.length; i += 1) {
@@ -2567,7 +2581,7 @@ export const __internal = {
   isSimpleScopeIdentifier,
   safeMethodNameFromParts,
   splitNullishCoalescingExpression,
-  replaceAllTemplateExpressionsWithKey,
+  toPomKeyPattern,
 };
 
 /**
@@ -2796,7 +2810,7 @@ export function applyResolvedDataTestId(args: {
 
   // Keyed-ness is represented in the selector pattern, not derived by parsing the test id.
   const formattedDataTestIdForPom = dataTestId.kind === "template"
-    ? replaceAllTemplateExpressionsWithKey(dataTestId)
+    ? toPomKeyPattern(dataTestId)
     : dataTestId.value;
 
   const isKeyed = formattedDataTestIdForPom.includes("${key}");
@@ -3379,7 +3393,11 @@ export function applyResolvedDataTestId(args: {
 
     // Fallback: parse the expression source.
     try {
-      const raw = args.context ? stringifyExpression(exp) : exp.loc.source;
+      const raw = getVueExpressionSource(
+        exp as VueExpressionNode,
+        args.context ? "compiled" : "loc",
+        args.context ? "loc" : "compiled",
+      );
       return parseExpression(raw, { plugins: ["typescript"] }) as BabelNode;
     }
     catch {

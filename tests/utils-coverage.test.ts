@@ -435,7 +435,9 @@ describe("utils.ts coverage", () => {
     expect(getIdOrName(firstElement(parseTemplate("<div id=\"foo-bar\" />")))).toBe("FooBar");
     expect(getIdOrName(firstElement(parseTemplate("<div name=\"foo_bar\" />")))).toBe("FooBar");
     const dyn = firstElement(parseTemplate("<div :id=\"something\" />"));
-    expect(getIdOrName(dyn)).toContain("someUniqueValueToDifferentiateInstanceFromOthersOnPageUsuallyAnId");
+    expect(getIdOrName(dyn)).toBe("");
+    const dynName = firstElement(parseTemplate("<div :name=\"something\" />"));
+    expect(getIdOrName(dynName)).toBe("");
   });
 
   it("extracts :handler semantic hints from common patterns", () => {
