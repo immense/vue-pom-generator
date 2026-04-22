@@ -1111,13 +1111,10 @@ export function createTestIdTransform(
       return getContainedInSlotDataKeyValue(element, hierarchyMap);
     };
 
-    const bestKeyInferred = getBestAvailableKeyValue();
-    const bestRuntimeKeyInferred = getBestAvailableRuntimeKeyValue();
-    const bestKeyTemplateFragment = toInterpolatedTemplateFragment(bestKeyInferred);
-    const bestRuntimeKeyTemplateFragment = toInterpolatedTemplateFragment(bestRuntimeKeyInferred);
+    const bestKeyTemplateFragment = toInterpolatedTemplateFragment(getBestAvailableKeyValue());
     const bestKeyPlaceholder = bestKeyTemplateFragment?.template ?? null;
-    const bestRuntimeKeyPlaceholder = bestRuntimeKeyTemplateFragment?.template ?? null;
     const bestKeyVariable = bestKeyTemplateFragment?.rawExpression ?? null;
+    const bestRuntimeKeyPlaceholder = toInterpolatedTemplateFragment(getBestAvailableRuntimeKeyValue())?.template ?? null;
 
     // If we can prove the v-for iterable is a static literal list, capture the concrete
     // values (e.g. ['One', 'Two']). Downstream codegen can use this to:

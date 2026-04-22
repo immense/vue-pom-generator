@@ -53,6 +53,7 @@ import {
   isTemplateLiteral,
 } from "@babel/types";
 import { parse, parseExpression } from "@babel/parser";
+import { createTypeScriptWriter } from "./typescript-codegen";
 
 export { isSimpleExpressionNode } from "./compiler/ast-guards";
 export type { RouterIntrospectionResult } from "./router-introspection";
@@ -557,6 +558,8 @@ function tryParseTemplateFragment(fragment: string): TemplateLiteral | null {
   }
 
   try {
+    // A fragment like `line-${item.id}` is the inside of a template literal, not a standalone
+    // JavaScript expression, so we synthesize the surrounding backticks before parsing.
     const ast = parseExpression(`\`${fragment}\``, { plugins: ["typescript"] }) as BabelNode;
     return isTemplateLiteral(ast) ? ast : null;
   }
@@ -590,15 +593,16 @@ export function toInterpolatedTemplateFragment(fragment: string | null): Interpo
 }
 
 export function renderTemplateLiteralExpressionFromFragment(fragment: string): string {
-  const wrappedSource = `\`${fragment}\``;
+  const templateLiteralSource = `\`${fragment}\``;
   const templateLiteral = tryParseTemplateFragment(fragment);
   if (!templateLiteral) {
-    return wrappedSource;
+    return templateLiteralSource;
   }
 
-  let expression = "`";
+  const writer = createTypeScriptWriter();
+  writer.write("`");
   for (let i = 0; i < templateLiteral.quasis.length; i += 1) {
-    expression += templateLiteral.quasis[i]?.value.raw ?? "";
+    writer.write(templateLiteral.quasis[i]?.value.raw ?? "");
 
     const interpolation = templateLiteral.expressions[i];
     if (!interpolation) {
@@ -608,14 +612,16 @@ export function renderTemplateLiteralExpressionFromFragment(fragment: string): s
     const start = typeof interpolation.start === "number" ? interpolation.start : null;
     const end = typeof interpolation.end === "number" ? interpolation.end : null;
     if (start === null || end === null) {
-      return wrappedSource;
+      return templateLiteralSource;
     }
 
-    expression += `\${${wrappedSource.slice(start, end)}}`;
+    writer.write("${");
+    writer.write(templateLiteralSource.slice(start, end));
+    writer.write("}");
   }
 
-  expression += "`";
-  return expression;
+  writer.write("`");
+  return writer.toString();
 }
 
 /**
