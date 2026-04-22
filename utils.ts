@@ -528,30 +528,74 @@ function getKeyDirective(node: ElementNode): DirectiveNode | null {
   return findDirectiveByName(node, "bind", "key") ?? null;
 }
 
-function tryUnwrapTemplateLiteralExpressionSource(source: string): { template: string; expressionCount: number } | null {
-  const trimmed = source.trim();
-  if (!trimmed) {
+/**
+ * Attempts to unwrap a template-literal expression into its body text.
+ *
+ * Accepts either the original Vue `SimpleExpressionNode` or a raw expression string.
+ *
+ * @example
+ * tryUnwrapTemplateLiteralExpressionSource("`row-${item.id}`")
+ * // => { template: "row-${item.id}", expressionCount: 1 }
+ *
+ * @example
+ * tryUnwrapTemplateLiteralExpressionSource("item.id")
+ * // => null
+ */
+function tryUnwrapTemplateLiteralExpressionSource(expression: SimpleExpressionNode | string | null | undefined): { template: string; expressionCount: number } | null {
+  const rawSource = typeof expression === "string"
+    ? expression.trim()
+    : (expression?.content ?? "").trim();
+  if (!rawSource) {
     return null;
   }
 
-  try {
-    const ast = parseExpression(trimmed, { plugins: ["typescript"] }) as BabelNode;
-    if (!isTemplateLiteral(ast)) {
+  let ast = typeof expression === "string"
+    ? null
+    : (expression?.ast as BabelNode | null | false | undefined);
+  if (!ast || !isTemplateLiteral(ast)) {
+    try {
+      ast = parseExpression(rawSource, { plugins: ["typescript"] }) as BabelNode;
+    }
+    catch {
       return null;
     }
+  }
 
+  if (!isTemplateLiteral(ast)) {
+    return null;
+  }
+
+  const cooked = ast.quasis.map(quasi => quasi.value.cooked ?? "").join("");
+  try {
     const start = typeof ast.start === "number" ? ast.start + 1 : 1;
-    const end = typeof ast.end === "number" ? ast.end - 1 : trimmed.length - 1;
+    const end = typeof ast.end === "number" ? ast.end - 1 : rawSource.length - 1;
     return {
-      template: trimmed.slice(start, end),
+      template: rawSource.slice(start, end) || cooked,
       expressionCount: ast.expressions.length,
     };
   }
   catch {
-    return null;
+    return {
+      template: cooked,
+      expressionCount: ast.expressions.length,
+    };
   }
 }
 
+/**
+ * Parses the inside of a template literal as a `TemplateLiteral` AST node.
+ *
+ * `parseExpression()` only accepts complete JavaScript expressions, so fragments like
+ * `line-${item.id}` need synthetic backticks before they can be parsed.
+ *
+ * @example
+ * tryParseTemplateFragment("line-${item.id}")?.expressions.length
+ * // => 1
+ *
+ * @example
+ * tryParseTemplateFragment("plain-text")?.expressions.length
+ * // => 0
+ */
 function tryParseTemplateFragment(fragment: string): TemplateLiteral | null {
   if (!fragment) {
     return null;
@@ -568,6 +612,17 @@ function tryParseTemplateFragment(fragment: string): TemplateLiteral | null {
   }
 }
 
+/**
+ * Returns `true` when a template fragment already contains one or more `${...}` interpolations.
+ *
+ * @example
+ * hasTemplateInterpolationExpressions("line-${item.id}")
+ * // => true
+ *
+ * @example
+ * hasTemplateInterpolationExpressions("item.id")
+ * // => false
+ */
 export function hasTemplateInterpolationExpressions(fragment: string): boolean {
   return (tryParseTemplateFragment(fragment)?.expressions.length ?? 0) > 0;
 }
@@ -577,6 +632,20 @@ export interface InterpolatedTemplateFragment {
   rawExpression: string | null;
 }
 
+/**
+ * Normalizes a fragment into something safe to splice into a template literal.
+ *
+ * Raw expressions become `${...}` placeholders; fragments that already contain template
+ * interpolations are returned as-is.
+ *
+ * @example
+ * toInterpolatedTemplateFragment("item.id")
+ * // => { template: "${item.id}", rawExpression: "item.id" }
+ *
+ * @example
+ * toInterpolatedTemplateFragment("line-${item.id}")
+ * // => { template: "line-${item.id}", rawExpression: null }
+ */
 export function toInterpolatedTemplateFragment(fragment: string | null): InterpolatedTemplateFragment | null {
   if (!fragment) {
     return null;
@@ -592,6 +661,17 @@ export function toInterpolatedTemplateFragment(fragment: string | null): Interpo
   };
 }
 
+/**
+ * Reconstructs a full template-literal expression from a fragment using the parsed quasis/expressions.
+ *
+ * @example
+ * renderTemplateLiteralExpressionFromFragment("line-${item.id}")
+ * // => "`line-${item.id}`"
+ *
+ * @example
+ * renderTemplateLiteralExpressionFromFragment("plain-text")
+ * // => "`plain-text`"
+ */
 export function renderTemplateLiteralExpressionFromFragment(fragment: string): string {
   const templateLiteralSource = `\`${fragment}\``;
   const templateLiteral = tryParseTemplateFragment(fragment);
@@ -599,6 +679,8 @@ export function renderTemplateLiteralExpressionFromFragment(fragment: string): s
     return templateLiteralSource;
   }
 
+  // Render through the shared TypeScript writer so this codegen path follows the same
+  // quoting/newline conventions as the rest of the repo's generated TypeScript output.
   const writer = createTypeScriptWriter();
   writer.write("`");
   for (let i = 0; i < templateLiteral.quasis.length; i += 1) {
@@ -2205,35 +2287,22 @@ export function tryGetExistingElementDataTestId(node: ElementNode, attributeName
     return null;
   }
 
-  // Prefer AST-based detection when available.
-  // Vue's compiler attaches Babel AST to SimpleExpressionNode.exp.ast.
   const simpleExp = exp as SimpleExpressionNode;
   const ast = simpleExp.ast;
 
-  // Template literal: :data-testid="`Foo-${bar}`"
-  // - If it has zero expressions, it's effectively a static string.
-  // - If it has expressions, it's dynamic.
-  if (ast && typeof ast === "object" && "type" in ast && (ast as { type: string }).type === "TemplateLiteral") {
-    const tl = ast as { quasis: Array<{ value?: { cooked?: string } }>; expressions: unknown[] };
-    const cooked = (tl.quasis ?? []).map(q => q.value?.cooked ?? "").join("");
-    const expressionCount = (tl.expressions ?? []).length;
-    const isStatic = expressionCount === 0;
-
-    // Prefer the raw template (so callers can validate placeholders / preserve interpolation),
-    // but fall back to cooked content when we can't confidently unwrap.
-    const raw = (simpleExp.content ?? "").trim();
-    const unwrappedTemplate = tryUnwrapTemplateLiteralExpressionSource(raw)?.template ?? cooked;
-
+  const unwrappedTemplateLiteral = tryUnwrapTemplateLiteralExpressionSource(simpleExp);
+  if (unwrappedTemplateLiteral) {
+    const isStatic = unwrappedTemplateLiteral.expressionCount === 0;
     if (isStatic) {
-      return { value: unwrappedTemplate, isDynamic: false, isStaticLiteral: true };
+      return { value: unwrappedTemplateLiteral.template, isDynamic: false, isStaticLiteral: true };
     }
 
     return {
-      value: unwrappedTemplate,
+      value: unwrappedTemplateLiteral.template,
       isDynamic: true,
       isStaticLiteral: false,
-      template: unwrappedTemplate,
-      templateExpressionCount: expressionCount,
+      template: unwrappedTemplateLiteral.template,
+      templateExpressionCount: unwrappedTemplateLiteral.expressionCount,
     };
   }
 
@@ -2259,53 +2328,36 @@ export function tryGetExistingElementDataTestId(node: ElementNode, attributeName
     };
   }
 
-  // Fallback: we have no parseable AST shape from Vue compiler.
-  // Attempt to parse manually to detect template literals (common for data-testid).
   const raw = (simpleExp.content ?? "").trim();
   if (!raw) {
     return null;
   }
 
-  try {
-    const ast = parseExpression(raw, { plugins: ["typescript"] });
-    if (ast && typeof ast === "object" && "type" in ast && (ast as { type: string }).type === "TemplateLiteral") {
-      const tl = ast as { quasis: Array<{ value?: { cooked?: string } }>; expressions: unknown[] };
-      const cooked = (tl.quasis ?? []).map(q => q.value?.cooked ?? "").join("");
-      const expressionCount = (tl.expressions ?? []).length;
-      const isStatic = expressionCount === 0;
-      const unwrappedTemplate = tryUnwrapTemplateLiteralExpressionSource(raw)?.template ?? cooked;
-
-      if (isStatic) {
-        return { value: unwrappedTemplate, isDynamic: false, isStaticLiteral: true };
-      }
-
-      return {
-        value: unwrappedTemplate,
-        isDynamic: true,
-        isStaticLiteral: false,
-        template: unwrappedTemplate,
-        templateExpressionCount: expressionCount,
-      };
+  let fallbackAst = ast as BabelNode | null | false | undefined;
+  if (!fallbackAst) {
+    try {
+      fallbackAst = parseExpression(raw, { plugins: ["typescript"] }) as BabelNode;
     }
-
-    if (ast && typeof ast === "object" && "type" in ast && (ast as { type: string }).type === "StringLiteral") {
-      const sl = ast as { value?: string };
-      return { value: sl.value ?? "", isDynamic: false, isStaticLiteral: true };
+    catch {
+      fallbackAst = null;
     }
+  }
 
-    const preservableReference = tryGetPreservableDynamicReferenceExpression(ast as BabelNode | null | false | undefined);
-    if (preservableReference) {
-      return {
-        value: preservableReference,
-        isDynamic: true,
-        isStaticLiteral: false,
-        template: `\${${preservableReference}}`,
-        templateExpressionCount: 1,
-        rawExpression: preservableReference,
-      };
-    }
-  } catch {
-    // Ignore parse errors; fall through to generic dynamic fallback.
+  if (fallbackAst && typeof fallbackAst === "object" && "type" in fallbackAst && (fallbackAst as { type: string }).type === "StringLiteral") {
+    const sl = fallbackAst as { value?: string };
+    return { value: sl.value ?? "", isDynamic: false, isStaticLiteral: true };
+  }
+
+  const fallbackPreservableReference = tryGetPreservableDynamicReferenceExpression(fallbackAst);
+  if (fallbackPreservableReference) {
+    return {
+      value: fallbackPreservableReference,
+      isDynamic: true,
+      isStaticLiteral: false,
+      template: `\${${fallbackPreservableReference}}`,
+      templateExpressionCount: 1,
+      rawExpression: fallbackPreservableReference,
+    };
   }
 
   return { value: raw, isDynamic: true, isStaticLiteral: false, rawExpression: raw };
