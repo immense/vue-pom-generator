@@ -449,6 +449,31 @@ describe('createTestIdTransform', () => {
     expect(code).not.toContain('_ctx._ctx.item.id')
   })
 
+  it('preserves keyed template segments that start with literal text', () => {
+    const componentHierarchyMap = new Map()
+
+    const code = compileAndCaptureCode(
+      [
+        '<ul>',
+        '  <li',
+        '    v-for="item in items"',
+        '    :key="`line-${item.id}`"',
+        '    @click="select(item)"',
+        '  >',
+        '    {{ item.id }}',
+        '  </li>',
+        '</ul>',
+      ].join('\n'),
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+      },
+    )
+
+    expect(code).toContain('"data-testid": `MyComp-line-${item.id}-Select-li`')
+    expect(code).not.toContain('${line-${item.id}}')
+  })
+
   it('injects click instrumentation by default', () => {
     const code = compileWithRuntimeTemplateOptions(
       `

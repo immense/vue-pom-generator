@@ -32,6 +32,7 @@ import {
   getContainedInVForDirectiveKeyValue,
   getContainedInVForDirectiveKeyRuntimeValue,
   getContainedInSlotDataKeyValue,
+  hasTemplateInterpolationExpressions,
   tryGetContainedInStaticVForSourceLiteralValues,
   getKeyDirectiveValue,
   getKeyDirectiveRuntimeValue,
@@ -1111,11 +1112,15 @@ export function createTestIdTransform(
 
     const bestKeyInferred = getBestAvailableKeyValue();
     const bestRuntimeKeyInferred = getBestAvailableRuntimeKeyValue();
-    const isSlotKey = bestKeyInferred && !bestKeyInferred.startsWith("${");
-    const bestKeyPlaceholder = isSlotKey ? `\${${bestKeyInferred}}` : bestKeyInferred;
-    const isRuntimeSlotKey = bestRuntimeKeyInferred && !bestRuntimeKeyInferred.startsWith("${");
-    const bestRuntimeKeyPlaceholder = isRuntimeSlotKey ? `\${${bestRuntimeKeyInferred}}` : bestRuntimeKeyInferred;
-    const bestKeyVariable = isSlotKey ? bestKeyInferred : null;
+    const bestKeyNeedsInterpolation = !!bestKeyInferred && !hasTemplateInterpolationExpressions(bestKeyInferred);
+    const bestKeyPlaceholder = bestKeyInferred
+      ? (bestKeyNeedsInterpolation ? `\${${bestKeyInferred}}` : bestKeyInferred)
+      : null;
+    const bestRuntimeKeyNeedsInterpolation = !!bestRuntimeKeyInferred && !hasTemplateInterpolationExpressions(bestRuntimeKeyInferred);
+    const bestRuntimeKeyPlaceholder = bestRuntimeKeyInferred
+      ? (bestRuntimeKeyNeedsInterpolation ? `\${${bestRuntimeKeyInferred}}` : bestRuntimeKeyInferred)
+      : null;
+    const bestKeyVariable = bestKeyNeedsInterpolation ? bestKeyInferred : null;
 
     // If we can prove the v-for iterable is a static literal list, capture the concrete
     // values (e.g. ['One', 'Two']). Downstream codegen can use this to:

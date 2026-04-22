@@ -28,6 +28,7 @@ import {
   getContainedInVForDirectiveKeyValue,
   getIdOrName,
   getKeyDirectiveValue,
+  getKeyDirectiveRuntimeValue,
   getNativeWrapperTransformInfo,
   getRouteNameKeyFromToDirective,
   getSelfClosingForDirectiveKeyAttrValue,
@@ -405,6 +406,11 @@ describe("utils.ts coverage", () => {
     const foo2 = firstElement(ast3);
     expect(Boolean(foo2.isSelfClosing)).toBe(false);
     expect(getSelfClosingForDirectiveKeyAttrValue(foo2)).toBeNull();
+
+    const ast4 = parseTemplate("<div :key=\"`line-${item.id}`\" />");
+    const el4 = firstElement(ast4);
+    expect(getKeyDirectiveValue(el4)).toBe("line-${item.id}");
+    expect(getKeyDirectiveRuntimeValue(el4)).toBe("line-${item.id}");
   });
 
   it("extracts id/name identifiers", () => {

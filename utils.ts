@@ -527,6 +527,48 @@ function getKeyDirective(node: ElementNode): DirectiveNode | null {
   return findDirectiveByName(node, "bind", "key") ?? null;
 }
 
+function tryUnwrapTemplateLiteralExpressionSource(source: string): { template: string; expressionCount: number } | null {
+  const trimmed = source.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const ast = parseExpression(trimmed, { plugins: ["typescript"] }) as BabelNode;
+    if (!isTemplateLiteral(ast)) {
+      return null;
+    }
+
+    const start = typeof ast.start === "number" ? ast.start + 1 : 1;
+    const end = typeof ast.end === "number" ? ast.end - 1 : trimmed.length - 1;
+    return {
+      template: trimmed.slice(start, end),
+      expressionCount: ast.expressions.length,
+    };
+  }
+  catch {
+    return null;
+  }
+}
+
+function tryParseTemplateFragment(fragment: string): TemplateLiteral | null {
+  if (!fragment) {
+    return null;
+  }
+
+  try {
+    const ast = parseExpression(`\`${fragment}\``, { plugins: ["typescript"] }) as BabelNode;
+    return isTemplateLiteral(ast) ? ast : null;
+  }
+  catch {
+    return null;
+  }
+}
+
+export function hasTemplateInterpolationExpressions(fragment: string): boolean {
+  return (tryParseTemplateFragment(fragment)?.expressions.length ?? 0) > 0;
+}
+
 /**
  * Gets the value placeholder for a :key directive
  *
@@ -543,8 +585,9 @@ export function getKeyDirectiveValue(node: ElementNode, _context: TransformConte
       // Inline template-literal keys directly into the generated data-testid template so the
       // resulting expression uses the compiler-prefixed component scope (`_ctx.*`) while still
       // preserving local v-for / slot bindings without nesting an extra template literal.
-      if (value.startsWith("`") && value.endsWith("`")) {
-        return value.slice(1, -1);
+      const templateLiteral = tryUnwrapTemplateLiteralExpressionSource(value);
+      if (templateLiteral) {
+        return templateLiteral.template;
       }
 
       return `\${${value}}`;
@@ -553,9 +596,8 @@ export function getKeyDirectiveValue(node: ElementNode, _context: TransformConte
 
   const rawSource = keyDirective?.exp?.loc.source?.trim();
   if (rawSource) {
-    return rawSource.startsWith("`") && rawSource.endsWith("`")
-      ? rawSource.slice(1, -1)
-      : `\${${rawSource}}`;
+    const templateLiteral = tryUnwrapTemplateLiteralExpressionSource(rawSource);
+    return templateLiteral ? templateLiteral.template : `\${${rawSource}}`;
   }
 
   return null;
@@ -565,17 +607,15 @@ export function getKeyDirectiveRuntimeValue(node: ElementNode): string | null {
   const keyDirective = getKeyDirective(node);
   const rawSource = keyDirective?.exp?.loc.source?.trim();
   if (rawSource) {
-    return rawSource.startsWith("`") && rawSource.endsWith("`")
-      ? rawSource.slice(1, -1)
-      : `\${${rawSource}}`;
+    const templateLiteral = tryUnwrapTemplateLiteralExpressionSource(rawSource);
+    return templateLiteral ? templateLiteral.template : `\${${rawSource}}`;
   }
 
   if (keyDirective?.exp) {
     const value = stringifyExpression(keyDirective.exp).trim();
     if (value) {
-      return value.startsWith("`") && value.endsWith("`")
-        ? value.slice(1, -1)
-        : `\${${value}}`;
+      const templateLiteral = tryUnwrapTemplateLiteralExpressionSource(value);
+      return templateLiteral ? templateLiteral.template : `\${${value}}`;
     }
   }
 
@@ -2127,9 +2167,7 @@ export function tryGetExistingElementDataTestId(node: ElementNode, attributeName
     // Prefer the raw template (so callers can validate placeholders / preserve interpolation),
     // but fall back to cooked content when we can't confidently unwrap.
     const raw = (simpleExp.content ?? "").trim();
-    const unwrappedTemplate = (raw.startsWith("`") && raw.endsWith("`") && raw.length >= 2)
-      ? raw.slice(1, -1)
-      : cooked;
+    const unwrappedTemplate = tryUnwrapTemplateLiteralExpressionSource(raw)?.template ?? cooked;
 
     if (isStatic) {
       return { value: unwrappedTemplate, isDynamic: false, isStaticLiteral: true };
@@ -2180,10 +2218,7 @@ export function tryGetExistingElementDataTestId(node: ElementNode, attributeName
       const cooked = (tl.quasis ?? []).map(q => q.value?.cooked ?? "").join("");
       const expressionCount = (tl.expressions ?? []).length;
       const isStatic = expressionCount === 0;
-
-      const unwrappedTemplate = (raw.startsWith("`") && raw.endsWith("`") && raw.length >= 2)
-        ? raw.slice(1, -1)
-        : cooked;
+      const unwrappedTemplate = tryUnwrapTemplateLiteralExpressionSource(raw)?.template ?? cooked;
 
       if (isStatic) {
         return { value: unwrappedTemplate, isDynamic: false, isStaticLiteral: true };
@@ -2222,8 +2257,12 @@ export function tryGetExistingElementDataTestId(node: ElementNode, attributeName
 }
 
 function isTemplatePlaceholder(part: string) {
-  // Avoid regex literals here; this only needs to detect the simple `${...}` wrapper.
-  return part.startsWith("${") && part.endsWith("}") && part.length >= 3;
+  const templateLiteral = tryParseTemplateFragment(part);
+  return !!templateLiteral
+    && templateLiteral.expressions.length === 1
+    && templateLiteral.quasis.length === 2
+    && (templateLiteral.quasis[0]?.value.raw ?? "") === ""
+    && (templateLiteral.quasis[1]?.value.raw ?? "") === "";
 }
 
 function isAllCapsOrDigits(value: string): boolean {
