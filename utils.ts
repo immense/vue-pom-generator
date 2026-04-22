@@ -569,6 +569,55 @@ export function hasTemplateInterpolationExpressions(fragment: string): boolean {
   return (tryParseTemplateFragment(fragment)?.expressions.length ?? 0) > 0;
 }
 
+export interface InterpolatedTemplateFragment {
+  template: string;
+  rawExpression: string | null;
+}
+
+export function toInterpolatedTemplateFragment(fragment: string | null): InterpolatedTemplateFragment | null {
+  if (!fragment) {
+    return null;
+  }
+
+  if (hasTemplateInterpolationExpressions(fragment)) {
+    return { template: fragment, rawExpression: null };
+  }
+
+  return {
+    template: `\${${fragment}}`,
+    rawExpression: fragment,
+  };
+}
+
+export function renderTemplateLiteralExpressionFromFragment(fragment: string): string {
+  const wrappedSource = `\`${fragment}\``;
+  const templateLiteral = tryParseTemplateFragment(fragment);
+  if (!templateLiteral) {
+    return wrappedSource;
+  }
+
+  let expression = "`";
+  for (let i = 0; i < templateLiteral.quasis.length; i += 1) {
+    expression += templateLiteral.quasis[i]?.value.raw ?? "";
+
+    const interpolation = templateLiteral.expressions[i];
+    if (!interpolation) {
+      continue;
+    }
+
+    const start = typeof interpolation.start === "number" ? interpolation.start : null;
+    const end = typeof interpolation.end === "number" ? interpolation.end : null;
+    if (start === null || end === null) {
+      return wrappedSource;
+    }
+
+    expression += `\${${wrappedSource.slice(start, end)}}`;
+  }
+
+  expression += "`";
+  return expression;
+}
+
 /**
  * Gets the value placeholder for a :key directive
  *

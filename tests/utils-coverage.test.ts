@@ -39,10 +39,12 @@ import {
   nodeHandlerAttributeValue,
   nodeHasClickDirective,
   nodeHasToDirective,
+  renderTemplateLiteralExpressionFromFragment,
   setResolveToComponentNameFn,
   setRouteNameToComponentNameMap,
   staticAttributeValue,
   templateAttributeValue,
+  toInterpolatedTemplateFragment,
   toPascalCase,
   tryGetClickDirective,
   tryGetContainedInStaticVForSourceLiteralValues,
@@ -411,6 +413,18 @@ describe("utils.ts coverage", () => {
     const el4 = firstElement(ast4);
     expect(getKeyDirectiveValue(el4)).toBe("line-${item.id}");
     expect(getKeyDirectiveRuntimeValue(el4)).toBe("line-${item.id}");
+  });
+
+  it("normalizes key fragments into template-safe output", () => {
+    expect(toInterpolatedTemplateFragment("item.id")).toEqual({
+      template: "${item.id}",
+      rawExpression: "item.id",
+    });
+    expect(toInterpolatedTemplateFragment("line-${item.id}")).toEqual({
+      template: "line-${item.id}",
+      rawExpression: null,
+    });
+    expect(renderTemplateLiteralExpressionFromFragment("line-${item.id}")).toBe("`line-${item.id}`");
   });
 
   it("extracts id/name identifiers", () => {

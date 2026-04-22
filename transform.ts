@@ -32,7 +32,7 @@ import {
   getContainedInVForDirectiveKeyValue,
   getContainedInVForDirectiveKeyRuntimeValue,
   getContainedInSlotDataKeyValue,
-  hasTemplateInterpolationExpressions,
+  renderTemplateLiteralExpressionFromFragment,
   tryGetContainedInStaticVForSourceLiteralValues,
   getKeyDirectiveValue,
   getKeyDirectiveRuntimeValue,
@@ -53,6 +53,7 @@ import {
   NativeWrappersMap,
   NativeRole,
   applyResolvedDataTestId,
+  toInterpolatedTemplateFragment,
   tryGetExistingElementDataTestId,
 } from "./utils";
 
@@ -685,7 +686,7 @@ function tryWrapClickDirectiveForTestEvents(
       return jsStringLiteral(resolvedRuntimeTestId.value);
     }
 
-    return `(\`${resolvedRuntimeTestId.template}\`)`;
+    return `(${renderTemplateLiteralExpressionFromFragment(resolvedRuntimeTestId.template)})`;
   };
 
   const testIdExpression = getTestIdExpressionForNode();
@@ -1112,15 +1113,11 @@ export function createTestIdTransform(
 
     const bestKeyInferred = getBestAvailableKeyValue();
     const bestRuntimeKeyInferred = getBestAvailableRuntimeKeyValue();
-    const bestKeyNeedsInterpolation = !!bestKeyInferred && !hasTemplateInterpolationExpressions(bestKeyInferred);
-    const bestKeyPlaceholder = bestKeyInferred
-      ? (bestKeyNeedsInterpolation ? `\${${bestKeyInferred}}` : bestKeyInferred)
-      : null;
-    const bestRuntimeKeyNeedsInterpolation = !!bestRuntimeKeyInferred && !hasTemplateInterpolationExpressions(bestRuntimeKeyInferred);
-    const bestRuntimeKeyPlaceholder = bestRuntimeKeyInferred
-      ? (bestRuntimeKeyNeedsInterpolation ? `\${${bestRuntimeKeyInferred}}` : bestRuntimeKeyInferred)
-      : null;
-    const bestKeyVariable = bestKeyNeedsInterpolation ? bestKeyInferred : null;
+    const bestKeyTemplateFragment = toInterpolatedTemplateFragment(bestKeyInferred);
+    const bestRuntimeKeyTemplateFragment = toInterpolatedTemplateFragment(bestRuntimeKeyInferred);
+    const bestKeyPlaceholder = bestKeyTemplateFragment?.template ?? null;
+    const bestRuntimeKeyPlaceholder = bestRuntimeKeyTemplateFragment?.template ?? null;
+    const bestKeyVariable = bestKeyTemplateFragment?.rawExpression ?? null;
 
     // If we can prove the v-for iterable is a static literal list, capture the concrete
     // values (e.g. ['One', 'Two']). Downstream codegen can use this to:
