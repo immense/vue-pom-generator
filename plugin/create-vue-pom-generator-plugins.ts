@@ -355,7 +355,6 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
   const excludedComponents = injection.excludeComponents ?? [];
   const testIdAttribute = (injection.attribute ?? "data-testid").trim() || "data-testid";
   const existingIdBehavior: ExistingIdBehavior = injection.existingIdBehavior ?? "preserve";
-  const clickInstrumentation = injection.clickInstrumentation ?? true;
 
   const outDir = (generationOptions?.outDir ?? "tests/playwright/__generated__").trim();
   const emitLanguages: Array<"ts" | "csharp"> = (generationOptions?.emit && generationOptions.emit.length)
@@ -480,7 +479,6 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
     vueOptions,
     existingIdBehavior,
     nameCollisionBehavior,
-    clickInstrumentation,
     nativeWrappers,
     elementMetadata,
     semanticNameMap,
@@ -513,7 +511,6 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
     nameCollisionBehavior,
     missingSemanticNameBehavior,
     existingIdBehavior,
-    clickInstrumentation,
     outDir,
     emitLanguages,
     typescriptOutputStructure,

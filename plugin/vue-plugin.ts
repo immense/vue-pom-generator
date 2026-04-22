@@ -20,7 +20,6 @@ interface InternalFactoryOptions {
   vueOptions?: VuePluginOptions;
   existingIdBehavior: "preserve" | "overwrite" | "error";
   nameCollisionBehavior: PomNameCollisionBehavior;
-  clickInstrumentation?: boolean;
   nativeWrappers: NativeWrappersMap;
   elementMetadata: Map<string, Map<string, ElementMetadata>>;
   semanticNameMap: Map<string, string>;
@@ -106,7 +105,6 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     vueOptions,
     existingIdBehavior,
     nameCollisionBehavior,
-    clickInstrumentation = true,
     nativeWrappers,
     elementMetadata,
     semanticNameMap,
@@ -212,7 +210,6 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
                   existingIdBehavior,
                   testIdAttribute,
                   nameCollisionBehavior,
-                  clickInstrumentation,
                   warn: (message) => loggerRef.current.warn(message),
                   vueFilesPathMap,
                   wrapperSearchRoots: getWrapperSearchRoots(),
@@ -247,7 +244,6 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
                 existingIdBehavior,
                 testIdAttribute,
                 nameCollisionBehavior,
-                clickInstrumentation,
                 warn: (message) => loggerRef.current.warn(message),
                 vueFilesPathMap,
                 wrapperSearchRoots: getWrapperSearchRoots(),

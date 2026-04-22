@@ -69,6 +69,7 @@ That example is intentionally small, but it shows the real contract:
 The generator does not use one naming trick. It layers several signals.
 
 - **Click actions** prefer semantic handler names such as `save`, `openDetails`, or `runImport`.
+- **Click handlers are instrumented** so generated Playwright helpers can wait on deterministic `__testid_event__` runtime events.
 - **Inputs and wrapper components** prefer `v-model`, wrapper `valueAttribute`, or related model-like bindings.
 - **Native elements** also consider `id` / `name` attributes.
 - **Router links / `:to` bindings** can contribute route-based naming and typed navigation return types when the target can be resolved.
@@ -976,18 +977,6 @@ The sections below follow the actual `VuePomGeneratorPluginOptions` shape from `
 
   ```ts
   injection: { wrapperSearchRoots: ["../shared-ui/src/components"] }
-  ```
-
-#### `injection.clickInstrumentation`
-
-- **What it does:** Controls whether runtime `@click` handlers emit `__testid_event__`.
-- **Why it exists:** some teams want the generated event stream, while others only want template injection and POM generation.
-- **Benefit:** the historical default behavior stays on, but you can explicitly disable click wrapping when needed.
-- **Without it:** default is `true`.
-- **Example:**
-
-  ```ts
-  injection: { clickInstrumentation: false }
   ```
 
 #### `injection.existingIdBehavior`

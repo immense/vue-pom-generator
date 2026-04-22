@@ -56,7 +56,6 @@ import {
 } from "./utils";
 
 const CLICK_EVENT_NAME = TESTID_CLICK_EVENT_NAME;
-const DEFAULT_CLICK_INSTRUMENTATION = true;
 // Cache inferred wrapper configs across transforms/build passes.
 const inferredNativeWrapperConfigByLookup = new Map<string, { role: string }>();
 const inferredSfcPathByLookup = new Map<string, string | null>();
@@ -873,7 +872,6 @@ export function createTestIdTransform(
     testIdAttribute?: string;
     nameCollisionBehavior?: "error" | "warn" | "suffix";
     missingSemanticNameBehavior?: "ignore" | "error";
-    clickInstrumentation?: boolean;
     warn?: (message: string) => void;
     vueFilesPathMap?: Map<string, string>;
     wrapperSearchRoots?: string[];
@@ -883,7 +881,6 @@ export function createTestIdTransform(
   const testIdAttribute = (options.testIdAttribute || "data-testid").trim() || "data-testid";
   const nameCollisionBehavior = options.nameCollisionBehavior ?? "suffix";
   const missingSemanticNameBehavior = options.missingSemanticNameBehavior ?? "error";
-  const enableClickInstrumentation = options.clickInstrumentation ?? DEFAULT_CLICK_INSTRUMENTATION;
   const warn = options.warn;
   const vueFilesPathMap = options.vueFilesPathMap;
   const wrapperSearchRoots = options.wrapperSearchRoots ?? [];
@@ -1547,9 +1544,7 @@ export function createTestIdTransform(
 
       // Instrument @click handlers so Playwright can wait on deterministic UI-side events
       // without relying on network inspection.
-      if (enableClickInstrumentation) {
-        tryWrapClickDirectiveForTestEvents(element, testIdAttribute, resolvedDataTestId.runtimeValue);
-      }
+      tryWrapClickDirectiveForTestEvents(element, testIdAttribute, resolvedDataTestId.runtimeValue);
       return;
     }
 

@@ -79,7 +79,6 @@ function compileAndCaptureCode(source: string, options: CompilerOptions & { file
 function compileWithRuntimeTemplateOptions(
   source: string,
   options: {
-    clickInstrumentation?: boolean
     nativeWrappers?: NativeWrappersMap
     bindingMetadata?: BindingMetadata
   } = {},
@@ -88,7 +87,6 @@ function compileWithRuntimeTemplateOptions(
   const { templateCompilerOptions } = createVuePluginWithTestIds({
     existingIdBehavior: 'preserve',
     nameCollisionBehavior: 'error',
-    clickInstrumentation: options.clickInstrumentation,
     nativeWrappers: options.nativeWrappers ?? {},
     elementMetadata: new Map(),
     semanticNameMap: new Map(),
@@ -442,7 +440,7 @@ describe('createTestIdTransform', () => {
       nestedVForTemplate,
       {
         filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views', { clickInstrumentation: true })],
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
       },
     )
 
@@ -471,30 +469,6 @@ describe('createTestIdTransform', () => {
     expect(code).toContain('__testid_event__')
     expect(code).toContain('"data-click-instrumented": "1"')
     expect(code).toContain('"data-testid": `MyComp-${item.key ?? item.data?.id ?? item.id ?? item.value ?? item}-Remove-button`')
-  })
-
-  it('can disable click instrumentation explicitly', () => {
-    const code = compileWithRuntimeTemplateOptions(
-      `
-        <ImmyTable>
-          <template #actions="{ item }">
-            <ImmyButton @click="remove(item)">Remove</ImmyButton>
-          </template>
-        </ImmyTable>
-      `,
-      {
-        clickInstrumentation: false,
-        nativeWrappers: { ImmyButton: { role: 'button' } },
-        bindingMetadata: {
-          remove: BindingTypes.SETUP_CONST,
-        },
-      },
-    )
-
-    expect(code).toMatch(/onClick:\s*\$event =>\s*\(remove\(item\)\)/)
-    expect(code).toContain('"data-testid": `MyComp-${item.key ?? item.data?.id ?? item.id ?? item.value ?? item}-Remove-button`')
-    expect(code).not.toContain('__testid_event__')
-    expect(code).not.toContain('data-click-instrumented')
   })
 
   it('prefixes component-scope identifiers inside keyed router-link test ids', () => {
