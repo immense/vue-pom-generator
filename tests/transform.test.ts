@@ -1,5 +1,5 @@
 // @vitest-environment node
-import type { AttributeNode, DirectiveNode, ElementNode, ForNode, RootNode, TemplateChildNode } from '@vue/compiler-core'
+import type { AttributeNode, BindingMetadata, DirectiveNode, ElementNode, ForNode, RootNode, TemplateChildNode } from '@vue/compiler-core'
 import type { Node as BabelNode } from '@babel/types'
 
 import fs from 'node:fs'
@@ -9,12 +9,13 @@ import { fileURLToPath } from 'node:url'
 
 import type { CompilerOptions } from '@vue/compiler-dom'
 import type { IComponentDependencies, NativeWrappersMap } from '../utils'
-import { ConstantTypes, NodeTypes } from '@vue/compiler-core'
-import { baseCompile, parserOptions } from '@vue/compiler-dom'
+import { BindingTypes, ConstantTypes, NodeTypes } from '@vue/compiler-core'
+import { baseCompile, compile as compileDom, parserOptions } from '@vue/compiler-dom'
 import { parse as parseSfc } from '@vue/compiler-sfc'
 
 
 import { describe, expect, it } from 'vitest'
+import { createVuePluginWithTestIds } from '../plugin/vue-plugin'
 import { __internal, createTestIdTransform } from '../transform'
 
 
@@ -73,6 +74,49 @@ function compileAndCaptureCode(source: string, options: CompilerOptions & { file
   )
 
   return result.code
+}
+
+function compileWithRuntimeTemplateOptions(
+  source: string,
+  options: {
+    clickInstrumentation?: boolean
+    nativeWrappers?: NativeWrappersMap
+    bindingMetadata?: BindingMetadata
+  } = {},
+): string {
+  const componentHierarchyMap = new Map<string, IComponentDependencies>()
+  const { templateCompilerOptions } = createVuePluginWithTestIds({
+    existingIdBehavior: 'preserve',
+    nameCollisionBehavior: 'error',
+    clickInstrumentation: options.clickInstrumentation,
+    nativeWrappers: options.nativeWrappers ?? {},
+    elementMetadata: new Map(),
+    semanticNameMap: new Map(),
+    componentHierarchyMap,
+    vueFilesPathMap: new Map(),
+    excludedComponents: [],
+    getViewsDirAbs: () => '/src/views',
+    testIdAttribute: 'data-testid',
+    loggerRef: {
+      current: {
+        info() {},
+        debug() {},
+        warn() {},
+      },
+    },
+    getSourceDirs: () => ['/src/views', '/src/components'],
+    getWrapperSearchRoots: () => [],
+    getProjectRoot: () => '/',
+  })
+
+  return compileDom(source, {
+    ...templateCompilerOptions,
+    filename: '/src/views/MyComp.vue',
+    inline: true,
+    cacheHandlers: true,
+    bindingMetadata: options.bindingMetadata,
+    mode: 'module',
+  }).code
 }
 
 function findFirstDataTestIdDirectiveExpAst(root: RootNode): BabelNode | null | false | undefined {
@@ -398,12 +442,80 @@ describe('createTestIdTransform', () => {
       nestedVForTemplate,
       {
         filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views', { clickInstrumentation: true })],
+      },
+    )
+
+    expect(code).toContain('"data-testid": `MyComp-${_ctx.item.id}-line-${matches.lineNumber}-LineSelected-li`')
+    expect(code).not.toContain('${`${item.id}-line-${matches.lineNumber}`}')
+    expect(code).not.toContain('_ctx._ctx.item.id')
+  })
+
+  it('injects click instrumentation by default', () => {
+    const code = compileWithRuntimeTemplateOptions(
+      `
+        <ImmyTable>
+          <template #actions="{ item }">
+            <ImmyButton @click="remove(item)">Remove</ImmyButton>
+          </template>
+        </ImmyTable>
+      `,
+      {
+        nativeWrappers: { ImmyButton: { role: 'button' } },
+        bindingMetadata: {
+          remove: BindingTypes.SETUP_CONST,
+        },
+      },
+    )
+
+    expect(code).toContain('__testid_event__')
+    expect(code).toContain('"data-click-instrumented": "1"')
+    expect(code).toContain('"data-testid": `MyComp-${item.key ?? item.data?.id ?? item.id ?? item.value ?? item}-Remove-button`')
+  })
+
+  it('can disable click instrumentation explicitly', () => {
+    const code = compileWithRuntimeTemplateOptions(
+      `
+        <ImmyTable>
+          <template #actions="{ item }">
+            <ImmyButton @click="remove(item)">Remove</ImmyButton>
+          </template>
+        </ImmyTable>
+      `,
+      {
+        clickInstrumentation: false,
+        nativeWrappers: { ImmyButton: { role: 'button' } },
+        bindingMetadata: {
+          remove: BindingTypes.SETUP_CONST,
+        },
+      },
+    )
+
+    expect(code).toMatch(/onClick:\s*\$event =>\s*\(remove\(item\)\)/)
+    expect(code).toContain('"data-testid": `MyComp-${item.key ?? item.data?.id ?? item.id ?? item.value ?? item}-Remove-button`')
+    expect(code).not.toContain('__testid_event__')
+    expect(code).not.toContain('data-click-instrumented')
+  })
+
+  it('prefixes component-scope identifiers inside keyed router-link test ids', () => {
+    const componentHierarchyMap = new Map()
+
+    const code = compileAndCaptureCode(
+      `
+        <RouterLink :key="\`${'${'}item.name}-${'${'}item.url}\`" :to="item.url">
+          {{ item.name }}
+        </RouterLink>
+      `,
+      {
+        filename: '/src/components/MyComp.vue',
         nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
       },
     )
 
-    expect(code).toContain('MyComp-${`${_ctx.item.id}-line-${matches.lineNumber}`}-LineSelected-li')
-    expect(code).not.toContain('_ctx._ctx.item.id')
+    expect(code).toContain('_ctx.item.name')
+    expect(code).toContain('_ctx.item.url')
+    expect(code).toContain('"data-testid": `MyComp-${_ctx.item.name}-${_ctx.item.url}--routerlink`')
+    expect(code).not.toContain('${`${item.name}-${item.url}`}')
   })
 
   it('ignores singleton :key values when generating click test ids', () => {

@@ -47,6 +47,7 @@ interface BuildProcessorOptions {
   missingSemanticNameBehavior?: "ignore" | "error";
   /** How to handle existing data-testid attributes. */
   existingIdBehavior?: "preserve" | "overwrite" | "error";
+  clickInstrumentation?: boolean;
   /** Native wrapper component config. */
   nativeWrappers: NativeWrappersMap;
   /** Components excluded from test-id injection. */
@@ -124,6 +125,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     nameCollisionBehavior,
     missingSemanticNameBehavior = "error",
     existingIdBehavior,
+    clickInstrumentation = true,
     nativeWrappers,
     excludedComponents,
     getWrapperSearchRoots,
@@ -264,6 +266,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
                   testIdAttribute,
                   nameCollisionBehavior,
                   missingSemanticNameBehavior,
+                  clickInstrumentation,
                   warn: (message: string) => loggerRef.current.warn(message),
                   vueFilesPathMap,
                   wrapperSearchRoots: getWrapperSearchRoots(),

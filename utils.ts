@@ -537,19 +537,46 @@ function getKeyDirective(node: ElementNode): DirectiveNode | null {
  */
 export function getKeyDirectiveValue(node: ElementNode, _context: TransformContext | null = null): string | null {
   const keyDirective = getKeyDirective(node);
+  if (keyDirective?.exp) {
+    const value = stringifyExpression(keyDirective.exp).trim();
+    if (value) {
+      // Inline template-literal keys directly into the generated data-testid template so the
+      // resulting expression uses the compiler-prefixed component scope (`_ctx.*`) while still
+      // preserving local v-for / slot bindings without nesting an extra template literal.
+      if (value.startsWith("`") && value.endsWith("`")) {
+        return value.slice(1, -1);
+      }
+
+      return `\${${value}}`;
+    }
+  }
+
   const rawSource = keyDirective?.exp?.loc.source?.trim();
   if (rawSource) {
-    // Preserve author-facing key source instead of compiler-prefixed `_ctx.*` output.
-    // Generated keyed test ids are later embedded into other transformed expressions
-    // (for example, click instrumentation wrappers), and reusing a stringified `_ctx.*`
-    // expression there can produce invalid double-prefixing like `_ctx._ctx.item.id`.
-    return `\${${rawSource}}`;
+    return rawSource.startsWith("`") && rawSource.endsWith("`")
+      ? rawSource.slice(1, -1)
+      : `\${${rawSource}}`;
+  }
+
+  return null;
+}
+
+export function getKeyDirectiveRuntimeValue(node: ElementNode): string | null {
+  const keyDirective = getKeyDirective(node);
+  const rawSource = keyDirective?.exp?.loc.source?.trim();
+  if (rawSource) {
+    return rawSource.startsWith("`") && rawSource.endsWith("`")
+      ? rawSource.slice(1, -1)
+      : `\${${rawSource}}`;
   }
 
   if (keyDirective?.exp) {
-    const value = stringifyExpression(keyDirective.exp);
-    if (value)
-      return `\${${value}}`;
+    const value = stringifyExpression(keyDirective.exp).trim();
+    if (value) {
+      return value.startsWith("`") && value.endsWith("`")
+        ? value.slice(1, -1)
+        : `\${${value}}`;
+    }
   }
 
   return null;
@@ -707,6 +734,24 @@ export function getContainedInVForDirectiveKeyValue(context: TransformContext, n
         // Found the v-for element, now look for :key
         const keyValue = getKeyDirectiveValue(parent as ElementNode);
         return keyValue;
+      }
+    }
+    parent = getParent(hierarchyMap, parent);
+  }
+  return null;
+}
+
+export function getContainedInVForDirectiveKeyRuntimeValue(context: TransformContext, node: ElementNode, hierarchyMap: HierarchyMap): string | null {
+  if (!context.scopes.vFor || context.scopes.vFor === 0) {
+    return null;
+  }
+
+  let parent = getParent(hierarchyMap, node);
+  while (parent) {
+    if (parent.type === NodeTypes.ELEMENT) {
+      const forDirective = findDirectiveByName(parent as ElementNode, "for");
+      if (forDirective) {
+        return getKeyDirectiveRuntimeValue(parent as ElementNode);
       }
     }
     parent = getParent(hierarchyMap, parent);
@@ -2025,6 +2070,12 @@ export interface ExistingElementDataTestIdInfo {
   rawExpression?: string;
 }
 
+export interface ResolvedDataTestIdValues {
+  selectorValue: AttributeValue;
+  runtimeValue: AttributeValue;
+  fromExisting: boolean;
+}
+
 /**
  * Extracts existing data-testid info from an element.
  *
@@ -2301,7 +2352,9 @@ export function applyResolvedDataTestId(args: {
   generatedMethodContentByComponent: Map<string, Set<string>>;
   nativeRole: string;
   preferredGeneratedValue: AttributeValue;
+  preferredRuntimeValue?: AttributeValue;
   bestKeyPlaceholder: string | null;
+  bestKeyPreservePlaceholder?: string | null;
   /** Optional variable name that must be present in a placeholder (e.g. "data" from slot scope). */
   bestKeyVariable?: string | null;
   /** Optional enumerable key values (e.g. derived from v-for="item in ['One','Two']"). */
@@ -2353,7 +2406,7 @@ export function applyResolvedDataTestId(args: {
 
   /** Optional warning sink (typically the shared generator logger). */
   warn?: (message: string) => void;
-}): void {
+}): ResolvedDataTestIdValues {
   const addHtmlAttribute = args.addHtmlAttribute ?? true;
   const entryOverrides = args.entryOverrides ?? {};
   const testIdAttribute = args.testIdAttribute ?? "data-testid";
@@ -2371,7 +2424,9 @@ export function applyResolvedDataTestId(args: {
 
   // 1) Resolve effective data-testid (respecting any existing attribute).
   let dataTestId = args.preferredGeneratedValue;
+  let runtimeDataTestId = args.preferredRuntimeValue ?? args.preferredGeneratedValue;
   let fromExisting = false;
+  const bestKeyPreservePlaceholder = args.bestKeyPreservePlaceholder ?? args.bestKeyPlaceholder;
 
   const existing = tryGetExistingElementDataTestId(args.element, testIdAttribute);
   if (existing) {
@@ -2412,22 +2467,23 @@ export function applyResolvedDataTestId(args: {
             );
           }
 
-          const hasExact = args.bestKeyPlaceholder && existingTemplate.includes(args.bestKeyPlaceholder);
+          const hasExact = bestKeyPreservePlaceholder && existingTemplate.includes(bestKeyPreservePlaceholder);
           const hasVarAccess = getBestKeyAccessCandidates(args.bestKeyVariable)
             .some(candidate => existingTemplate.includes(candidate));
 
-          if (!hasExact && !hasVarAccess && args.bestKeyPlaceholder) {
+          if (!hasExact && !hasVarAccess && bestKeyPreservePlaceholder) {
             throw new Error(
               `[vue-pom-generator] Existing ${attrLabel} appears to be missing the key placeholder needed to keep it unique.\n`
               + `Component: ${args.componentName}\n`
               + `File: ${file}:${locationHint}\n`
               + `Existing ${attrLabel}: ${JSON.stringify(existing.value)}\n`
-              + `Required placeholder: ${JSON.stringify(args.bestKeyPlaceholder)}${args.bestKeyVariable ? ` or an access on "${args.bestKeyVariable}"` : ""}\n\n`
-              + `Fix: either (1) include ${args.bestKeyPlaceholder} in your :${attrLabel} template literal, or (2) remove the explicit ${attrLabel} so it can be auto-generated.`,
+              + `Required placeholder: ${JSON.stringify(bestKeyPreservePlaceholder)}${args.bestKeyVariable ? ` or an access on "${args.bestKeyVariable}"` : ""}\n\n`
+              + `Fix: either (1) include ${bestKeyPreservePlaceholder} in your :${attrLabel} template literal, or (2) remove the explicit ${attrLabel} so it can be auto-generated.`,
             );
           }
 
           dataTestId = templateAttributeValue(existing.template);
+          runtimeDataTestId = templateAttributeValue(existing.template);
           fromExisting = true;
         }
         else {
@@ -2442,18 +2498,19 @@ export function applyResolvedDataTestId(args: {
         }
       }
       else {
-        if (args.bestKeyPlaceholder && existing.isStaticLiteral) {
+        if (bestKeyPreservePlaceholder && existing.isStaticLiteral) {
           throw new Error(
             `[vue-pom-generator] Existing ${attrLabel} appears to be missing the key placeholder needed to keep it unique.\n`
             + `Component: ${args.componentName}\n`
             + `File: ${file}:${locationHint}\n`
             + `Existing ${attrLabel}: ${JSON.stringify(existing.value)}\n`
-            + `Required placeholder: ${JSON.stringify(args.bestKeyPlaceholder)}${args.bestKeyVariable ? ` or an access on "${args.bestKeyVariable}"` : ""}\n\n`
-            + `Fix: either (1) include ${args.bestKeyPlaceholder} in your :${attrLabel} template literal, or (2) remove the explicit ${attrLabel} so it can be auto-generated.`,
+            + `Required placeholder: ${JSON.stringify(bestKeyPreservePlaceholder)}${args.bestKeyVariable ? ` or an access on "${args.bestKeyVariable}"` : ""}\n\n`
+            + `Fix: either (1) include ${bestKeyPreservePlaceholder} in your :${attrLabel} template literal, or (2) remove the explicit ${attrLabel} so it can be auto-generated.`,
           );
         }
 
         dataTestId = staticAttributeValue(existing.value);
+        runtimeDataTestId = staticAttributeValue(existing.value);
         fromExisting = true;
       }
     }
@@ -3230,7 +3287,7 @@ export function applyResolvedDataTestId(args: {
       }
 
       // For statically-known options, we intentionally do NOT generate the generic parameterized method.
-      return;
+      return { selectorValue: dataTestId, runtimeValue: runtimeDataTestId, fromExisting };
     }
 
     // Dynamic options expression: generate a single method that accepts an option label string.
@@ -3257,7 +3314,7 @@ export function applyResolvedDataTestId(args: {
     if (added) {
       registerGeneratedMethodSignature(generatedName, { params: `value: string, annotationText: string = ""`, argNames: ["value", "annotationText"] });
     }
-    return;
+    return { selectorValue: dataTestId, runtimeValue: runtimeDataTestId, fromExisting };
   }
 
   // Special handling for v-for driven by a static literal list.
@@ -3314,7 +3371,7 @@ export function applyResolvedDataTestId(args: {
     }
 
     // For statically-known keys, we intentionally do NOT emit the generic keyed method.
-    return;
+    return { selectorValue: dataTestId, runtimeValue: runtimeDataTestId, fromExisting };
   }
 
   // Default/legacy behavior: emit the primary method+locator for this element.
@@ -3332,6 +3389,8 @@ export function applyResolvedDataTestId(args: {
     const generatedName = getGeneratedMethodName();
     registerGeneratedMethodSignature(generatedName, signature);
   }
+
+  return { selectorValue: dataTestId, runtimeValue: runtimeDataTestId, fromExisting };
 }
 
 export interface IDataTestId {

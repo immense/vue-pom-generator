@@ -46,6 +46,7 @@ interface DevProcessorOptions {
   missingSemanticNameBehavior?: "ignore" | "error";
   /** How to handle existing data-testid attributes in the source. */
   existingIdBehavior?: "preserve" | "overwrite" | "error";
+  clickInstrumentation?: boolean;
   testIdAttribute: string;
 
   routerAwarePoms: boolean;
@@ -81,6 +82,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     nameCollisionBehavior = "suffix",
     missingSemanticNameBehavior = "error",
     existingIdBehavior,
+    clickInstrumentation = true,
     testIdAttribute,
     routerAwarePoms,
     getResolvedRouterEntry,
@@ -323,6 +325,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
                 existingIdBehavior: existingIdBehavior ?? "preserve",
                 nameCollisionBehavior,
                 missingSemanticNameBehavior,
+                clickInstrumentation,
                 testIdAttribute,
                 warn: message => loggerRef.current.warn(message),
                 vueFilesPathMap: provisionalVuePathMap,

@@ -25,6 +25,7 @@ interface SupportFactoryOptions {
   missingSemanticNameBehavior?: "ignore" | "error";
   /** How to handle existing data-testid attributes in the source. */
   existingIdBehavior?: "preserve" | "overwrite" | "error";
+  clickInstrumentation?: boolean;
 
   /** Output directory for generated files (POMs + optional fixtures). */
   outDir?: string;
@@ -71,6 +72,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     nameCollisionBehavior = "suffix",
     missingSemanticNameBehavior = "error",
     existingIdBehavior,
+    clickInstrumentation = true,
     outDir,
     emitLanguages,
     typescriptOutputStructure,
@@ -141,6 +143,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     nameCollisionBehavior,
     missingSemanticNameBehavior,
     existingIdBehavior,
+    clickInstrumentation,
     nativeWrappers,
     excludedComponents,
     getWrapperSearchRoots,
@@ -175,6 +178,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     nameCollisionBehavior,
     missingSemanticNameBehavior,
     existingIdBehavior,
+    clickInstrumentation,
     testIdAttribute,
     routerAwarePoms,
     routerType,

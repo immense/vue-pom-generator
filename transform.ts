@@ -25,20 +25,21 @@ import {
   isAsciiLetterCode,
   isAsciiUppercaseLetterCode,
   upsertAttribute,
-  findTestIdAttribute,
   formatTagName,
   getComposedClickHandlerContent,
   getIdOrName,
   getInnerText,
-   getContainedInVForDirectiveKeyValue,
-   getContainedInSlotDataKeyValue,
-   tryGetContainedInStaticVForSourceLiteralValues,
-   getKeyDirectiveValue,
-   getModelBindingValues,
-   getNativeWrapperTransformInfo,
-   nodeHandlerAttributeValue,
-   nodeHandlerAttributeInfo,
-   tryGetClickDirective,
+  getContainedInVForDirectiveKeyValue,
+  getContainedInVForDirectiveKeyRuntimeValue,
+  getContainedInSlotDataKeyValue,
+  tryGetContainedInStaticVForSourceLiteralValues,
+  getKeyDirectiveValue,
+  getKeyDirectiveRuntimeValue,
+  getModelBindingValues,
+  getNativeWrapperTransformInfo,
+  nodeHandlerAttributeValue,
+  nodeHandlerAttributeInfo,
+  tryGetClickDirective,
   nodeHasToDirective,
   generateToDirectiveDataTestId,
   toDirectiveObjectFieldNameValue,
@@ -55,7 +56,7 @@ import {
 } from "./utils";
 
 const CLICK_EVENT_NAME = TESTID_CLICK_EVENT_NAME;
-const ENABLE_CLICK_INSTRUMENTATION = true;
+const DEFAULT_CLICK_INSTRUMENTATION = true;
 // Cache inferred wrapper configs across transforms/build passes.
 const inferredNativeWrapperConfigByLookup = new Map<string, { role: string }>();
 const inferredSfcPathByLookup = new Map<string, string | null>();
@@ -665,41 +666,26 @@ function tryInferNativeWrapperRoleFromSfc(
   return null;
 }
 
-function tryWrapClickDirectiveForTestEvents(element: ElementNode, testIdAttribute: string): void {
+function tryWrapClickDirectiveForTestEvents(
+  element: ElementNode,
+  testIdAttribute: string,
+  resolvedRuntimeTestId: AttributeValue | null | undefined,
+): void {
   const jsStringLiteral = (value: string) => {
     // Use JSON.stringify to safely escape quotes/newlines.
     return JSON.stringify(value);
   };
 
-  // Prefer using the template node's data-testid (static or bound) so wrapper components
-  // like <AppButton data-testid="..."> still emit the expected id even though the
-  // underlying DOM <button> doesn't have the attribute.
   const getTestIdExpressionForNode = (): string => {
-    const existing = findTestIdAttribute(element, testIdAttribute);
-    if (!existing) {
+    if (!resolvedRuntimeTestId) {
       return "undefined";
     }
 
-    if (existing.type === NodeTypes.ATTRIBUTE) {
-      const v = existing.value?.content;
-      if (!v) {
-        return "undefined";
-      }
-      return jsStringLiteral(v);
+    if (resolvedRuntimeTestId.kind === "static") {
+      return jsStringLiteral(resolvedRuntimeTestId.value);
     }
 
-    // :<attr>="..." / v-bind:<attr>="..."
-    const directive = existing as DirectiveNode;
-    const exp = directive.exp;
-    if (!exp || exp.type !== NodeTypes.SIMPLE_EXPRESSION) {
-      return "undefined";
-    }
-    const content = (exp.content ?? "").trim();
-    if (!content) {
-      return "undefined";
-    }
-    // Use the bound expression verbatim; it will be evaluated in the same scope as the handler.
-    return `(${content})`;
+    return `(\`${resolvedRuntimeTestId.template}\`)`;
   };
 
   const testIdExpression = getTestIdExpressionForNode();
@@ -887,6 +873,7 @@ export function createTestIdTransform(
     testIdAttribute?: string;
     nameCollisionBehavior?: "error" | "warn" | "suffix";
     missingSemanticNameBehavior?: "ignore" | "error";
+    clickInstrumentation?: boolean;
     warn?: (message: string) => void;
     vueFilesPathMap?: Map<string, string>;
     wrapperSearchRoots?: string[];
@@ -896,6 +883,7 @@ export function createTestIdTransform(
   const testIdAttribute = (options.testIdAttribute || "data-testid").trim() || "data-testid";
   const nameCollisionBehavior = options.nameCollisionBehavior ?? "suffix";
   const missingSemanticNameBehavior = options.missingSemanticNameBehavior ?? "error";
+  const enableClickInstrumentation = options.clickInstrumentation ?? DEFAULT_CLICK_INSTRUMENTATION;
   const warn = options.warn;
   const vueFilesPathMap = options.vueFilesPathMap;
   const wrapperSearchRoots = options.wrapperSearchRoots ?? [];
@@ -1113,9 +1101,23 @@ export function createTestIdTransform(
       return getContainedInSlotDataKeyValue(element, hierarchyMap);
     };
 
+    const getBestAvailableRuntimeKeyValue = () => {
+      const parentNode = (context.parent && typeof context.parent === "object") ? context.parent as { type?: number } : null;
+      const isDirectVForChild = parentNode?.type === NodeTypes.FOR;
+
+      const vForKey = (isDirectVForChild ? getKeyDirectiveRuntimeValue(element) : null)
+        || getContainedInVForDirectiveKeyRuntimeValue(context, element, hierarchyMap);
+      if (vForKey) return vForKey;
+
+      return getContainedInSlotDataKeyValue(element, hierarchyMap);
+    };
+
     const bestKeyInferred = getBestAvailableKeyValue();
+    const bestRuntimeKeyInferred = getBestAvailableRuntimeKeyValue();
     const isSlotKey = bestKeyInferred && !bestKeyInferred.startsWith("${");
     const bestKeyPlaceholder = isSlotKey ? `\${${bestKeyInferred}}` : bestKeyInferred;
+    const isRuntimeSlotKey = bestRuntimeKeyInferred && !bestRuntimeKeyInferred.startsWith("${");
+    const bestRuntimeKeyPlaceholder = isRuntimeSlotKey ? `\${${bestRuntimeKeyInferred}}` : bestRuntimeKeyInferred;
     const bestKeyVariable = isSlotKey ? bestKeyInferred : null;
 
     // If we can prove the v-for iterable is a static literal list, capture the concrete
@@ -1246,6 +1248,13 @@ export function createTestIdTransform(
         : staticAttributeValue(`${componentName}${clickSuffix}${tagSuffix}`);
     };
 
+    const getClickRuntimeDataTestId = (clickSuffix: string): AttributeValue => {
+      const tagSuffix = getTagSuffix();
+      return bestRuntimeKeyPlaceholder
+        ? templateAttributeValue(`${componentName}-${bestRuntimeKeyPlaceholder}${clickSuffix}${tagSuffix}`)
+        : staticAttributeValue(`${componentName}${clickSuffix}${tagSuffix}`);
+    };
+
     const getSubmitDataTestId = (identifier: string): string => {
       const tagSuffix = getTagSuffix();
       return `${componentName}-${identifier}${tagSuffix}`;
@@ -1254,15 +1263,16 @@ export function createTestIdTransform(
 
     const applyResolvedDataTestIdForElement = (args: {
       preferredGeneratedValue: AttributeValue;
+      preferredRuntimeValue?: AttributeValue;
       nativeRoleOverride?: string;
       entryOverrides?: Partial<IDataTestId>;
       addHtmlAttribute?: boolean;
       semanticNameHint?: string;
       semanticNameHintAlternates?: string[];
       pomMergeKey?: string;
-    }): void => {
+    }) => {
       const nativeRole = args.nativeRoleOverride ?? getNativeRoleFromTagSuffix();
-      applyResolvedDataTestId({
+      return applyResolvedDataTestId({
         element,
         componentName,
         parentComponentName,
@@ -1272,7 +1282,9 @@ export function createTestIdTransform(
         generatedMethodContentByComponent,
         nativeRole,
         preferredGeneratedValue: args.preferredGeneratedValue,
+        preferredRuntimeValue: args.preferredRuntimeValue,
         bestKeyPlaceholder,
+        bestKeyPreservePlaceholder: bestRuntimeKeyPlaceholder,
         bestKeyVariable,
         keyValuesOverride,
         entryOverrides: args.entryOverrides,
@@ -1523,9 +1535,11 @@ export function createTestIdTransform(
       const pomMergeKey = clickHint ? `click:hint:${clickHint}` : undefined;
 
       const testId = getClickDataTestId(clickSuffix);
+      const runtimeTestId = getClickRuntimeDataTestId(clickSuffix);
 
-      applyResolvedDataTestIdForElement({
+      const resolvedDataTestId = applyResolvedDataTestIdForElement({
         preferredGeneratedValue: testId,
+        preferredRuntimeValue: runtimeTestId,
         semanticNameHint,
         semanticNameHintAlternates,
         pomMergeKey,
@@ -1533,8 +1547,8 @@ export function createTestIdTransform(
 
       // Instrument @click handlers so Playwright can wait on deterministic UI-side events
       // without relying on network inspection.
-      if (ENABLE_CLICK_INSTRUMENTATION) {
-        tryWrapClickDirectiveForTestEvents(element, testIdAttribute);
+      if (enableClickInstrumentation) {
+        tryWrapClickDirectiveForTestEvents(element, testIdAttribute, resolvedDataTestId.runtimeValue);
       }
       return;
     }

@@ -978,6 +978,18 @@ The sections below follow the actual `VuePomGeneratorPluginOptions` shape from `
   injection: { wrapperSearchRoots: ["../shared-ui/src/components"] }
   ```
 
+#### `injection.clickInstrumentation`
+
+- **What it does:** Controls whether runtime `@click` handlers emit `__testid_event__`.
+- **Why it exists:** some teams want the generated event stream, while others only want template injection and POM generation.
+- **Benefit:** the historical default behavior stays on, but you can explicitly disable click wrapping when needed.
+- **Without it:** default is `true`.
+- **Example:**
+
+  ```ts
+  injection: { clickInstrumentation: false }
+  ```
+
 #### `injection.existingIdBehavior`
 
 - **What it does:** Chooses what happens when a template already has the target attribute.

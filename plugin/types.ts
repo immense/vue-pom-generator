@@ -130,8 +130,18 @@ export interface VuePomGeneratorPluginOptions {
     wrapperSearchRoots?: string[];
 
     /**
-     * What to do when the author already provided a test id attribute.
-     *
+      * Whether to wrap click handlers so the app emits `__testid_event__` runtime events.
+      *
+      * Defaults to `true`.
+      *
+      * Set this to `false` to opt out when you only want template injection / POM generation
+      * without runtime click-handler wrapping.
+      */
+    clickInstrumentation?: boolean;
+
+    /**
+      * What to do when the author already provided a test id attribute.
+      *
      * - `"preserve"` (default): keep the existing value
      * - `"overwrite"`: replace it with the generated value
      * - `"error"`: throw to force cleanup/migration
