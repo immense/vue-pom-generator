@@ -11,7 +11,7 @@ import type {
   IfBranchNode,
   ForNode,
 } from "@vue/compiler-core";
-import type { AttributeValue, HierarchyMap } from "./utils";
+import type { AttributeValue, HierarchyMap, ResolvedKeyInfo } from "./utils";
 import { NodeTypes } from "@vue/compiler-core";
 import { parse as parseSfc } from "@vue/compiler-sfc";
 import { parse as parseTemplate } from "@vue/compiler-dom";
@@ -27,16 +27,14 @@ import {
   upsertAttribute,
   formatTagName,
   getComposedClickHandlerContent,
-  getIdOrName,
+  getStaticIdOrNameHint,
   getInnerText,
-  getContainedInVForDirectiveKeyValue,
-  getContainedInVForDirectiveKeyRuntimeValue,
-  getContainedInSlotDataKeyValue,
+  getContainedInSlotDataKeyInfo,
+  getContainedInVForDirectiveKeyInfo,
   getVueExpressionSource,
   renderTemplateLiteralExpression,
   tryGetContainedInStaticVForSourceLiteralValues,
-  getKeyDirectiveValue,
-  getKeyDirectiveRuntimeValue,
+  getKeyDirectiveInfo,
   getModelBindingValues,
   getNativeWrapperTransformInfo,
   nodeHandlerAttributeValue,
@@ -54,7 +52,6 @@ import {
   NativeWrappersMap,
   NativeRole,
   applyResolvedDataTestId,
-  toInterpolatedTemplateFragment,
   tryGetExistingElementDataTestId,
 } from "./utils";
 
@@ -1085,48 +1082,30 @@ export function createTestIdTransform(
       }
     }
 
-      const getBestAvailableKeyInfo = () => {
+      const getBestAvailableKeyInfo = (): ResolvedKeyInfo | null => {
         const parentNode = (context.parent && typeof context.parent === "object") ? context.parent as { type?: number } : null;
         const isDirectVForChild = parentNode?.type === NodeTypes.FOR;
 
-        const selectorFragment = (isDirectVForChild ? getKeyDirectiveValue(element, context) : null)
-          || getContainedInVForDirectiveKeyValue(context, element, hierarchyMap);
-        const runtimeFragment = (isDirectVForChild ? getKeyDirectiveRuntimeValue(element) : null)
-          || getContainedInVForDirectiveKeyRuntimeValue(context, element, hierarchyMap);
-        if (selectorFragment || runtimeFragment) {
-          return {
-            selectorFragment: selectorFragment ?? runtimeFragment,
-            runtimeFragment: runtimeFragment ?? selectorFragment,
-            rawExpression: null,
-          };
+        const vForKeyInfo = (isDirectVForChild ? getKeyDirectiveInfo(element) : null)
+          || getContainedInVForDirectiveKeyInfo(context, element, hierarchyMap);
+        if (vForKeyInfo) {
+          return vForKeyInfo;
         }
 
-        const slotKeyFragment = toInterpolatedTemplateFragment(getContainedInSlotDataKeyValue(element, hierarchyMap));
-        if (!slotKeyFragment) {
-          return null;
-        }
-
-        return {
-          selectorFragment: slotKeyFragment.template,
-          runtimeFragment: slotKeyFragment.template,
-          rawExpression: slotKeyFragment.rawExpression,
-        };
+        return getContainedInSlotDataKeyInfo(element, hierarchyMap);
       };
 
-    // `bestKeyPlaceholder` and `bestRuntimeKeyPlaceholder` are already-final template fragments
-    // that get concatenated directly into generated `data-testid` template literals later on.
-    // They are not string-replaced after the fact.
-    //
-    // Expected shapes:
-    // - direct v-for key `item.id`        -> `${item.id}`
-    // - template-literal key `line-${id}` -> `line-${id}`
-    //
-    // `bestKeyVariable` is only populated for raw expressions (typically slot-scope fallbacks)
-    // so downstream method generation can still expose a stable `key` parameter name instead of
-    // collapsing every keyed helper into a generic `...ByKey(key: string)` signature.
+      // `bestKeyInfo` carries the keyed selector shape end-to-end:
+      // - selectorFragment: the fragment used in generated selector-side templates
+      // - runtimeFragment: the fragment used when preserving/matching runtime-facing ids
+      // - rawExpression: the author-visible raw expression when the fragment came from wrapping
+      //   a plain expression like `item.id` instead of reusing an existing template literal
+      //
+      // Expected fragments:
+      // - direct v-for key `item.id`        -> selector `${_ctx.item.id}` / runtime `${item.id}`
+      // - template-literal key `line-${id}` -> `line-${_ctx.id}` / `line-${id}`
       const bestKeyInfo = getBestAvailableKeyInfo();
       const bestKeyPlaceholder = bestKeyInfo?.selectorFragment ?? null;
-      const bestKeyVariable = bestKeyInfo?.rawExpression ?? null;
 
       // Runtime click wrappers use the same normalization, but only need the runtime fragment itself.
       const bestRuntimeKeyPlaceholder = bestKeyInfo?.runtimeFragment ?? null;
@@ -1290,9 +1269,7 @@ export function createTestIdTransform(
         nativeRole,
         preferredGeneratedValue: args.preferredGeneratedValue,
         preferredRuntimeValue: args.preferredRuntimeValue,
-        bestKeyPlaceholder,
-        bestKeyPreservePlaceholder: bestRuntimeKeyPlaceholder,
-        bestKeyVariable,
+        keyInfo: bestKeyInfo,
         keyValuesOverride,
         entryOverrides: args.entryOverrides,
         semanticNameHint: args.semanticNameHint,
@@ -1526,7 +1503,7 @@ export function createTestIdTransform(
       // Derive a semantic hint from the click suffix (which is already derived from AST and/or innerText).
       // This is NOT derived by parsing the final data-testid.
       const clickHint = trimLeadingSeparators(clickSuffix) || undefined;
-      const idOrName = getIdOrName(element) || undefined;
+      const idOrName = getStaticIdOrNameHint(element) || undefined;
 
       const semanticHintCandidates = [clickHint, idOrName, innerText, conditionalHint]
         .map(value => (value ?? "").trim())
@@ -1585,7 +1562,7 @@ export function createTestIdTransform(
       // 2) handler attribute
       // 3) inner text (labels)
       // 4) the data-testid value itself (last resort hint)
-      const identifierHint = getIdOrName(element)
+      const identifierHint = getStaticIdOrNameHint(element)
         || nodeHandlerAttributeValue(element)
         || innerText
         || existingElementDataTestId.value
@@ -1605,7 +1582,7 @@ export function createTestIdTransform(
     const isSubmit = (element.props.find((p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === "type")?.value?.content === "submit");
     if (isSubmit) {
       // Prefer explicit identity (id/name), otherwise fall back to literal inner text.
-      const identifier = getIdOrName(element) || innerText;
+      const identifier = getStaticIdOrNameHint(element) || innerText;
       if (!identifier) {
         const loc = element.loc?.start;
         const locationHint = loc ? `${loc.line}:${loc.column}` : "unknown";

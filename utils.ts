@@ -126,6 +126,12 @@ export type AttributeValue =
 
 type VueExpressionNode = SimpleExpressionNode | CompoundExpressionNode;
 
+export interface ResolvedKeyInfo {
+  selectorFragment: string;
+  runtimeFragment: string;
+  rawExpression: string | null;
+}
+
 export function staticAttributeValue(value: string): AttributeValue {
   return { kind: "static", value };
 }
@@ -295,15 +301,7 @@ export function nodeHasClickDirective(node: ElementNode): boolean {
   return tryGetClickDirective(node) !== undefined;
 }
 
-/**
- * Detects if a node is a <template> element with slot scope data and returns the scope expression.
- *
- * This detects template elements with v-slot directives that have parameters,
- * such as <template #item="{ data }"> or <template v-slot="item">.
- *
- * @internal
- */
-function getTemplateSlotScope(node: ElementNode): string | null {
+function findTemplateSlotScopeExpression(node: ElementNode): VueExpressionNode | null {
   if (node.tag !== "template") {
     return null;
   }
@@ -312,11 +310,9 @@ function getTemplateSlotScope(node: ElementNode): string | null {
     return prop.type === NodeTypes.DIRECTIVE && prop.name === "slot";
   });
 
-  if (slotProp?.exp && (slotProp.exp.type === NodeTypes.SIMPLE_EXPRESSION || slotProp.exp.type === NodeTypes.COMPOUND_EXPRESSION)) {
-    return getVueExpressionSource(slotProp.exp as VueExpressionNode, "content", "compiled") || null;
-  }
-
-  return null;
+  return slotProp?.exp && (slotProp.exp.type === NodeTypes.SIMPLE_EXPRESSION || slotProp.exp.type === NodeTypes.COMPOUND_EXPRESSION)
+    ? slotProp.exp as VueExpressionNode
+    : null;
 }
 
 /**
@@ -330,7 +326,7 @@ function getTemplateSlotScope(node: ElementNode): string | null {
  * @internal
  */
 function isTemplateWithData(node: ElementNode): boolean {
-  return getTemplateSlotScope(node) !== null;
+  return findTemplateSlotScopeExpression(node) !== null;
 }
 
 /**
@@ -492,52 +488,77 @@ function tryGetSlotScopeKeyCandidate(node: BabelNode | null | undefined): SlotSc
   return best;
 }
 
-function tryGetTemplateSlotScopeKeyExpression(scope: string): string | null {
-  const trimmed = scope.trim();
-  if (!trimmed) {
+function tryGetTemplateSlotScopeBindingNode(expression: VueExpressionNode): BabelNode | null {
+  const ast = ("ast" in expression ? expression.ast : null) as BabelNode | null | false | undefined;
+  if (ast) {
+    if (isArrowFunctionExpression(ast)) {
+      return ast.params[0] as BabelNode | undefined ?? null;
+    }
+    return ast;
+  }
+
+  const rawSource = getVueExpressionSource(expression, "content", "loc", "compiled");
+  if (!rawSource) {
     return null;
   }
 
-  if (isSimpleScopeIdentifier(trimmed)) {
-    return buildSlotScopeFallbackKeyExpression(trimmed);
+  try {
+    return parseExpression(rawSource, { plugins: ["typescript"] }) as BabelNode;
+  }
+  catch {
+    // Slot-scope destructuring like `{ data }` is not a standalone expression, so parse it as
+    // the parameter list of a synthetic arrow function to recover the binding pattern AST.
   }
 
   try {
-    const parsed = parse(`(${trimmed}) => {}`, {
+    const parsed = parse(`(${rawSource}) => {}`, {
       sourceType: "module",
       plugins: ["typescript"],
     });
     const statement = parsed.program.body[0];
     if (statement && isExpressionStatement(statement) && isArrowFunctionExpression(statement.expression)) {
-      return tryGetSlotScopeKeyCandidate(statement.expression.params[0])?.expression ?? null;
+      return statement.expression.params[0] as BabelNode | undefined ?? null;
     }
   }
   catch {
-    // Fall back to the prior best-effort string parsing below.
+    return null;
   }
 
-  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-    const inner = trimmed.slice(1, -1).trim();
-    let cutIdx = -1;
-    const commaIdx = inner.indexOf(",");
-    const colonIdx = inner.indexOf(":");
-    if (commaIdx !== -1 && colonIdx !== -1) {
-      cutIdx = Math.min(commaIdx, colonIdx);
-    }
-    else if (commaIdx !== -1) {
-      cutIdx = commaIdx;
-    }
-    else if (colonIdx !== -1) {
-      cutIdx = colonIdx;
-    }
+  return null;
+}
 
-    const first = (cutIdx === -1 ? inner : inner.slice(0, cutIdx)).trim();
-    if (first && isSimpleScopeIdentifier(first)) {
-      return buildSlotScopeFallbackKeyExpression(first);
-    }
+function toResolvedTemplateFragment(source: string): InterpolatedTemplateFragment | null {
+  const templateLiteral = tryUnwrapTemplateLiteralSource(source);
+  if (templateLiteral) {
+    return {
+      template: templateLiteral.template,
+      rawExpression: null,
+    };
   }
 
-  return trimmed;
+  return toInterpolatedTemplateFragment(source);
+}
+
+function toResolvedKeyInfo(selectorSource: string | null, runtimeSource: string | null = selectorSource): ResolvedKeyInfo | null {
+  const selectorFragment = selectorSource ? toResolvedTemplateFragment(selectorSource) : null;
+  const runtimeFragment = runtimeSource ? toResolvedTemplateFragment(runtimeSource) : null;
+  const selectorTemplate = selectorFragment?.template ?? runtimeFragment?.template ?? null;
+  const runtimeTemplate = runtimeFragment?.template ?? selectorFragment?.template ?? null;
+  if (!selectorTemplate || !runtimeTemplate) {
+    return null;
+  }
+
+  return {
+    selectorFragment: selectorTemplate,
+    runtimeFragment: runtimeTemplate,
+    rawExpression: runtimeFragment?.rawExpression ?? selectorFragment?.rawExpression ?? null,
+  };
+}
+
+function tryGetTemplateSlotScopeKeyInfo(expression: VueExpressionNode): ResolvedKeyInfo | null {
+  const bindingNode = tryGetTemplateSlotScopeBindingNode(expression);
+  const candidateExpression = bindingNode ? tryGetSlotScopeKeyCandidate(bindingNode)?.expression ?? null : null;
+  return candidateExpression ? toResolvedKeyInfo(candidateExpression) : null;
 }
 
 /**
@@ -844,11 +865,6 @@ export function renderTemplateLiteralExpression(templateValue: Extract<Attribute
  *
  * @internal
  */
-interface KeyDirectiveFragments {
-  selectorFragment: string;
-  runtimeFragment: string;
-}
-
 function getKeyDirectiveExpression(node: ElementNode): VueExpressionNode | null {
   const keyDirective = getKeyDirective(node);
   return keyDirective?.exp && (
@@ -859,12 +875,7 @@ function getKeyDirectiveExpression(node: ElementNode): VueExpressionNode | null 
     : null;
 }
 
-function toTemplateInterpolationFragment(source: string): string {
-  const templateLiteral = tryUnwrapTemplateLiteralSource(source);
-  return templateLiteral ? templateLiteral.template : `\${${source}}`;
-}
-
-function getKeyDirectiveFragments(node: ElementNode): KeyDirectiveFragments | null {
+export function getKeyDirectiveInfo(node: ElementNode): ResolvedKeyInfo | null {
   const keyExpression = getKeyDirectiveExpression(node);
   if (!keyExpression) {
     return null;
@@ -872,26 +883,15 @@ function getKeyDirectiveFragments(node: ElementNode): KeyDirectiveFragments | nu
 
   const selectorSource = getVueExpressionSource(keyExpression, "compiled", "loc");
   const runtimeSource = getVueExpressionSource(keyExpression, "loc", "compiled");
-  if (!selectorSource && !runtimeSource) {
-    return null;
-  }
-
-  return {
-    // Selector-side generation lives inside Vue-compiled output, so it prefers the compiler
-    // rewritten source when available (`_ctx.*`) and falls back to author-written source.
-    selectorFragment: toTemplateInterpolationFragment(selectorSource || runtimeSource),
-    // Runtime-side matching needs the author-visible/local-scope form first so v-for/slot
-    // locals like `item.id` stay intact for comparisons and preserve-mode checks.
-    runtimeFragment: toTemplateInterpolationFragment(runtimeSource || selectorSource),
-  };
+  return toResolvedKeyInfo(selectorSource, runtimeSource);
 }
 
 export function getKeyDirectiveValue(node: ElementNode, _context: TransformContext | null = null): string | null {
-  return getKeyDirectiveFragments(node)?.selectorFragment ?? null;
+  return getKeyDirectiveInfo(node)?.selectorFragment ?? null;
 }
 
 export function getKeyDirectiveRuntimeValue(node: ElementNode): string | null {
-  return getKeyDirectiveFragments(node)?.runtimeFragment ?? null;
+  return getKeyDirectiveInfo(node)?.runtimeFragment ?? null;
 }
 
 /**
@@ -932,7 +932,7 @@ export function getSelfClosingForDirectiveKeyAttrValue(node: ElementNode): strin
     const hasForDirective = nodeHasForDirective(node);
 
     if (hasForDirective) {
-      return getKeyDirectiveValue(node);
+      return getKeyDirectiveInfo(node)?.selectorFragment ?? null;
     }
   }
   return null;
@@ -948,7 +948,7 @@ export function getSelfClosingForDirectiveKeyAttrValue(node: ElementNode): strin
  *
  * @internal
  */
-export function getIdOrName(node: ElementNode): string {
+export function getStaticIdOrNameHint(node: ElementNode): string {
   // Get id or name attribute (static)
   let idAttr = findAttributeByKey(node, "id");
   if (!idAttr) {
@@ -1013,12 +1013,16 @@ export function isNodeContainedInTemplateWithData(node: ElementNode, hierarchyMa
  * @internal
  */
 export function getContainedInSlotDataKeyValue(node: ElementNode, hierarchyMap: HierarchyMap): string | null {
+  return getContainedInSlotDataKeyInfo(node, hierarchyMap)?.selectorFragment ?? null;
+}
+
+export function getContainedInSlotDataKeyInfo(node: ElementNode, hierarchyMap: HierarchyMap): ResolvedKeyInfo | null {
   let parent = getParent(hierarchyMap, node);
   while (parent) {
     if (parent.type === NodeTypes.ELEMENT && parent.tag === "template") {
-      const scope = getTemplateSlotScope(parent);
-      if (scope) {
-        return tryGetTemplateSlotScopeKeyExpression(scope);
+      const slotScopeExpression = findTemplateSlotScopeExpression(parent);
+      if (slotScopeExpression) {
+        return tryGetTemplateSlotScopeKeyInfo(slotScopeExpression);
       }
     }
     parent = getParent(hierarchyMap, parent);
@@ -1034,11 +1038,11 @@ export function getContainedInSlotDataKeyValue(node: ElementNode, hierarchyMap: 
  * @internal
  */
 export function getContainedInVForDirectiveKeyValue(context: TransformContext, node: ElementNode, hierarchyMap: HierarchyMap): string | null {
-  const keyFragments = getContainedInVForDirectiveKeyFragments(context, node, hierarchyMap);
+  const keyFragments = getContainedInVForDirectiveKeyInfo(context, node, hierarchyMap);
   return keyFragments?.selectorFragment ?? null;
 }
 
-function getContainedInVForDirectiveKeyFragments(context: TransformContext, node: ElementNode, hierarchyMap: HierarchyMap): KeyDirectiveFragments | null {
+export function getContainedInVForDirectiveKeyInfo(context: TransformContext, node: ElementNode, hierarchyMap: HierarchyMap): ResolvedKeyInfo | null {
   // Check if we're in a v-for scope
   if (!context.scopes.vFor || context.scopes.vFor === 0) {
     return null;
@@ -1050,7 +1054,7 @@ function getContainedInVForDirectiveKeyFragments(context: TransformContext, node
     if (parent.type === NodeTypes.ELEMENT) {
       const forDirective = findDirectiveByName(parent as ElementNode, "for");
       if (forDirective) {
-        return getKeyDirectiveFragments(parent as ElementNode);
+        return getKeyDirectiveInfo(parent as ElementNode);
       }
     }
     parent = getParent(hierarchyMap, parent);
@@ -1059,7 +1063,7 @@ function getContainedInVForDirectiveKeyFragments(context: TransformContext, node
 }
 
 export function getContainedInVForDirectiveKeyRuntimeValue(context: TransformContext, node: ElementNode, hierarchyMap: HierarchyMap): string | null {
-  const keyFragments = getContainedInVForDirectiveKeyFragments(context, node, hierarchyMap);
+  const keyFragments = getContainedInVForDirectiveKeyInfo(context, node, hierarchyMap);
   return keyFragments?.runtimeFragment ?? null;
 }
 
@@ -2600,10 +2604,7 @@ export function applyResolvedDataTestId(args: {
   nativeRole: string;
   preferredGeneratedValue: AttributeValue;
   preferredRuntimeValue?: AttributeValue;
-  bestKeyPlaceholder: string | null;
-  bestKeyPreservePlaceholder?: string | null;
-  /** Optional variable name that must be present in a placeholder (e.g. "data" from slot scope). */
-  bestKeyVariable?: string | null;
+  keyInfo: ResolvedKeyInfo | null;
   /** Optional enumerable key values (e.g. derived from v-for="item in ['One','Two']"). */
   keyValuesOverride?: string[] | null;
   entryOverrides?: Partial<IDataTestId>;
@@ -2673,7 +2674,8 @@ export function applyResolvedDataTestId(args: {
   let dataTestId = args.preferredGeneratedValue;
   let runtimeDataTestId = args.preferredRuntimeValue ?? args.preferredGeneratedValue;
   let fromExisting = false;
-  const bestKeyPreservePlaceholder = args.bestKeyPreservePlaceholder ?? args.bestKeyPlaceholder;
+  const bestKeyPreservePlaceholder = args.keyInfo?.runtimeFragment ?? null;
+  const bestKeyVariable = args.keyInfo?.rawExpression ?? null;
 
   const existing = tryGetExistingElementDataTestId(args.element, testIdAttribute);
   if (existing) {
@@ -2721,7 +2723,7 @@ export function applyResolvedDataTestId(args: {
           const hasExact = requiredKeyTemplateValue
             ? templateFragmentContainsSingleExpression(existingTemplateValue.parsedTemplate, requiredKeyTemplateValue.parsedTemplate)
             : false;
-          const hasVarAccess = getBestKeyAccessCandidates(args.bestKeyVariable)
+          const hasVarAccess = getBestKeyAccessCandidates(bestKeyVariable)
             .some(candidate => existingTemplateFragment.expressionSource === candidate);
 
           if (!hasExact && !hasVarAccess && bestKeyPreservePlaceholder) {
@@ -2730,7 +2732,7 @@ export function applyResolvedDataTestId(args: {
               + `Component: ${args.componentName}\n`
               + `File: ${file}:${locationHint}\n`
               + `Existing ${attrLabel}: ${JSON.stringify(existing.value)}\n`
-              + `Required placeholder: ${JSON.stringify(bestKeyPreservePlaceholder)}${args.bestKeyVariable ? ` or an access on "${args.bestKeyVariable}"` : ""}\n\n`
+              + `Required placeholder: ${JSON.stringify(bestKeyPreservePlaceholder)}${bestKeyVariable ? ` or an access on "${bestKeyVariable}"` : ""}\n\n`
               + `Fix: either (1) include ${bestKeyPreservePlaceholder} in your :${attrLabel} template literal, or (2) remove the explicit ${attrLabel} so it can be auto-generated.`,
             );
           }
@@ -2757,7 +2759,7 @@ export function applyResolvedDataTestId(args: {
             + `Component: ${args.componentName}\n`
             + `File: ${file}:${locationHint}\n`
             + `Existing ${attrLabel}: ${JSON.stringify(existing.value)}\n`
-            + `Required placeholder: ${JSON.stringify(bestKeyPreservePlaceholder)}${args.bestKeyVariable ? ` or an access on "${args.bestKeyVariable}"` : ""}\n\n`
+            + `Required placeholder: ${JSON.stringify(bestKeyPreservePlaceholder)}${bestKeyVariable ? ` or an access on "${bestKeyVariable}"` : ""}\n\n`
             + `Fix: either (1) include ${bestKeyPreservePlaceholder} in your :${attrLabel} template literal, or (2) remove the explicit ${attrLabel} so it can be auto-generated.`,
           );
         }

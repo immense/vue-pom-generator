@@ -25,8 +25,9 @@ import {
   generateToDirectiveDataTestId,
   getAttributeValueText,
   getComposedClickHandlerContent,
+  getContainedInSlotDataKeyInfo,
   getContainedInVForDirectiveKeyValue,
-  getIdOrName,
+  getStaticIdOrNameHint,
   getKeyDirectiveValue,
   getKeyDirectiveRuntimeValue,
   getNativeWrapperTransformInfo,
@@ -396,7 +397,8 @@ describe("utils.ts coverage", () => {
     const ast = parseTemplate("<div :key=\"item.id\" />");
     const el = firstElement(ast);
     expect(getKeyDirectiveValue(el)).toBe("${item.id}");
-    // any non-null context triggers stringifyExpression branch
+    // The selector-facing helper still produces the same placeholder even though key resolution
+    // now flows through the shared key-info object rather than a context-sensitive branch.
     expect(getKeyDirectiveValue(el, {} as TransformContext)).toBe("${item.id}");
 
     const ast2 = parseTemplate("<Foo v-for=\"x in xs\" :key=\"x.id\" />");
@@ -432,12 +434,12 @@ describe("utils.ts coverage", () => {
   });
 
   it("extracts id/name identifiers", () => {
-    expect(getIdOrName(firstElement(parseTemplate("<div id=\"foo-bar\" />")))).toBe("FooBar");
-    expect(getIdOrName(firstElement(parseTemplate("<div name=\"foo_bar\" />")))).toBe("FooBar");
+    expect(getStaticIdOrNameHint(firstElement(parseTemplate("<div id=\"foo-bar\" />")))).toBe("FooBar");
+    expect(getStaticIdOrNameHint(firstElement(parseTemplate("<div name=\"foo_bar\" />")))).toBe("FooBar");
     const dyn = firstElement(parseTemplate("<div :id=\"something\" />"));
-    expect(getIdOrName(dyn)).toBe("");
+    expect(getStaticIdOrNameHint(dyn)).toBe("");
     const dynName = firstElement(parseTemplate("<div :name=\"something\" />"));
-    expect(getIdOrName(dynName)).toBe("");
+    expect(getStaticIdOrNameHint(dynName)).toBe("");
   });
 
   it("extracts :handler semantic hints from common patterns", () => {
@@ -466,6 +468,21 @@ describe("utils.ts coverage", () => {
     const map2 = buildHierarchyMap(withoutData);
     const span2 = findFirstTag(withoutData, "span");
     expect(isNodeContainedInTemplateWithData(span2, map2)).toBe(false);
+  });
+
+  it("extracts slot-scope key info from compiled slot bindings", () => {
+    const compiled = compileAndCaptureAst(
+      "<MyList><template #item=\"{ data }\"><div><span>Hi</span></div></template></MyList>",
+      { filename: "/src/components/Test.vue" },
+    );
+    const map = buildHierarchyMap(compiled);
+    const span = findFirstTag(compiled, "span");
+
+    expect(getContainedInSlotDataKeyInfo(span, map)).toEqual({
+      selectorFragment: "${data.key ?? data.data?.id ?? data.id ?? data.value ?? data}",
+      runtimeFragment: "${data.key ?? data.data?.id ?? data.id ?? data.value ?? data}",
+      rawExpression: "data.key ?? data.data?.id ?? data.id ?? data.value ?? data",
+    });
   });
 
   it("walks v-for scopes for :key and infers static iterable literals", () => {
@@ -705,7 +722,7 @@ describe("utils.ts coverage", () => {
         generatedMethodContentByComponent,
         nativeRole: "button",
         preferredGeneratedValue: staticAttributeValue("MyComp-Foo-button"),
-        bestKeyPlaceholder: null,
+        keyInfo: null,
         testIdAttribute: "data-testid",
         existingIdBehavior: "preserve",
         addHtmlAttribute: false,
@@ -736,7 +753,11 @@ describe("utils.ts coverage", () => {
       generatedMethodContentByComponent,
       nativeRole: "button",
       preferredGeneratedValue: staticAttributeValue("ignored"),
-      bestKeyPlaceholder: "${item.id}",
+      keyInfo: {
+        selectorFragment: "${item.id}",
+        runtimeFragment: "${item.id}",
+        rawExpression: "item.id",
+      },
       testIdAttribute: "data-testid",
       existingIdBehavior: "preserve",
       addHtmlAttribute: false,
@@ -770,7 +791,11 @@ describe("utils.ts coverage", () => {
       generatedMethodContentByComponent,
       nativeRole: "button",
       preferredGeneratedValue: staticAttributeValue("ignored"),
-      bestKeyPlaceholder: "line-${item.id}",
+      keyInfo: {
+        selectorFragment: "line-${item.id}",
+        runtimeFragment: "line-${item.id}",
+        rawExpression: null,
+      },
       testIdAttribute: "data-testid",
       existingIdBehavior: "preserve",
       addHtmlAttribute: false,
@@ -804,8 +829,11 @@ describe("utils.ts coverage", () => {
       generatedMethodContentByComponent,
       nativeRole: "button",
       preferredGeneratedValue: staticAttributeValue("ignored"),
-      bestKeyPlaceholder: "${data.key ?? data.data?.id ?? data.id ?? data.value ?? data}",
-      bestKeyVariable: "data.key ?? data.data?.id ?? data.id ?? data.value ?? data",
+      keyInfo: {
+        selectorFragment: "${data.key ?? data.data?.id ?? data.id ?? data.value ?? data}",
+        runtimeFragment: "${data.key ?? data.data?.id ?? data.id ?? data.value ?? data}",
+        rawExpression: "data.key ?? data.data?.id ?? data.id ?? data.value ?? data",
+      },
       testIdAttribute: "data-testid",
       existingIdBehavior: "preserve",
       addHtmlAttribute: false,
@@ -839,8 +867,11 @@ describe("utils.ts coverage", () => {
       generatedMethodContentByComponent,
       nativeRole: "button",
       preferredGeneratedValue: staticAttributeValue("ignored"),
-      bestKeyPlaceholder: "${p.parameter.name}",
-      bestKeyVariable: "p.parameter.name",
+      keyInfo: {
+        selectorFragment: "${p.parameter.name}",
+        runtimeFragment: "${p.parameter.name}",
+        rawExpression: "p.parameter.name",
+      },
       testIdAttribute: "data-testid",
       existingIdBehavior: "preserve",
       addHtmlAttribute: false,
@@ -877,7 +908,7 @@ describe("utils.ts coverage", () => {
       generatedMethodContentByComponent,
       nativeRole: "radio",
       preferredGeneratedValue: staticAttributeValue("MyComp-Foo-radio"),
-      bestKeyPlaceholder: null,
+      keyInfo: null,
       testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
       addHtmlAttribute: false,
@@ -904,7 +935,7 @@ describe("utils.ts coverage", () => {
       generatedMethodContentByComponent,
       nativeRole: "radio",
       preferredGeneratedValue: staticAttributeValue("MyComp-Foo-radio"),
-      bestKeyPlaceholder: null,
+      keyInfo: null,
       testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
       addHtmlAttribute: false,
@@ -937,7 +968,7 @@ describe("utils.ts coverage", () => {
       generatedMethodContentByComponent,
       nativeRole: "radio",
       preferredGeneratedValue: staticAttributeValue("MyComp-radio"),
-      bestKeyPlaceholder: null,
+      keyInfo: null,
       testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
       addHtmlAttribute: false,
@@ -960,7 +991,7 @@ describe("utils.ts coverage", () => {
       // Change the wrapper prefix so the extra method is not semantically de-duped,
       // and the generator has to pick a unique name.
       preferredGeneratedValue: staticAttributeValue("MyComp2-radio"),
-      bestKeyPlaceholder: null,
+      keyInfo: null,
       testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
       addHtmlAttribute: false,
@@ -1022,7 +1053,7 @@ describe("utils.ts coverage", () => {
         generatedMethodContentByComponent,
         nativeRole: "button",
         preferredGeneratedValue: staticAttributeValue("MyComp-A-button"),
-        bestKeyPlaceholder: null,
+        keyInfo: null,
         testIdAttribute: "data-testid",
         existingIdBehavior: "overwrite",
         addHtmlAttribute: false,
@@ -1038,7 +1069,7 @@ describe("utils.ts coverage", () => {
           generatedMethodContentByComponent,
           nativeRole: "button",
           preferredGeneratedValue: staticAttributeValue("MyComp-B-button"),
-          bestKeyPlaceholder: null,
+          keyInfo: null,
           testIdAttribute: "data-testid",
           existingIdBehavior: "overwrite",
           addHtmlAttribute: false,
@@ -1061,7 +1092,7 @@ describe("utils.ts coverage", () => {
         generatedMethodContentByComponent,
         nativeRole: "button",
         preferredGeneratedValue: staticAttributeValue("MyComp-A-button"),
-        bestKeyPlaceholder: null,
+        keyInfo: null,
         testIdAttribute: "data-testid",
         existingIdBehavior: "overwrite",
         addHtmlAttribute: false,
@@ -1077,7 +1108,7 @@ describe("utils.ts coverage", () => {
         generatedMethodContentByComponent,
         nativeRole: "button",
         preferredGeneratedValue: staticAttributeValue("MyComp-B-button"),
-        bestKeyPlaceholder: null,
+        keyInfo: null,
         testIdAttribute: "data-testid",
         existingIdBehavior: "overwrite",
         addHtmlAttribute: false,
@@ -1107,7 +1138,7 @@ describe("utils.ts coverage", () => {
         generatedMethodContentByComponent,
         nativeRole: "button",
         preferredGeneratedValue: staticAttributeValue("MyComp-A-button"),
-        bestKeyPlaceholder: null,
+        keyInfo: null,
         testIdAttribute: "data-testid",
         existingIdBehavior: "overwrite",
         addHtmlAttribute: false,
@@ -1123,7 +1154,7 @@ describe("utils.ts coverage", () => {
         generatedMethodContentByComponent,
         nativeRole: "button",
         preferredGeneratedValue: staticAttributeValue("MyComp-B-button"),
-        bestKeyPlaceholder: null,
+        keyInfo: null,
         testIdAttribute: "data-testid",
         existingIdBehavior: "overwrite",
         addHtmlAttribute: false,
@@ -1163,7 +1194,7 @@ describe("utils.ts coverage", () => {
         generatedMethodContentByComponent,
         nativeRole: "button",
         preferredGeneratedValue: templateAttributeValue("MyComp-${value}-immynavitem"),
-        bestKeyPlaceholder: null,
+        keyInfo: null,
         testIdAttribute: "data-testid",
         existingIdBehavior: "overwrite",
         addHtmlAttribute: false,
@@ -1213,7 +1244,7 @@ describe("utils.ts coverage", () => {
       nativeRole: "select",
       semanticNameHint: "ParameterDefaultValue",
       preferredGeneratedValue: staticAttributeValue("MyComp-select"),
-      bestKeyPlaceholder: null,
+      keyInfo: null,
       testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
       addHtmlAttribute: false,
@@ -1230,7 +1261,7 @@ describe("utils.ts coverage", () => {
         nativeRole: "radio",
         semanticNameHint: "ParameterDefaultValue",
         preferredGeneratedValue: staticAttributeValue("MyComp-radio"),
-        bestKeyPlaceholder: null,
+        keyInfo: null,
         testIdAttribute: "data-testid",
         existingIdBehavior: "overwrite",
         addHtmlAttribute: false,
@@ -1268,7 +1299,7 @@ describe("utils.ts coverage", () => {
       generatedMethodContentByComponent,
       nativeRole: "radio",
       preferredGeneratedValue: staticAttributeValue("MyComp-radio"),
-      bestKeyPlaceholder: null,
+      keyInfo: null,
       testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
       addHtmlAttribute: false,
