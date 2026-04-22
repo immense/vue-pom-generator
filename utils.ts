@@ -592,6 +592,15 @@ function tryUnwrapTemplateLiteralSource(source: string): { template: string; exp
  * attached Babel AST is a single `TemplateLiteral`, so this helper intentionally accepts both
  * simple and compound expression nodes.
  *
+ * Vue also exposes two different string views of the same binding:
+ * - `loc.source` preserves the author-written local scope expression (e.g. `item.id`)
+ * - `stringifyExpression()` emits the compiler-rewritten form (often including `_ctx.*`)
+ *
+ * We still prefer carrying structured AST metadata through the pipeline, but this helper is the
+ * narrow bridge where we normalize those compiler-provided string forms before reparsing a template
+ * fragment later on. That keeps the rest of the codebase from having to care which compiler view
+ * produced the binding in the first place.
+ *
  * @example
  * const exp = findDirectiveByName(node, "bind", "key")?.exp as SimpleExpressionNode | CompoundExpressionNode;
  * tryUnwrapTemplateLiteralExpressionSource(exp)
