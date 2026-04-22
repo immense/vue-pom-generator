@@ -2537,8 +2537,9 @@ function safeMethodNameFromParts(parts: string[]) {
 /**
  * Replaces any `${...}` interpolation in a template string with the stable placeholder `${key}`.
  *
- * IMPORTANT: This function does NOT attempt to parse the template expression(s). It is a
- * best-effort scanner that preserves literal text and normalizes interpolation slots.
+ * This is only for the generated POM selector shape. Runtime/test-id generation keeps the real
+ * interpolation expressions; the POM layer just needs to know that a keyed slot exists and where
+ * it sits relative to the surrounding literal text.
  */
 function replaceAllTemplateExpressionsWithKey(templateValue: Extract<AttributeValue, { kind: "template" }>): string {
   const { templateLiteral } = templateValue.parsedTemplate;
