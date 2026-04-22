@@ -107,6 +107,24 @@ export function getIndexedPomPatternVariable(pattern: PomStringPattern): string 
   return pattern.templateVariables[0];
 }
 
+export function toTypeScriptPomPatternExpression(pattern: PomStringPattern): string {
+  return isParameterizedPomPattern(pattern.patternKind)
+    ? `\`${pattern.formatted}\``
+    : JSON.stringify(pattern.formatted);
+}
+
+export function toCSharpPomPatternExpression(pattern: PomStringPattern): string {
+  if (!isParameterizedPomPattern(pattern.patternKind)) {
+    return JSON.stringify(pattern.formatted);
+  }
+
+  // Convert our `${var}` placeholder format into C# interpolated-string `{var}`.
+  const inner = pattern.formatted.replace(/\$\{/g, "{");
+  // JSON.stringify gives us a normal quoted string literal with escaping that is close
+  // enough for the C# interpolated-string wrapper we emit.
+  return `$${JSON.stringify(inner)}`;
+}
+
 export function pomStringPatternEquals(left: PomStringPattern, right: PomStringPattern): boolean {
   return left.formatted === right.formatted && left.patternKind === right.patternKind;
 }

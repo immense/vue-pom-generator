@@ -17,6 +17,7 @@ import {
   ensurePomPatternParameters,
   getIndexedPomPatternVariable,
   isParameterizedPomPattern,
+  toTypeScriptPomPatternExpression,
   uniquePomStringPatterns,
   type PomStringPattern,
 } from "./pom-patterns";
@@ -76,12 +77,6 @@ function removeByKeySegment(value: string): string {
   return value.slice(0, idx) + value.slice(idx + "ByKey".length);
 }
 
-function testIdExpression(pattern: PomStringPattern): string {
-  return isParameterizedPomPattern(pattern.patternKind)
-    ? `\`${pattern.formatted}\``
-    : JSON.stringify(pattern.formatted);
-}
-
 function createAsyncMethod(
   name: string,
   parameters: OptionalKind<ParameterDeclarationStructure>[],
@@ -108,10 +103,10 @@ function generateClickMethod(
   const baseParameters = createParameters(selectorParams);
   const argsForForward = Object.keys(selectorParams).join(", ");
   const alternates = uniquePomStringPatterns(selector, alternateSelectors).slice(1);
-  const primaryTestIdExpr = testIdExpression(selector);
+  const primaryTestIdExpr = toTypeScriptPomPatternExpression(selector);
 
   if (alternates.length > 0) {
-    const candidatesExpr = [primaryTestIdExpr, ...alternates.map(id => testIdExpression(id))].join(", ");
+    const candidatesExpr = [primaryTestIdExpr, ...alternates.map(id => toTypeScriptPomPatternExpression(id))].join(", ");
     const clickMethod = createAsyncMethod(
       name,
       hasSelectorVariables
@@ -177,7 +172,7 @@ function generateRadioMethod(
   const name = `select${methodName}`;
   const selectorParams = ensurePomPatternParameters(params, [selector]);
   const parameters = createParameters(selectorParams);
-  const testIdExpr = testIdExpression(selector);
+  const testIdExpr = toTypeScriptPomPatternExpression(selector);
 
   return [
     createAsyncMethod(name, parameters, (writer) => {
@@ -193,7 +188,7 @@ function generateSelectMethod(
 ): TypeScriptClassMember[] {
   const name = `select${methodName}`;
   const selectorParams = ensurePomPatternParameters(params, [selector]);
-  const selectorExpr = `this.selectorForTestId(${testIdExpression(selector)})`;
+  const selectorExpr = `this.selectorForTestId(${toTypeScriptPomPatternExpression(selector)})`;
 
   return [
     createAsyncMethod(
@@ -221,7 +216,7 @@ function generateVSelectMethod(
       name,
       createParameters(selectorParams),
       (writer) => {
-        writer.writeLine(`await this.selectVSelectByTestId(${testIdExpression(selector)}, value, timeOut, annotationText);`);
+        writer.writeLine(`await this.selectVSelectByTestId(${toTypeScriptPomPatternExpression(selector)}, value, timeOut, annotationText);`);
       },
     ),
   ];
@@ -240,7 +235,7 @@ function generateTypeMethod(
       name,
       createParameters(selectorParams),
       (writer) => {
-        writer.writeLine(`await this.fillInputByTestId(${testIdExpression(selector)}, text, annotationText);`);
+        writer.writeLine(`await this.fillInputByTestId(${toTypeScriptPomPatternExpression(selector)}, text, annotationText);`);
       },
     ),
   ];
@@ -280,7 +275,7 @@ function generateGetElementByDataTestId(
       createClassGetter({
         name: keyedPropertyName,
         statements: [
-          `return this.keyedLocators((${indexedVariable}: ${keyType}) => this.locatorByTestId(${testIdExpression(selector)}));`,
+          `return this.keyedLocators((${indexedVariable}: ${keyType}) => this.locatorByTestId(${toTypeScriptPomPatternExpression(selector)}));`,
         ],
       }),
     ];
@@ -291,7 +286,7 @@ function generateGetElementByDataTestId(
   if (alternates.length > 0) {
     const all = [selector, ...alternates];
     const locatorExpr = all
-      .map(id => `this.locatorByTestId(${testIdExpression(id)})`)
+      .map(id => `this.locatorByTestId(${toTypeScriptPomPatternExpression(id)})`)
       .reduce((acc, next) => `${acc}.or(${next})`);
 
     return [
@@ -305,7 +300,7 @@ function generateGetElementByDataTestId(
   return [
     createClassGetter({
       name: finalPropertyName,
-      statements: [`return this.locatorByTestId(${testIdExpression(selector)});`],
+      statements: [`return this.locatorByTestId(${toTypeScriptPomPatternExpression(selector)});`],
     }),
   ];
 }
@@ -326,7 +321,7 @@ function generateNavigationMethod(args: {
   const selectorParams = ensurePomPatternParameters(params, [selector]);
   const parameters = createParameters(selectorParams);
   const alternates = uniquePomStringPatterns(selector, alternateSelectors).slice(1);
-  const candidatesExpr = [testIdExpression(selector), ...alternates.map(id => testIdExpression(id))].join(", ");
+  const candidatesExpr = [toTypeScriptPomPatternExpression(selector), ...alternates.map(id => toTypeScriptPomPatternExpression(id))].join(", ");
 
   if (alternates.length > 0) {
     return [
@@ -365,7 +360,7 @@ function generateNavigationMethod(args: {
       returnType: `Fluent<${target}>`,
       statements: (writer) => {
         writer.write("return this.fluent(async () => ").block(() => {
-          writer.writeLine(`await this.clickByTestId(${testIdExpression(selector)});`);
+          writer.writeLine(`await this.clickByTestId(${toTypeScriptPomPatternExpression(selector)});`);
           writer.writeLine(`return new ${target}(this.page);`);
         });
         writer.writeLine(");");

@@ -12,6 +12,8 @@ import { generateViewObjectModelMembers, generateViewObjectModelMethodContent } 
 import {
   ensurePomPatternParameters,
   isParameterizedPomPattern,
+  toCSharpPomPatternExpression,
+  toTypeScriptPomPatternExpression,
   uniquePomStringPatterns,
   type PomStringPattern,
 } from "../pom-patterns";
@@ -476,13 +478,7 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScr
 
   if (spec.selector.kind === "testId") {
     const needsTemplate = isParameterizedPomPattern(spec.selector.testId.patternKind);
-    const testIdExpr = needsTemplate
-      ? `\`${spec.selector.testId.formatted}\``
-      : JSON.stringify(spec.selector.testId.formatted);
-
-    if (needsTemplate) {
-      // handled below
-    }
+    const testIdExpr = toTypeScriptPomPatternExpression(spec.selector.testId);
 
     const clickArgs: string[] = [];
     clickArgs.push(needsTemplate ? "testId" : testIdExpr);
@@ -514,12 +510,8 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScr
 
   const rootNeedsTemplate = isParameterizedPomPattern(spec.selector.rootTestId.patternKind);
   const labelNeedsTemplate = isParameterizedPomPattern(spec.selector.label.patternKind);
-  const rootExpr = rootNeedsTemplate
-    ? `\`${spec.selector.rootTestId.formatted}\``
-    : JSON.stringify(spec.selector.rootTestId.formatted);
-  const labelExpr = labelNeedsTemplate
-    ? `\`${spec.selector.label.formatted}\``
-    : JSON.stringify(spec.selector.label.formatted);
+  const rootExpr = toTypeScriptPomPatternExpression(spec.selector.rootTestId);
+  const labelExpr = toTypeScriptPomPatternExpression(spec.selector.label);
 
   const rootArg = rootNeedsTemplate ? "rootTestId" : rootExpr;
   const labelArg = labelNeedsTemplate ? "label" : labelExpr;
@@ -1081,20 +1073,6 @@ function buildGeneratedGitAttributesFiles(generatedFilePaths: string[]): Generat
     });
 }
 
-function toCSharpTestIdExpression(pattern: PomStringPattern): string {
-  // Convert our `${var}` placeholder format into C# interpolated-string `{var}`.
-  const needsInterpolation = isParameterizedPomPattern(pattern.patternKind);
-  if (!needsInterpolation) {
-    return JSON.stringify(pattern.formatted);
-  }
-
-  const inner = pattern.formatted.replace(/\$\{/g, "{");
-  // Use verbatim JSON escaping for quotes/backslashes, then adapt to C# string literal.
-  // JSON.stringify gives us a JS string literal with escapes, which is close enough for a C# normal string.
-  const quoted = JSON.stringify(inner);
-  return `$${quoted}`;
-}
-
 function toCSharpParam(paramTypeExpr: string): { type: string; defaultExpr?: string } {
   const trimmed = (paramTypeExpr ?? "").trim();
 
@@ -1264,7 +1242,7 @@ function generateAggregatedCSharpFiles(
       const baseGetterName = upperFirst(pom.getterNameOverride ?? pom.methodName);
       const locatorName = baseGetterName.endsWith(roleSuffix) ? baseGetterName : `${baseGetterName}${roleSuffix}`;
       const selectorIsParameterized = isParameterizedPomPattern(pom.selector.patternKind);
-      const testIdExpr = toCSharpTestIdExpression(pom.selector);
+      const testIdExpr = toCSharpPomPatternExpression(pom.selector);
       const orderedParams = ensurePomPatternParameters(pom.params, [pom.selector]);
 
       const { signature, argNames } = formatCSharpParams(orderedParams);
@@ -1300,7 +1278,7 @@ function generateAggregatedCSharpFiles(
         }
         else {
           chunks.push("        Exception? lastError = null;");
-          chunks.push(`        foreach (var testId in new[] { ${allTestIds.map(testId => toCSharpTestIdExpression(testId)).join(", ")} })`);
+          chunks.push(`        foreach (var testId in new[] { ${allTestIds.map(testId => toCSharpPomPatternExpression(testId)).join(", ")} })`);
           chunks.push("        {");
           chunks.push("            try");
           chunks.push("            {");
@@ -1347,7 +1325,7 @@ function generateAggregatedCSharpFiles(
 
       if (!selectorIsParameterized && allTestIds.length > 1) {
         chunks.push("        Exception? lastError = null;");
-        chunks.push(`        foreach (var testId in new[] { ${allTestIds.map(testId => toCSharpTestIdExpression(testId)).join(", ")} })`);
+        chunks.push(`        foreach (var testId in new[] { ${allTestIds.map(testId => toCSharpPomPatternExpression(testId)).join(", ")} })`);
         chunks.push("        {");
         chunks.push("            try");
         chunks.push("            {");
@@ -1417,7 +1395,7 @@ function generateAggregatedCSharpFiles(
 
       if (extra.selector.kind === "testId") {
         const needsTemplate = isParameterizedPomPattern(extra.selector.testId.patternKind);
-        const testIdExpr = toCSharpTestIdExpression(extra.selector.testId);
+        const testIdExpr = toCSharpPomPatternExpression(extra.selector.testId);
         if (needsTemplate) {
           chunks.push(`        var testId = ${testIdExpr};`);
           chunks.push("        await LocatorByTestId(testId).ClickAsync();");
@@ -1429,8 +1407,8 @@ function generateAggregatedCSharpFiles(
       else {
         const rootNeedsTemplate = isParameterizedPomPattern(extra.selector.rootTestId.patternKind);
         const labelNeedsTemplate = isParameterizedPomPattern(extra.selector.label.patternKind);
-        const rootExpr = toCSharpTestIdExpression(extra.selector.rootTestId);
-        const labelExpr = toCSharpTestIdExpression(extra.selector.label);
+        const rootExpr = toCSharpPomPatternExpression(extra.selector.rootTestId);
+        const labelExpr = toCSharpPomPatternExpression(extra.selector.label);
         const exactArg = extra.selector.exact === false ? "false" : "true";
 
         if (rootNeedsTemplate) {
