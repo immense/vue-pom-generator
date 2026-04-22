@@ -115,7 +115,7 @@ export interface NativeWrappersMap {
   }
 }
 
-interface ParsedTemplateFragment {
+export interface ParsedTemplateFragment {
   source: string;
   templateLiteral: TemplateLiteral;
 }
@@ -128,7 +128,7 @@ export function staticAttributeValue(value: string): AttributeValue {
   return { kind: "static", value };
 }
 
-export function templateAttributeValue(template: string): AttributeValue {
+export function templateAttributeValue(template: string): Extract<AttributeValue, { kind: "template" }> {
   const parsedTemplate = tryParseTemplateFragment(template);
   if (!parsedTemplate) {
     throw new Error(`[vue-pom-generator] Failed to parse generated template fragment: ${template}`);
@@ -638,6 +638,55 @@ function tryParseTemplateFragment(fragment: string): ParsedTemplateFragment | nu
   catch {
     return null;
   }
+}
+
+function getTemplateExpressionSource(parsedTemplate: ParsedTemplateFragment, index: number): string | null {
+  const expression = parsedTemplate.templateLiteral.expressions[index];
+  if (!expression) {
+    return null;
+  }
+
+  const start = typeof expression.start === "number" ? expression.start : null;
+  const end = typeof expression.end === "number" ? expression.end : null;
+  if (start === null || end === null) {
+    return null;
+  }
+
+  return parsedTemplate.source.slice(start, end);
+}
+
+function getSingleExpressionTemplateFragment(parsedTemplate: ParsedTemplateFragment): {
+  prefix: string;
+  expressionSource: string;
+  suffix: string;
+} | null {
+  const { templateLiteral } = parsedTemplate;
+  if (templateLiteral.expressions.length !== 1 || templateLiteral.quasis.length !== 2) {
+    return null;
+  }
+
+  const expressionSource = getTemplateExpressionSource(parsedTemplate, 0);
+  if (expressionSource === null) {
+    return null;
+  }
+
+  return {
+    prefix: templateLiteral.quasis[0]?.value.raw ?? "",
+    expressionSource,
+    suffix: templateLiteral.quasis[1]?.value.raw ?? "",
+  };
+}
+
+function templateFragmentContainsSingleExpression(container: ParsedTemplateFragment, candidate: ParsedTemplateFragment): boolean {
+  const containerFragment = getSingleExpressionTemplateFragment(container);
+  const candidateFragment = getSingleExpressionTemplateFragment(candidate);
+  if (!containerFragment || !candidateFragment) {
+    return false;
+  }
+
+  return containerFragment.expressionSource === candidateFragment.expressionSource
+    && containerFragment.prefix.endsWith(candidateFragment.prefix)
+    && containerFragment.suffix.startsWith(candidateFragment.suffix);
 }
 
 /**
@@ -2285,6 +2334,8 @@ export interface ExistingElementDataTestIdInfo {
 
   /** When the binding can be preserved as a one-slot template, the unwrapped template text (without backticks). */
   template?: string;
+  /** Parsed template metadata for preserve-safe template ids. */
+  parsedTemplate?: ParsedTemplateFragment;
   /** Number of interpolations in the template literal, if known. */
   templateExpressionCount?: number;
   /** For non-template dynamic bindings, the raw expression string (identifier/call/etc). */
@@ -2341,11 +2392,13 @@ export function tryGetExistingElementDataTestId(node: ElementNode, attributeName
       return { value: unwrappedTemplateLiteral.template, isDynamic: false, isStaticLiteral: true };
     }
 
+    const templateValue = templateAttributeValue(unwrappedTemplateLiteral.template);
     return {
-      value: unwrappedTemplateLiteral.template,
+      value: templateValue.template,
       isDynamic: true,
       isStaticLiteral: false,
-      template: unwrappedTemplateLiteral.template,
+      template: templateValue.template,
+      parsedTemplate: templateValue.parsedTemplate,
       templateExpressionCount: unwrappedTemplateLiteral.expressionCount,
     };
   }
@@ -2362,11 +2415,13 @@ export function tryGetExistingElementDataTestId(node: ElementNode, attributeName
 
   const preservableReference = tryGetPreservableDynamicReferenceExpression(ast as BabelNode | null | false | undefined);
   if (preservableReference) {
+    const templateValue = templateAttributeValue(`\${${preservableReference}}`);
     return {
       value: preservableReference,
       isDynamic: true,
       isStaticLiteral: false,
-      template: `\${${preservableReference}}`,
+      template: templateValue.template,
+      parsedTemplate: templateValue.parsedTemplate,
       templateExpressionCount: 1,
       rawExpression: preservableReference,
     };
@@ -2394,11 +2449,13 @@ export function tryGetExistingElementDataTestId(node: ElementNode, attributeName
 
   const fallbackPreservableReference = tryGetPreservableDynamicReferenceExpression(fallbackAst);
   if (fallbackPreservableReference) {
+    const templateValue = templateAttributeValue(`\${${fallbackPreservableReference}}`);
     return {
       value: fallbackPreservableReference,
       isDynamic: true,
       isStaticLiteral: false,
-      template: `\${${fallbackPreservableReference}}`,
+      template: templateValue.template,
+      parsedTemplate: templateValue.parsedTemplate,
       templateExpressionCount: 1,
       rawExpression: fallbackPreservableReference,
     };
@@ -2409,12 +2466,8 @@ export function tryGetExistingElementDataTestId(node: ElementNode, attributeName
 
 function isTemplatePlaceholder(part: string) {
   const parsedTemplate = tryParseTemplateFragment(part);
-  const templateLiteral = parsedTemplate?.templateLiteral;
-  return !!templateLiteral
-    && templateLiteral.expressions.length === 1
-    && templateLiteral.quasis.length === 2
-    && (templateLiteral.quasis[0]?.value.raw ?? "") === ""
-    && (templateLiteral.quasis[1]?.value.raw ?? "") === "";
+  const templateFragment = parsedTemplate ? getSingleExpressionTemplateFragment(parsedTemplate) : null;
+  return !!templateFragment && templateFragment.prefix === "" && templateFragment.suffix === "";
 }
 
 function isAllCapsOrDigits(value: string): boolean {
@@ -2487,35 +2540,14 @@ function safeMethodNameFromParts(parts: string[]) {
  * IMPORTANT: This function does NOT attempt to parse the template expression(s). It is a
  * best-effort scanner that preserves literal text and normalizes interpolation slots.
  */
-function replaceAllTemplateExpressionsWithKey(template: string): string {
+function replaceAllTemplateExpressionsWithKey(templateValue: Extract<AttributeValue, { kind: "template" }>): string {
+  const { templateLiteral } = templateValue.parsedTemplate;
   let out = "";
-  let i = 0;
-  while (i < template.length) {
-    const start = template.indexOf("${", i);
-    if (start < 0) {
-      out += template.slice(i);
-      break;
+  for (let i = 0; i < templateLiteral.quasis.length; i += 1) {
+    out += templateLiteral.quasis[i]?.value.raw ?? "";
+    if (templateLiteral.expressions[i]) {
+      out += "${key}";
     }
-    out += template.slice(i, start);
-    // Find the closing brace, accounting for nested braces within the interpolation.
-    let depth = 1;
-    let j = start + 2;
-    while (j < template.length && depth > 0) {
-      if (template[j] === "{") {
-        depth++;
-      } else if (template[j] === "}") {
-        depth--;
-      }
-      j++;
-    }
-    const end = depth === 0 ? j - 1 : -1;
-    if (end < 0) {
-      // Malformed; append rest and stop.
-      out += template.slice(start);
-      break;
-    }
-    out += "${key}";
-    i = end + 1;
   }
   return out;
 }
@@ -2646,9 +2678,13 @@ export function applyResolvedDataTestId(args: {
 
       if (existing.isDynamic) {
         if (existing.template) {
-          const existingTemplate = existing.template;
+          const existingTemplateValue = existing.parsedTemplate
+            ? { kind: "template", template: existing.template, parsedTemplate: existing.parsedTemplate } as const
+            : templateAttributeValue(existing.template);
+          const existingTemplateFragment = getSingleExpressionTemplateFragment(existingTemplateValue.parsedTemplate);
+          const requiredKeyTemplateValue = bestKeyPreservePlaceholder ? templateAttributeValue(bestKeyPreservePlaceholder) : null;
 
-          if ((existing.templateExpressionCount ?? 0) !== 1) {
+          if ((existing.templateExpressionCount ?? 0) !== 1 || !existingTemplateFragment) {
             throw new Error(
               `[vue-pom-generator] Existing ${attrLabel} is a template literal with multiple interpolations and cannot be preserved safely.\n`
               + `Component: ${args.componentName}\n`
@@ -2658,9 +2694,11 @@ export function applyResolvedDataTestId(args: {
             );
           }
 
-          const hasExact = bestKeyPreservePlaceholder && existingTemplate.includes(bestKeyPreservePlaceholder);
+          const hasExact = requiredKeyTemplateValue
+            ? templateFragmentContainsSingleExpression(existingTemplateValue.parsedTemplate, requiredKeyTemplateValue.parsedTemplate)
+            : false;
           const hasVarAccess = getBestKeyAccessCandidates(args.bestKeyVariable)
-            .some(candidate => existingTemplate.includes(candidate));
+            .some(candidate => existingTemplateFragment.expressionSource === candidate);
 
           if (!hasExact && !hasVarAccess && bestKeyPreservePlaceholder) {
             throw new Error(
@@ -2673,8 +2711,8 @@ export function applyResolvedDataTestId(args: {
             );
           }
 
-          dataTestId = templateAttributeValue(existing.template);
-          runtimeDataTestId = templateAttributeValue(existing.template);
+          dataTestId = existingTemplateValue;
+          runtimeDataTestId = existingTemplateValue;
           fromExisting = true;
         }
         else {
@@ -2748,7 +2786,7 @@ export function applyResolvedDataTestId(args: {
 
   // Keyed-ness is represented in the selector pattern, not derived by parsing the test id.
   const formattedDataTestIdForPom = dataTestId.kind === "template"
-    ? replaceAllTemplateExpressionsWithKey(dataTestId.template)
+    ? replaceAllTemplateExpressionsWithKey(dataTestId)
     : dataTestId.value;
 
   const isKeyed = formattedDataTestIdForPom.includes("${key}");

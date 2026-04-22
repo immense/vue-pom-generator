@@ -745,6 +745,40 @@ describe("utils.ts coverage", () => {
     expect(entries[0]?.pom?.formattedDataTestId).toBe("abc-${key}");
   });
 
+  it("allows preserving an existing template when the required key fragment carries literal context", () => {
+    const el = firstElement(parseTemplate("<button :data-testid=\"`abc-line-${item.id}`\" />"));
+    setBindAst(el, "data-testid", "`abc-line-${item.id}`");
+
+    const deps: IComponentDependencies = {
+      filePath: "/src/components/MyComp.vue",
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set<IDataTestId>(),
+      generatedMethods: new Map(),
+      isView: false,
+    };
+
+    const generatedMethodContentByComponent = new Map<string, Set<string>>();
+
+    applyResolvedDataTestId({
+      element: el,
+      componentName: "MyComp",
+      parentComponentName: "MyComp",
+      dependencies: deps,
+      generatedMethodContentByComponent,
+      nativeRole: "button",
+      preferredGeneratedValue: staticAttributeValue("ignored"),
+      bestKeyPlaceholder: "line-${item.id}",
+      testIdAttribute: "data-testid",
+      existingIdBehavior: "preserve",
+      addHtmlAttribute: false,
+    });
+
+    const entries = Array.from(deps.dataTestIdSet);
+    expect(entries.length).toBe(1);
+    expect(entries[0]?.pom?.formattedDataTestId).toBe("abc-line-${key}");
+  });
+
   it("allows preserving an existing key-based template literal that uses a fallback branch access", () => {
     const el = firstElement(parseTemplate("<button :data-testid=\"`abc-${data.id}`\" />"));
     setBindAst(el, "data-testid", "`abc-${data.id}`");
