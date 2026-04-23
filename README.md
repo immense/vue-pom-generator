@@ -12,6 +12,7 @@ If you already use Playwright with `getByTestId`, the point is simple: this pack
 - **Injects test ids during Vue compilation, not at runtime.** It hooks into the Vue template compiler and rewrites the compiled template output.
 - **Uses real template signals to name ids and methods.** Click handlers, `v-model`, `id`/`name`, `:to`, wrapper configuration, and a few targeted fallbacks all feed the generated API.
 - **Generates TypeScript POM output as either one aggregate or split per class, always with a stable `index.ts` barrel.**
+- **Describes generated Playwright locators** with deterministic human-readable labels via `Locator.describe()`.
 - **Can generate Playwright fixtures** so tests can request `userListPage` instead of constructing `new UserListPage(page)` manually.
 - **Can fail fast on unnameable wrapper-button actions** so complex inline handlers do not silently degrade into low-signal generated APIs.
 - **Can emit a single C# POM file** for Playwright .NET consumers.
@@ -691,12 +692,14 @@ What it contains:
 - an object keyed by component name
 - `testIdManifest`: each value is a sorted array of collected test ids for that component
 - `pomManifest`: richer per-component metadata including source file, generated locator/property names, and generated action names
+- each manifest entry also carries `locatorDescription`, which matches the human-readable label used by generated Playwright locators
 
 What it is good for:
 
 - runtime inspection
 - analytics / logging helpers that need the current generated ids
 - debugging what the generator has collected and generated
+- keeping manifest-driven tools aligned with the same locator descriptions shown in Playwright traces
 
 What it is not:
 

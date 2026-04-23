@@ -233,12 +233,22 @@ export class BasePage {
     return `[${this.testIdAttribute}="${testId}"]`;
   }
 
-  protected locatorByTestId(testId: string): PwLocator {
-    return this.page.locator(this.selectorForTestId(testId));
+  protected describeLocator(locator: PwLocator, description?: string): PwLocator {
+    const normalizedDescription = description?.trim();
+    return normalizedDescription ? locator.describe(normalizedDescription) : locator;
   }
 
-  protected locatorWithinTestIdByLabel(rootTestId: string, label: string, options?: { exact?: boolean }): PwLocator {
-    return this.locatorByTestId(rootTestId).getByLabel(label, { exact: options?.exact ?? true });
+  protected locatorByTestId(testId: string, description?: string): PwLocator {
+    return this.describeLocator(this.page.locator(this.selectorForTestId(testId)), description);
+  }
+
+  protected locatorWithinTestIdByLabel(
+    rootTestId: string,
+    label: string,
+    options?: { exact?: boolean; description?: string },
+  ): PwLocator {
+    const locator = this.locatorByTestId(rootTestId).getByLabel(label, { exact: options?.exact ?? true });
+    return this.describeLocator(locator, options?.description);
   }
 
   /**
@@ -488,8 +498,14 @@ export class BasePage {
    * Clicks on an element with the specified data-testid
    * @param testId The data-testid of the element to click
    */
-  public async clickByTestId(testId: string, annotationText: string = "", wait: boolean = true): Promise<void> {
-    await this.pointer.animateCursorToElement(this.selectorForTestId(testId), true, 200, annotationText, {
+  public async clickByTestId(
+    testId: string,
+    annotationText: string = "",
+    wait: boolean = true,
+    description?: string,
+  ): Promise<void> {
+    const locator = this.locatorByTestId(testId, description);
+    await this.pointer.animateCursorToElement(locator, true, 200, annotationText, {
       afterClick: async ({ testId: clickedTestId, instrumented }: AfterPointerClickInfo) => {
         if (!wait) return;
         if (!clickedTestId || !instrumented) return;
@@ -513,14 +529,23 @@ export class BasePage {
     label: string,
     annotationText: string = "",
     wait: boolean = true,
-    options?: { exact?: boolean },
+    options?: { exact?: boolean; description?: string },
   ): Promise<void> {
-    const locator = this.locatorWithinTestIdByLabel(rootTestId, label, { exact: options?.exact });
+    const locator = this.locatorWithinTestIdByLabel(rootTestId, label, {
+      exact: options?.exact,
+      description: options?.description,
+    });
     await this.clickLocator(locator, annotationText, wait);
   }
 
-  protected async fillInputByTestId(testId: string, text: string, annotationText: string = ""): Promise<void> {
-    await this.pointer.animateCursorToElementAndClickAndFill(this.selectorForTestId(testId), text, true, 200, annotationText, {
+  protected async fillInputByTestId(
+    testId: string,
+    text: string,
+    annotationText: string = "",
+    description?: string,
+  ): Promise<void> {
+    const locator = this.locatorByTestId(testId, description);
+    await this.pointer.animateCursorToElementAndClickAndFill(locator, text, true, 200, annotationText, {
       afterClick: async ({ testId: clickedTestId, instrumented }: AfterPointerClickInfo) => {
         if (!clickedTestId || !instrumented) return;
         await this.waitForTestIdClickEventAfter(clickedTestId);
@@ -532,8 +557,14 @@ export class BasePage {
    * Interacts with a vue-select control rooted by a data-testid.
    * This is emitted frequently by the generator; keeping it here reduces per-page duplicated code.
    */
-  protected async selectVSelectByTestId(testId: string, value: string, timeOut: number = 500, annotationText: string = ""): Promise<void> {
-    const root = this.locatorByTestId(testId);
+  protected async selectVSelectByTestId(
+    testId: string,
+    value: string,
+    timeOut: number = 500,
+    annotationText: string = "",
+    description?: string,
+  ): Promise<void> {
+    const root = this.locatorByTestId(testId, description);
     const input = root.locator("input");
 
     await this.pointer.animateCursorToElement(input, false, 200, annotationText);

@@ -27,6 +27,7 @@ import {
   uniquePomStringPatterns,
   type PomStringPattern,
 } from "./pom-patterns";
+import { buildPomLocatorDescription } from "./pom-discoverability";
 
 function upperFirst(value: string): string {
   if (!value) {
@@ -75,6 +76,7 @@ function createAsyncMethod(
 }
 
 function generateClickMethod(
+  componentName: string | undefined,
   methodName: string,
   selector: PomStringPattern,
   alternateSelectors: PomStringPattern[] | undefined,
@@ -82,6 +84,11 @@ function generateClickMethod(
 ): TypeScriptClassMember[] {
   const name = `click${methodName}`;
   const noWaitName = `${name}NoWait`;
+  const locatorDescription = JSON.stringify(buildPomLocatorDescription({
+    componentName,
+    methodName,
+    nativeRole: "button",
+  }));
   const selectorParams = orderPomPatternParameters(parameters, [selector]);
   const hasSelectorVariables = hasPomPatternVariables(selector);
   const baseParameters = createParameters(selectorParams);
@@ -103,23 +110,23 @@ function generateClickMethod(
             createInlineParameter("wait", { type: "boolean", initializer: "true" }),
             createInlineParameter("annotationText", { type: "string", initializer: "\"\"" }),
           ],
-      (writer) => {
-        writer.writeLine(`const candidates = [${candidatesExpr}] as const;`);
-        writer.writeLine("let lastError: unknown;");
-        writer.write("for (const testId of candidates) ").block(() => {
-          writer.writeLine("const locator = this.locatorByTestId(testId);");
-          writer.write("try ").block(() => {
-            writer.write("if (await locator.count()) ").block(() => {
-              writer.writeLine("await this.clickLocator(locator, annotationText, wait);");
-              writer.writeLine("return;");
+        (writer) => {
+          writer.writeLine(`const candidates = [${candidatesExpr}] as const;`);
+          writer.writeLine("let lastError: unknown;");
+          writer.write("for (const testId of candidates) ").block(() => {
+            writer.writeLine(`const locator = this.locatorByTestId(testId, ${locatorDescription});`);
+            writer.write("try ").block(() => {
+              writer.write("if (await locator.count()) ").block(() => {
+                writer.writeLine("await this.clickLocator(locator, annotationText, wait);");
+                writer.writeLine("return;");
+              });
+            });
+            writer.write("catch (e) ").block(() => {
+              writer.writeLine("lastError = e;");
             });
           });
-          writer.write("catch (e) ").block(() => {
-            writer.writeLine("lastError = e;");
-          });
-        });
-        writer.writeLine(`throw (lastError instanceof Error) ? lastError : new Error("[pom] Failed to click any candidate locator for ${name}.");`);
-      },
+          writer.writeLine(`throw (lastError instanceof Error) ? lastError : new Error("[pom] Failed to click any candidate locator for ${name}.");`);
+        },
     );
 
     const noWaitArgs = argsForForward ? `${argsForForward}, false, annotationText` : "false, annotationText";
@@ -146,7 +153,7 @@ function generateClickMethod(
           createInlineParameter("annotationText", { type: "string", initializer: "\"\"" }),
         ],
         (writer) => {
-          writer.writeLine(`await this.clickByTestId(${primaryTestIdExpr}, annotationText, wait);`);
+          writer.writeLine(`await this.clickByTestId(${primaryTestIdExpr}, annotationText, wait, ${locatorDescription});`);
         },
       ),
       createAsyncMethod(
@@ -167,7 +174,7 @@ function generateClickMethod(
         createInlineParameter("annotationText", { type: "string", initializer: "\"\"" }),
       ],
       (writer) => {
-        writer.writeLine(`await this.clickByTestId(${primaryTestIdExpr}, annotationText, wait);`);
+        writer.writeLine(`await this.clickByTestId(${primaryTestIdExpr}, annotationText, wait, ${locatorDescription});`);
       },
     ),
     createAsyncMethod(
@@ -181,50 +188,69 @@ function generateClickMethod(
 }
 
 function generateRadioMethod(
+  componentName: string | undefined,
   methodName: string,
   selector: PomStringPattern,
   parameters: PomParameterSpec[],
 ): TypeScriptClassMember[] {
   const name = `select${methodName}`;
+  const locatorDescription = JSON.stringify(buildPomLocatorDescription({
+    componentName,
+    methodName,
+    nativeRole: "radio",
+  }));
   const selectorParams = orderPomPatternParameters(parameters, [selector]);
   const methodParameters = createParameters(selectorParams);
   const testIdExpr = toTypeScriptPomPatternExpression(selector);
 
   return [
     createAsyncMethod(name, methodParameters, (writer) => {
-      writer.writeLine(`await this.clickByTestId(${testIdExpr}, annotationText);`);
+      writer.writeLine(`await this.clickByTestId(${testIdExpr}, annotationText, true, ${locatorDescription});`);
     }),
   ];
 }
 
 function generateSelectMethod(
+  componentName: string | undefined,
   methodName: string,
   selector: PomStringPattern,
   parameters: PomParameterSpec[],
 ): TypeScriptClassMember[] {
   const name = `select${methodName}`;
+  const locatorDescription = JSON.stringify(buildPomLocatorDescription({
+    componentName,
+    methodName,
+    nativeRole: "select",
+  }));
   const selectorParams = orderPomPatternParameters(parameters, [selector]);
-  const selectorExpr = `this.selectorForTestId(${toTypeScriptPomPatternExpression(selector)})`;
+  const testIdExpr = toTypeScriptPomPatternExpression(selector);
 
   return [
     createAsyncMethod(
       name,
       createParameters(selectorParams),
       (writer) => {
-        writer.writeLine(`const selector = ${selectorExpr};`);
-        writer.writeLine("await this.animateCursorToElement(selector, false, 500, annotationText);");
-        writer.writeLine("await this.page.selectOption(selector, value);");
+        writer.writeLine(`const testId = ${testIdExpr};`);
+        writer.writeLine(`const locator = this.locatorByTestId(testId, ${locatorDescription});`);
+        writer.writeLine("await this.animateCursorToElement(locator, false, 500, annotationText);");
+        writer.writeLine("await locator.selectOption(value);");
       },
     ),
   ];
 }
 
 function generateVSelectMethod(
+  componentName: string | undefined,
   methodName: string,
   selector: PomStringPattern,
   parameters: PomParameterSpec[],
 ): TypeScriptClassMember[] {
   const name = `select${methodName}`;
+  const locatorDescription = JSON.stringify(buildPomLocatorDescription({
+    componentName,
+    methodName,
+    nativeRole: "vselect",
+  }));
   const selectorParams = orderPomPatternParameters(parameters, [selector]);
 
   return [
@@ -232,18 +258,24 @@ function generateVSelectMethod(
       name,
       createParameters(selectorParams),
       (writer) => {
-        writer.writeLine(`await this.selectVSelectByTestId(${toTypeScriptPomPatternExpression(selector)}, value, timeOut, annotationText);`);
+        writer.writeLine(`await this.selectVSelectByTestId(${toTypeScriptPomPatternExpression(selector)}, value, timeOut, annotationText, ${locatorDescription});`);
       },
     ),
   ];
 }
 
 function generateTypeMethod(
+  componentName: string | undefined,
   methodName: string,
   selector: PomStringPattern,
   parameters: PomParameterSpec[],
 ): TypeScriptClassMember[] {
   const name = `type${methodName}`;
+  const locatorDescription = JSON.stringify(buildPomLocatorDescription({
+    componentName,
+    methodName,
+    nativeRole: "input",
+  }));
   const selectorParams = orderPomPatternParameters(parameters, [selector]);
 
   return [
@@ -251,7 +283,7 @@ function generateTypeMethod(
       name,
       createParameters(selectorParams),
       (writer) => {
-        writer.writeLine(`await this.fillInputByTestId(${toTypeScriptPomPatternExpression(selector)}, text, annotationText);`);
+        writer.writeLine(`await this.fillInputByTestId(${toTypeScriptPomPatternExpression(selector)}, text, annotationText, ${locatorDescription});`);
       },
     ),
   ];
@@ -269,6 +301,7 @@ function isAllDigits(value: string): boolean {
 }
 
 function generateGetElementByDataTestId(
+  componentName: string | undefined,
   methodName: string,
   nativeRole: string,
   selector: PomStringPattern,
@@ -276,6 +309,11 @@ function generateGetElementByDataTestId(
   getterNameOverride: string | undefined,
   parameters: PomParameterSpec[],
 ): TypeScriptClassMember[] {
+  const locatorDescription = JSON.stringify(buildPomLocatorDescription({
+    componentName,
+    methodName,
+    nativeRole,
+  }));
   const roleSuffix = upperFirst(nativeRole || "Element");
   const baseName = upperFirst(methodName);
   const numericSuffix = baseName.startsWith(roleSuffix) ? baseName.slice(roleSuffix.length) : "";
@@ -291,7 +329,7 @@ function generateGetElementByDataTestId(
       createClassGetter({
         name: keyedPropertyName,
         statements: [
-          `return this.keyedLocators((${indexedVariable}: ${keyType}) => this.locatorByTestId(${toTypeScriptPomPatternExpression(selector)}));`,
+          `return this.keyedLocators((${indexedVariable}: ${keyType}) => this.locatorByTestId(${toTypeScriptPomPatternExpression(selector)}, ${locatorDescription}));`,
         ],
       }),
     ];
@@ -308,7 +346,7 @@ function generateGetElementByDataTestId(
     return [
       createClassGetter({
         name: finalPropertyName,
-        statements: [`return ${locatorExpr};`],
+        statements: [`return this.describeLocator(${locatorExpr}, ${locatorDescription});`],
       }),
     ];
   }
@@ -316,23 +354,29 @@ function generateGetElementByDataTestId(
   return [
     createClassGetter({
       name: finalPropertyName,
-      statements: [`return this.locatorByTestId(${toTypeScriptPomPatternExpression(selector)});`],
+      statements: [`return this.locatorByTestId(${toTypeScriptPomPatternExpression(selector)}, ${locatorDescription});`],
     }),
   ];
 }
 
 function generateNavigationMethod(args: {
+  componentName?: string;
   targetPageObjectModelClass: string;
   baseMethodName: string;
   selector: PomStringPattern;
   alternateSelectors?: PomStringPattern[];
   parameters: PomParameterSpec[];
 }): TypeScriptClassMember[] {
-  const { targetPageObjectModelClass: target, baseMethodName, selector, alternateSelectors, parameters } = args;
+  const { componentName, targetPageObjectModelClass: target, baseMethodName, selector, alternateSelectors, parameters } = args;
 
   const methodName = baseMethodName
     ? `goTo${upperFirst(baseMethodName)}`
     : `goTo${target.endsWith("Page") ? target.slice(0, -"Page".length) : target}`;
+  const locatorDescription = JSON.stringify(buildPomLocatorDescription({
+    componentName,
+    methodName: baseMethodName,
+    nativeRole: "button",
+  }));
 
   const selectorParams = orderPomPatternParameters(parameters, [selector]);
   const methodParameters = createParameters(selectorParams);
@@ -350,7 +394,7 @@ function generateNavigationMethod(args: {
             writer.writeLine(`const candidates = [${candidatesExpr}] as const;`);
             writer.writeLine("let lastError: unknown;");
             writer.write("for (const testId of candidates) ").block(() => {
-              writer.writeLine("const locator = this.locatorByTestId(testId);");
+              writer.writeLine(`const locator = this.locatorByTestId(testId, ${locatorDescription});`);
               writer.write("try ").block(() => {
                 writer.write("if (await locator.count()) ").block(() => {
                   writer.writeLine("await this.clickLocator(locator);");
@@ -376,7 +420,8 @@ function generateNavigationMethod(args: {
       returnType: `Fluent<${target}>`,
       statements: (writer) => {
         writer.write("return this.fluent(async () => ").block(() => {
-          writer.writeLine(`await this.clickByTestId(${toTypeScriptPomPatternExpression(selector)});`);
+          writer.writeLine(`const locator = this.locatorByTestId(${toTypeScriptPomPatternExpression(selector)}, ${locatorDescription});`);
+          writer.writeLine("await this.clickLocator(locator);");
           writer.writeLine(`return new ${target}(this.page);`);
         });
         writer.writeLine(");");
@@ -386,6 +431,7 @@ function generateNavigationMethod(args: {
 }
 
 export function generateViewObjectModelMembers(
+  componentName: string | undefined,
   targetPageObjectModelClass: string | undefined,
   methodName: string,
   nativeRole: string,
@@ -399,6 +445,7 @@ export function generateViewObjectModelMembers(
     : methodName;
 
   const members = generateGetElementByDataTestId(
+    componentName,
     baseMethodName,
     nativeRole,
     selector,
@@ -411,6 +458,7 @@ export function generateViewObjectModelMembers(
     return [
       ...members,
       ...generateNavigationMethod({
+        componentName,
         targetPageObjectModelClass,
         baseMethodName,
         selector,
@@ -421,22 +469,23 @@ export function generateViewObjectModelMembers(
   }
 
   if (nativeRole === "select") {
-    return [...members, ...generateSelectMethod(baseMethodName, selector, parameters)];
+    return [...members, ...generateSelectMethod(componentName, baseMethodName, selector, parameters)];
   }
   if (nativeRole === "vselect") {
-    return [...members, ...generateVSelectMethod(baseMethodName, selector, parameters)];
+    return [...members, ...generateVSelectMethod(componentName, baseMethodName, selector, parameters)];
   }
   if (nativeRole === "input") {
-    return [...members, ...generateTypeMethod(baseMethodName, selector, parameters)];
+    return [...members, ...generateTypeMethod(componentName, baseMethodName, selector, parameters)];
   }
   if (nativeRole === "radio") {
-    return [...members, ...generateRadioMethod(baseMethodName || "Radio", selector, parameters)];
+    return [...members, ...generateRadioMethod(componentName, baseMethodName || "Radio", selector, parameters)];
   }
 
-  return [...members, ...generateClickMethod(baseMethodName, selector, alternateSelectors, parameters)];
+  return [...members, ...generateClickMethod(componentName, baseMethodName, selector, alternateSelectors, parameters)];
 }
 
 export function generateViewObjectModelMethodContent(
+  componentName: string | undefined,
   targetPageObjectModelClass: string | undefined,
   methodName: string,
   nativeRole: string,
@@ -447,6 +496,7 @@ export function generateViewObjectModelMethodContent(
 ) {
   return renderClassMembers(
     generateViewObjectModelMembers(
+      componentName,
       targetPageObjectModelClass,
       methodName,
       nativeRole,

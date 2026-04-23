@@ -110,6 +110,7 @@ describe("virtual:testids", () => {
     expect(code).toContain("\"generatedActionNames\": [");
     expect(code).toContain("\"clickFooByKey\"");
     expect(code).toContain("\"clickFirstFoo\"");
+    expect(code).toContain("\"locatorDescription\": \"Foo button\"");
     expect(code).toContain("\"sourceFile\": \"/repo/src/views/Foo.vue\"");
     expect(code).toContain("\"kind\": \"view\"");
     expect(code).toContain("\"semanticName\": \"foo item\"");
@@ -122,6 +123,7 @@ describe("virtual:testids", () => {
     expect(pomManifestCode).toContain("export const pomManifest");
     expect(pomManifestCode).not.toContain("export const testIdManifest");
     expect(pomManifestCode).toContain("\"generatedPropertyName\": \"FooButton\"");
+    expect(pomManifestCode).toContain("\"locatorDescription\": \"Foo button\"");
 
     componentHierarchyMap.set("Baz", createDependencies(new Set([
       {

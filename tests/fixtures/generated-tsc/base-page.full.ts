@@ -12,7 +12,11 @@ export class BasePage {
     throw new Error("not implemented");
   }
 
-  protected locatorByTestId(_testId: string): any {
+  protected describeLocator<T>(_locator: T, _description?: string): T {
+    return _locator;
+  }
+
+  protected locatorByTestId(_testId: string, _description?: string): any {
     return null as any;
   }
 
@@ -24,13 +28,15 @@ export class BasePage {
     return `[data-testid="${testId}"]`;
   }
 
-  protected async clickByTestId(_testId: string, _annotationText: string = "", _wait: boolean = true): Promise<void> {}
+  protected async clickByTestId(_testId: string, _annotationText: string = "", _wait: boolean = true, _description?: string): Promise<void> {}
 
-  protected async clickWithinTestIdByLabel(_rootTestId: string, _label: string, _annotationText: string = "", _wait: boolean = true, _options?: { exact?: boolean }): Promise<void> {}
+  protected async clickLocator(_locator: any, _annotationText: string = "", _wait: boolean = true): Promise<void> {}
 
-  protected async fillInputByTestId(_testId: string, _text: string, _annotationText: string = ""): Promise<void> {}
+  protected async clickWithinTestIdByLabel(_rootTestId: string, _label: string, _annotationText: string = "", _wait: boolean = true, _options?: { exact?: boolean; description?: string }): Promise<void> {}
 
-  protected async selectVSelectByTestId(_testId: string, _value: string, _timeOut = 500, _annotationText: string = ""): Promise<void> {}
+  protected async fillInputByTestId(_testId: string, _text: string, _annotationText: string = "", _description?: string): Promise<void> {}
+
+  protected async selectVSelectByTestId(_testId: string, _value: string, _timeOut = 500, _annotationText: string = "", _description?: string): Promise<void> {}
 
   protected async animateCursorToElement(_selector: string, _executeClick = true, _delay = 100, _annotationText: string = "", _waitForInstrumentationEvent = true): Promise<void> {}
 }

@@ -4,6 +4,7 @@
  */
 
 import type { ElementMetadata } from "./metadata-collector";
+import { buildPomLocatorDescription, humanizePomMethodName } from "./pom-discoverability";
 import type { IComponentDependencies, IDataTestId, PomExtraClickMethodSpec, PomPrimarySpec } from "./utils";
 import { renderSourceFile, VariableDeclarationKind, type WriterFunction } from "./typescript-codegen";
 import { upperFirst } from "./utils";
@@ -12,6 +13,7 @@ type PomManifestEntry = {
   testId: string;
   selectorPatternKind: "static" | "parameterized";
   semanticName: string;
+  locatorDescription: string;
   inferredRole: string | null;
   generatedPropertyName: string | null;
   generatedActionName: string | null;
@@ -89,13 +91,6 @@ function getGeneratedActionName(entry: IDataTestId, pom: PomPrimarySpec): string
   }
 }
 
-function humanizeMethodName(methodName: string): string {
-  return methodName
-    .replace(/ByKey/g, "")
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .trim();
-}
-
 function matchesPrimarySelector(extraMethod: PomExtraClickMethodSpec, pom: PomPrimarySpec): boolean {
   if (extraMethod.selector.kind !== "testId") {
     return false;
@@ -106,6 +101,7 @@ function matchesPrimarySelector(extraMethod: PomExtraClickMethodSpec, pom: PomPr
 }
 
 function getManifestEntry(
+  componentName: string,
   entry: IDataTestId,
   componentMetadata: Map<string, ElementMetadata> | undefined,
   extraMethods: readonly PomExtraClickMethodSpec[],
@@ -129,7 +125,14 @@ function getManifestEntry(
   return {
     testId,
     selectorPatternKind: entry.selectorValue.patternKind,
-    semanticName: metadata?.semanticName ?? (pom ? humanizeMethodName(pom.methodName) : testId),
+    semanticName: metadata?.semanticName ?? (pom ? humanizePomMethodName(pom.methodName) : testId),
+    locatorDescription: pom
+      ? buildPomLocatorDescription({
+        componentName,
+        methodName: pom.methodName,
+        nativeRole: pom.nativeRole,
+      })
+      : componentName,
     inferredRole: pom?.nativeRole ?? null,
     generatedPropertyName: pom ? getGeneratedPropertyName(pom) : null,
     generatedActionName,
@@ -156,7 +159,7 @@ export function buildPomManifest(
     .map(([componentName, dependencies]) => {
       const entries = Array.from(dependencies.dataTestIdSet)
         .sort((a, b) => a.selectorValue.formatted.localeCompare(b.selectorValue.formatted))
-        .map(entry => getManifestEntry(entry, elementMetadata.get(componentName), dependencies.pomExtraMethods ?? []));
+        .map(entry => getManifestEntry(componentName, entry, elementMetadata.get(componentName), dependencies.pomExtraMethods ?? []));
 
       if (!entries.length) {
         return null;

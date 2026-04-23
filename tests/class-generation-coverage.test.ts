@@ -39,6 +39,9 @@ function writeMinimalBasePage(filePath: string) {
       "  public constructor(page?: any, _options?: { testIdAttribute?: string }) {",
       "    this.page = page;",
       "  }",
+      "  protected describeLocator<T>(_locator: T, _description?: string): T {",
+      "    return _locator;",
+      "  }",
       "}",
       "",
     ].join("\n"),
@@ -624,6 +627,60 @@ describe("class-generation coverage", () => {
       expect(content).not.toMatch(/export class FirmsGrid\.client/);
       expect(content).not.toMatch(/export class forgot-password/);
       expect(content).not.toMatch(/export class template-library/);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("threads human-readable locator descriptions through generated Playwright getters and actions", async () => {
+    const tempRoot = makeTempRoot("vue-pom-described-locators-");
+
+    try {
+      const basePagePath = path.join(tempRoot, "base-page.ts");
+      writeMinimalBasePage(basePagePath);
+
+      const componentHierarchyMap = new Map<string, IComponentDependencies>([
+        [
+          "UserListPage",
+          makeDeps({
+            filePath: path.join(tempRoot, "src", "views", "UserListPage.vue"),
+            isView: true,
+            dataTestIdSet: new Set<IDataTestId>([
+              {
+                selectorValue: createPomStringPattern("UserListPage-Search-input", "static"),
+                pom: {
+                  nativeRole: "input",
+                  methodName: "Search",
+                  selector: createPomStringPattern("UserListPage-Search-input", "static"),
+                  parameters: createPomParameters(["text", "string"], ["annotationText", "string = \"\""]),
+                },
+              },
+              {
+                selectorValue: createPomStringPattern("UserListPage-Save-button", "static"),
+                pom: {
+                  nativeRole: "button",
+                  methodName: "Save",
+                  selector: createPomStringPattern("UserListPage-Save-button", "static"),
+                  parameters: [],
+                },
+              },
+            ]),
+          }),
+        ],
+      ]);
+
+      const outDir = path.join(tempRoot, "pom");
+      await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
+        outDir,
+        projectRoot: tempRoot,
+      });
+
+      const content = readFile(path.join(outDir, "page-object-models.g.ts"));
+
+      expect(content).toContain('return this.locatorByTestId("UserListPage-Search-input", "User list search input");');
+      expect(content).toContain('await this.fillInputByTestId("UserListPage-Search-input", text, annotationText, "User list search input");');
+      expect(content).toContain('return this.locatorByTestId("UserListPage-Save-button", "User list save button");');
+      expect(content).toContain('await this.clickByTestId("UserListPage-Save-button", annotationText, wait, "User list save button");');
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
