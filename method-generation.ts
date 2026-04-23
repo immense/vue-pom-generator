@@ -13,11 +13,11 @@ import {
   type TypeScriptClassMember,
   type WriterFunction,
 } from "./typescript-codegen";
+import { getPomParameterNames, normalizePomParameters } from "./pom-params";
 import {
   ensurePomPatternParameters,
   getIndexedPomPatternVariable,
   hasPomPatternVariables,
-  isParameterizedPomPattern,
   toTypeScriptPomPatternExpression,
   uniquePomStringPatterns,
   type PomStringPattern,
@@ -30,30 +30,12 @@ function upperFirst(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-function splitTypeAndInitializer(typeExpression: string): { type: string; initializer?: string } {
-  const trimmed = typeExpression.trim();
-  const initializerIndex = trimmed.lastIndexOf("=");
-  if (initializerIndex < 0) {
-    return { type: trimmed };
-  }
-
-  return {
-    type: trimmed.slice(0, initializerIndex).trim(),
-    initializer: trimmed.slice(initializerIndex + 1).trim(),
-  };
-}
-
-function createParameter(name: string, typeExpression: string): OptionalKind<ParameterDeclarationStructure> {
-  const { type, initializer } = splitTypeAndInitializer(typeExpression);
-  return {
+function createParameters(params: Record<string, string>): OptionalKind<ParameterDeclarationStructure>[] {
+  return normalizePomParameters(params).map(({ name, type, initializer }) => ({
     name,
     type: type || undefined,
     initializer,
-  };
-}
-
-function createParameters(params: Record<string, string>): OptionalKind<ParameterDeclarationStructure>[] {
-  return Object.entries(params).map(([name, typeExpression]) => createParameter(name, typeExpression));
+  }));
 }
 
 function createInlineParameter(
@@ -102,7 +84,7 @@ function generateClickMethod(
   const selectorParams = ensurePomPatternParameters(params, [selector]);
   const hasSelectorVariables = hasPomPatternVariables(selector);
   const baseParameters = createParameters(selectorParams);
-  const argsForForward = Object.keys(selectorParams).join(", ");
+  const argsForForward = getPomParameterNames(selectorParams).join(", ");
   const alternates = uniquePomStringPatterns(selector, alternateSelectors).slice(1);
   const primaryTestIdExpr = toTypeScriptPomPatternExpression(selector);
 

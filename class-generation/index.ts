@@ -9,6 +9,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { generateViewObjectModelMembers, generateViewObjectModelMethodContent } from "../method-generation";
+import { formatTypeScriptPomParameters, normalizePomParameters, type PomParameterSpec } from "../pom-params";
 import {
   bindCSharpPomPattern,
   bindTypeScriptPomPattern,
@@ -440,19 +441,6 @@ function generateGoToSelfMethod(componentName: string): TypeScriptClassMember[] 
   ];
 }
 
-function formatMethodParams(params: Record<string, string> | undefined): string {
-  if (!params)
-    return "";
-
-  const entries = Object.entries(params);
-  if (!entries.length)
-    return "";
-
-  return entries
-    .map(([name, typeExpr]) => `${name}: ${typeExpr}`)
-    .join(", ");
-}
-
 function getSelectorPatterns(selector: PomSelectorSpec): PomStringPattern[] {
   return selector.kind === "testId"
     ? [selector.testId]
@@ -470,7 +458,7 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScr
     selectorPatterns,
     { omit: spec.keyLiteral !== undefined ? ["key"] : [] },
   );
-  const signatureParams = formatMethodParams(params);
+  const signatureParams = formatTypeScriptPomParameters(params);
   const parameters = parseParameterSignatures(signatureParams);
 
   const hasAnnotationText = Object.prototype.hasOwnProperty.call(params, "annotationText");
@@ -1069,16 +1057,9 @@ function buildGeneratedGitAttributesFiles(generatedFilePaths: string[]): Generat
     });
 }
 
-function toCSharpParam(paramTypeExpr: string): { type: string; defaultExpr?: string } {
-  const trimmed = (paramTypeExpr ?? "").trim();
-
-  // Handle default values: "boolean = true", "string = \"\"", "timeOut = 500".
-  const eqIdx = trimmed.indexOf("=");
-  const left = eqIdx >= 0 ? trimmed.slice(0, eqIdx).trim() : trimmed;
-  const right = eqIdx >= 0 ? trimmed.slice(eqIdx + 1).trim() : undefined;
-
+function toCSharpParam(param: PomParameterSpec): { type: string; defaultExpr?: string } {
   // Collapse union types to their widest practical type.
-  const typePart = left.includes("|") ? "string" : left;
+  const typePart = param.type.includes("|") ? "string" : param.type;
 
   let type = "string";
   if (/(?:^|\s)boolean(?:\s|$)/.test(typePart))
@@ -1087,23 +1068,21 @@ function toCSharpParam(paramTypeExpr: string): { type: string; defaultExpr?: str
     type = "string";
   else if (/(?:^|\s)number(?:\s|$)/.test(typePart))
     type = "int";
-  else if (/\d+/.test(typePart) && typePart === "")
-    type = "int";
   else if (/\btimeOut\b/i.test(typePart))
     type = "int";
 
   let defaultExpr: string | undefined;
-  if (right !== undefined) {
+  if (param.initializer !== undefined) {
     if (type === "bool") {
-      defaultExpr = right.includes("true") ? "true" : right.includes("false") ? "false" : undefined;
+      defaultExpr = param.initializer.includes("true") ? "true" : param.initializer.includes("false") ? "false" : undefined;
     }
     else if (type === "int") {
-      const m = right.match(/\d+/);
+      const m = param.initializer.match(/\d+/);
       defaultExpr = m ? m[0] : undefined;
     }
     else {
       // string defaults, keep empty string if detected.
-      if (right === "\"\"" || right === "\"\"" || right === "''") {
+      if (param.initializer === "\"\"" || param.initializer === "''") {
         defaultExpr = "\"\"";
       }
     }
@@ -1113,20 +1092,17 @@ function toCSharpParam(paramTypeExpr: string): { type: string; defaultExpr?: str
 }
 
 function formatCSharpParams(params: Record<string, string> | undefined): { signature: string; argNames: string[] } {
-  if (!params)
-    return { signature: "", argNames: [] };
-
-  const entries = Object.entries(params);
-  if (!entries.length)
+  const normalizedParams = normalizePomParameters(params);
+  if (!normalizedParams.length)
     return { signature: "", argNames: [] };
 
   const signatureParts: string[] = [];
   const argNames: string[] = [];
 
-  for (const [name, typeExpr] of entries) {
-    const { type, defaultExpr } = toCSharpParam(typeExpr);
-    argNames.push(name);
-    signatureParts.push(defaultExpr !== undefined ? `${type} ${name} = ${defaultExpr}` : `${type} ${name}`);
+  for (const param of normalizedParams) {
+    const { type, defaultExpr } = toCSharpParam(param);
+    argNames.push(param.name);
+    signatureParts.push(defaultExpr !== undefined ? `${type} ${param.name} = ${defaultExpr}` : `${type} ${param.name}`);
   }
 
   return { signature: signatureParts.join(", "), argNames };
