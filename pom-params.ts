@@ -79,6 +79,32 @@ export function hasPomParameter(params: PomParameterInput, name: string): boolea
   return !!getPomParameter(params, name);
 }
 
+export function setPomParameter(
+  params: PomParameterInput,
+  name: string,
+  typeExpression?: string,
+  options: {
+    initializer?: string;
+    hasQuestionToken?: boolean;
+    isRestParameter?: boolean;
+  } = {},
+): PomParameterSpec[] {
+  const nextParam = createPomParameterSpec(name, typeExpression, options);
+  const normalizedParams = normalizePomParameters(params);
+  const existingIndex = normalizedParams.findIndex(param => param.name === name);
+  if (existingIndex < 0) {
+    return [...normalizedParams, nextParam];
+  }
+
+  const nextParams = normalizedParams.slice();
+  nextParams[existingIndex] = nextParam;
+  return nextParams;
+}
+
+export function removePomParameter(params: PomParameterInput, name: string): PomParameterSpec[] {
+  return normalizePomParameters(params).filter(param => param.name !== name);
+}
+
 export function formatTypeScriptPomParameters(params: PomParameterInput): string {
   return normalizePomParameters(params)
     .map((param) => {

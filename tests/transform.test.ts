@@ -1056,6 +1056,41 @@ describe('createTestIdTransform', () => {
     expect(dataTestIdAttr?.value?.content).toBe('MyComp-SelectedGroup-vselect')
   })
 
+  it('registers v-select generated-method signatures from structured primary parameters', () => {
+    const componentHierarchyMap = new Map()
+    const nativeWrappers: NativeWrappersMap = {
+      'v-select': {
+        role: 'vselect',
+        requiresOptionDataTestIdPrefix: true,
+      },
+    }
+
+    compileAndCaptureAst(
+      readFixtureTemplate('MyComp_VSelect.vue'),
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, nativeWrappers, [], '/src/views')],
+      },
+    )
+
+    const deps = componentHierarchyMap.get('MyComp') as IComponentDependencies | undefined
+    expect(deps).toBeTruthy()
+
+    const signature = deps?.generatedMethods?.get('selectSelectedGroup')
+    expect(signature).toEqual(createPomMethodSignature({
+      value: 'string',
+      timeOut: 'number = 500',
+      annotationText: 'string = ""',
+    }))
+
+    const pom = Array.from(deps?.dataTestIdSet ?? []).find(entry => entry.pom?.methodName === 'SelectedGroup')?.pom
+    expect(pom?.parameters).toEqual(normalizePomParameters({
+      value: 'string',
+      timeOut: 'number = 500',
+      annotationText: 'string = ""',
+    }))
+  })
+
   it('infers radio wrappers through nested local SFCs without nativeWrappers config', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-transform-'))
     const radioPath = path.join(tempRoot, 'src', 'components', 'ImmyRadio.vue')

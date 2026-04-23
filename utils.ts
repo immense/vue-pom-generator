@@ -57,8 +57,10 @@ import { createPomStringPattern, pomStringPatternEquals, type PomPatternKind, ty
 import {
   createPomMethodSignature,
   createPomParameterSpec,
-  normalizePomParameters,
+  hasPomParameter,
   pomMethodSignatureEquals,
+  removePomParameter,
+  setPomParameter,
   type PomMethodSignature,
   type PomParameterSpec,
 } from "./pom-params";
@@ -3217,42 +3219,35 @@ export function applyResolvedDataTestId(args: {
     );
   }
 
-  const params: Record<string, string> = {};
-  if (selectorIsParameterized) {
-    params.key = keyTypeFromValues;
-  }
+  let parameters: PomParameterSpec[] = selectorIsParameterized
+    ? [createPomParameterSpec("key", keyTypeFromValues)]
+    : [];
 
   switch (normalizedRole) {
     case "input":
-      params.text = "string";
-      params.annotationText = "string = \"\"";
-      if (!selectorIsParameterized) delete params.key;
+      parameters = setPomParameter(parameters, "text", "string");
+      parameters = setPomParameter(parameters, "annotationText", "string = \"\"");
       break;
     case "select":
-      params.value = "string";
-      params.annotationText = "string = \"\"";
-      if (!selectorIsParameterized) delete params.key;
+      parameters = setPomParameter(parameters, "value", "string");
+      parameters = setPomParameter(parameters, "annotationText", "string = \"\"");
       break;
     case "vselect":
-      params.value = "string";
-      params.timeOut = "number = 500";
-      params.annotationText = "string = \"\"";
-      if (!selectorIsParameterized) delete params.key;
+      parameters = setPomParameter(parameters, "value", "string");
+      parameters = setPomParameter(parameters, "timeOut", "number = 500");
+      parameters = setPomParameter(parameters, "annotationText", "string = \"\"");
       break;
     case "radio":
       // radio selectors can be parameterized (for dynamic option ids) or static.
-      params.annotationText = "string = \"\"";
+      parameters = setPomParameter(parameters, "annotationText", "string = \"\"");
       break;
     default:
       break;
   }
 
-  // If the caller provided enumerable key values (e.g. derived from a static v-for list),
-  // propagate a literal-union type into the underlying keyed locator method signature.
-  if (keyTypeFromValues !== "string" && Object.prototype.hasOwnProperty.call(params, "key")) {
-    params.key = keyTypeFromValues;
-  }
-  const normalizedParameters = normalizePomParameters(params);
+  const normalizedParameters = selectorIsParameterized
+    ? setPomParameter(parameters, "key", keyTypeFromValues)
+    : removePomParameter(parameters, "key");
 
   // 3) Apply attribute (only when we generated it) and register for POM generation.
   if (addHtmlAttribute && !fromExisting) {
@@ -3316,41 +3311,7 @@ export function applyResolvedDataTestId(args: {
   };
 
   const getSignatureForGeneratedMethod = () => {
-    const role = normalizedRole;
-    const isNavigation = !!dataTestIdEntry.targetPageObjectModelClass;
-    const needsKey = Object.prototype.hasOwnProperty.call(params, "key");
-    const keyType = keyTypeFromValues;
-
-    if (isNavigation) {
-      if (needsKey) {
-        return createPomMethodSignature({ key: keyType });
-      }
-      return createPomMethodSignature([]);
-    }
-
-    switch (role) {
-      case "input":
-        return needsKey
-          ? createPomMethodSignature({ key: keyType, text: "string", annotationText: "string = \"\"" })
-          : createPomMethodSignature({ text: "string", annotationText: "string = \"\"" });
-      case "select":
-        return needsKey
-          ? createPomMethodSignature({ key: keyType, value: "string", annotationText: "string = \"\"" })
-          : createPomMethodSignature({ value: "string", annotationText: "string = \"\"" });
-      case "vselect":
-        return needsKey
-          ? createPomMethodSignature({ key: keyType, value: "string", timeOut: "number = 500" })
-          : createPomMethodSignature({ value: "string", timeOut: "number = 500" });
-      case "radio":
-        return needsKey
-          ? createPomMethodSignature({ key: keyType, annotationText: "string = \"\"" })
-          : createPomMethodSignature({ annotationText: "string = \"\"" });
-      default:
-        if (needsKey) {
-          return createPomMethodSignature({ key: keyType });
-        }
-        return createPomMethodSignature([]);
-    }
+    return createPomMethodSignature(normalizedParameters);
   };
 
   const registerPrimaryOnce = (pom: PomPrimarySpec) => {
@@ -3567,11 +3528,11 @@ export function applyResolvedDataTestId(args: {
             label: createPomStringPattern(label, "static"),
             exact: true,
           },
-          parameters: normalizePomParameters({ annotationText: `string = ""` }),
+          parameters: [createPomParameterSpec("annotationText", `string = ""`)],
         });
 
         if (added) {
-          registerGeneratedMethodSignature(generatedName, createPomMethodSignature({ annotationText: `string = ""` }));
+          registerGeneratedMethodSignature(generatedName, createPomMethodSignature([createPomParameterSpec("annotationText", `string = ""`)]));
         }
       }
 
@@ -3597,11 +3558,17 @@ export function applyResolvedDataTestId(args: {
         label: createPomStringPattern("${value}", "parameterized"),
         exact: true,
       },
-      parameters: normalizePomParameters({ value: "string", annotationText: `string = ""` }),
+      parameters: [
+        createPomParameterSpec("value", "string"),
+        createPomParameterSpec("annotationText", `string = ""`),
+      ],
     });
 
     if (added) {
-      registerGeneratedMethodSignature(generatedName, createPomMethodSignature({ value: "string", annotationText: `string = ""` }));
+      registerGeneratedMethodSignature(generatedName, createPomMethodSignature([
+        createPomParameterSpec("value", "string"),
+        createPomParameterSpec("annotationText", `string = ""`),
+      ]));
     }
     return { selectorValue: dataTestId, runtimeValue: runtimeDataTestId, fromExisting };
   }
@@ -3613,7 +3580,7 @@ export function applyResolvedDataTestId(args: {
   //
   // This keeps the POM ergonomic and avoids pushing key plumbing into tests.
   const staticKeyValues = (args.keyValuesOverride ?? null);
-  const needsKey = Object.prototype.hasOwnProperty.call(params, "key")
+  const needsKey = hasPomParameter(normalizedParameters, "key")
     && selectorIsParameterized;
   const isNavigation = !!dataTestIdEntry.targetPageObjectModelClass;
 
@@ -3650,11 +3617,11 @@ export function applyResolvedDataTestId(args: {
           testId: selectorPattern,
         },
         keyLiteral: rawValue,
-        parameters: normalizePomParameters({ wait: "boolean = true" }),
+        parameters: [createPomParameterSpec("wait", "boolean = true")],
       });
 
       if (added) {
-        registerGeneratedMethodSignature(generatedName, createPomMethodSignature({ wait: "boolean = true" }));
+        registerGeneratedMethodSignature(generatedName, createPomMethodSignature([createPomParameterSpec("wait", "boolean = true")]));
       }
     }
 
