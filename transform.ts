@@ -11,34 +11,35 @@ import type {
   IfBranchNode,
   ForNode,
 } from "@vue/compiler-core";
-import type { AttributeValue, HierarchyMap } from "./utils";
-import { NodeTypes, stringifyExpression } from "@vue/compiler-core";
+import type { AttributeValue, DataTestIdEntryOverrides, HierarchyMap, ResolvedKeyInfo } from "./utils";
+import { NodeTypes } from "@vue/compiler-core";
 import { parse as parseSfc } from "@vue/compiler-sfc";
 import { parse as parseTemplate } from "@vue/compiler-dom";
 import { parseExpression } from "@babel/parser";
 import path from "node:path";
 import fs from "node:fs";
 import process from "node:process";
-import { TESTID_CLICK_EVENT_NAME, TESTID_CLICK_EVENT_STRICT_FLAG } from "./click-instrumentation";
+import { TESTID_CLICK_EVENT_NAME } from "./click-instrumentation";
 import {
   isAsciiDigitCode,
   isAsciiLetterCode,
   isAsciiUppercaseLetterCode,
   upsertAttribute,
-  findTestIdAttribute,
   formatTagName,
   getComposedClickHandlerContent,
-  getIdOrName,
+  getStaticIdOrNameHint,
   getInnerText,
-   getContainedInVForDirectiveKeyValue,
-   getContainedInSlotDataKeyValue,
-   tryGetContainedInStaticVForSourceLiteralValues,
-   getKeyDirectiveValue,
-   getModelBindingValues,
-   getNativeWrapperTransformInfo,
-   nodeHandlerAttributeValue,
-   nodeHandlerAttributeInfo,
-   tryGetClickDirective,
+  getContainedInSlotDataKeyInfo,
+  getContainedInVForDirectiveKeyInfo,
+  getVueExpressionSource,
+  renderTemplateLiteralExpression,
+  tryGetContainedInStaticVForSourceLiteralValues,
+  getKeyDirectiveInfo,
+  getModelBindingValues,
+  getNativeWrapperTransformInfo,
+  nodeHandlerAttributeValue,
+  nodeHandlerAttributeInfo,
+  tryGetClickDirective,
   nodeHasToDirective,
   generateToDirectiveDataTestId,
   toDirectiveObjectFieldNameValue,
@@ -55,7 +56,6 @@ import {
 } from "./utils";
 
 const CLICK_EVENT_NAME = TESTID_CLICK_EVENT_NAME;
-const ENABLE_CLICK_INSTRUMENTATION = true;
 // Cache inferred wrapper configs across transforms/build passes.
 const inferredNativeWrapperConfigByLookup = new Map<string, { role: string }>();
 const inferredSfcPathByLookup = new Map<string, string | null>();
@@ -396,9 +396,7 @@ function getConditionalDirectiveInfo(element: ElementNode): { kind: "if" | "else
   if (directive.name === "else") {
     const exp = directive.exp;
     if (exp && (exp.type === NodeTypes.SIMPLE_EXPRESSION || exp.type === NodeTypes.COMPOUND_EXPRESSION)) {
-      const source = (exp.type === NodeTypes.SIMPLE_EXPRESSION
-        ? (exp as SimpleExpressionNode).content
-        : stringifyExpression(exp)).trim();
+      const source = getVueExpressionSource(exp as SimpleExpressionNode | CompoundExpressionNode, "content", "compiled");
       return { kind: "else-if", source };
     }
     return { kind: "else", source: "" };
@@ -409,9 +407,7 @@ function getConditionalDirectiveInfo(element: ElementNode): { kind: "if" | "else
     const exp = directive.exp;
     if (!exp || (exp.type !== NodeTypes.SIMPLE_EXPRESSION && exp.type !== NodeTypes.COMPOUND_EXPRESSION))
       return null;
-    const source = (exp.type === NodeTypes.SIMPLE_EXPRESSION
-      ? (exp as SimpleExpressionNode).content
-      : stringifyExpression(exp)).trim();
+    const source = getVueExpressionSource(exp as SimpleExpressionNode | CompoundExpressionNode, "content", "compiled");
     return { kind: "else-if", source };
   }
 
@@ -419,9 +415,7 @@ function getConditionalDirectiveInfo(element: ElementNode): { kind: "if" | "else
   if (!exp || (exp.type !== NodeTypes.SIMPLE_EXPRESSION && exp.type !== NodeTypes.COMPOUND_EXPRESSION))
     return null;
 
-  const source = (exp.type === NodeTypes.SIMPLE_EXPRESSION
-    ? (exp as SimpleExpressionNode).content
-    : stringifyExpression(exp)).trim();
+  const source = getVueExpressionSource(exp as SimpleExpressionNode | CompoundExpressionNode, "content", "compiled");
   return { kind: directive.name as "if" | "else-if", source };
 }
 
@@ -665,41 +659,29 @@ function tryInferNativeWrapperRoleFromSfc(
   return null;
 }
 
-function tryWrapClickDirectiveForTestEvents(element: ElementNode, testIdAttribute: string): void {
+function tryWrapClickDirectiveForTestEvents(
+  element: ElementNode,
+  testIdAttribute: string,
+  resolvedRuntimeTestId: AttributeValue | null | undefined,
+): void {
   const jsStringLiteral = (value: string) => {
     // Use JSON.stringify to safely escape quotes/newlines.
     return JSON.stringify(value);
   };
 
-  // Prefer using the template node's data-testid (static or bound) so wrapper components
-  // like <AppButton data-testid="..."> still emit the expected id even though the
-  // underlying DOM <button> doesn't have the attribute.
   const getTestIdExpressionForNode = (): string => {
-    const existing = findTestIdAttribute(element, testIdAttribute);
-    if (!existing) {
+    if (!resolvedRuntimeTestId) {
       return "undefined";
     }
 
-    if (existing.type === NodeTypes.ATTRIBUTE) {
-      const v = existing.value?.content;
-      if (!v) {
-        return "undefined";
-      }
-      return jsStringLiteral(v);
+    if (resolvedRuntimeTestId.kind === "static") {
+      return jsStringLiteral(resolvedRuntimeTestId.value);
     }
 
-    // :<attr>="..." / v-bind:<attr>="..."
-    const directive = existing as DirectiveNode;
-    const exp = directive.exp;
-    if (!exp || exp.type !== NodeTypes.SIMPLE_EXPRESSION) {
-      return "undefined";
-    }
-    const content = (exp.content ?? "").trim();
-    if (!content) {
-      return "undefined";
-    }
-    // Use the bound expression verbatim; it will be evaluated in the same scope as the handler.
-    return `(${content})`;
+    // Template AttributeValues keep only the fragment body (`line-${item.id}`), because most call sites
+    // splice that fragment into a larger generated template. Click instrumentation needs a standalone
+    // JavaScript template-literal expression again, so we rebuild it here from the parsed quasis/spans.
+    return `(${renderTemplateLiteralExpression(resolvedRuntimeTestId)})`;
   };
 
   const testIdExpression = getTestIdExpressionForNode();
@@ -723,13 +705,13 @@ function tryWrapClickDirectiveForTestEvents(element: ElementNode, testIdAttribut
     return;
 
   // Avoid double-wrapping if transform runs multiple times (SSR + client passes).
-  const existingSource = (exp.loc?.source ?? (exp.type === NodeTypes.SIMPLE_EXPRESSION ? exp.content : "")).trim();
+  const existingSource = getVueExpressionSource(exp as SimpleExpressionNode | CompoundExpressionNode, "loc", "content");
   if (existingSource.includes(CLICK_EVENT_NAME))
     return;
 
   // Best-effort extract of the original handler expression.
   // For SIMPLE_EXPRESSION, prefer content; otherwise fall back to loc.source.
-  const originalExpression = (exp.type === NodeTypes.SIMPLE_EXPRESSION ? exp.content : exp.loc?.source ?? "").trim();
+  const originalExpression = getVueExpressionSource(exp as SimpleExpressionNode | CompoundExpressionNode, "content", "loc");
   if (!originalExpression)
     return;
 
@@ -772,16 +754,12 @@ function tryWrapClickDirectiveForTestEvents(element: ElementNode, testIdAttribut
         __w.dispatchEvent(new __CustomEvent('${CLICK_EVENT_NAME}', { detail: { testId: __testId, phase, err: err ? String(err) : undefined } }));
       }
     } catch (e) {
-      // Instrumentation must never hide failures during e2e strict mode.
-      // In strict mode we rethrow so tests fail fast and the underlying problem is visible.
-      // Outside strict mode we log and continue so we don't break real user clicks.
+      // Instrumentation failures should never be silent. Log the root cause and fail fast.
       const __w = __win || (__target && __target.ownerDocument && __target.ownerDocument.defaultView);
       if (__w && __w.console && typeof __w.console.error === 'function') {
         __w.console.error('[testid-click-event] failed to emit ${CLICK_EVENT_NAME}', e);
       }
-      if (__w && (__w[${JSON.stringify(TESTID_CLICK_EVENT_STRICT_FLAG)}] === true)) {
-        throw e;
-      }
+      throw e;
     }
   };
     const __w2 = __win || (__target && __target.ownerDocument && __target.ownerDocument.defaultView);
@@ -824,16 +802,12 @@ function tryWrapClickDirectiveForTestEvents(element: ElementNode, testIdAttribut
         __w.dispatchEvent(new __CustomEvent('${CLICK_EVENT_NAME}', { detail: { testId: __testId, phase, err: err ? String(err) : undefined } }));
       }
     } catch (e) {
-      // Instrumentation must never hide failures during e2e strict mode.
-      // In strict mode we rethrow so tests fail fast and the underlying problem is visible.
-      // Outside strict mode we log and continue so we don't break real user clicks.
+      // Instrumentation failures should never be silent. Log the root cause and fail fast.
       const __w = __win || (__target && __target.ownerDocument && __target.ownerDocument.defaultView);
       if (__w && __w.console && typeof __w.console.error === 'function') {
         __w.console.error('[testid-click-event] failed to emit ${CLICK_EVENT_NAME}', e);
       }
-      if (__w && (__w[${JSON.stringify(TESTID_CLICK_EVENT_STRICT_FLAG)}] === true)) {
-        throw e;
-      }
+      throw e;
     }
   };
     const __w2 = __win || (__target && __target.ownerDocument && __target.ownerDocument.defaultView);
@@ -886,16 +860,14 @@ export function createTestIdTransform(
     existingIdBehavior?: "preserve" | "overwrite" | "error";
     testIdAttribute?: string;
     nameCollisionBehavior?: "error" | "warn" | "suffix";
-    missingSemanticNameBehavior?: "ignore" | "error";
     warn?: (message: string) => void;
     vueFilesPathMap?: Map<string, string>;
     wrapperSearchRoots?: string[];
   } = {},
 ): NodeTransform {
-  const existingIdBehavior = options.existingIdBehavior ?? "preserve";
+  const existingIdBehavior = options.existingIdBehavior ?? "error";
   const testIdAttribute = (options.testIdAttribute || "data-testid").trim() || "data-testid";
-  const nameCollisionBehavior = options.nameCollisionBehavior ?? "suffix";
-  const missingSemanticNameBehavior = options.missingSemanticNameBehavior ?? "error";
+  const nameCollisionBehavior = options.nameCollisionBehavior ?? "error";
   const warn = options.warn;
   const vueFilesPathMap = options.vueFilesPathMap;
   const wrapperSearchRoots = options.wrapperSearchRoots ?? [];
@@ -1000,9 +972,7 @@ export function createTestIdTransform(
           continue;
         }
 
-        const condSource = (cond.type === NodeTypes.SIMPLE_EXPRESSION
-          ? (cond as SimpleExpressionNode).content
-          : stringifyExpression(cond)).trim();
+        const condSource = getVueExpressionSource(cond, "content", "compiled");
         const stable = tryExtractStableHintFromConditionalExpressionSource(condSource);
 
         if (stable) {
@@ -1102,21 +1072,33 @@ export function createTestIdTransform(
       }
     }
 
-    const getBestAvailableKeyValue = () => {
-      const parentNode = (context.parent && typeof context.parent === "object") ? context.parent as { type?: number } : null;
-      const isDirectVForChild = parentNode?.type === NodeTypes.FOR;
+      const getBestAvailableKeyInfo = (): ResolvedKeyInfo | null => {
+        const parentNode = (context.parent && typeof context.parent === "object") ? context.parent as { type?: number } : null;
+        const isDirectVForChild = parentNode?.type === NodeTypes.FOR;
 
-      const vForKey = (isDirectVForChild ? getKeyDirectiveValue(element, context) : null)
-        || getContainedInVForDirectiveKeyValue(context, element, hierarchyMap);
-      if (vForKey) return vForKey;
+        const vForKeyInfo = (isDirectVForChild ? getKeyDirectiveInfo(element) : null)
+          || getContainedInVForDirectiveKeyInfo(context, element, hierarchyMap);
+        if (vForKeyInfo) {
+          return vForKeyInfo;
+        }
 
-      return getContainedInSlotDataKeyValue(element, hierarchyMap);
-    };
+        return getContainedInSlotDataKeyInfo(element, hierarchyMap);
+      };
 
-    const bestKeyInferred = getBestAvailableKeyValue();
-    const isSlotKey = bestKeyInferred && !bestKeyInferred.startsWith("${");
-    const bestKeyPlaceholder = isSlotKey ? `\${${bestKeyInferred}}` : bestKeyInferred;
-    const bestKeyVariable = isSlotKey ? bestKeyInferred : null;
+      // `bestKeyInfo` carries the keyed selector shape end-to-end:
+      // - selectorFragment: the fragment used in generated selector-side templates
+      // - runtimeFragment: the fragment used when preserving/matching runtime-facing ids
+      // - rawExpression: the author-visible raw expression when the fragment came from wrapping
+      //   a plain expression like `item.id` instead of reusing an existing template literal
+      //
+      // Expected fragments:
+      // - direct v-for key `item.id`        -> selector `${_ctx.item.id}` / runtime `${item.id}`
+      // - template-literal key `line-${id}` -> `line-${_ctx.id}` / `line-${id}`
+      const bestKeyInfo = getBestAvailableKeyInfo();
+      const bestKeyPlaceholder = bestKeyInfo?.selectorFragment ?? null;
+
+      // Runtime click wrappers use the same normalization, but only need the runtime fragment itself.
+      const bestRuntimeKeyPlaceholder = bestKeyInfo?.runtimeFragment ?? null;
 
     // If we can prove the v-for iterable is a static literal list, capture the concrete
     // values (e.g. ['One', 'Two']). Downstream codegen can use this to:
@@ -1183,9 +1165,7 @@ export function createTestIdTransform(
         if (!cond) {
           conditionalHint = "else";
         } else {
-          const condSource = (cond.type === NodeTypes.SIMPLE_EXPRESSION
-            ? (cond as SimpleExpressionNode).content
-            : stringifyExpression(cond)).trim();
+          const condSource = getVueExpressionSource(cond, "content", "compiled");
           conditionalHint = tryExtractStableHintFromConditionalExpressionSource(condSource) ?? "if";
         }
       }
@@ -1198,9 +1178,7 @@ export function createTestIdTransform(
     });
     if (showDirective?.exp && (showDirective.exp.type === NodeTypes.SIMPLE_EXPRESSION || showDirective.exp.type === NodeTypes.COMPOUND_EXPRESSION)) {
       const exp = showDirective.exp as SimpleExpressionNode | CompoundExpressionNode;
-      const source = (exp.type === NodeTypes.SIMPLE_EXPRESSION
-        ? (exp as SimpleExpressionNode).content
-        : stringifyExpression(exp)).trim();
+      const source = getVueExpressionSource(exp, "content", "compiled");
       const showHint = tryExtractStableHintFromConditionalExpressionSource(source);
       if (showHint) {
         conditionalHint = conditionalHint ? `${conditionalHint} ${showHint}` : showHint;
@@ -1246,6 +1224,13 @@ export function createTestIdTransform(
         : staticAttributeValue(`${componentName}${clickSuffix}${tagSuffix}`);
     };
 
+    const getClickRuntimeDataTestId = (clickSuffix: string): AttributeValue => {
+      const tagSuffix = getTagSuffix();
+      return bestRuntimeKeyPlaceholder
+        ? templateAttributeValue(`${componentName}-${bestRuntimeKeyPlaceholder}${clickSuffix}${tagSuffix}`)
+        : staticAttributeValue(`${componentName}${clickSuffix}${tagSuffix}`);
+    };
+
     const getSubmitDataTestId = (identifier: string): string => {
       const tagSuffix = getTagSuffix();
       return `${componentName}-${identifier}${tagSuffix}`;
@@ -1254,15 +1239,16 @@ export function createTestIdTransform(
 
     const applyResolvedDataTestIdForElement = (args: {
       preferredGeneratedValue: AttributeValue;
+      preferredRuntimeValue?: AttributeValue;
       nativeRoleOverride?: string;
-      entryOverrides?: Partial<IDataTestId>;
+      entryOverrides?: DataTestIdEntryOverrides;
       addHtmlAttribute?: boolean;
       semanticNameHint?: string;
       semanticNameHintAlternates?: string[];
       pomMergeKey?: string;
-    }): void => {
+    }) => {
       const nativeRole = args.nativeRoleOverride ?? getNativeRoleFromTagSuffix();
-      applyResolvedDataTestId({
+      return applyResolvedDataTestId({
         element,
         componentName,
         parentComponentName,
@@ -1272,8 +1258,8 @@ export function createTestIdTransform(
         generatedMethodContentByComponent,
         nativeRole,
         preferredGeneratedValue: args.preferredGeneratedValue,
-        bestKeyPlaceholder,
-        bestKeyVariable,
+        preferredRuntimeValue: args.preferredRuntimeValue,
+        keyInfo: bestKeyInfo,
         keyValuesOverride,
         entryOverrides: args.entryOverrides,
         semanticNameHint: args.semanticNameHint,
@@ -1299,12 +1285,7 @@ export function createTestIdTransform(
     }) ?? null;
     const handlerInfo = handlerDirective ? nodeHandlerAttributeInfo(element) : null;
 
-    if (
-      missingSemanticNameBehavior === "error"
-      && nativeWrappers[element.tag]?.role === "button"
-      && handlerDirective
-      && !handlerInfo
-    ) {
+    if (nativeWrappers[element.tag]?.role === "button" && handlerDirective && !handlerInfo) {
       const loc = element.loc?.start;
       const locationHint = loc ? `${loc.line}:${loc.column}` : "unknown";
       const handlerSource = (handlerDirective.exp?.loc?.source ?? "").trim() || "<unknown>";
@@ -1314,8 +1295,7 @@ export function createTestIdTransform(
         + `Element: <${element.tag}>\n`
         + `Handler: ${handlerSource}\n\n`
         + `Fix: move complex inline logic into a named function (for example, const onAction = () => ...; then bind :handler="onAction"), `
-        + `or simplify the handler to a direct identifier/call the generator can name. `
-        + `You can also set errorBehavior = "ignore" to keep generic fallback behavior.`,
+        + `or simplify the handler to a direct identifier/call the generator can name.`,
       );
     }
 
@@ -1507,7 +1487,7 @@ export function createTestIdTransform(
       // Derive a semantic hint from the click suffix (which is already derived from AST and/or innerText).
       // This is NOT derived by parsing the final data-testid.
       const clickHint = trimLeadingSeparators(clickSuffix) || undefined;
-      const idOrName = getIdOrName(element) || undefined;
+      const idOrName = getStaticIdOrNameHint(element) || undefined;
 
       const semanticHintCandidates = [clickHint, idOrName, innerText, conditionalHint]
         .map(value => (value ?? "").trim())
@@ -1523,9 +1503,11 @@ export function createTestIdTransform(
       const pomMergeKey = clickHint ? `click:hint:${clickHint}` : undefined;
 
       const testId = getClickDataTestId(clickSuffix);
+      const runtimeTestId = getClickRuntimeDataTestId(clickSuffix);
 
-      applyResolvedDataTestIdForElement({
+      const resolvedDataTestId = applyResolvedDataTestIdForElement({
         preferredGeneratedValue: testId,
+        preferredRuntimeValue: runtimeTestId,
         semanticNameHint,
         semanticNameHintAlternates,
         pomMergeKey,
@@ -1533,9 +1515,7 @@ export function createTestIdTransform(
 
       // Instrument @click handlers so Playwright can wait on deterministic UI-side events
       // without relying on network inspection.
-      if (ENABLE_CLICK_INSTRUMENTATION) {
-        tryWrapClickDirectiveForTestEvents(element, testIdAttribute);
-      }
+      tryWrapClickDirectiveForTestEvents(element, testIdAttribute, resolvedDataTestId.runtimeValue);
       return;
     }
 
@@ -1566,7 +1546,7 @@ export function createTestIdTransform(
       // 2) handler attribute
       // 3) inner text (labels)
       // 4) the data-testid value itself (last resort hint)
-      const identifierHint = getIdOrName(element)
+      const identifierHint = getStaticIdOrNameHint(element)
         || nodeHandlerAttributeValue(element)
         || innerText
         || existingElementDataTestId.value
@@ -1586,7 +1566,7 @@ export function createTestIdTransform(
     const isSubmit = (element.props.find((p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === "type")?.value?.content === "submit");
     if (isSubmit) {
       // Prefer explicit identity (id/name), otherwise fall back to literal inner text.
-      const identifier = getIdOrName(element) || innerText;
+      const identifier = getStaticIdOrNameHint(element) || innerText;
       if (!identifier) {
         const loc = element.loc?.start;
         const locationHint = loc ? `${loc.line}:${loc.column}` : "unknown";

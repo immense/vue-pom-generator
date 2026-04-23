@@ -9,6 +9,8 @@ import { describe, expect, it } from "vitest";
 
 import type { IComponentDependencies, IDataTestId } from "../utils";
 import { generateFiles } from "../class-generation";
+import { createPomMethodSignature, createPomParameters } from "../pom-params";
+import { createPomStringPattern } from "../pom-patterns";
 import { renderTypeScriptLines } from "../typescript-codegen";
 
 function extractClassBlock(content: string, className: string): string {
@@ -36,6 +38,7 @@ function copyRepoFixture(rootDir: string, fixtureName: string, destinationRelati
 }
 
 function writePlaywrightTypeStub(rootDir: string) {
+  copyRepoFixture(rootDir, "playwright.d.ts", path.join("node_modules", "playwright", "index.d.ts"));
   copyRepoFixture(rootDir, "playwright-test.d.ts", path.join("node_modules", "@playwright", "test", "index.d.ts"));
 }
 
@@ -81,12 +84,12 @@ describe("generated output", () => {
 
     const formattedDataTestId = "TestComponent-${key}-Save-button";
     const dataTestIdEntry: IDataTestId = {
-      value: formattedDataTestId,
+      selectorValue: createPomStringPattern(formattedDataTestId, "parameterized"),
       pom: {
         nativeRole: "button",
         methodName: "SaveButton",
-        formattedDataTestId,
-        params: { key: "string" },
+        selector: createPomStringPattern(formattedDataTestId, "parameterized"),
+        parameters: createPomParameters(["key", "string"]),
       },
     };
 
@@ -101,11 +104,11 @@ describe("generated output", () => {
           name: "selectDatabaseTypeCloud",
           selector: {
             kind: "withinTestIdByLabel",
-            rootFormattedDataTestId: "TestComponent-databaseType-radio",
-            formattedLabel: "Cloud",
+            rootTestId: createPomStringPattern("TestComponent-databaseType-radio", "static"),
+            label: createPomStringPattern("Cloud", "static"),
             exact: true,
           },
-          params: { annotationText: "string = \"\"" },
+          parameters: createPomParameters(["annotationText", "string = \"\""]),
         },
       ],
       generatedMethods: new Map(),
@@ -138,6 +141,80 @@ describe("generated output", () => {
     }
   });
 
+  it("fails fast when parameterized input methods omit key params", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-keyed-input-"));
+
+    writePlaywrightTypeStub(tempRoot);
+
+    const basePagePath = path.join(tempRoot, "base-page.ts");
+    copyRepoFixture(tempRoot, "base-page.full.ts", "base-page.ts");
+    copyRepoFixture(tempRoot, "pointer.ts", "pointer.ts");
+
+    const componentName = "ItemsPage";
+    const dataTestIdEntry: IDataTestId = {
+      selectorValue: createPomStringPattern("items-check-${key}", "parameterized"),
+      pom: {
+        nativeRole: "input",
+        methodName: "ItemsCheckByKey",
+        selector: createPomStringPattern("items-check-${key}", "parameterized"),
+        // Simulate stale/manual IR that forgot to carry the selector parameter.
+        parameters: createPomParameters(["text", "string"], ["annotationText", 'string = ""']),
+      },
+    };
+
+    const deps: IComponentDependencies = {
+      filePath: path.join(tempRoot, `${componentName}.vue`),
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set([dataTestIdEntry]),
+      generatedMethods: new Map(),
+      isView: false,
+    };
+
+    const outDir = path.join(tempRoot, "out");
+    await expect(generateFiles(new Map([[componentName, deps]]), new Map(), basePagePath, {
+      outDir,
+      projectRoot: tempRoot,
+    })).rejects.toThrow(/Missing selector parameter\(s\) "key"/);
+  });
+
+  it("fails fast when parameterized input methods omit non-key selector vars", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-selector-vars-"));
+
+    writePlaywrightTypeStub(tempRoot);
+
+    const basePagePath = path.join(tempRoot, "base-page.ts");
+    copyRepoFixture(tempRoot, "base-page.full.ts", "base-page.ts");
+    copyRepoFixture(tempRoot, "pointer.ts", "pointer.ts");
+
+    const componentName = "ItemsPage";
+    const dataTestIdEntry: IDataTestId = {
+      selectorValue: createPomStringPattern("items-check-${itemId}", "parameterized"),
+      pom: {
+        nativeRole: "input",
+        methodName: "ItemsCheckByKey",
+        selector: createPomStringPattern("items-check-${itemId}", "parameterized"),
+        // Simulate stale/manual IR that forgot to carry the selector variable name.
+        parameters: createPomParameters(["text", "string"], ["annotationText", 'string = ""']),
+      },
+    };
+
+    const deps: IComponentDependencies = {
+      filePath: path.join(tempRoot, `${componentName}.vue`),
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set([dataTestIdEntry]),
+      generatedMethods: new Map(),
+      isView: false,
+    };
+
+    const outDir = path.join(tempRoot, "out");
+    await expect(generateFiles(new Map([[componentName, deps]]), new Map(), basePagePath, {
+      outDir,
+      projectRoot: tempRoot,
+    })).rejects.toThrow(/Missing selector parameter\(s\) "itemId"/);
+  });
+
   it("typechecks split TypeScript output with barrel exports and stub targets", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-split-"));
 
@@ -153,13 +230,13 @@ describe("generated output", () => {
     );
 
     const navigationEntry: IDataTestId = {
-      value: "TenantListPage-NewTenant-routerlink",
+      selectorValue: createPomStringPattern("TenantListPage-NewTenant-routerlink", "static"),
       targetPageObjectModelClass: "NewTenantPage",
       pom: {
         nativeRole: "button",
         methodName: "NewTenant",
-        formattedDataTestId: "TenantListPage-NewTenant-routerlink",
-        params: {},
+        selector: createPomStringPattern("TenantListPage-NewTenant-routerlink", "static"),
+        parameters: [],
       },
     };
 
@@ -177,16 +254,16 @@ describe("generated output", () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set([{
-        value: "TenantDetailsEditForm-Name-input",
+        selectorValue: createPomStringPattern("TenantDetailsEditForm-Name-input", "static"),
         pom: {
           nativeRole: "input",
           methodName: "TenantName",
-          formattedDataTestId: "TenantDetailsEditForm-Name-input",
-          params: { text: "string", annotationText: 'string = ""' },
+          selector: createPomStringPattern("TenantDetailsEditForm-Name-input", "static"),
+          parameters: createPomParameters(["text", "string"], ["annotationText", 'string = ""']),
         },
       }]),
       generatedMethods: new Map([
-        ["typeTenantName", { params: "name: string", argNames: ["name"] }],
+        ["typeTenantName", createPomMethodSignature(createPomParameters(["name", "string"]))],
       ]),
       isView: false,
     };
@@ -378,17 +455,20 @@ describe("generated output", () => {
     );
     writeFile(
       path.join(tempRoot, "tests", "playwright", "pom", "custom", "Grid.ts"),
-      [
-        "export class Grid {",
-        "  constructor(_page: any, _owner: any) {}",
-        "  Search(text: string, options?: { timeoutMs?: number }) {",
-        "    return { text, options };",
-        "  }",
-        "  searchHighlight(text: string) {",
-        "    return text;",
-        "  }",
-        "}",
-      ].join("\n"),
+        [
+          "export class Grid {",
+          "  constructor(_page: any, _owner: any) {}",
+          "  Search(text: string, options?: { timeoutMs?: number }) {",
+          "    return { text, options };",
+          "  }",
+          "  SearchAll(...terms: string[]) {",
+          "    return terms;",
+          "  }",
+          "  searchHighlight(text: string) {",
+          "    return text;",
+          "  }",
+          "}",
+        ].join("\n"),
     );
 
     const deps: IComponentDependencies = {
@@ -397,7 +477,7 @@ describe("generated output", () => {
       usedComponentSet: new Set(["ImmyDxDataGrid"]),
       dataTestIdSet: new Set([
         {
-          value: "UsersTable-Refresh-button",
+          selectorValue: createPomStringPattern("UsersTable-Refresh-button", "static"),
         },
       ]),
       generatedMethods: new Map(),
@@ -428,6 +508,8 @@ describe("generated output", () => {
     expect(classBlock).toContain("grid: Grid;");
     expect(classBlock).toContain("Search(text: string, options?: { timeoutMs?: number }) {");
     expect(classBlock).toContain("return this.grid.Search(text, options);");
+    expect(classBlock).toContain("SearchAll(...terms: string[]) {");
+    expect(classBlock).toContain("return this.grid.SearchAll(...terms);");
     expect(classBlock).toContain("searchHighlight(text: string) {");
     expect(classBlock).toContain("return this.grid.searchHighlight(text);");
 
@@ -440,7 +522,7 @@ describe("generated output", () => {
     }
   });
 
-  it("skips missing custom helper attachments and widget instances when no helper files exist", async () => {
+  it("fails when configured custom helper infrastructure is missing", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-"));
 
     writePlaywrightTypeStub(tempRoot);
@@ -466,7 +548,7 @@ describe("generated output", () => {
       usedComponentSet: new Set(["Page", "ImmyDxDataGrid"]),
       dataTestIdSet: new Set([
         {
-          value: "UsersView-EnableSessionEmails-toggle",
+          selectorValue: createPomStringPattern("UsersView-EnableSessionEmails-toggle", "static"),
         },
       ]),
       generatedMethods: new Map(),
@@ -477,10 +559,11 @@ describe("generated output", () => {
     const vueFilesPathMap = new Map<string, string>();
     const outDir = path.join(tempRoot, "out");
 
-    await generateFiles(componentHierarchyMap, vueFilesPathMap, basePagePath, {
+    await expect(generateFiles(componentHierarchyMap, vueFilesPathMap, basePagePath, {
       outDir,
       projectRoot: tempRoot,
       customPomDir: "tests/playwright/pom/custom",
+      requireCustomPomDir: true,
       customPomAttachments: [
         {
           className: "Grid",
@@ -496,25 +579,7 @@ describe("generated output", () => {
           flatten: true,
         },
       ],
-    });
-
-    const generatedFile = path.join(outDir, "page-object-models.g.ts");
-    const generatedContent = fs.readFileSync(generatedFile, "utf8");
-
-    expect(generatedContent).not.toContain("ToggleWidget");
-    expect(generatedContent).not.toContain("CheckboxWidget");
-    expect(generatedContent).not.toContain("new Grid(");
-    expect(generatedContent).not.toContain("new ConfirmationModal(");
-    expect(generatedContent).not.toContain("return this.grid.");
-    expect(generatedContent).not.toContain("return this.confirmationModal.");
-
-    const result = runTscNoEmit([generatedFile, basePagePath], { cwd: tempRoot });
-
-    if (result.status !== 0) {
-      const stdout = (result.stdout || "").toString();
-      const stderr = (result.stderr || "").toString();
-      throw new Error(`tsc failed (exit ${result.status})\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`);
-    }
+    })).rejects.toThrow(/Custom POM directory .* does not exist/i);
   });
 
   it("only emits view passthrough methods when the view has a single child component POM", async () => {
@@ -572,22 +637,22 @@ describe("generated output", () => {
     const childB = "ChildB";
 
     const childAEntry: IDataTestId = {
-      value: "ChildA-OnlyInA-button",
+      selectorValue: createPomStringPattern("ChildA-OnlyInA-button", "static"),
       pom: {
         nativeRole: "button",
         methodName: "OnlyInAButton",
-        formattedDataTestId: "ChildA-OnlyInA-button",
-        params: {},
+        selector: createPomStringPattern("ChildA-OnlyInA-button", "static"),
+        parameters: [],
       },
     };
 
     const childBEntry: IDataTestId = {
-      value: "ChildB-SomethingElse-button",
+      selectorValue: createPomStringPattern("ChildB-SomethingElse-button", "static"),
       pom: {
         nativeRole: "button",
         methodName: "SomethingElseButton",
-        formattedDataTestId: "ChildB-SomethingElse-button",
-        params: {},
+        selector: createPomStringPattern("ChildB-SomethingElse-button", "static"),
+        parameters: [],
       },
     };
 
@@ -605,7 +670,7 @@ describe("generated output", () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set([childAEntry]),
-      generatedMethods: new Map([["clickOnlyInAButton", { params: "wait: boolean = true, annotationText: string = \"\"", argNames: ["wait", "annotationText"] }]]),
+      generatedMethods: new Map([["clickOnlyInAButton", createPomMethodSignature(createPomParameters(["wait", "boolean = true"], ["annotationText", "string = \"\""]))]]),
       isView: false,
     };
 
@@ -614,7 +679,7 @@ describe("generated output", () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set([childBEntry]),
-      generatedMethods: new Map([["clickSomethingElseButton", { params: "wait: boolean = true, annotationText: string = \"\"", argNames: ["wait", "annotationText"] }]]),
+      generatedMethods: new Map([["clickSomethingElseButton", createPomMethodSignature(createPomParameters(["wait", "boolean = true"], ["annotationText", "string = \"\""]))]]),
       isView: false,
     };
 

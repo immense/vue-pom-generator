@@ -69,12 +69,13 @@ That example is intentionally small, but it shows the real contract:
 The generator does not use one naming trick. It layers several signals.
 
 - **Click actions** prefer semantic handler names such as `save`, `openDetails`, or `runImport`.
+- **Click handlers are instrumented** so generated Playwright helpers can wait on deterministic `__testid_event__` runtime events.
 - **Inputs and wrapper components** prefer `v-model`, wrapper `valueAttribute`, or related model-like bindings.
 - **Native elements** also consider `id` / `name` attributes.
 - **Router links / `:to` bindings** can contribute route-based naming and typed navigation return types when the target can be resolved.
 - **Wrapper components** can be explicit (`nativeWrappers`) or inferred from simple local SFC templates.
 - **Fallback naming exists, but it is intentionally conservative.** That is why `generation.nameCollisionBehavior` exists.
-- **Wrapper-action generation fails fast by default.** The generator blocks button-like wrapper `:handler` expressions that it cannot turn into a semantic action name; set `errorBehavior: "ignore"` if you explicitly want the old permissive fallback.
+- **Wrapper-action generation fails fast.** The generator blocks button-like wrapper `:handler` expressions that it cannot turn into a semantic action name.
 
 Important limit: wrapper inference is helpful, not magical. The current implementation recursively inspects simple local SFC templates for the first inferable primitive (`input`, `textarea`, `select`, `button`, `vselect`, radio/checkbox inputs). It also recognizes some naming patterns like `*Button`. For anything more complex, configure `nativeWrappers` explicitly.
 
@@ -205,7 +206,6 @@ const pomConfig = defineVuePomGeneratorConfig({
     script: { defineModel: true, propsDestructure: true },
   },
   logging: { verbosity: "info" },
-  errorBehavior: "error",
   injection: {
     attribute: "data-testid",
     viewsDir: "src/views",
@@ -218,7 +218,7 @@ const pomConfig = defineVuePomGeneratorConfig({
       AppRadioGroup: { role: "radio", requiresOptionDataTestIdPrefix: true },
     },
     excludeComponents: ["LegacyWidget"],
-    existingIdBehavior: "preserve",
+    existingIdBehavior: "error",
   },
   generation: {
     emit: ["ts", "csharp"],
@@ -226,7 +226,7 @@ const pomConfig = defineVuePomGeneratorConfig({
       namespace: "MyProject.Tests.Generated",
     },
     outDir: "tests/playwright/__generated__",
-    nameCollisionBehavior: "suffix",
+    nameCollisionBehavior: "error",
     router: {
       entry: "src/router/index.ts",
       moduleShims: {
@@ -849,18 +849,6 @@ The sections below follow the actual `VuePomGeneratorPluginOptions` shape from `
   logging: { verbosity: "debug" }
   ```
 
-#### `errorBehavior`
-
-- **What it does:** Controls strict/error behavior for generator checks.
-- **Why it exists:** complex inline handlers can otherwise fall through to generic naming, which makes generated APIs harder to discover and review.
-- **Benefit:** fail-fast behavior is the default, while `"ignore"` or the object form let you opt back into only the permissive checks you want.
-- **Without it:** the default is `"error"`, so unsupported button-wrapper handlers stop generation instead of silently falling back.
-- **Accepted values:**
-  - `"ignore"` — keep permissive defaults for all supported checks
-  - `"error"` — enable error-on-failure behavior for all supported checks (default)
-  - `{ missingSemanticNameBehavior: "ignore" }` — opt out only of the button-wrapper semantic-name check
-- **Current scope:** this first pass is intentionally narrow. The object form currently supports `missingSemanticNameBehavior`, which targets button-like wrappers with `:handler`; value/model-driven wrappers still use their existing naming flow.
-
 ### `injection`
 
 `injection` controls compile-time test-id derivation and template rewriting.
@@ -983,7 +971,7 @@ The sections below follow the actual `VuePomGeneratorPluginOptions` shape from `
 - **What it does:** Chooses what happens when a template already has the target attribute.
 - **Why it exists:** migrations usually start from a mixed codebase with manual ids already present.
 - **Benefit:** lets you migrate gradually (`preserve`), force replacement (`overwrite`), or enforce cleanup (`error`).
-- **Without it:** default is `"preserve"`.
+- **Without it:** default is `"error"`.
 - **Current options:**
   - `"preserve"` — keep the existing attribute
   - `"overwrite"` — replace it with the generated one
@@ -1030,7 +1018,7 @@ Set `generation: false` to keep injection and `virtual:testids` but skip emitted
 - **What it does:** Controls what happens when two generated members inside the same class want the same name.
 - **Why it exists:** collisions happen in real templates, especially when multiple elements share the same handler or weak fallback signals.
 - **Benefit:** lets you decide between strictness and convenience.
-- **Without it:** the generator silently suffixes (`"suffix"`).
+- **Without it:** the generator fails fast (`"error"`).
 - **Current options:**
   - `"error"` — fail fast
   - `"warn"` — warn and suffix

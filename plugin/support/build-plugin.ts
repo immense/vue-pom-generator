@@ -14,7 +14,7 @@ import type { IComponentDependencies, NativeWrappersMap, RouterIntrospectionResu
 import { setResolveToComponentNameFn, setRouteNameToComponentNameMap, toPascalCase } from "../../utils";
 import type { VuePomGeneratorLogger } from "../logger";
 import { resolveComponentNameFromPath } from "../path-utils";
-import type { PlaywrightOutputStructure, PomNameCollisionBehavior, RouterModuleShimDefinition } from "../types";
+import type { ResolvedGenerationSupportOptions } from "../resolved-generation-options";
 
 interface BuildProcessorOptions {
   componentHierarchyMap: Map<string, IComponentDependencies>;
@@ -27,37 +27,15 @@ interface BuildProcessorOptions {
 
   basePageClassPath: string;
   normalizedBasePagePath: string;
-
-  outDir?: string;
-  emitLanguages?: Array<"ts" | "csharp">;
-  typescriptOutputStructure?: PlaywrightOutputStructure;
-  csharp?: {
-    namespace?: string;
-  };
-  generateFixtures?: boolean | string | { outDir?: string };
-  customPomAttachments?: Array<{ className: string; propertyName: string; attachWhenUsesComponents: string[]; attachTo?: "views" | "components" | "both" | "pagesAndComponents"; flatten?: boolean }>;
+  generation: ResolvedGenerationSupportOptions;
   projectRootRef: { current: string };
-  customPomDir?: string;
-  customPomImportAliases?: Record<string, string>;
-  customPomImportNameCollisionBehavior?: "error" | "alias";
-  testIdAttribute: string;
-
-  /** How to handle POM member-name collisions. */
-  nameCollisionBehavior?: PomNameCollisionBehavior;
-  missingSemanticNameBehavior?: "ignore" | "error";
-  /** How to handle existing data-testid attributes. */
-  existingIdBehavior?: "preserve" | "overwrite" | "error";
   /** Native wrapper component config. */
   nativeWrappers: NativeWrappersMap;
   /** Components excluded from test-id injection. */
   excludedComponents: string[];
   /** Getter for resolved wrapper search root directories. */
   getWrapperSearchRoots: () => string[];
-
-  routerAwarePoms: boolean;
   getResolvedRouterEntry: () => string | undefined;
-  routerType?: "vue-router" | "nuxt";
-  routerModuleShims?: Record<string, RouterModuleShimDefinition>;
 
   loggerRef: { current: VuePomGeneratorLogger };
 }
@@ -110,29 +88,32 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     getSourceDirs,
     basePageClassPath,
     normalizedBasePagePath,
+    generation,
+    projectRootRef,
+    nativeWrappers,
+    excludedComponents,
+    getWrapperSearchRoots,
+    getResolvedRouterEntry,
+    loggerRef,
+  } = options;
+  const {
     outDir,
     emitLanguages,
     typescriptOutputStructure,
     csharp,
     generateFixtures,
     customPomAttachments,
-    projectRootRef,
     customPomDir,
+    requireCustomPomDir,
     customPomImportAliases,
     customPomImportNameCollisionBehavior,
     testIdAttribute,
     nameCollisionBehavior,
-    missingSemanticNameBehavior = "error",
     existingIdBehavior,
-    nativeWrappers,
-    excludedComponents,
-    getWrapperSearchRoots,
     routerAwarePoms,
-    getResolvedRouterEntry,
     routerType,
     routerModuleShims,
-    loggerRef,
-  } = options;
+  } = generation;
 
   // Vite (v6/v7) may run multiple build environments/passes (e.g. SSR + client) in a single invocation.
   // Some passes can execute without compiling any Vue SFC templates that reach our transform, leaving
@@ -260,10 +241,9 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
                 excludedComponents,
                 getViewsDirAbs(),
                 {
-                  existingIdBehavior: existingIdBehavior ?? "preserve",
+                  existingIdBehavior: existingIdBehavior ?? "error",
                   testIdAttribute,
                   nameCollisionBehavior,
-                  missingSemanticNameBehavior,
                   warn: (message: string) => loggerRef.current.warn(message),
                   vueFilesPathMap,
                   wrapperSearchRoots: getWrapperSearchRoots(),
@@ -391,6 +371,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
         customPomAttachments,
         projectRoot: projectRootRef.current,
         customPomDir,
+        requireCustomPomDir,
         customPomImportAliases,
         customPomImportNameCollisionBehavior,
         testIdAttribute,

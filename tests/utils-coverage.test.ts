@@ -16,18 +16,22 @@ import { baseCompile, parse, parserOptions } from "@vue/compiler-dom";
 
 import { parseExpression } from "@babel/parser";
 
+import { createPomMethodSignature, createPomParameters } from "../pom-params";
+import { createPomStringPattern } from "../pom-patterns";
 import {
   addComponentTestIds,
   applyResolvedDataTestId,
+  analyzeToDirectiveTarget,
   findDataTestIdAttribute,
   findTestIdAttribute,
   formatTagName,
   generateToDirectiveDataTestId,
   getAttributeValueText,
   getComposedClickHandlerContent,
-  getContainedInVForDirectiveKeyValue,
-  getIdOrName,
-  getKeyDirectiveValue,
+  getContainedInSlotDataKeyInfo,
+  getContainedInVForDirectiveKeyInfo,
+  getStaticIdOrNameHint,
+  getKeyDirectiveInfo,
   getNativeWrapperTransformInfo,
   getRouteNameKeyFromToDirective,
   getSelfClosingForDirectiveKeyAttrValue,
@@ -38,10 +42,12 @@ import {
   nodeHandlerAttributeValue,
   nodeHasClickDirective,
   nodeHasToDirective,
+  renderTemplateLiteralExpression,
   setResolveToComponentNameFn,
   setRouteNameToComponentNameMap,
   staticAttributeValue,
   templateAttributeValue,
+  toInterpolatedTemplateFragment,
   toPascalCase,
   tryGetClickDirective,
   tryGetContainedInStaticVForSourceLiteralValues,
@@ -236,6 +242,22 @@ function setBindAst(node: ElementNode, argName: string, expAstSource: string) {
     directiveNode.exp.ast = parseExpression(expAstSource, { plugins: ["typescript"] });
 }
 
+function clearBindAst(node: ElementNode, argName: string) {
+  const dir = node.props.find(
+    (p)  =>
+      p.type === NodeTypes.DIRECTIVE
+      && p.name === "bind"
+      && p.arg?.type === NodeTypes.SIMPLE_EXPRESSION
+      && p.arg.content === argName,
+  );
+  const directiveNode = dir as DirectiveNode;
+  if (!directiveNode || directiveNode === undefined || directiveNode.exp === undefined) {
+    throw new Error(`Missing :${argName} directive with SIMPLE_EXPRESSION`);
+  }
+  else
+    (directiveNode.exp as { ast?: unknown }).ast = null;
+}
+
 describe("utils.ts coverage", () => {
   it("covers simple type helpers and click detection", () => {
     expect(toPascalCase("hello world")).toBe("HelloWorld");
@@ -259,6 +281,12 @@ describe("utils.ts coverage", () => {
     const toDir = nodeHasToDirective(el);
     expect(toDir).toBeTruthy();
 
+    expect(analyzeToDirectiveTarget(toDir!)).toMatchObject({
+      kind: "resolved",
+      routeNameKey: "Users",
+      paramKeys: [],
+    });
+
     // Fallback map path
     setResolveToComponentNameFn(null);
     setRouteNameToComponentNameMap(new Map([["Users", "UsersPage"]]));
@@ -278,7 +306,28 @@ describe("utils.ts coverage", () => {
     const ast2 = parseTemplate("<RouterLink :to=\"{ name: 'users', params: { id: foo } }\">Users</RouterLink>");
     const el2 = firstElement(ast2);
     const toDir2 = nodeHasToDirective(el2);
+    expect(analyzeToDirectiveTarget(toDir2!)).toMatchObject({
+      kind: "resolved",
+      routeNameKey: "Users",
+      paramKeys: ["id"],
+    });
     expect(tryResolveToDirectiveTargetComponentName(toDir2!)).toBe("UsersViaResolve");
+  });
+
+  it("distinguishes unsupported and parse-error :to directive shapes", () => {
+    const unsupportedAst = parseTemplate("<RouterLink :to=\"routeTarget\">Users</RouterLink>");
+    const unsupportedDir = nodeHasToDirective(firstElement(unsupportedAst));
+    expect(analyzeToDirectiveTarget(unsupportedDir!)).toMatchObject({
+      kind: "unsupported",
+      reason: "dynamic-expression",
+    });
+
+    const parseErrorAst = parseTemplate("<RouterLink :to=\"foo(\">Users</RouterLink>");
+    const parseErrorDir = nodeHasToDirective(firstElement(parseErrorAst));
+    expect(analyzeToDirectiveTarget(parseErrorDir!)).toMatchObject({
+      kind: "parse-error",
+      reason: "parse-error",
+    });
   });
 
   it("derives :handler semanticNameHint from literal call arguments", () => {
@@ -392,9 +441,11 @@ describe("utils.ts coverage", () => {
   it("handles :key extraction paths", () => {
     const ast = parseTemplate("<div :key=\"item.id\" />");
     const el = firstElement(ast);
-    expect(getKeyDirectiveValue(el)).toBe("${item.id}");
-    // any non-null context triggers stringifyExpression branch
-    expect(getKeyDirectiveValue(el, {} as TransformContext)).toBe("${item.id}");
+    expect(getKeyDirectiveInfo(el)).toEqual({
+      selectorFragment: "${item.id}",
+      runtimeFragment: "${item.id}",
+      rawExpression: "item.id",
+    });
 
     const ast2 = parseTemplate("<Foo v-for=\"x in xs\" :key=\"x.id\" />");
     const foo = firstElement(ast2);
@@ -405,13 +456,39 @@ describe("utils.ts coverage", () => {
     const foo2 = firstElement(ast3);
     expect(Boolean(foo2.isSelfClosing)).toBe(false);
     expect(getSelfClosingForDirectiveKeyAttrValue(foo2)).toBeNull();
+
+    const ast4 = parseTemplate("<div :key=\"`line-${item.id}`\" />");
+    const el4 = firstElement(ast4);
+    expect(getKeyDirectiveInfo(el4)).toEqual({
+      selectorFragment: "line-${item.id}",
+      runtimeFragment: "line-${item.id}",
+      rawExpression: null,
+    });
+  });
+
+  it("normalizes key fragments into template-safe output", () => {
+    expect(toInterpolatedTemplateFragment("item.id")).toEqual({
+      template: "${item.id}",
+      rawExpression: "item.id",
+    });
+    expect(toInterpolatedTemplateFragment("line-${item.id}")).toEqual({
+      template: "line-${item.id}",
+      rawExpression: null,
+    });
+    const templateValue = templateAttributeValue("line-${item.id}");
+    expect(templateValue.kind).toBe("template");
+    if (templateValue.kind === "template") {
+      expect(renderTemplateLiteralExpression(templateValue)).toBe("`line-${item.id}`");
+    }
   });
 
   it("extracts id/name identifiers", () => {
-    expect(getIdOrName(firstElement(parseTemplate("<div id=\"foo-bar\" />")))).toBe("FooBar");
-    expect(getIdOrName(firstElement(parseTemplate("<div name=\"foo_bar\" />")))).toBe("FooBar");
+    expect(getStaticIdOrNameHint(firstElement(parseTemplate("<div id=\"foo-bar\" />")))).toBe("FooBar");
+    expect(getStaticIdOrNameHint(firstElement(parseTemplate("<div name=\"foo_bar\" />")))).toBe("FooBar");
     const dyn = firstElement(parseTemplate("<div :id=\"something\" />"));
-    expect(getIdOrName(dyn)).toContain("someUniqueValueToDifferentiateInstanceFromOthersOnPageUsuallyAnId");
+    expect(getStaticIdOrNameHint(dyn)).toBe("");
+    const dynName = firstElement(parseTemplate("<div :name=\"something\" />"));
+    expect(getStaticIdOrNameHint(dynName)).toBe("");
   });
 
   it("extracts :handler semantic hints from common patterns", () => {
@@ -442,13 +519,32 @@ describe("utils.ts coverage", () => {
     expect(isNodeContainedInTemplateWithData(span2, map2)).toBe(false);
   });
 
+  it("extracts slot-scope key info from compiled slot bindings", () => {
+    const compiled = compileAndCaptureAst(
+      "<MyList><template #item=\"{ data }\"><div><span>Hi</span></div></template></MyList>",
+      { filename: "/src/components/Test.vue" },
+    );
+    const map = buildHierarchyMap(compiled);
+    const span = findFirstTag(compiled, "span");
+
+    expect(getContainedInSlotDataKeyInfo(span, map)).toEqual({
+      selectorFragment: "${data.key ?? data.data?.id ?? data.id ?? data.value ?? data}",
+      runtimeFragment: "${data.key ?? data.data?.id ?? data.id ?? data.value ?? data}",
+      rawExpression: "data.key ?? data.data?.id ?? data.id ?? data.value ?? data",
+    });
+  });
+
   it("walks v-for scopes for :key and infers static iterable literals", () => {
     const ast = parseTemplate("<div v-for=\"item in items\" :key=\"item.id\"><span /></div>");
     const span = findFirstTag(ast, "span");
     const map = buildHierarchyMap(ast);
 
-    expect(getContainedInVForDirectiveKeyValue({ scopes: { vFor: 0 } } as TransformContext, span, map)).toBeNull();
-    expect(getContainedInVForDirectiveKeyValue({ scopes: { vFor: 1 } } as TransformContext, span, map)).toBe("${item.id}");
+    expect(getContainedInVForDirectiveKeyInfo({ scopes: { vFor: 0 } } as TransformContext, span, map)).toBeNull();
+    expect(getContainedInVForDirectiveKeyInfo({ scopes: { vFor: 1 } } as TransformContext, span, map)).toEqual({
+      selectorFragment: "${item.id}",
+      runtimeFragment: "${item.id}",
+      rawExpression: "item.id",
+    });
 
     const astStatic = compileAndCaptureAst(
       "<div v-for=\"item in ['One','Two']\" :key=\"item\"><span /></div>",
@@ -656,6 +752,19 @@ describe("utils.ts coverage", () => {
     expect(info?.rawExpression).toBe("p.parameter.name");
   });
 
+  it("re-parses existing bound test ids through the shared Vue-expression AST helper when compiler ast is absent", () => {
+    const node = firstElement(parseTemplate("<div :data-testid=\"p.parameter.name\" />"));
+    clearBindAst(node, "data-testid");
+
+    const info = tryGetExistingElementDataTestId(node);
+    expect(info?.isDynamic).toBe(true);
+    expect(info?.isStaticLiteral).toBe(false);
+    expect(info?.value).toBe("p.parameter.name");
+    expect(info?.template).toBe("${p.parameter.name}");
+    expect(info?.templateExpressionCount).toBe(1);
+    expect(info?.rawExpression).toBe("p.parameter.name");
+  });
+
   it("throws when preserving an existing dynamic data-testid expression (unusable selector)", () => {
     const el = firstElement(parseTemplate("<button :data-testid=\"__props.name\" />"));
 
@@ -679,7 +788,7 @@ describe("utils.ts coverage", () => {
         generatedMethodContentByComponent,
         nativeRole: "button",
         preferredGeneratedValue: staticAttributeValue("MyComp-Foo-button"),
-        bestKeyPlaceholder: null,
+        keyInfo: null,
         testIdAttribute: "data-testid",
         existingIdBehavior: "preserve",
         addHtmlAttribute: false,
@@ -710,7 +819,11 @@ describe("utils.ts coverage", () => {
       generatedMethodContentByComponent,
       nativeRole: "button",
       preferredGeneratedValue: staticAttributeValue("ignored"),
-      bestKeyPlaceholder: "${item.id}",
+      keyInfo: {
+        selectorFragment: "${item.id}",
+        runtimeFragment: "${item.id}",
+        rawExpression: "item.id",
+      },
       testIdAttribute: "data-testid",
       existingIdBehavior: "preserve",
       addHtmlAttribute: false,
@@ -718,7 +831,45 @@ describe("utils.ts coverage", () => {
 
     const entries = Array.from(deps.dataTestIdSet);
     expect(entries.length).toBe(1);
-    expect(entries[0]?.pom?.formattedDataTestId).toBe("abc-${key}");
+    expect(entries[0]?.pom?.selector).toEqual(createPomStringPattern("abc-${key}", "parameterized"));
+  });
+
+  it("allows preserving an existing template when the required key fragment carries literal context", () => {
+    const el = firstElement(parseTemplate("<button :data-testid=\"`abc-line-${item.id}`\" />"));
+    setBindAst(el, "data-testid", "`abc-line-${item.id}`");
+
+    const deps: IComponentDependencies = {
+      filePath: "/src/components/MyComp.vue",
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set<IDataTestId>(),
+      generatedMethods: new Map(),
+      isView: false,
+    };
+
+    const generatedMethodContentByComponent = new Map<string, Set<string>>();
+
+    applyResolvedDataTestId({
+      element: el,
+      componentName: "MyComp",
+      parentComponentName: "MyComp",
+      dependencies: deps,
+      generatedMethodContentByComponent,
+      nativeRole: "button",
+      preferredGeneratedValue: staticAttributeValue("ignored"),
+      keyInfo: {
+        selectorFragment: "line-${item.id}",
+        runtimeFragment: "line-${item.id}",
+        rawExpression: null,
+      },
+      testIdAttribute: "data-testid",
+      existingIdBehavior: "preserve",
+      addHtmlAttribute: false,
+    });
+
+    const entries = Array.from(deps.dataTestIdSet);
+    expect(entries.length).toBe(1);
+    expect(entries[0]?.pom?.selector).toEqual(createPomStringPattern("abc-line-${key}", "parameterized"));
   });
 
   it("allows preserving an existing key-based template literal that uses a fallback branch access", () => {
@@ -744,8 +895,11 @@ describe("utils.ts coverage", () => {
       generatedMethodContentByComponent,
       nativeRole: "button",
       preferredGeneratedValue: staticAttributeValue("ignored"),
-      bestKeyPlaceholder: "${data.key ?? data.data?.id ?? data.id ?? data.value ?? data}",
-      bestKeyVariable: "data.key ?? data.data?.id ?? data.id ?? data.value ?? data",
+      keyInfo: {
+        selectorFragment: "${data.key ?? data.data?.id ?? data.id ?? data.value ?? data}",
+        runtimeFragment: "${data.key ?? data.data?.id ?? data.id ?? data.value ?? data}",
+        rawExpression: "data.key ?? data.data?.id ?? data.id ?? data.value ?? data",
+      },
       testIdAttribute: "data-testid",
       existingIdBehavior: "preserve",
       addHtmlAttribute: false,
@@ -753,7 +907,7 @@ describe("utils.ts coverage", () => {
 
     const entries = Array.from(deps.dataTestIdSet);
     expect(entries.length).toBe(1);
-    expect(entries[0]?.pom?.formattedDataTestId).toBe("abc-${key}");
+    expect(entries[0]?.pom?.selector).toEqual(createPomStringPattern("abc-${key}", "parameterized"));
   });
 
   it("allows preserving an existing simple member-expression data-testid", () => {
@@ -779,8 +933,11 @@ describe("utils.ts coverage", () => {
       generatedMethodContentByComponent,
       nativeRole: "button",
       preferredGeneratedValue: staticAttributeValue("ignored"),
-      bestKeyPlaceholder: "${p.parameter.name}",
-      bestKeyVariable: "p.parameter.name",
+      keyInfo: {
+        selectorFragment: "${p.parameter.name}",
+        runtimeFragment: "${p.parameter.name}",
+        rawExpression: "p.parameter.name",
+      },
       testIdAttribute: "data-testid",
       existingIdBehavior: "preserve",
       addHtmlAttribute: false,
@@ -788,8 +945,8 @@ describe("utils.ts coverage", () => {
 
     const entries = Array.from(deps.dataTestIdSet);
     expect(entries.length).toBe(1);
-    expect(entries[0]?.value).toBe("${p.parameter.name}");
-    expect(entries[0]?.pom?.formattedDataTestId).toBe("${key}");
+    expect(entries[0]?.selectorValue).toEqual(createPomStringPattern("${p.parameter.name}", "parameterized"));
+    expect(entries[0]?.pom?.selector).toEqual(createPomStringPattern("${key}", "parameterized"));
   });
 
   it("drives applyResolvedDataTestId through option-driven radio handling and de-duping", () => {
@@ -817,11 +974,12 @@ describe("utils.ts coverage", () => {
       generatedMethodContentByComponent,
       nativeRole: "radio",
       preferredGeneratedValue: staticAttributeValue("MyComp-Foo-radio"),
-      bestKeyPlaceholder: null,
+      keyInfo: null,
       testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
+      nameCollisionBehavior: "suffix",
       addHtmlAttribute: false,
-      entryOverrides: { value: "MyComp-Foo-radio" },
+      entryOverrides: { selectorValue: createPomStringPattern("MyComp-Foo-radio", "static") },
     });
 
     // Should have generated per-option extra click methods (IR), not raw emitted method strings.
@@ -830,8 +988,8 @@ describe("utils.ts coverage", () => {
     expect(extras.every(e => e.kind === "click")).toBe(true);
     expect(extras.some(e => e.name.startsWith("select"))).toBe(true);
     expect(extras.every(e => e.selector.kind === "withinTestIdByLabel")).toBe(true);
-    expect(extras.some(e => e.selector.kind === "withinTestIdByLabel" && e.selector.rootFormattedDataTestId === "MyComp-Foo-radio")).toBe(true);
-    expect(extras.some(e => e.selector.kind === "withinTestIdByLabel" && e.selector.formattedLabel === "One")).toBe(true);
+    expect(extras.some(e => e.selector.kind === "withinTestIdByLabel" && e.selector.rootTestId.formatted === "MyComp-Foo-radio")).toBe(true);
+    expect(extras.some(e => e.selector.kind === "withinTestIdByLabel" && e.selector.label.formatted === "One")).toBe(true);
 
     const prevCount = extras.length;
 
@@ -844,11 +1002,12 @@ describe("utils.ts coverage", () => {
       generatedMethodContentByComponent,
       nativeRole: "radio",
       preferredGeneratedValue: staticAttributeValue("MyComp-Foo-radio"),
-      bestKeyPlaceholder: null,
+      keyInfo: null,
       testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
+      nameCollisionBehavior: "suffix",
       addHtmlAttribute: false,
-      entryOverrides: { value: "MyComp-Foo-radio" },
+      entryOverrides: { selectorValue: createPomStringPattern("MyComp-Foo-radio", "static") },
     });
 
     // De-dupe: calling again should not add more extra methods.
@@ -877,9 +1036,10 @@ describe("utils.ts coverage", () => {
       generatedMethodContentByComponent,
       nativeRole: "radio",
       preferredGeneratedValue: staticAttributeValue("MyComp-radio"),
-      bestKeyPlaceholder: null,
+      keyInfo: null,
       testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
+      nameCollisionBehavior: "suffix",
       addHtmlAttribute: false,
     });
 
@@ -888,7 +1048,7 @@ describe("utils.ts coverage", () => {
     expect(prev).not.toBeUndefined();
 
     // Force a collision on the next registration pass.
-    deps.generatedMethods!.set(some, { params: "x: number", argNames: ["x"] });
+    deps.generatedMethods!.set(some, createPomMethodSignature(createPomParameters(["x", "number"])));
 
     applyResolvedDataTestId({
       element: el,
@@ -900,19 +1060,22 @@ describe("utils.ts coverage", () => {
       // Change the wrapper prefix so the extra method is not semantically de-duped,
       // and the generator has to pick a unique name.
       preferredGeneratedValue: staticAttributeValue("MyComp2-radio"),
-      bestKeyPlaceholder: null,
+      keyInfo: null,
       testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
+      nameCollisionBehavior: "suffix",
       addHtmlAttribute: false,
     });
 
     // Because dynamic options use ensureUniqueGeneratedName, collisions produce a suffixed name
     // rather than poisoning the original signature.
-    expect(deps.generatedMethods!.get(some)).toEqual({ params: "x: number", argNames: ["x"] });
-    expect(deps.generatedMethods!.get("selectRadio2")).toEqual({
-      params: "value: string, annotationText: string = \"\"",
-      argNames: ["value", "annotationText"],
-    });
+    expect(deps.generatedMethods!.get(some)).toEqual(createPomMethodSignature(createPomParameters(["x", "number"])));
+    expect(deps.generatedMethods!.get("selectRadio2")).toEqual(
+      createPomMethodSignature(createPomParameters(
+        ["value", "string"],
+        ["annotationText", "string = \"\""],
+      )),
+    );
 
     // Dynamic options should be represented as a single extra method that interpolates `${value}`.
     const extras = deps.pomExtraMethods ?? [];
@@ -920,8 +1083,8 @@ describe("utils.ts coverage", () => {
     expect(method1).toBeTruthy();
     expect(method1?.selector).toEqual({
       kind: "withinTestIdByLabel",
-      rootFormattedDataTestId: "MyComp-radio",
-      formattedLabel: "${value}",
+      rootTestId: createPomStringPattern("MyComp-radio", "static"),
+      label: createPomStringPattern("${value}", "parameterized"),
       exact: true,
     });
 
@@ -929,8 +1092,8 @@ describe("utils.ts coverage", () => {
     expect(method2).toBeTruthy();
     expect(method2?.selector).toEqual({
       kind: "withinTestIdByLabel",
-      rootFormattedDataTestId: "MyComp2-radio",
-      formattedLabel: "${value}",
+      rootTestId: createPomStringPattern("MyComp2-radio", "static"),
+      label: createPomStringPattern("${value}", "parameterized"),
       exact: true,
     });
   });
@@ -962,7 +1125,7 @@ describe("utils.ts coverage", () => {
         generatedMethodContentByComponent,
         nativeRole: "button",
         preferredGeneratedValue: staticAttributeValue("MyComp-A-button"),
-        bestKeyPlaceholder: null,
+        keyInfo: null,
         testIdAttribute: "data-testid",
         existingIdBehavior: "overwrite",
         addHtmlAttribute: false,
@@ -978,7 +1141,7 @@ describe("utils.ts coverage", () => {
           generatedMethodContentByComponent,
           nativeRole: "button",
           preferredGeneratedValue: staticAttributeValue("MyComp-B-button"),
-          bestKeyPlaceholder: null,
+          keyInfo: null,
           testIdAttribute: "data-testid",
           existingIdBehavior: "overwrite",
           addHtmlAttribute: false,
@@ -1001,7 +1164,7 @@ describe("utils.ts coverage", () => {
         generatedMethodContentByComponent,
         nativeRole: "button",
         preferredGeneratedValue: staticAttributeValue("MyComp-A-button"),
-        bestKeyPlaceholder: null,
+        keyInfo: null,
         testIdAttribute: "data-testid",
         existingIdBehavior: "overwrite",
         addHtmlAttribute: false,
@@ -1017,7 +1180,7 @@ describe("utils.ts coverage", () => {
         generatedMethodContentByComponent,
         nativeRole: "button",
         preferredGeneratedValue: staticAttributeValue("MyComp-B-button"),
-        bestKeyPlaceholder: null,
+        keyInfo: null,
         testIdAttribute: "data-testid",
         existingIdBehavior: "overwrite",
         addHtmlAttribute: false,
@@ -1047,7 +1210,7 @@ describe("utils.ts coverage", () => {
         generatedMethodContentByComponent,
         nativeRole: "button",
         preferredGeneratedValue: staticAttributeValue("MyComp-A-button"),
-        bestKeyPlaceholder: null,
+        keyInfo: null,
         testIdAttribute: "data-testid",
         existingIdBehavior: "overwrite",
         addHtmlAttribute: false,
@@ -1063,7 +1226,7 @@ describe("utils.ts coverage", () => {
         generatedMethodContentByComponent,
         nativeRole: "button",
         preferredGeneratedValue: staticAttributeValue("MyComp-B-button"),
-        bestKeyPlaceholder: null,
+        keyInfo: null,
         testIdAttribute: "data-testid",
         existingIdBehavior: "overwrite",
         addHtmlAttribute: false,
@@ -1103,7 +1266,7 @@ describe("utils.ts coverage", () => {
         generatedMethodContentByComponent,
         nativeRole: "button",
         preferredGeneratedValue: templateAttributeValue("MyComp-${value}-immynavitem"),
-        bestKeyPlaceholder: null,
+        keyInfo: null,
         testIdAttribute: "data-testid",
         existingIdBehavior: "overwrite",
         addHtmlAttribute: false,
@@ -1153,7 +1316,7 @@ describe("utils.ts coverage", () => {
       nativeRole: "select",
       semanticNameHint: "ParameterDefaultValue",
       preferredGeneratedValue: staticAttributeValue("MyComp-select"),
-      bestKeyPlaceholder: null,
+      keyInfo: null,
       testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
       addHtmlAttribute: false,
@@ -1170,7 +1333,7 @@ describe("utils.ts coverage", () => {
         nativeRole: "radio",
         semanticNameHint: "ParameterDefaultValue",
         preferredGeneratedValue: staticAttributeValue("MyComp-radio"),
-        bestKeyPlaceholder: null,
+        keyInfo: null,
         testIdAttribute: "data-testid",
         existingIdBehavior: "overwrite",
         addHtmlAttribute: false,
@@ -1179,8 +1342,8 @@ describe("utils.ts coverage", () => {
     }).not.toThrow();
 
     const entries = Array.from(deps.dataTestIdSet);
-    const selectEntry = entries.find(e => e.value === "MyComp-select");
-    const radioEntry = entries.find(e => e.value === "MyComp-radio");
+    const selectEntry = entries.find(e => e.selectorValue.formatted === "MyComp-select");
+    const radioEntry = entries.find(e => e.selectorValue.formatted === "MyComp-radio");
 
     expect(selectEntry?.pom?.methodName).toBe("ParameterDefaultValue");
     expect(radioEntry?.pom?.methodName).toBe("ParameterDefaultValueRadio");
@@ -1208,7 +1371,7 @@ describe("utils.ts coverage", () => {
       generatedMethodContentByComponent,
       nativeRole: "radio",
       preferredGeneratedValue: staticAttributeValue("MyComp-radio"),
-      bestKeyPlaceholder: null,
+      keyInfo: null,
       testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
       addHtmlAttribute: false,

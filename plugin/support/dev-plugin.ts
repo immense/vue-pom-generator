@@ -15,7 +15,7 @@ import type { IComponentDependencies, NativeWrappersMap, RouterIntrospectionResu
 import { setResolveToComponentNameFn, setRouteNameToComponentNameMap, toPascalCase } from "../../utils";
 import type { VuePomGeneratorLogger } from "../logger";
 import { isPathWithinDir, resolveComponentNameFromPath } from "../path-utils";
-import type { PlaywrightOutputStructure, PomNameCollisionBehavior, RouterModuleShimDefinition } from "../types";
+import type { ResolvedGenerationSupportOptions } from "../resolved-generation-options";
 
 interface DevProcessorOptions {
   nativeWrappers: NativeWrappersMap;
@@ -30,28 +30,8 @@ interface DevProcessorOptions {
   projectRootRef: { current: string };
   normalizedBasePagePath: string;
   basePageClassPath: string;
-
-  outDir?: string;
-  emitLanguages?: Array<"ts" | "csharp">;
-  typescriptOutputStructure?: PlaywrightOutputStructure;
-  csharp?: {
-    namespace?: string;
-  };
-  generateFixtures?: boolean | string | { outDir?: string };
-  customPomAttachments?: Array<{ className: string; propertyName: string; attachWhenUsesComponents: string[]; attachTo?: "views" | "components" | "both" | "pagesAndComponents"; flatten?: boolean }>;
-  customPomDir?: string;
-  customPomImportAliases?: Record<string, string>;
-  customPomImportNameCollisionBehavior?: "error" | "alias";
-  nameCollisionBehavior?: PomNameCollisionBehavior;
-  missingSemanticNameBehavior?: "ignore" | "error";
-  /** How to handle existing data-testid attributes in the source. */
-  existingIdBehavior?: "preserve" | "overwrite" | "error";
-  testIdAttribute: string;
-
-  routerAwarePoms: boolean;
+  generation: ResolvedGenerationSupportOptions;
   getResolvedRouterEntry: () => string | undefined;
-  routerType?: "vue-router" | "nuxt";
-  routerModuleShims?: Record<string, RouterModuleShimDefinition>;
 
   loggerRef: { current: VuePomGeneratorLogger };
 }
@@ -69,6 +49,11 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     projectRootRef,
     normalizedBasePagePath,
     basePageClassPath,
+    generation,
+    getResolvedRouterEntry,
+    loggerRef,
+  } = options;
+  const {
     outDir,
     emitLanguages,
     typescriptOutputStructure,
@@ -76,18 +61,16 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     generateFixtures,
     customPomAttachments,
     customPomDir,
+    requireCustomPomDir,
     customPomImportAliases,
     customPomImportNameCollisionBehavior,
-    nameCollisionBehavior = "suffix",
-    missingSemanticNameBehavior = "error",
+    nameCollisionBehavior,
     existingIdBehavior,
     testIdAttribute,
     routerAwarePoms,
-    getResolvedRouterEntry,
     routerType,
     routerModuleShims,
-    loggerRef,
-  } = options;
+  } = generation;
 
   // Bridge between configureServer (where we have timers/logger) and handleHotUpdate.
   let scheduleVueFileRegen: ((filePath: string, source: "hmr" | "fs") => void) | null = null;
@@ -320,9 +303,8 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
               excludedComponents,
               getViewsDirAbs(),
               {
-                existingIdBehavior: existingIdBehavior ?? "preserve",
+                existingIdBehavior: existingIdBehavior ?? "error",
                 nameCollisionBehavior,
-                missingSemanticNameBehavior,
                 testIdAttribute,
                 warn: message => loggerRef.current.warn(message),
                 vueFilesPathMap: provisionalVuePathMap,
@@ -383,6 +365,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
           customPomAttachments,
           projectRoot: projectRootRef.current,
           customPomDir,
+          requireCustomPomDir,
           customPomImportAliases,
           customPomImportNameCollisionBehavior,
           pageDirs: getPageDirs(),

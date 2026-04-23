@@ -53,15 +53,29 @@ import {
   isTemplateLiteral,
 } from "@babel/types";
 import { parse, parseExpression } from "@babel/parser";
+import { createPomStringPattern, pomStringPatternEquals, type PomPatternKind, type PomStringPattern } from "./pom-patterns";
+import {
+  createPomMethodSignature,
+  createPomParameterSpec,
+  hasPomParameter,
+  pomMethodSignatureEquals,
+  removePomParameter,
+  setPomParameter,
+  type PomMethodSignature,
+  type PomParameterSpec,
+} from "./pom-params";
+import { createTypeScriptWriter } from "./typescript-codegen";
 
 export { isSimpleExpressionNode } from "./compiler/ast-guards";
 export type { RouterIntrospectionResult } from "./router-introspection";
 export {
+  analyzeToDirectiveTarget,
   getRouteNameKeyFromToDirective,
   setResolveToComponentNameFn,
   setRouteNameToComponentNameMap,
   tryResolveToDirectiveTargetComponentName,
 } from "./routing/to-directive";
+export type { RouteDirectiveTargetAnalysis } from "./routing/to-directive";
 
 function getDataTestIdFromGroupOption(text: string) {
   // eslint-disable-next-line no-restricted-syntax
@@ -114,20 +128,149 @@ export interface NativeWrappersMap {
   }
 }
 
+export interface ParsedTemplateFragment {
+  source: string;
+  templateLiteral: TemplateLiteral;
+}
+
 export type AttributeValue =
   | { kind: "static"; value: string }
-  | { kind: "template"; template: string };
+  | { kind: "template"; template: string; parsedTemplate: ParsedTemplateFragment };
+
+type VueExpressionNode = SimpleExpressionNode | CompoundExpressionNode;
+type VueExpressionSourceView = "content" | "loc" | "compiled";
+type BabelParserPluginName = "typescript" | "jsx";
+
+export interface ResolvedKeyInfo {
+  selectorFragment: string;
+  runtimeFragment: string;
+  rawExpression: string | null;
+}
 
 export function staticAttributeValue(value: string): AttributeValue {
   return { kind: "static", value };
 }
 
-export function templateAttributeValue(template: string): AttributeValue {
-  return { kind: "template", template };
+export function templateAttributeValue(template: string): Extract<AttributeValue, { kind: "template" }> {
+  const parsedTemplate = tryParseTemplateFragment(template);
+  if (!parsedTemplate) {
+    throw new Error(`[vue-pom-generator] Failed to parse generated template fragment: ${template}`);
+  }
+
+  return { kind: "template", template, parsedTemplate };
 }
 
 export function getAttributeValueText(value: AttributeValue): string {
   return value.kind === "static" ? value.value : value.template;
+}
+
+/**
+ * Reads source text from a Vue compiler expression using the preferred view order.
+ *
+ * - `content`: original SIMPLE_EXPRESSION content
+ * - `loc`: author-written template source from `loc.source`
+ * - `compiled`: compiler-rewritten source from `stringifyExpression()`
+ */
+export function getVueExpressionSource(
+  expression: VueExpressionNode | null | undefined,
+  ...preferredViews: VueExpressionSourceView[]
+): string {
+  if (!expression) {
+    return "";
+  }
+
+  for (const view of preferredViews) {
+    let value = "";
+    switch (view) {
+      case "content":
+        value = expression.type === NodeTypes.SIMPLE_EXPRESSION ? expression.content : "";
+        break;
+      case "loc":
+        value = expression.loc?.source ?? "";
+        break;
+      case "compiled":
+        try {
+          value = stringifyExpression(expression);
+        }
+        catch {
+          value = "";
+        }
+        break;
+      default:
+        value = "";
+        break;
+    }
+
+    const trimmed = value.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+
+  return "";
+}
+
+function tryGetExistingVueExpressionAst(expression: VueExpressionNode | null | undefined): BabelNode | null {
+  if (!expression) {
+    return null;
+  }
+
+  const ast = ("ast" in expression ? expression.ast : null) as object | null | false | undefined;
+  return ast && "type" in ast ? ast as BabelNode : null;
+}
+
+function tryParseBabelExpressionFromSource(source: string, plugins: BabelParserPluginName[]): BabelNode | null {
+  const trimmed = source.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    return parseExpression(trimmed, { plugins }) as BabelNode;
+  }
+  catch {
+    return null;
+  }
+}
+
+function tryGetVueExpressionAst(
+  expression: VueExpressionNode | null | undefined,
+  options?: {
+    preferredViews?: VueExpressionSourceView[];
+    plugins?: BabelParserPluginName[];
+    preferExistingAst?: boolean;
+  },
+): BabelNode | null {
+  if (!expression) {
+    return null;
+  }
+
+  if (options?.preferExistingAst !== false) {
+    const existingAst = tryGetExistingVueExpressionAst(expression);
+    if (existingAst) {
+      return existingAst;
+    }
+  }
+
+  const source = getVueExpressionSource(expression, ...(options?.preferredViews ?? ["content", "loc", "compiled"]));
+  return source ? tryParseBabelExpressionFromSource(source, options?.plugins ?? ["typescript"]) : null;
+}
+
+function tryGetDirectiveBabelAst(
+  directive: DirectiveNode,
+  options?: {
+    preferredViews?: VueExpressionSourceView[];
+    plugins?: BabelParserPluginName[];
+    preferExistingAst?: boolean;
+  },
+): BabelNode | null {
+  const exp = directive.exp && (
+    directive.exp.type === NodeTypes.SIMPLE_EXPRESSION
+    || directive.exp.type === NodeTypes.COMPOUND_EXPRESSION
+  )
+    ? directive.exp as VueExpressionNode
+    : null;
+  return tryGetVueExpressionAst(exp, options);
 }
 
 /**
@@ -236,15 +379,7 @@ export function nodeHasClickDirective(node: ElementNode): boolean {
   return tryGetClickDirective(node) !== undefined;
 }
 
-/**
- * Detects if a node is a <template> element with slot scope data and returns the scope expression.
- *
- * This detects template elements with v-slot directives that have parameters,
- * such as <template #item="{ data }"> or <template v-slot="item">.
- *
- * @internal
- */
-function getTemplateSlotScope(node: ElementNode): string | null {
+function findTemplateSlotScopeExpression(node: ElementNode): VueExpressionNode | null {
   if (node.tag !== "template") {
     return null;
   }
@@ -253,16 +388,9 @@ function getTemplateSlotScope(node: ElementNode): string | null {
     return prop.type === NodeTypes.DIRECTIVE && prop.name === "slot";
   });
 
-  if (slotProp?.exp) {
-    if (slotProp.exp.type === NodeTypes.SIMPLE_EXPRESSION) {
-      return slotProp.exp.content;
-    }
-    if (slotProp.exp.type === NodeTypes.COMPOUND_EXPRESSION) {
-      return stringifyExpression(slotProp.exp);
-    }
-  }
-
-  return null;
+  return slotProp?.exp && (slotProp.exp.type === NodeTypes.SIMPLE_EXPRESSION || slotProp.exp.type === NodeTypes.COMPOUND_EXPRESSION)
+    ? slotProp.exp as VueExpressionNode
+    : null;
 }
 
 /**
@@ -276,7 +404,7 @@ function getTemplateSlotScope(node: ElementNode): string | null {
  * @internal
  */
 function isTemplateWithData(node: ElementNode): boolean {
-  return getTemplateSlotScope(node) !== null;
+  return findTemplateSlotScopeExpression(node) !== null;
 }
 
 /**
@@ -438,52 +566,77 @@ function tryGetSlotScopeKeyCandidate(node: BabelNode | null | undefined): SlotSc
   return best;
 }
 
-function tryGetTemplateSlotScopeKeyExpression(scope: string): string | null {
-  const trimmed = scope.trim();
-  if (!trimmed) {
+function tryGetTemplateSlotScopeBindingNode(expression: VueExpressionNode): BabelNode | null {
+  const ast = tryGetExistingVueExpressionAst(expression);
+  if (ast) {
+    if (isArrowFunctionExpression(ast)) {
+      return ast.params[0] as BabelNode | undefined ?? null;
+    }
+    return ast;
+  }
+
+  const rawSource = getVueExpressionSource(expression, "content", "loc", "compiled");
+  if (!rawSource) {
     return null;
   }
 
-  if (isSimpleScopeIdentifier(trimmed)) {
-    return buildSlotScopeFallbackKeyExpression(trimmed);
+  try {
+    return parseExpression(rawSource, { plugins: ["typescript"] }) as BabelNode;
+  }
+  catch {
+    // Slot-scope destructuring like `{ data }` is not a standalone expression, so parse it as
+    // the parameter list of a synthetic arrow function to recover the binding pattern AST.
   }
 
   try {
-    const parsed = parse(`(${trimmed}) => {}`, {
+    const parsed = parse(`(${rawSource}) => {}`, {
       sourceType: "module",
       plugins: ["typescript"],
     });
     const statement = parsed.program.body[0];
     if (statement && isExpressionStatement(statement) && isArrowFunctionExpression(statement.expression)) {
-      return tryGetSlotScopeKeyCandidate(statement.expression.params[0])?.expression ?? null;
+      return statement.expression.params[0] as BabelNode | undefined ?? null;
     }
   }
   catch {
-    // Fall back to the prior best-effort string parsing below.
+    return null;
   }
 
-  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-    const inner = trimmed.slice(1, -1).trim();
-    let cutIdx = -1;
-    const commaIdx = inner.indexOf(",");
-    const colonIdx = inner.indexOf(":");
-    if (commaIdx !== -1 && colonIdx !== -1) {
-      cutIdx = Math.min(commaIdx, colonIdx);
-    }
-    else if (commaIdx !== -1) {
-      cutIdx = commaIdx;
-    }
-    else if (colonIdx !== -1) {
-      cutIdx = colonIdx;
-    }
+  return null;
+}
 
-    const first = (cutIdx === -1 ? inner : inner.slice(0, cutIdx)).trim();
-    if (first && isSimpleScopeIdentifier(first)) {
-      return buildSlotScopeFallbackKeyExpression(first);
-    }
+function toResolvedTemplateFragment(source: string): InterpolatedTemplateFragment | null {
+  const templateLiteral = tryUnwrapTemplateLiteralSource(source);
+  if (templateLiteral) {
+    return {
+      template: templateLiteral.template,
+      rawExpression: null,
+    };
   }
 
-  return trimmed;
+  return toInterpolatedTemplateFragment(source);
+}
+
+function toResolvedKeyInfo(selectorSource: string | null, runtimeSource: string | null = selectorSource): ResolvedKeyInfo | null {
+  const selectorFragment = selectorSource ? toResolvedTemplateFragment(selectorSource) : null;
+  const runtimeFragment = runtimeSource ? toResolvedTemplateFragment(runtimeSource) : null;
+  const selectorTemplate = selectorFragment?.template ?? runtimeFragment?.template ?? null;
+  const runtimeTemplate = runtimeFragment?.template ?? selectorFragment?.template ?? null;
+  if (!selectorTemplate || !runtimeTemplate) {
+    return null;
+  }
+
+  return {
+    selectorFragment: selectorTemplate,
+    runtimeFragment: runtimeTemplate,
+    rawExpression: runtimeFragment?.rawExpression ?? selectorFragment?.rawExpression ?? null,
+  };
+}
+
+function tryGetTemplateSlotScopeKeyInfo(expression: VueExpressionNode): ResolvedKeyInfo | null {
+  const bindingNode = tryGetTemplateSlotScopeBindingNode(expression);
+  const candidateExpression = bindingNode ? tryGetSlotScopeKeyCandidate(bindingNode)?.expression ?? null : null;
+  return candidateExpression ? toResolvedKeyInfo(candidateExpression) : null;
 }
 
 /**
@@ -528,6 +681,261 @@ function getKeyDirective(node: ElementNode): DirectiveNode | null {
 }
 
 /**
+ * Attempts to unwrap a full template-literal expression source into its body text.
+ *
+ * @example
+ * tryUnwrapTemplateLiteralSource("`row-${item.id}`")
+ * // => { template: "row-${item.id}", expressionCount: 1 }
+ *
+ * @example
+ * tryUnwrapTemplateLiteralSource("item.id")
+ * // => null
+ */
+function tryUnwrapTemplateLiteralSource(source: string): { template: string; expressionCount: number } | null {
+  const rawSource = source.trim();
+  if (!rawSource) {
+    return null;
+  }
+
+  let ast: BabelNode | null | false | undefined = null;
+  try {
+    ast = parseExpression(rawSource, { plugins: ["typescript"] }) as BabelNode;
+  }
+  catch {
+    return null;
+  }
+
+  if (!ast || !isTemplateLiteral(ast)) {
+    return null;
+  }
+
+  const cooked = ast.quasis.map(quasi => quasi.value.cooked ?? "").join("");
+  try {
+    const start = typeof ast.start === "number" ? ast.start + 1 : 1;
+    const end = typeof ast.end === "number" ? ast.end - 1 : rawSource.length - 1;
+    return {
+      template: rawSource.slice(start, end) || cooked,
+      expressionCount: ast.expressions.length,
+    };
+  }
+  catch {
+    return {
+      template: cooked,
+      expressionCount: ast.expressions.length,
+    };
+  }
+}
+
+/**
+ * Attempts to unwrap a template-literal expression node into its body text.
+ *
+ * Accepts the original Vue template-expression node so callers stay on the AST-driven path.
+ * Vue commonly represents template-literal bindings as `CompoundExpressionNode`s even when the
+ * attached Babel AST is a single `TemplateLiteral`, so this helper intentionally accepts both
+ * simple and compound expression nodes.
+ *
+ * Vue also exposes two different string views of the same binding:
+ * - `loc.source` preserves the author-written local scope expression (e.g. `item.id`)
+ * - `stringifyExpression()` emits the compiler-rewritten form (often including `_ctx.*`)
+ *
+ * We still prefer carrying structured AST metadata through the pipeline, but this helper is the
+ * narrow bridge where we normalize those compiler-provided string forms before reparsing a template
+ * fragment later on. That keeps the rest of the codebase from having to care which compiler view
+ * produced the binding in the first place.
+ *
+ * @example
+ * const exp = findDirectiveByName(node, "bind", "key")?.exp as SimpleExpressionNode | CompoundExpressionNode;
+ * tryUnwrapTemplateLiteralExpressionSource(exp)
+ * // => { template: "row-${item.id}", expressionCount: 1 }
+ *
+ * @example
+ * const exp = findDirectiveByName(node, "bind", "key")?.exp as SimpleExpressionNode | CompoundExpressionNode;
+ * tryUnwrapTemplateLiteralExpressionSource(exp)
+ * // => null
+ */
+function tryUnwrapTemplateLiteralExpressionSource(expression: SimpleExpressionNode | CompoundExpressionNode | null): { template: string; expressionCount: number } | null {
+  const rawSource = getVueExpressionSource(expression, "loc", "compiled");
+  return rawSource ? tryUnwrapTemplateLiteralSource(rawSource) : null;
+}
+
+/**
+ * Parses the inside of a template literal as a `TemplateLiteral` AST node.
+ *
+ * `parseExpression()` only accepts complete JavaScript expressions, so fragments like
+ * `line-${item.id}` need synthetic backticks before they can be parsed.
+ *
+ * @example
+ * tryParseTemplateFragment("line-${item.id}")?.templateLiteral.expressions.length
+ * // => 1
+ *
+ * @example
+ * tryParseTemplateFragment("plain-text")?.templateLiteral.expressions.length
+ * // => 0
+ */
+function tryParseTemplateFragment(fragment: string): ParsedTemplateFragment | null {
+  if (!fragment) {
+    return null;
+  }
+
+  try {
+    // A fragment like `line-${item.id}` is the inside of a template literal, not a standalone
+    // JavaScript expression, so we synthesize the surrounding backticks before parsing.
+    const source = `\`${fragment}\``;
+    const ast = parseExpression(source, { plugins: ["typescript"] }) as BabelNode;
+    return isTemplateLiteral(ast) ? { source, templateLiteral: ast } : null;
+  }
+  catch {
+    return null;
+  }
+}
+
+function getTemplateExpressionSource(parsedTemplate: ParsedTemplateFragment, index: number): string | null {
+  const expression = parsedTemplate.templateLiteral.expressions[index];
+  if (!expression) {
+    return null;
+  }
+
+  const start = typeof expression.start === "number" ? expression.start : null;
+  const end = typeof expression.end === "number" ? expression.end : null;
+  if (start === null || end === null) {
+    return null;
+  }
+
+  return parsedTemplate.source.slice(start, end);
+}
+
+function getSingleExpressionTemplateFragment(parsedTemplate: ParsedTemplateFragment): {
+  prefix: string;
+  expressionSource: string;
+  suffix: string;
+} | null {
+  const { templateLiteral } = parsedTemplate;
+  if (templateLiteral.expressions.length !== 1 || templateLiteral.quasis.length !== 2) {
+    return null;
+  }
+
+  const expressionSource = getTemplateExpressionSource(parsedTemplate, 0);
+  if (expressionSource === null) {
+    return null;
+  }
+
+  return {
+    prefix: templateLiteral.quasis[0]?.value.raw ?? "",
+    expressionSource,
+    suffix: templateLiteral.quasis[1]?.value.raw ?? "",
+  };
+}
+
+function templateFragmentContainsSingleExpression(container: ParsedTemplateFragment, candidate: ParsedTemplateFragment): boolean {
+  const containerFragment = getSingleExpressionTemplateFragment(container);
+  const candidateFragment = getSingleExpressionTemplateFragment(candidate);
+  if (!containerFragment || !candidateFragment) {
+    return false;
+  }
+
+  return containerFragment.expressionSource === candidateFragment.expressionSource
+    && containerFragment.prefix.endsWith(candidateFragment.prefix)
+    && containerFragment.suffix.startsWith(candidateFragment.suffix);
+}
+
+/**
+ * Returns `true` when a template fragment already contains one or more `${...}` interpolations.
+ *
+ * @example
+ * hasTemplateInterpolationExpressions("line-${item.id}")
+ * // => true
+ *
+ * @example
+ * hasTemplateInterpolationExpressions("item.id")
+ * // => false
+ */
+export function hasTemplateInterpolationExpressions(fragment: string): boolean {
+  return (tryParseTemplateFragment(fragment)?.templateLiteral.expressions.length ?? 0) > 0;
+}
+
+export interface InterpolatedTemplateFragment {
+  template: string;
+  rawExpression: string | null;
+}
+
+/**
+ * Normalizes a fragment into something safe to splice into a template literal.
+ *
+ * Raw expressions become `${...}` placeholders; fragments that already contain template
+ * interpolations are returned as-is.
+ *
+ * @example
+ * toInterpolatedTemplateFragment("item.id")
+ * // => { template: "${item.id}", rawExpression: "item.id" }
+ *
+ * @example
+ * toInterpolatedTemplateFragment("line-${item.id}")
+ * // => { template: "line-${item.id}", rawExpression: null }
+ */
+export function toInterpolatedTemplateFragment(fragment: string | null): InterpolatedTemplateFragment | null {
+  if (!fragment) {
+    return null;
+  }
+
+  if (hasTemplateInterpolationExpressions(fragment)) {
+    return { template: fragment, rawExpression: null };
+  }
+
+  return {
+    template: `\${${fragment}}`,
+    rawExpression: fragment,
+  };
+}
+
+/**
+ * Reconstructs a full template-literal expression from a template AttributeValue using its parsed quasis/expressions.
+ *
+ * @example
+ * const templateValue = templateAttributeValue("line-${item.id}");
+ * if (templateValue.kind === "template") {
+ *   renderTemplateLiteralExpression(templateValue)
+ * }
+ * // => "`line-${item.id}`"
+ *
+ * @example
+ * const templateValue = templateAttributeValue("plain-text");
+ * if (templateValue.kind === "template") {
+ *   renderTemplateLiteralExpression(templateValue)
+ * }
+ * // => "`plain-text`"
+ */
+export function renderTemplateLiteralExpression(templateValue: Extract<AttributeValue, { kind: "template" }>): string {
+  const templateLiteralSource = templateValue.parsedTemplate.source;
+  const templateLiteral = templateValue.parsedTemplate.templateLiteral;
+
+  // Render through the shared TypeScript writer so this codegen path follows the same
+  // quoting/newline conventions as the rest of the repo's generated TypeScript output.
+  const writer = createTypeScriptWriter();
+  writer.write("`");
+  for (let i = 0; i < templateLiteral.quasis.length; i += 1) {
+    writer.write(templateLiteral.quasis[i]?.value.raw ?? "");
+
+    const interpolation = templateLiteral.expressions[i];
+    if (!interpolation) {
+      continue;
+    }
+
+    const start = typeof interpolation.start === "number" ? interpolation.start : null;
+    const end = typeof interpolation.end === "number" ? interpolation.end : null;
+    if (start === null || end === null) {
+      return templateLiteralSource;
+    }
+
+    writer.write("${");
+    writer.write(templateLiteralSource.slice(start, end));
+    writer.write("}");
+  }
+
+  writer.write("`");
+  return writer.toString();
+}
+
+/**
  * Gets the value placeholder for a :key directive
  *
  * Returns a placeholder string if the element has a :key directive, null otherwise
@@ -535,24 +943,25 @@ function getKeyDirective(node: ElementNode): DirectiveNode | null {
  *
  * @internal
  */
-export function getKeyDirectiveValue(node: ElementNode, _context: TransformContext | null = null): string | null {
+function getKeyDirectiveExpression(node: ElementNode): VueExpressionNode | null {
   const keyDirective = getKeyDirective(node);
-  const rawSource = keyDirective?.exp?.loc.source?.trim();
-  if (rawSource) {
-    // Preserve author-facing key source instead of compiler-prefixed `_ctx.*` output.
-    // Generated keyed test ids are later embedded into other transformed expressions
-    // (for example, click instrumentation wrappers), and reusing a stringified `_ctx.*`
-    // expression there can produce invalid double-prefixing like `_ctx._ctx.item.id`.
-    return `\${${rawSource}}`;
+  return keyDirective?.exp && (
+    keyDirective.exp.type === NodeTypes.SIMPLE_EXPRESSION
+    || keyDirective.exp.type === NodeTypes.COMPOUND_EXPRESSION
+  )
+    ? keyDirective.exp as SimpleExpressionNode | CompoundExpressionNode
+    : null;
+}
+
+export function getKeyDirectiveInfo(node: ElementNode): ResolvedKeyInfo | null {
+  const keyExpression = getKeyDirectiveExpression(node);
+  if (!keyExpression) {
+    return null;
   }
 
-  if (keyDirective?.exp) {
-    const value = stringifyExpression(keyDirective.exp);
-    if (value)
-      return `\${${value}}`;
-  }
-
-  return null;
+  const selectorSource = getVueExpressionSource(keyExpression, "compiled", "loc");
+  const runtimeSource = getVueExpressionSource(keyExpression, "loc", "compiled");
+  return toResolvedKeyInfo(selectorSource, runtimeSource);
 }
 
 /**
@@ -565,15 +974,22 @@ export function getModelBindingValues(node: ElementNode): { vModel: string; mode
   let vModel = "";
   const vModelDirective = findDirectiveByName(node, "model");
 
-  if (vModelDirective?.exp?.loc.source) {
-    vModel = toPascalCase(vModelDirective.exp.loc.source);
+  if (vModelDirective?.exp && (vModelDirective.exp.type === NodeTypes.SIMPLE_EXPRESSION || vModelDirective.exp.type === NodeTypes.COMPOUND_EXPRESSION)) {
+    vModel = toPascalCase(getVueExpressionSource(vModelDirective.exp as VueExpressionNode, "loc", "content"));
   }
 
   let modelValue: string | null = null;
   const modelValueDirective = findDirectiveByName(node, "bind", "modelValue");
 
-  if (modelValueDirective?.exp?.ast) {
-    const { name: mv } = getClickHandlerNameFromAst(modelValueDirective.exp.ast as BabelNode);
+  const modelValueAst = modelValueDirective
+    ? tryGetDirectiveBabelAst(modelValueDirective, {
+      preferredViews: ["loc", "compiled"],
+      plugins: ["typescript"],
+      preferExistingAst: false,
+    })
+    : null;
+  if (modelValueAst) {
+    const { name: mv } = getClickHandlerNameFromAst(modelValueAst);
     modelValue = mv;
   }
 
@@ -593,7 +1009,7 @@ export function getSelfClosingForDirectiveKeyAttrValue(node: ElementNode): strin
     const hasForDirective = nodeHasForDirective(node);
 
     if (hasForDirective) {
-      return getKeyDirectiveValue(node);
+      return getKeyDirectiveInfo(node)?.selectorFragment ?? null;
     }
   }
   return null;
@@ -602,12 +1018,14 @@ export function getSelfClosingForDirectiveKeyAttrValue(node: ElementNode): strin
 /**
  * Gets the id or name attribute value from a node
  *
- * Returns the identifier, converting dashes and underscores to PascalCase
- * Returns a placeholder if a dynamic :id is found
+ * Returns the identifier, converting dashes and underscores to PascalCase.
+ *
+ * Dynamic `:id` / `:name` bindings are intentionally ignored here because they are not stable
+ * semantic hints for generated POM member names.
  *
  * @internal
  */
-export function getIdOrName(node: ElementNode): string {
+export function getStaticIdOrNameHint(node: ElementNode): string {
   // Get id or name attribute (static)
   let idAttr = findAttributeByKey(node, "id");
   if (!idAttr) {
@@ -616,12 +1034,12 @@ export function getIdOrName(node: ElementNode): string {
 
   let identifier = idAttr?.value?.content ?? "";
 
-  // If no static id or name attribute is found, check for a dynamic v-bind:id directive
+  // Dynamic id/name bindings are not stable identifiers for naming hints, so treat them as absent.
   if (!identifier) {
     const dynamicIdAttr = findDirectiveByName(node, "bind", "id");
-    if (dynamicIdAttr?.exp) {
-      // TODO: Make sure this is still necessary and if so maybe pick a better name
-      identifier = `\${someUniqueValueToDifferentiateInstanceFromOthersOnPageUsuallyAnId}`;
+    const dynamicNameAttr = findDirectiveByName(node, "bind", "name");
+    if (dynamicIdAttr?.exp || dynamicNameAttr?.exp) {
+      return "";
     }
   }
 
@@ -663,21 +1081,13 @@ export function isNodeContainedInTemplateWithData(node: ElementNode, hierarchyMa
   return false;
 }
 
-/**
- * Extracts a key placeholder from a parent <template> with slot scope data.
- *
- * If the node is within a slot that has scope variables (e.g. #item="{ data }"),
- * returns a placeholder derived from that scope.
- *
- * @internal
- */
-export function getContainedInSlotDataKeyValue(node: ElementNode, hierarchyMap: HierarchyMap): string | null {
+export function getContainedInSlotDataKeyInfo(node: ElementNode, hierarchyMap: HierarchyMap): ResolvedKeyInfo | null {
   let parent = getParent(hierarchyMap, node);
   while (parent) {
     if (parent.type === NodeTypes.ELEMENT && parent.tag === "template") {
-      const scope = getTemplateSlotScope(parent);
-      if (scope) {
-        return tryGetTemplateSlotScopeKeyExpression(scope);
+      const slotScopeExpression = findTemplateSlotScopeExpression(parent);
+      if (slotScopeExpression) {
+        return tryGetTemplateSlotScopeKeyInfo(slotScopeExpression);
       }
     }
     parent = getParent(hierarchyMap, parent);
@@ -685,14 +1095,7 @@ export function getContainedInSlotDataKeyValue(node: ElementNode, hierarchyMap: 
   return null;
 }
 
-/**
- * Extracts the key value expression from a v-for directive on a parent element
- *
- * If the node is within a v-for that has a :key directive, returns the key expression.
- *
- * @internal
- */
-export function getContainedInVForDirectiveKeyValue(context: TransformContext, node: ElementNode, hierarchyMap: HierarchyMap): string | null {
+export function getContainedInVForDirectiveKeyInfo(context: TransformContext, node: ElementNode, hierarchyMap: HierarchyMap): ResolvedKeyInfo | null {
   // Check if we're in a v-for scope
   if (!context.scopes.vFor || context.scopes.vFor === 0) {
     return null;
@@ -704,9 +1107,7 @@ export function getContainedInVForDirectiveKeyValue(context: TransformContext, n
     if (parent.type === NodeTypes.ELEMENT) {
       const forDirective = findDirectiveByName(parent as ElementNode, "for");
       if (forDirective) {
-        // Found the v-for element, now look for :key
-        const keyValue = getKeyDirectiveValue(parent as ElementNode);
-        return keyValue;
+        return getKeyDirectiveInfo(parent as ElementNode);
       }
     }
     parent = getParent(hierarchyMap, parent);
@@ -760,14 +1161,7 @@ export function tryGetContainedInStaticVForSourceLiteralValues(
     return null;
   }
 
-  const iterableRaw = (() => {
-    try {
-      return stringifyExpression(simpleSourceExp).trim();
-    }
-    catch {
-      return (simpleSourceExp.loc?.source ?? "").trim();
-    }
-  })();
+  const iterableRaw = getVueExpressionSource(simpleSourceExp, "compiled", "loc");
 
   if (!iterableRaw) {
     return null;
@@ -859,9 +1253,7 @@ export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInf
   }
 
   const exp = handlerDirective.exp as SimpleExpressionNode | CompoundExpressionNode;
-  const source = (exp.type === NodeTypes.SIMPLE_EXPRESSION
-    ? (exp as SimpleExpressionNode).content
-    : stringifyExpression(exp)).trim();
+  const source = getVueExpressionSource(exp, "content", "compiled");
   if (!source) {
     return null;
   }
@@ -870,11 +1262,14 @@ export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInf
   // NOTE: We intentionally do not normalize via regex/string parsing helpers in this package.
   const mergeKey = `handler:expr:${source}`;
 
-  let expr: object;
-  try {
-    expr = parseExpression(source, { plugins: ["typescript", "jsx"] });
-  }
-  catch {
+  const expr = tryGetDirectiveBabelAst(handlerDirective, {
+    preferredViews: ["content", "compiled"],
+    plugins: ["typescript", "jsx"],
+    // Vue's compiler AST can encode `_ctx.foo` as an Identifier name instead of a MemberExpression.
+    // That is fine for Vue codegen, but our semantic-name extraction needs a normal Babel parse tree.
+    preferExistingAst: false,
+  });
+  if (!expr) {
     // Even if parsing fails, still provide a merge identity.
     return null;
   }
@@ -1348,16 +1743,23 @@ function getDataTestIdValueFromValueAttribute(
   }
 
   const attrDynamic = findDirectiveByName(node, "bind", attributeKey);
-  if (attrDynamic && 'exp' in attrDynamic && attrDynamic.exp && 'ast' in attrDynamic.exp && attrDynamic.exp.ast) {
-    let value = attrDynamic.exp.loc.source;
+  const attrDynamicAst = attrDynamic
+    ? tryGetDirectiveBabelAst(attrDynamic, {
+      preferredViews: ["loc", "compiled"],
+      plugins: ["typescript"],
+      preferExistingAst: false,
+    })
+    : null;
+  if (attrDynamic?.exp && attrDynamicAst) {
+    let value = getVueExpressionSource(attrDynamic.exp as VueExpressionNode, "loc", "compiled");
 
-    if (attrDynamic.exp.ast?.type === "MemberExpression") {
+    if (isMemberExpression(attrDynamicAst) || isOptionalMemberExpression(attrDynamicAst)) {
       // eslint-disable-next-line no-restricted-syntax
       return staticAttributeValue(`${actualFileName}-${value.replaceAll(".", "")}-${role}`);
     }
 
-    if (attrDynamic.exp.ast?.type === "CallExpression") {
-      value = stringifyExpression(attrDynamic.exp);
+    if (isCallExpression(attrDynamicAst) || isOptionalCallExpression(attrDynamicAst)) {
+      value = getVueExpressionSource(attrDynamic.exp as VueExpressionNode, "compiled", "loc");
       return templateAttributeValue(`${actualFileName}-\${${value}}-${role}`);
     }
     return staticAttributeValue(`${actualFileName}-${value}-${role}`);
@@ -1366,9 +1768,9 @@ function getDataTestIdValueFromValueAttribute(
 }
 
 export function generateToDirectiveDataTestId(componentName: string, node: ElementNode, toDirective: DirectiveNode, context: TransformContext, hierarchyMap: HierarchyMap, nativeWrappers: NativeWrappersMap): AttributeValue | null {
-  const key = getKeyDirectiveValue(node, context) || getSelfClosingForDirectiveKeyAttrValue(node) || getContainedInVForDirectiveKeyValue(context, node, hierarchyMap);
-  if (key) {
-    return templateAttributeValue(`${componentName}-${key}-${formatTagName(node, nativeWrappers)}`);
+  const keyInfo = getKeyDirectiveInfo(node) || getContainedInVForDirectiveKeyInfo(context, node, hierarchyMap);
+  if (keyInfo) {
+    return templateAttributeValue(`${componentName}-${keyInfo.selectorFragment}-${formatTagName(node, nativeWrappers)}`);
   } else {
     let name = toDirectiveObjectFieldNameValue(toDirective);
     if (!name) {
@@ -1376,7 +1778,7 @@ export function generateToDirectiveDataTestId(componentName: string, node: Eleme
         return null;
       }
 
-      const source = stringifyExpression(toDirective.exp);
+      const source = getVueExpressionSource(toDirective.exp as VueExpressionNode, "compiled", "loc");
 
       const toAst = toDirective.exp.ast;
       const interpolated = (toAst !== undefined && toAst !== null && toAst !== false) && isTemplateLiteral(toAst as BabelNode);
@@ -1420,48 +1822,49 @@ export function toDirectiveObjectFieldNameValue(node: DirectiveNode): string | n
     return null;
   }
 
-  const source = (node.exp as CompoundExpressionNode).loc.source.trim();
-  try {
-    const expr = parseExpression(source, { plugins: ["typescript"] }) as object;
-
-    const isNodeType = (n: object | null, type: string): n is { type: string } => {
-      return n !== null && (n as { type?: string }).type === type;
-    };
-    const isStringLiteralNode = (n: object | null): n is { type: "StringLiteral"; value: string } => {
-      return isNodeType(n, "StringLiteral") && typeof (n as { value?: string }).value === "string";
-    };
-    const isIdentifierNode = (n: object | null): n is { type: "Identifier"; name: string } => {
-      return isNodeType(n, "Identifier") && typeof (n as { name?: string }).name === "string";
-    };
-    const isObjectPropertyNode = (n: object | null): n is { type: "ObjectProperty"; key: object; value: object } => {
-      if (!isNodeType(n, "ObjectProperty"))
-        return false;
-      const nn = n as { key?: object; value?: object };
-      return typeof nn.key === "object" && nn.key !== null && typeof nn.value === "object" && nn.value !== null;
-    };
-    const isObjectExpressionNode = (n: object | null): n is { type: "ObjectExpression"; properties: object[] } => {
-      if (!isNodeType(n, "ObjectExpression"))
-        return false;
-      const nn = n as { properties?: object[] };
-      return Array.isArray(nn.properties);
-    };
-
-    if (!isObjectExpressionNode(expr))
-      return null;
-
-    const nameProp = (expr as { properties: object[] }).properties.find((p) => {
-      if (!isObjectPropertyNode(p))
-        return false;
-      const key = p.key as object;
-      return (isIdentifierNode(key) && key.name === "name") || (isStringLiteralNode(key) && key.value === "name");
-    });
-    if (!nameProp || !isObjectPropertyNode(nameProp) || !isStringLiteralNode(nameProp.value as object))
-      return null;
-    return toPascalCase((nameProp.value as { value: string }).value);
-  }
-  catch {
+  const expr = tryGetDirectiveBabelAst(node, {
+    preferredViews: ["loc", "compiled"],
+    plugins: ["typescript"],
+    preferExistingAst: false,
+  }) as object | null;
+  if (!expr) {
     return null;
   }
+
+  const isNodeType = (n: object | null, type: string): n is { type: string } => {
+    return n !== null && (n as { type?: string }).type === type;
+  };
+  const isStringLiteralNode = (n: object | null): n is { type: "StringLiteral"; value: string } => {
+    return isNodeType(n, "StringLiteral") && typeof (n as { value?: string }).value === "string";
+  };
+  const isIdentifierNode = (n: object | null): n is { type: "Identifier"; name: string } => {
+    return isNodeType(n, "Identifier") && typeof (n as { name?: string }).name === "string";
+  };
+  const isObjectPropertyNode = (n: object | null): n is { type: "ObjectProperty"; key: object; value: object } => {
+    if (!isNodeType(n, "ObjectProperty"))
+      return false;
+    const nn = n as { key?: object; value?: object };
+    return typeof nn.key === "object" && nn.key !== null && typeof nn.value === "object" && nn.value !== null;
+  };
+  const isObjectExpressionNode = (n: object | null): n is { type: "ObjectExpression"; properties: object[] } => {
+    if (!isNodeType(n, "ObjectExpression"))
+      return false;
+    const nn = n as { properties?: object[] };
+    return Array.isArray(nn.properties);
+  };
+
+  if (!isObjectExpressionNode(expr))
+    return null;
+
+  const nameProp = (expr as { properties: object[] }).properties.find((p) => {
+    if (!isObjectPropertyNode(p))
+      return false;
+    const key = p.key as object;
+    return (isIdentifierNode(key) && key.name === "name") || (isStringLiteralNode(key) && key.value === "name");
+  });
+  if (!nameProp || !isObjectPropertyNode(nameProp) || !isStringLiteralNode(nameProp.value as object))
+    return null;
+  return toPascalCase((nameProp.value as { value: string }).value);
 }
 
 export function addComponentTestIds(componentName: string, componentTestIds: Map<string, Set<string>>, desiredTestId: string) {
@@ -1493,9 +1896,7 @@ export function getComposedClickHandlerContent(
 
   if (click.exp) {
     const exp = click.exp as SimpleExpressionNode | CompoundExpressionNode;
-    const source = (exp.type === NodeTypes.SIMPLE_EXPRESSION
-      ? (exp as SimpleExpressionNode).content
-      : stringifyExpression(exp)).trim();
+    const source = getVueExpressionSource(exp, "content", "compiled");
 
     if (source) {
       const parsed = tryParseBabelAstFromHandlerSource(source);
@@ -1530,12 +1931,12 @@ function tryParseBabelAstFromHandlerSource(source: string): object | null {
     return null;
 
   // Most handlers are expression-shaped; parse that first.
-  try {
-    return parseExpression(trimmed, { plugins: ["typescript", "jsx"] }) as object;
+  const expressionAst = tryParseBabelExpressionFromSource(trimmed, ["typescript", "jsx"]);
+  if (expressionAst) {
+    return expressionAst as object;
   }
-  catch {
-    // Handlers can also be statement-shaped (e.g. `a(); b()` or `if (...) ...`). Parse as a file.
-  }
+
+  // Handlers can also be statement-shaped (e.g. `a(); b()` or `if (...) ...`). Parse as a file.
 
   try {
     return parse(trimmed, { sourceType: "module", plugins: ["typescript", "jsx"] }) as object;
@@ -2019,10 +2420,18 @@ export interface ExistingElementDataTestIdInfo {
 
   /** When the binding can be preserved as a one-slot template, the unwrapped template text (without backticks). */
   template?: string;
+  /** Parsed template metadata for preserve-safe template ids. */
+  parsedTemplate?: ParsedTemplateFragment;
   /** Number of interpolations in the template literal, if known. */
   templateExpressionCount?: number;
   /** For non-template dynamic bindings, the raw expression string (identifier/call/etc). */
   rawExpression?: string;
+}
+
+export interface ResolvedDataTestIdValues {
+  selectorValue: AttributeValue;
+  runtimeValue: AttributeValue;
+  fromExisting: boolean;
 }
 
 /**
@@ -2059,37 +2468,27 @@ export function tryGetExistingElementDataTestId(node: ElementNode, attributeName
     return null;
   }
 
-  // Prefer AST-based detection when available.
-  // Vue's compiler attaches Babel AST to SimpleExpressionNode.exp.ast.
   const simpleExp = exp as SimpleExpressionNode;
-  const ast = simpleExp.ast;
+  const ast = tryGetVueExpressionAst(simpleExp, {
+    preferredViews: ["content", "loc", "compiled"],
+    plugins: ["typescript"],
+  });
 
-  // Template literal: :data-testid="`Foo-${bar}`"
-  // - If it has zero expressions, it's effectively a static string.
-  // - If it has expressions, it's dynamic.
-  if (ast && typeof ast === "object" && "type" in ast && (ast as { type: string }).type === "TemplateLiteral") {
-    const tl = ast as { quasis: Array<{ value?: { cooked?: string } }>; expressions: unknown[] };
-    const cooked = (tl.quasis ?? []).map(q => q.value?.cooked ?? "").join("");
-    const expressionCount = (tl.expressions ?? []).length;
-    const isStatic = expressionCount === 0;
-
-    // Prefer the raw template (so callers can validate placeholders / preserve interpolation),
-    // but fall back to cooked content when we can't confidently unwrap.
-    const raw = (simpleExp.content ?? "").trim();
-    const unwrappedTemplate = (raw.startsWith("`") && raw.endsWith("`") && raw.length >= 2)
-      ? raw.slice(1, -1)
-      : cooked;
-
+  const unwrappedTemplateLiteral = tryUnwrapTemplateLiteralExpressionSource(simpleExp);
+  if (unwrappedTemplateLiteral) {
+    const isStatic = unwrappedTemplateLiteral.expressionCount === 0;
     if (isStatic) {
-      return { value: unwrappedTemplate, isDynamic: false, isStaticLiteral: true };
+      return { value: unwrappedTemplateLiteral.template, isDynamic: false, isStaticLiteral: true };
     }
 
+    const templateValue = templateAttributeValue(unwrappedTemplateLiteral.template);
     return {
-      value: unwrappedTemplate,
+      value: templateValue.template,
       isDynamic: true,
       isStaticLiteral: false,
-      template: unwrappedTemplate,
-      templateExpressionCount: expressionCount,
+      template: templateValue.template,
+      parsedTemplate: templateValue.parsedTemplate,
+      templateExpressionCount: unwrappedTemplateLiteral.expressionCount,
     };
   }
 
@@ -2105,74 +2504,30 @@ export function tryGetExistingElementDataTestId(node: ElementNode, attributeName
 
   const preservableReference = tryGetPreservableDynamicReferenceExpression(ast as BabelNode | null | false | undefined);
   if (preservableReference) {
+    const templateValue = templateAttributeValue(`\${${preservableReference}}`);
     return {
       value: preservableReference,
       isDynamic: true,
       isStaticLiteral: false,
-      template: `\${${preservableReference}}`,
+      template: templateValue.template,
+      parsedTemplate: templateValue.parsedTemplate,
       templateExpressionCount: 1,
       rawExpression: preservableReference,
     };
   }
 
-  // Fallback: we have no parseable AST shape from Vue compiler.
-  // Attempt to parse manually to detect template literals (common for data-testid).
   const raw = (simpleExp.content ?? "").trim();
   if (!raw) {
     return null;
-  }
-
-  try {
-    const ast = parseExpression(raw, { plugins: ["typescript"] });
-    if (ast && typeof ast === "object" && "type" in ast && (ast as { type: string }).type === "TemplateLiteral") {
-      const tl = ast as { quasis: Array<{ value?: { cooked?: string } }>; expressions: unknown[] };
-      const cooked = (tl.quasis ?? []).map(q => q.value?.cooked ?? "").join("");
-      const expressionCount = (tl.expressions ?? []).length;
-      const isStatic = expressionCount === 0;
-
-      const unwrappedTemplate = (raw.startsWith("`") && raw.endsWith("`") && raw.length >= 2)
-        ? raw.slice(1, -1)
-        : cooked;
-
-      if (isStatic) {
-        return { value: unwrappedTemplate, isDynamic: false, isStaticLiteral: true };
-      }
-
-      return {
-        value: unwrappedTemplate,
-        isDynamic: true,
-        isStaticLiteral: false,
-        template: unwrappedTemplate,
-        templateExpressionCount: expressionCount,
-      };
-    }
-
-    if (ast && typeof ast === "object" && "type" in ast && (ast as { type: string }).type === "StringLiteral") {
-      const sl = ast as { value?: string };
-      return { value: sl.value ?? "", isDynamic: false, isStaticLiteral: true };
-    }
-
-    const preservableReference = tryGetPreservableDynamicReferenceExpression(ast as BabelNode | null | false | undefined);
-    if (preservableReference) {
-      return {
-        value: preservableReference,
-        isDynamic: true,
-        isStaticLiteral: false,
-        template: `\${${preservableReference}}`,
-        templateExpressionCount: 1,
-        rawExpression: preservableReference,
-      };
-    }
-  } catch {
-    // Ignore parse errors; fall through to generic dynamic fallback.
   }
 
   return { value: raw, isDynamic: true, isStaticLiteral: false, rawExpression: raw };
 }
 
 function isTemplatePlaceholder(part: string) {
-  // Avoid regex literals here; this only needs to detect the simple `${...}` wrapper.
-  return part.startsWith("${") && part.endsWith("}") && part.length >= 3;
+  const parsedTemplate = tryParseTemplateFragment(part);
+  const templateFragment = parsedTemplate ? getSingleExpressionTemplateFragment(parsedTemplate) : null;
+  return !!templateFragment && templateFragment.prefix === "" && templateFragment.suffix === "";
 }
 
 function isAllCapsOrDigits(value: string): boolean {
@@ -2240,40 +2595,20 @@ function safeMethodNameFromParts(parts: string[]) {
 }
 
 /**
- * Replaces any `${...}` interpolation in a template string with the stable placeholder `${key}`.
+ * Replaces any `${...}` interpolation in a template string with the stable POM placeholder `${key}`.
  *
- * IMPORTANT: This function does NOT attempt to parse the template expression(s). It is a
- * best-effort scanner that preserves literal text and normalizes interpolation slots.
+ * This is only for the generated POM selector shape. Runtime/test-id generation keeps the real
+ * interpolation expressions; the POM layer just needs to know that a keyed slot exists and where
+ * it sits relative to the surrounding literal text.
  */
-function replaceAllTemplateExpressionsWithKey(template: string): string {
+function toPomKeyPattern(templateValue: Extract<AttributeValue, { kind: "template" }>): string {
+  const { templateLiteral } = templateValue.parsedTemplate;
   let out = "";
-  let i = 0;
-  while (i < template.length) {
-    const start = template.indexOf("${", i);
-    if (start < 0) {
-      out += template.slice(i);
-      break;
+  for (let i = 0; i < templateLiteral.quasis.length; i += 1) {
+    out += templateLiteral.quasis[i]?.value.raw ?? "";
+    if (templateLiteral.expressions[i]) {
+      out += "${key}";
     }
-    out += template.slice(i, start);
-    // Find the closing brace, accounting for nested braces within the interpolation.
-    let depth = 1;
-    let j = start + 2;
-    while (j < template.length && depth > 0) {
-      if (template[j] === "{") {
-        depth++;
-      } else if (template[j] === "}") {
-        depth--;
-      }
-      j++;
-    }
-    const end = depth === 0 ? j - 1 : -1;
-    if (end < 0) {
-      // Malformed; append rest and stop.
-      out += template.slice(start);
-      break;
-    }
-    out += "${key}";
-    i = end + 1;
   }
   return out;
 }
@@ -2283,7 +2618,7 @@ export const __internal = {
   isSimpleScopeIdentifier,
   safeMethodNameFromParts,
   splitNullishCoalescingExpression,
-  replaceAllTemplateExpressionsWithKey,
+  toPomKeyPattern,
 };
 
 /**
@@ -2301,12 +2636,11 @@ export function applyResolvedDataTestId(args: {
   generatedMethodContentByComponent: Map<string, Set<string>>;
   nativeRole: string;
   preferredGeneratedValue: AttributeValue;
-  bestKeyPlaceholder: string | null;
-  /** Optional variable name that must be present in a placeholder (e.g. "data" from slot scope). */
-  bestKeyVariable?: string | null;
+  preferredRuntimeValue?: AttributeValue;
+  keyInfo: ResolvedKeyInfo | null;
   /** Optional enumerable key values (e.g. derived from v-for="item in ['One','Two']"). */
   keyValuesOverride?: string[] | null;
-  entryOverrides?: Partial<IDataTestId>;
+  entryOverrides?: DataTestIdEntryOverrides;
   /**
    * Semantic naming hint used for generating method/property names.
    *
@@ -2337,28 +2671,28 @@ export function applyResolvedDataTestId(args: {
   /**
    * How to handle an author-provided existing test id attribute when we encounter one.
    *
-   * - "preserve": keep the existing value (default)
+   * - "error": throw to force cleanup/migration (default)
+   * - "preserve": keep the existing value
    * - "overwrite": replace it with the generated value
-   * - "error": throw to force cleanup/migration
    */
   existingIdBehavior?: "preserve" | "overwrite" | "error";
 
   /**
    * Controls what happens when the generator would emit duplicate POM member names within the same class.
-   * - "error": throw and fail compilation
+   * - "error": throw and fail compilation (default)
    * - "warn": warn and append a suffix
-   * - "suffix": append a suffix silently (default)
+   * - "suffix": append a suffix silently
    */
   nameCollisionBehavior?: "error" | "warn" | "suffix";
 
   /** Optional warning sink (typically the shared generator logger). */
   warn?: (message: string) => void;
-}): void {
+}): ResolvedDataTestIdValues {
   const addHtmlAttribute = args.addHtmlAttribute ?? true;
   const entryOverrides = args.entryOverrides ?? {};
   const testIdAttribute = args.testIdAttribute ?? "data-testid";
-  const existingIdBehavior = args.existingIdBehavior ?? "preserve";
-  const nameCollisionBehavior = args.nameCollisionBehavior ?? "suffix";
+  const existingIdBehavior = args.existingIdBehavior ?? "error";
+  const nameCollisionBehavior = args.nameCollisionBehavior ?? "error";
   const warn = args.warn;
 
   const getBestKeyAccessCandidates = (expr: string | null | undefined) => {
@@ -2371,7 +2705,10 @@ export function applyResolvedDataTestId(args: {
 
   // 1) Resolve effective data-testid (respecting any existing attribute).
   let dataTestId = args.preferredGeneratedValue;
+  let runtimeDataTestId = args.preferredRuntimeValue ?? args.preferredGeneratedValue;
   let fromExisting = false;
+  const bestKeyPreservePlaceholder = args.keyInfo?.runtimeFragment ?? null;
+  const bestKeyVariable = args.keyInfo?.rawExpression ?? null;
 
   const existing = tryGetExistingElementDataTestId(args.element, testIdAttribute);
   if (existing) {
@@ -2400,9 +2737,13 @@ export function applyResolvedDataTestId(args: {
 
       if (existing.isDynamic) {
         if (existing.template) {
-          const existingTemplate = existing.template;
+          const existingTemplateValue = existing.parsedTemplate
+            ? { kind: "template", template: existing.template, parsedTemplate: existing.parsedTemplate } as const
+            : templateAttributeValue(existing.template);
+          const existingTemplateFragment = getSingleExpressionTemplateFragment(existingTemplateValue.parsedTemplate);
+          const requiredKeyTemplateValue = bestKeyPreservePlaceholder ? templateAttributeValue(bestKeyPreservePlaceholder) : null;
 
-          if ((existing.templateExpressionCount ?? 0) !== 1) {
+          if ((existing.templateExpressionCount ?? 0) !== 1 || !existingTemplateFragment) {
             throw new Error(
               `[vue-pom-generator] Existing ${attrLabel} is a template literal with multiple interpolations and cannot be preserved safely.\n`
               + `Component: ${args.componentName}\n`
@@ -2412,22 +2753,25 @@ export function applyResolvedDataTestId(args: {
             );
           }
 
-          const hasExact = args.bestKeyPlaceholder && existingTemplate.includes(args.bestKeyPlaceholder);
-          const hasVarAccess = getBestKeyAccessCandidates(args.bestKeyVariable)
-            .some(candidate => existingTemplate.includes(candidate));
+          const hasExact = requiredKeyTemplateValue
+            ? templateFragmentContainsSingleExpression(existingTemplateValue.parsedTemplate, requiredKeyTemplateValue.parsedTemplate)
+            : false;
+          const hasVarAccess = getBestKeyAccessCandidates(bestKeyVariable)
+            .some(candidate => existingTemplateFragment.expressionSource === candidate);
 
-          if (!hasExact && !hasVarAccess && args.bestKeyPlaceholder) {
+          if (!hasExact && !hasVarAccess && bestKeyPreservePlaceholder) {
             throw new Error(
               `[vue-pom-generator] Existing ${attrLabel} appears to be missing the key placeholder needed to keep it unique.\n`
               + `Component: ${args.componentName}\n`
               + `File: ${file}:${locationHint}\n`
               + `Existing ${attrLabel}: ${JSON.stringify(existing.value)}\n`
-              + `Required placeholder: ${JSON.stringify(args.bestKeyPlaceholder)}${args.bestKeyVariable ? ` or an access on "${args.bestKeyVariable}"` : ""}\n\n`
-              + `Fix: either (1) include ${args.bestKeyPlaceholder} in your :${attrLabel} template literal, or (2) remove the explicit ${attrLabel} so it can be auto-generated.`,
+              + `Required placeholder: ${JSON.stringify(bestKeyPreservePlaceholder)}${bestKeyVariable ? ` or an access on "${bestKeyVariable}"` : ""}\n\n`
+              + `Fix: either (1) include ${bestKeyPreservePlaceholder} in your :${attrLabel} template literal, or (2) remove the explicit ${attrLabel} so it can be auto-generated.`,
             );
           }
 
-          dataTestId = templateAttributeValue(existing.template);
+          dataTestId = existingTemplateValue;
+          runtimeDataTestId = existingTemplateValue;
           fromExisting = true;
         }
         else {
@@ -2442,18 +2786,19 @@ export function applyResolvedDataTestId(args: {
         }
       }
       else {
-        if (args.bestKeyPlaceholder && existing.isStaticLiteral) {
+        if (bestKeyPreservePlaceholder && existing.isStaticLiteral) {
           throw new Error(
             `[vue-pom-generator] Existing ${attrLabel} appears to be missing the key placeholder needed to keep it unique.\n`
             + `Component: ${args.componentName}\n`
             + `File: ${file}:${locationHint}\n`
             + `Existing ${attrLabel}: ${JSON.stringify(existing.value)}\n`
-            + `Required placeholder: ${JSON.stringify(args.bestKeyPlaceholder)}${args.bestKeyVariable ? ` or an access on "${args.bestKeyVariable}"` : ""}\n\n`
-            + `Fix: either (1) include ${args.bestKeyPlaceholder} in your :${attrLabel} template literal, or (2) remove the explicit ${attrLabel} so it can be auto-generated.`,
+            + `Required placeholder: ${JSON.stringify(bestKeyPreservePlaceholder)}${bestKeyVariable ? ` or an access on "${bestKeyVariable}"` : ""}\n\n`
+            + `Fix: either (1) include ${bestKeyPreservePlaceholder} in your :${attrLabel} template literal, or (2) remove the explicit ${attrLabel} so it can be auto-generated.`,
           );
         }
 
         dataTestId = staticAttributeValue(existing.value);
+        runtimeDataTestId = staticAttributeValue(existing.value);
         fromExisting = true;
       }
     }
@@ -2498,12 +2843,14 @@ export function applyResolvedDataTestId(args: {
   // It can be provided via entryOverrides (e.g. router-link :to resolution).
   const targetPageObjectModelClass = entryOverrides.targetPageObjectModelClass;
 
-  // Keyed-ness is represented in the selector pattern, not derived by parsing the test id.
+  // Parameterized selectors are represented explicitly in the POM spec instead of being re-inferred
+  // later from the formatted `${key}` placeholder convention.
   const formattedDataTestIdForPom = dataTestId.kind === "template"
-    ? replaceAllTemplateExpressionsWithKey(dataTestId.template)
+    ? toPomKeyPattern(dataTestId)
     : dataTestId.value;
-
-  const isKeyed = formattedDataTestIdForPom.includes("${key}");
+  const selectorPatternKind: PomPatternKind = dataTestId.kind === "template" ? "parameterized" : "static";
+  const selectorPattern = createPomStringPattern(formattedDataTestIdForPom, selectorPatternKind);
+  const selectorIsParameterized = selectorPatternKind === "parameterized";
 
   const deriveBaseMethodNameFromHint = (hint: string | undefined) => {
     const hintRaw = (hint ?? "").trim();
@@ -2568,8 +2915,8 @@ export function applyResolvedDataTestId(args: {
     const roleSuffix = upperFirst(normalizedRole || "Element");
     const baseName = upperFirst(primaryMethodName);
     const propertyName = hasRoleSuffix(baseName, roleSuffix) ? baseName : `${baseName}${roleSuffix}`;
-    // Keep behavior aligned with TS emitter: keyed getters expose `Foo[key]` by removing `ByKey`.
-    return isKeyed ? removeByKeySegment(propertyName) : propertyName;
+    // Keep behavior aligned with TS emitter: parameterized getters expose `Foo[key]` by removing `ByKey`.
+    return selectorIsParameterized ? removeByKeySegment(propertyName) : propertyName;
   };
 
   const getPrimaryGetterNameCandidates = (primaryMethodName: string): { primary: string; alternate?: string } => {
@@ -2577,7 +2924,7 @@ export function applyResolvedDataTestId(args: {
     const baseName = upperFirst(primaryMethodName);
     const propertyName = hasRoleSuffix(baseName, roleSuffix) ? baseName : `${baseName}${roleSuffix}`;
 
-    if (!isKeyed) {
+    if (!selectorIsParameterized) {
       return { primary: propertyName };
     }
 
@@ -2658,15 +3005,15 @@ export function applyResolvedDataTestId(args: {
     }
 
     const existingSelectors = [
-      existingPom.formattedDataTestId,
-      ...(existingPom.alternateFormattedDataTestIds ?? []),
+      existingPom.selector,
+      ...(existingPom.alternateSelectors ?? []),
     ];
-    const sharesSelectorIdentity = existingSelectors.includes(formattedDataTestIdForPom);
+    const sharesSelectorIdentity = existingSelectors.some(existingSelector => pomStringPatternEquals(existingSelector, selectorPattern));
 
-    // Keyed selectors are only safe to merge when both entries already resolve to the exact
-    // same keyed selector pattern. Distinct keyed lists should still force authors to
+    // Parameterized selectors are only safe to merge when both entries already resolve to the exact
+    // same selector pattern. Distinct dynamic lists should still force authors to
     // disambiguate their semantic hints instead of collapsing to one API.
-    if (isKeyed && !sharesSelectorIdentity) {
+    if (selectorIsParameterized && !sharesSelectorIdentity) {
       return false;
     }
 
@@ -2688,11 +3035,15 @@ export function applyResolvedDataTestId(args: {
     }
 
     // Merge the selector(s) into the existing primary.
-    if (existingPom.formattedDataTestId !== formattedDataTestIdForPom) {
-      existingPom.alternateFormattedDataTestIds ??= [];
-      if (!existingPom.alternateFormattedDataTestIds.includes(formattedDataTestIdForPom)) {
-        existingPom.alternateFormattedDataTestIds.push(formattedDataTestIdForPom);
+    if (!pomStringPatternEquals(existingPom.selector, selectorPattern)) {
+      existingPom.alternateSelectors ??= [];
+      if (!(existingPom.alternateSelectors ?? []).some(existingSelector => pomStringPatternEquals(existingSelector, selectorPattern))) {
+        existingPom.alternateSelectors.push(selectorPattern);
       }
+    }
+
+    if (selectorIsParameterized && !existingPom.parameters.some(param => param.name === "key")) {
+      existingPom.parameters = [createPomParameterSpec("key", keyTypeFromValues), ...existingPom.parameters];
     }
 
     return true;
@@ -2711,9 +3062,9 @@ export function applyResolvedDataTestId(args: {
 
     while (true) {
       const baseWithSuffix = suffix === 1 ? base : `${base}${suffix}`;
-      // Keep the ByKey segment at the end so downstream logic (and keyed getter naming)
+      // Keep the ByKey segment at the end so downstream logic (and parameterized getter naming)
       // can reliably strip it when needed.
-      const candidate = isKeyed ? `${baseWithSuffix}ByKey` : baseWithSuffix;
+      const candidate = selectorIsParameterized ? `${baseWithSuffix}ByKey` : baseWithSuffix;
 
       const actionName = getPrimaryActionMethodName(candidate);
 
@@ -2727,8 +3078,8 @@ export function applyResolvedDataTestId(args: {
 
       let conflicts = hasConflicts(chosenGetterName);
 
-      // Edge-case: keyed getter name (FooButton[key]) can collide with a non-keyed FooButton.
-      // When that happens, keep the ByKey segment on the keyed getter name.
+      // Edge-case: parameterized getter name (FooButton[key]) can collide with a non-parameterized
+      // FooButton. When that happens, keep the ByKey segment on the parameterized getter name.
       if (conflicts && getterCandidates.alternate) {
         const alt = getterCandidates.alternate;
         const altConflicts = hasConflicts(alt);
@@ -2761,7 +3112,7 @@ export function applyResolvedDataTestId(args: {
         // Only try role-suffixing when the base name isn't already role-suffixed.
         if (!hasRoleSuffix(baseNameUpper, roleSuffix)) {
           const baseWithRoleSuffix = `${baseWithSuffix}${roleSuffix}`;
-          const candidateWithRoleSuffix = isKeyed ? `${baseWithRoleSuffix}ByKey` : baseWithRoleSuffix;
+          const candidateWithRoleSuffix = selectorIsParameterized ? `${baseWithRoleSuffix}ByKey` : baseWithRoleSuffix;
           const actionNameWithRoleSuffix = getPrimaryActionMethodName(candidateWithRoleSuffix);
 
           const getterCandidatesWithRoleSuffix = getPrimaryGetterNameCandidates(candidateWithRoleSuffix);
@@ -2774,7 +3125,7 @@ export function applyResolvedDataTestId(args: {
 
           let conflictsWithRoleSuffix = hasConflictsWithRoleSuffix(chosenGetterNameWithRoleSuffix);
 
-          // Preserve keyed edge-case behavior: allow keeping ByKey segment on the getter.
+          // Preserve the parameterized edge-case behavior: allow keeping ByKey on the getter.
           if (conflictsWithRoleSuffix && getterCandidatesWithRoleSuffix.alternate) {
             const alt = getterCandidatesWithRoleSuffix.alternate;
             const altConflicts = hasConflictsWithRoleSuffix(alt);
@@ -2851,41 +3202,35 @@ export function applyResolvedDataTestId(args: {
     );
   }
 
-  const params: Record<string, string> = {};
-  if (isKeyed) {
-    params.key = keyTypeFromValues;
-  }
+  let parameters: PomParameterSpec[] = selectorIsParameterized
+    ? [createPomParameterSpec("key", keyTypeFromValues)]
+    : [];
 
   switch (normalizedRole) {
     case "input":
-      params.text = "string";
-      params.annotationText = "string = \"\"";
-      if (!isKeyed) delete params.key;
+      parameters = setPomParameter(parameters, "text", "string");
+      parameters = setPomParameter(parameters, "annotationText", "string = \"\"");
       break;
     case "select":
-      params.value = "string";
-      params.annotationText = "string = \"\"";
-      if (!isKeyed) delete params.key;
+      parameters = setPomParameter(parameters, "value", "string");
+      parameters = setPomParameter(parameters, "annotationText", "string = \"\"");
       break;
     case "vselect":
-      params.value = "string";
-      params.timeOut = "number = 500";
-      params.annotationText = "string = \"\"";
-      if (!isKeyed) delete params.key;
+      parameters = setPomParameter(parameters, "value", "string");
+      parameters = setPomParameter(parameters, "timeOut", "number = 500");
+      parameters = setPomParameter(parameters, "annotationText", "string = \"\"");
       break;
     case "radio":
-      // radio can be keyed (e.g. `${key}` option ids) or not.
-      params.annotationText = "string = \"\"";
+      // radio selectors can be parameterized (for dynamic option ids) or static.
+      parameters = setPomParameter(parameters, "annotationText", "string = \"\"");
       break;
     default:
       break;
   }
 
-  // If the caller provided enumerable key values (e.g. derived from a static v-for list),
-  // propagate a literal-union type into the underlying keyed locator method signature.
-  if (keyTypeFromValues !== "string" && Object.prototype.hasOwnProperty.call(params, "key")) {
-    params.key = keyTypeFromValues;
-  }
+  const normalizedParameters = selectorIsParameterized
+    ? setPomParameter(parameters, "key", keyTypeFromValues)
+    : removePomParameter(parameters, "key");
 
   // 3) Apply attribute (only when we generated it) and register for POM generation.
   if (addHtmlAttribute && !fromExisting) {
@@ -2894,9 +3239,12 @@ export function applyResolvedDataTestId(args: {
 
   const childComponentName = args.element.tag;
   const dataTestIdEntry: IDataTestId = {
-    value: getAttributeValueText(dataTestId),
-    templateLiteral: undefined,
-    ...entryOverrides,
+    selectorValue: entryOverrides.selectorValue ?? createPomStringPattern(
+      getAttributeValueText(dataTestId),
+      dataTestId.kind === "template" ? "parameterized" : "static",
+    ),
+    templateLiteral: entryOverrides.templateLiteral,
+    targetPageObjectModelClass: entryOverrides.targetPageObjectModelClass,
   };
 
   // Store the primary POM spec so emitters can generate POMs for multiple languages.
@@ -2905,10 +3253,10 @@ export function applyResolvedDataTestId(args: {
     nativeRole: normalizedRole,
     methodName,
     getterNameOverride,
-    formattedDataTestId: formattedDataTestIdForPom,
-    alternateFormattedDataTestIds: undefined,
+    selector: selectorPattern,
+    alternateSelectors: undefined,
     mergeKey: args.pomMergeKey,
-    params,
+    parameters: normalizedParameters,
     keyValuesOverride: args.keyValuesOverride ?? null,
     // emitPrimary defaults to true; special cases (including merge) may set it to false below.
   };
@@ -2946,61 +3294,25 @@ export function applyResolvedDataTestId(args: {
   };
 
   const getSignatureForGeneratedMethod = () => {
-    const role = normalizedRole;
-    const isNavigation = !!dataTestIdEntry.targetPageObjectModelClass;
-    const needsKey = Object.prototype.hasOwnProperty.call(params, "key");
-    const keyType = keyTypeFromValues;
-
-    if (isNavigation) {
-      if (needsKey) {
-        return { params: `key: ${keyType}`, argNames: ["key"] };
-      }
-      return { params: "", argNames: [] };
-    }
-
-    switch (role) {
-      case "input":
-        return needsKey
-          ? { params: `key: ${keyType}, text: string, annotationText: string = ""`, argNames: ["key", "text", "annotationText"] }
-          : { params: "text: string, annotationText: string = \"\"", argNames: ["text", "annotationText"] };
-      case "select":
-        return needsKey
-          ? { params: `key: ${keyType}, value: string, annotationText: string = ""`, argNames: ["key", "value", "annotationText"] }
-          : { params: "value: string, annotationText: string = \"\"", argNames: ["value", "annotationText"] };
-      case "vselect":
-        return needsKey
-          ? { params: `key: ${keyType}, value: string, timeOut = 500`, argNames: ["key", "value", "timeOut"] }
-          : { params: "value: string, timeOut = 500", argNames: ["value", "timeOut"] };
-      case "radio":
-        return needsKey
-          ? { params: `key: ${keyType}, annotationText: string = ""`, argNames: ["key", "annotationText"] }
-          : { params: "annotationText: string = \"\"", argNames: ["annotationText"] };
-      default:
-        if (needsKey) {
-          return { params: `key: ${keyType}`, argNames: ["key"] };
-        }
-        return { params: "", argNames: [] };
-    }
+    return createPomMethodSignature(normalizedParameters);
   };
 
   const registerPrimaryOnce = (pom: PomPrimarySpec) => {
-    const stableParams = pom.params
-      ? Object.fromEntries(Object.entries(pom.params).sort((a, b) => a[0].localeCompare(b[0])))
-      : undefined;
-
-    const alternates = (pom.alternateFormattedDataTestIds ?? []).slice().sort();
+    const alternates = (pom.alternateSelectors ?? [])
+      .slice()
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
 
     // Deduplicate by a stable key rather than by emitted code strings.
-    const key = JSON.stringify({
-      kind: "primary",
-      role: pom.nativeRole,
-      methodName: pom.methodName,
-      getterNameOverride: pom.getterNameOverride ?? null,
-      formattedDataTestId: pom.formattedDataTestId,
-      alternateFormattedDataTestIds: alternates.length ? alternates : undefined,
-      params: stableParams,
-      target: dataTestIdEntry.targetPageObjectModelClass ?? null,
-      emitPrimary: pom.emitPrimary ?? true,
+      const key = JSON.stringify({
+        kind: "primary",
+        role: pom.nativeRole,
+        methodName: pom.methodName,
+        getterNameOverride: pom.getterNameOverride ?? null,
+        selector: pom.selector,
+        alternateSelectors: alternates.length ? alternates : undefined,
+        parameters: pom.parameters,
+        target: dataTestIdEntry.targetPageObjectModelClass ?? null,
+        emitPrimary: pom.emitPrimary ?? true,
     });
 
     const seen = args.generatedMethodContentByComponent.get(args.parentComponentName) ?? new Set<string>();
@@ -3014,15 +3326,11 @@ export function applyResolvedDataTestId(args: {
   };
 
   const addExtraClickMethod = (spec: PomExtraClickMethodSpec): boolean => {
-    const stableParams = spec.params
-      ? Object.fromEntries(Object.entries(spec.params).sort((a, b) => a[0].localeCompare(b[0])))
-      : undefined;
-
     // IMPORTANT:
-    // De-dupe based on semantic identity (testId+params+keyLiteral), not the emitted method name.
+    // De-dupe based on semantic identity (testId+parameters+keyLiteral), not the emitted method name.
     // This prevents repeated passes over the same element from generating new unique names
     // (e.g. selectFoo -> selectFoo2) and growing the output.
-    const key = JSON.stringify({ kind: spec.kind, selector: spec.selector, keyLiteral: spec.keyLiteral ?? null, params: stableParams });
+    const key = JSON.stringify({ kind: spec.kind, selector: spec.selector, keyLiteral: spec.keyLiteral ?? null, parameters: spec.parameters });
     const seen = args.generatedMethodContentByComponent.get(args.parentComponentName) ?? new Set<string>();
     if (!args.generatedMethodContentByComponent.has(args.parentComponentName)) {
       args.generatedMethodContentByComponent.set(args.parentComponentName, seen);
@@ -3036,8 +3344,8 @@ export function applyResolvedDataTestId(args: {
     return true;
   };
 
-  const registerGeneratedMethodSignature = (name: string, signature: { params: string; argNames: string[] } | null) => {
-    args.dependencies.generatedMethods ??= new Map<string, { params: string; argNames: string[] } | null>();
+  const registerGeneratedMethodSignature = (name: string, signature: PomMethodSignature | null) => {
+    args.dependencies.generatedMethods ??= new Map<string, PomMethodSignature | null>();
     const prev = args.dependencies.generatedMethods.get(name);
     if (prev === undefined) {
       args.dependencies.generatedMethods.set(name, signature);
@@ -3046,7 +3354,7 @@ export function applyResolvedDataTestId(args: {
     if (prev === null) {
       return;
     }
-    if (signature === null || prev.params !== signature.params) {
+    if (signature === null || !pomMethodSignatureEquals(prev, signature)) {
       args.dependencies.generatedMethods.set(name, null);
     }
   };
@@ -3067,28 +3375,10 @@ export function applyResolvedDataTestId(args: {
   };
 
   const tryGetDirectiveExpressionAst = (dir: DirectiveNode): BabelNode | null => {
-    const exp = dir.exp;
-    if (!exp) {
-      return null;
-    }
-
-    // Prefer Vue-populated `exp.ast` when present.
-    if (exp.type === NodeTypes.SIMPLE_EXPRESSION) {
-      const simple = exp as SimpleExpressionNode;
-      const ast = simple.ast as object | null;
-      if (ast && "type" in ast) {
-        return ast as BabelNode;
-      }
-    }
-
-    // Fallback: parse the expression source.
-    try {
-      const raw = args.context ? stringifyExpression(exp) : exp.loc.source;
-      return parseExpression(raw, { plugins: ["typescript"] }) as BabelNode;
-    }
-    catch {
-      return null;
-    }
+    return tryGetDirectiveBabelAst(dir, {
+      preferredViews: args.context ? ["compiled", "loc"] : ["loc", "compiled"],
+      plugins: ["typescript"],
+    });
   };
 
   const tryGetStaticStringFromBabel = (node: BabelNode | null): string | null => {
@@ -3217,20 +3507,20 @@ export function applyResolvedDataTestId(args: {
           name: generatedName,
           selector: {
             kind: "withinTestIdByLabel",
-            rootFormattedDataTestId: wrapperTestId,
-            formattedLabel: label,
+            rootTestId: createPomStringPattern(wrapperTestId, selectorPatternKind),
+            label: createPomStringPattern(label, "static"),
             exact: true,
           },
-          params: { annotationText: `string = ""` },
+          parameters: [createPomParameterSpec("annotationText", `string = ""`)],
         });
 
         if (added) {
-          registerGeneratedMethodSignature(generatedName, { params: `annotationText: string = ""`, argNames: ["annotationText"] });
+          registerGeneratedMethodSignature(generatedName, createPomMethodSignature([createPomParameterSpec("annotationText", `string = ""`)]));
         }
       }
 
       // For statically-known options, we intentionally do NOT generate the generic parameterized method.
-      return;
+      return { selectorValue: dataTestId, runtimeValue: runtimeDataTestId, fromExisting };
     }
 
     // Dynamic options expression: generate a single method that accepts an option label string.
@@ -3247,17 +3537,23 @@ export function applyResolvedDataTestId(args: {
       name: generatedName,
       selector: {
         kind: "withinTestIdByLabel",
-        rootFormattedDataTestId: wrapperTestId,
-        formattedLabel: "${value}",
+        rootTestId: createPomStringPattern(wrapperTestId, selectorPatternKind),
+        label: createPomStringPattern("${value}", "parameterized"),
         exact: true,
       },
-      params: { value: "string", annotationText: `string = ""` },
+      parameters: [
+        createPomParameterSpec("value", "string"),
+        createPomParameterSpec("annotationText", `string = ""`),
+      ],
     });
 
     if (added) {
-      registerGeneratedMethodSignature(generatedName, { params: `value: string, annotationText: string = ""`, argNames: ["value", "annotationText"] });
+      registerGeneratedMethodSignature(generatedName, createPomMethodSignature([
+        createPomParameterSpec("value", "string"),
+        createPomParameterSpec("annotationText", `string = ""`),
+      ]));
     }
-    return;
+    return { selectorValue: dataTestId, runtimeValue: runtimeDataTestId, fromExisting };
   }
 
   // Special handling for v-for driven by a static literal list.
@@ -3267,9 +3563,8 @@ export function applyResolvedDataTestId(args: {
   //
   // This keeps the POM ergonomic and avoids pushing key plumbing into tests.
   const staticKeyValues = (args.keyValuesOverride ?? null);
-  const needsKey = Object.prototype.hasOwnProperty.call(params, "key")
-    && typeof formattedDataTestIdForPom === "string"
-    && formattedDataTestIdForPom.includes("${key}");
+  const needsKey = hasPomParameter(normalizedParameters, "key")
+    && selectorIsParameterized;
   const isNavigation = !!dataTestIdEntry.targetPageObjectModelClass;
 
   if (
@@ -3302,22 +3597,22 @@ export function applyResolvedDataTestId(args: {
         name: generatedName,
         selector: {
           kind: "testId",
-          formattedDataTestId: formattedDataTestIdForPom,
+          testId: selectorPattern,
         },
         keyLiteral: rawValue,
-        params: { wait: "boolean = true", annotationText: "string = \"\"" },
+        parameters: [createPomParameterSpec("wait", "boolean = true"), createPomParameterSpec("annotationText", "string = \"\"")],
       });
 
       if (added) {
-        registerGeneratedMethodSignature(generatedName, {
-          params: `wait: boolean = true, annotationText: string = ""`,
-          argNames: ["wait", "annotationText"],
-        });
+        registerGeneratedMethodSignature(generatedName, createPomMethodSignature([
+          createPomParameterSpec("wait", "boolean = true"),
+          createPomParameterSpec("annotationText", "string = \"\""),
+        ]));
       }
     }
 
     // For statically-known keys, we intentionally do NOT emit the generic keyed method.
-    return;
+    return { selectorValue: dataTestId, runtimeValue: runtimeDataTestId, fromExisting };
   }
 
   // Default/legacy behavior: emit the primary method+locator for this element.
@@ -3335,10 +3630,12 @@ export function applyResolvedDataTestId(args: {
     const generatedName = getGeneratedMethodName();
     registerGeneratedMethodSignature(generatedName, signature);
   }
+
+  return { selectorValue: dataTestId, runtimeValue: runtimeDataTestId, fromExisting };
 }
 
 export interface IDataTestId {
-  value: string;
+  selectorValue: PomStringPattern;
 
   /** Optional parsed/constructed template literal for AST-based formatting in codegen. */
   templateLiteral?: TemplateLiteral;
@@ -3354,12 +3651,18 @@ export interface IDataTestId {
   pom?: PomPrimarySpec;
 }
 
+export interface DataTestIdEntryOverrides {
+  selectorValue?: PomStringPattern;
+  templateLiteral?: TemplateLiteral;
+  targetPageObjectModelClass?: string;
+}
+
 /**
  * Structured representation of a generated element for POM emission.
  *
- * - `formattedDataTestId` may contain the placeholder `${key}` when keyed.
- * - `params` is TypeScript-flavored today because TS is our reference emitter;
- *   C# emission maps these params to C# types.
+ * - `selector` carries both the rendered selector text and whether it is static or parameterized.
+ * - `parameters` are TypeScript-flavored today because TS is our reference emitter;
+ *   C# emission maps these parameters to C# types.
  */
 export interface PomPrimarySpec {
   nativeRole: NativeRole;
@@ -3367,15 +3670,15 @@ export interface PomPrimarySpec {
   methodName: string;
   /** Optional override for the generated locator getter name (used for edge-case collision avoidance). */
   getterNameOverride?: string;
-  /** Test id pattern used by generated POM methods (may include `${key}` placeholder). */
-  formattedDataTestId: string;
-  /** Additional test id patterns that should be treated as equivalent to formattedDataTestId (merge-by-action). */
-  alternateFormattedDataTestIds?: string[];
+  /** Test id pattern used by generated POM methods. Parameterized patterns still render with `${key}`. */
+  selector: PomStringPattern;
+  /** Additional selector patterns that should be treated as equivalent to `selector` (merge-by-action). */
+  alternateSelectors?: PomStringPattern[];
 
   /** Optional key used to decide whether distinct elements should be merged into one POM member. */
   mergeKey?: string;
-  /** TypeScript param blocks used by the TS emitter (and signature metadata). */
-  params: Record<string, string>;
+  /** Structured method parameters used by emitters and signature metadata. */
+  parameters: PomParameterSpec[];
   /** Optional enum values for key when derived from a static v-for list. */
   keyValuesOverride?: string[] | null;
 
@@ -3386,15 +3689,15 @@ export interface PomPrimarySpec {
 export type PomSelectorSpec =
   | {
     kind: "testId";
-    /** Static or keyed test id; keyed uses `${key}` placeholder. */
-    formattedDataTestId: string;
+    /** Static or parameterized test id; parameterized patterns render with `${key}`. */
+    testId: PomStringPattern;
   }
   | {
     kind: "withinTestIdByLabel";
     /** Wrapper/root test id to scope the label search under. */
-    rootFormattedDataTestId: string;
-    /** Visible label text; may include `${value}` placeholder for dynamic methods. */
-    formattedLabel: string;
+    rootTestId: PomStringPattern;
+    /** Visible label text; parameterized labels may contain `${value}`. */
+    label: PomStringPattern;
     exact?: boolean;
   };
 
@@ -3411,7 +3714,7 @@ export interface PomExtraClickMethodSpec {
   selector: PomSelectorSpec;
   /** Optional fixed key to substitute into `${key}` in the method body. */
   keyLiteral?: string;
-  params: Record<string, string>;
+  parameters: PomParameterSpec[];
 }
 
 export interface IComponentDependencies {
@@ -3435,10 +3738,10 @@ export interface IComponentDependencies {
    * without re-parsing the generated TypeScript.
    *
    * - key: method name
-   * - value: { params, argNames } when the signature is known and consistent
+   * - value: structured parameters when the signature is known and consistent
    *          null when multiple distinct signatures were observed for the same name
    */
-  generatedMethods?: Map<string, { params: string; argNames: string[] } | null>;
+  generatedMethods?: Map<string, PomMethodSignature | null>;
   isView?: boolean;
 
   /**

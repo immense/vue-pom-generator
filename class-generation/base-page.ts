@@ -1,5 +1,5 @@
 import type { PwLocator, PwPage } from "./playwright-types";
-import { TESTID_CLICK_EVENT_NAME, TESTID_CLICK_EVENT_STRICT_FLAG } from "../click-instrumentation";
+import { TESTID_CLICK_EVENT_NAME } from "../click-instrumentation";
 import type { TestIdClickEventDetail } from "../click-instrumentation";
 import { Callout } from "./callout";
 import type { CalloutRenderer } from "./callout";
@@ -118,6 +118,10 @@ export class BasePage {
     this.pointer = new Pointer(this.page, this.testIdAttribute, this.callout, pointerRenderer);
   }
 
+  public get screencast(): PwPage["screencast"] {
+    return this.page.screencast;
+  }
+
   private async waitForTestIdClickEventAfter(testId: string, options?: { timeoutMs?: number }): Promise<void> {
     if (!REQUIRE_CLICK_EVENT) {
       return;
@@ -135,22 +139,12 @@ export class BasePage {
     // In that scenario, the click already did its job; don't fail the test infra.
     try {
       await this.page.evaluate(
-        ({ eventName, strictFlagName, expectedTestId, timeoutMs, requireEvent, debug }) => {
+        ({ eventName, expectedTestId, timeoutMs, requireEvent, debug }) => {
           return new Promise<void>((resolve, reject) => {
             const g = globalThis;
             if (!g || typeof g.addEventListener !== "function") {
               reject(new Error(`Click instrumentation not available (no addEventListener) for '${expectedTestId}'`));
               return;
-            }
-
-            // Mark strict mode in the page so the injected click wrapper can
-            // fail fast (no fallback) when instrumentation is expected.
-            if (requireEvent) {
-              try {
-                type GlobalWithFlag = typeof globalThis & { [k: string]: boolean | undefined };
-                (g as GlobalWithFlag)[strictFlagName] = true;
-              }
-              catch { /* noop */ }
             }
 
             const cleanup = (timer: ReturnType<typeof setTimeout>, onEvent: (evt: Event) => void) => {
@@ -216,7 +210,6 @@ export class BasePage {
         },
         {
           eventName: TESTID_CLICK_EVENT_NAME,
-          strictFlagName: TESTID_CLICK_EVENT_STRICT_FLAG,
           expectedTestId: testId,
           timeoutMs,
           requireEvent,

@@ -193,30 +193,6 @@ describe("createVuePomGeneratorPlugins options", () => {
     expect(names).toContain("vue-pom-generator-dev");
   });
 
-  it("accepts root-level errorBehavior as a string", async () => {
-    const plugins = createVuePomGeneratorPlugins({
-      errorBehavior: "error",
-      generation: {
-        outDir: "./tests/playwright/generated",
-      },
-    });
-
-    await expect(runConfigResolved(plugins)).resolves.toBeUndefined();
-  });
-
-  it("accepts root-level errorBehavior as an object", async () => {
-    const plugins = createVuePomGeneratorPlugins({
-      errorBehavior: {
-        missingSemanticNameBehavior: "error",
-      },
-      generation: {
-        outDir: "./tests/playwright/generated",
-      },
-    });
-
-    await expect(runConfigResolved(plugins)).resolves.toBeUndefined();
-  });
-
   it("accepts split Playwright output structure", async () => {
     const plugins = createVuePomGeneratorPlugins({
       generation: {
@@ -266,30 +242,6 @@ describe("createVuePomGeneratorPlugins options", () => {
     await expect(runConfigResolved(plugins)).rejects.toThrow("generation.router.entry");
   });
 
-  it("fails fast for invalid root-level errorBehavior string", async () => {
-    const plugins = createVuePomGeneratorPlugins({
-      errorBehavior: "strict" as "ignore",
-      generation: {
-        outDir: "tests/playwright/generated",
-      },
-    });
-
-    await expect(runConfigResolved(plugins)).rejects.toThrow("errorBehavior");
-  });
-
-  it("fails fast for invalid root-level errorBehavior object", async () => {
-    const plugins = createVuePomGeneratorPlugins({
-      errorBehavior: {
-        missingSemanticNameBehavior: "strict" as "ignore",
-      },
-      generation: {
-        outDir: "tests/playwright/generated",
-      },
-    });
-
-    await expect(runConfigResolved(plugins)).rejects.toThrow("errorBehavior.missingSemanticNameBehavior");
-  });
-
   it("fails fast for invalid generation.playwright.outputStructure", async () => {
     const plugins = createVuePomGeneratorPlugins({
       generation: {
@@ -335,9 +287,6 @@ describe("createVuePomGeneratorPlugins options", () => {
 
   it("supports alias and typed config helper exports", () => {
     const config = defineVuePomGeneratorConfig({
-      errorBehavior: {
-        missingSemanticNameBehavior: "error",
-      },
       generation: false,
       vueOptions: {
         script: { defineModel: true },
@@ -347,9 +296,6 @@ describe("createVuePomGeneratorPlugins options", () => {
     const plugins = vuePomGenerator(config);
     expect(Array.isArray(plugins)).toBe(true);
     expect(plugins.length).toBeGreaterThan(0);
-    expect(config.errorBehavior).toEqual({
-      missingSemanticNameBehavior: "error",
-    });
 
     const nuxtConfig = defineNuxtPomGeneratorConfig({
       generation: false,
@@ -423,6 +369,44 @@ describe("createVuePomGeneratorPlugins options", () => {
       expect(compilerOptions?.nodeTransforms?.length).toBeGreaterThan(0);
       expect(compilerOptions?.expressionPlugins).toContain("typescript");
       expect(compilerOptions?.prefixIdentifiers).toBe(true);
+    });
+  });
+
+  it("fails fast when auto-detected Nuxt projects cannot find vite:vue to patch", async () => {
+    await withTempProject({
+      "package.json": JSON.stringify({
+        devDependencies: {
+          nuxt: "^4.0.0",
+        },
+      }),
+      "app.vue": "<template><div /></template>",
+    }, async () => {
+      const plugins = createVuePomGeneratorPlugins({
+        generation: {
+          outDir: "tests/playwright/generated",
+        },
+      });
+
+      const configPlugin = plugins
+        .map((p) => {
+          if (typeof p !== "object" || !p || !("name" in p))
+            return null;
+          return p as ConfigPlugin;
+        })
+        .find(p => p?.name === "vue-pom-generator-config");
+
+      if (!configPlugin?.configResolved)
+        throw new Error("config plugin not found");
+
+      await expect(configPlugin.configResolved({
+        root: "/project",
+        logger: {
+          info() {},
+          warn() {},
+          error() {},
+        },
+        plugins: [],
+      })).rejects.toThrow("Nuxt bridge could not find vite:vue plugin to patch");
     });
   });
 });

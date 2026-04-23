@@ -8,6 +8,8 @@ import { describe, expect, it } from "vitest";
 
 import type { IComponentDependencies, IDataTestId } from "../utils";
 import { generateFiles } from "../class-generation";
+import { createPomMethodSignature, createPomParameters } from "../pom-params";
+import { createPomStringPattern } from "../pom-patterns";
 import { renderTypeScriptLines } from "../typescript-codegen";
 
 function writeFile(filePath: string, content: string) {
@@ -253,7 +255,7 @@ describe("class-generation coverage", () => {
       );
 
       const dt: IDataTestId = {
-        value: "TenantListPage-NewTenant-routerlink",
+        selectorValue: createPomStringPattern("TenantListPage-NewTenant-routerlink", "static"),
         targetPageObjectModelClass: "NewTenantPage",
       };
 
@@ -266,9 +268,9 @@ describe("class-generation coverage", () => {
       const depsForm = makeDeps({
         filePath: path.join(tempRoot, "src", "components", "TenantDetailsEditForm.vue"),
         isView: false,
-        dataTestIdSet: new Set([{ value: "TenantDetailsEditForm-Name-input" }]),
+        dataTestIdSet: new Set([{ selectorValue: createPomStringPattern("TenantDetailsEditForm-Name-input", "static") }]),
         generatedMethods: new Map([
-          ["typeTenantName", { params: "name: string", argNames: ["name"] }],
+          ["typeTenantName", createPomMethodSignature(createPomParameters(["name", "string"]))],
         ]),
       });
 
@@ -318,7 +320,7 @@ describe("class-generation coverage", () => {
       );
 
       const navigationEntry: IDataTestId = {
-        value: "TenantListPage-NewTenant-routerlink",
+        selectorValue: createPomStringPattern("TenantListPage-NewTenant-routerlink", "static"),
         targetPageObjectModelClass: "NewTenantPage",
       };
 
@@ -332,9 +334,9 @@ describe("class-generation coverage", () => {
       const depsForm = makeDeps({
         filePath: path.join(tempRoot, "src", "components", "TenantDetailsEditForm.vue"),
         isView: false,
-        dataTestIdSet: new Set([{ value: "TenantDetailsEditForm-Name-input" }]),
+        dataTestIdSet: new Set([{ selectorValue: createPomStringPattern("TenantDetailsEditForm-Name-input", "static") }]),
         generatedMethods: new Map([
-          ["typeTenantName", { params: "name: string", argNames: ["name"] }],
+          ["typeTenantName", createPomMethodSignature(createPomParameters(["name", "string"]))],
         ]),
       });
 
@@ -438,7 +440,7 @@ describe("class-generation coverage", () => {
       const depsUsersView = makeDeps({
         filePath: path.join(tempRoot, "UsersView.vue"),
         isView: true,
-        dataTestIdSet: new Set([{ value: "UsersView-EnableSessionEmails-toggle" }]),
+        dataTestIdSet: new Set([{ selectorValue: createPomStringPattern("UsersView-EnableSessionEmails-toggle", "static") }]),
       });
 
       // Provide custom widget helpers so the generated file has imports for ToggleWidget.
@@ -529,7 +531,7 @@ describe("class-generation coverage", () => {
           makeDeps({
             filePath: viewPath,
             isView: true,
-            dataTestIdSet: new Set<IDataTestId>([{ value: "List-FetchData-button" }]),
+            dataTestIdSet: new Set<IDataTestId>([{ selectorValue: createPomStringPattern("List-FetchData-button", "static") }]),
           }),
         ],
       ]);
@@ -627,25 +629,17 @@ describe("class-generation coverage", () => {
     }
   });
 
-  it("C#: dynamic-test-id input element generates key+text params so the locator compiles", async () => {
-    // Regression: when an <input> has :data-testid="`...-${key}`", the C# generator was
-    // emitting `(string text, string annotationText = "")` but the locator body referenced
-    // `{key}` — causing a CS0103 compile error.  Both params must appear together.
-    //
-    // Simulate the broken state: params lacks `key` (as utils.ts incorrectly deletes it
-    // for input elements with dynamic test IDs).  The C# generator must add it when the
-    // formattedDataTestId contains `${key}`.
+  it("C#: fails fast when parameterized selectors omit key params", async () => {
     const tempRoot = makeTempRoot("vue-pom-csharp-dyn-input-");
 
     try {
       const dt: IDataTestId = {
-        value: "items-check-${key}",
+        selectorValue: createPomStringPattern("items-check-${key}", "parameterized"),
         pom: {
           nativeRole: "input",
           methodName: "ItemsCheckByKey",
-          formattedDataTestId: "items-check-${key}",
-          // Broken params as currently produced by utils.ts: key is absent
-          params: { text: "string", annotationText: "string = \"\"" },
+          selector: createPomStringPattern("items-check-${key}", "parameterized"),
+          parameters: createPomParameters(["text", "string"], ["annotationText", "string = \"\""]),
         },
       };
 
@@ -661,25 +655,48 @@ describe("class-generation coverage", () => {
       ]);
 
       const outDir = path.join(tempRoot, "pom");
-      await generateFiles(componentHierarchyMap, new Map(), null as any, {
+      await expect(generateFiles(componentHierarchyMap, new Map(), null as any, {
         outDir,
         emitLanguages: ["csharp"],
         csharp: { namespace: "Test.Generated" },
-      });
+      })).rejects.toThrow(/Missing selector parameter\(s\) "key"/);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
 
-      const csFile = path.join(outDir, "page-object-models.g.cs");
-      const cs = readFile(csFile);
-      const csGitAttributesPath = path.join(outDir, ".gitattributes");
-      expect(fs.existsSync(csGitAttributesPath)).toBe(true);
-      expect(readFile(csGitAttributesPath)).toContain("page-object-models.g.cs linguist-generated");
+  it("C#: fails fast when parameterized selectors omit non-key template variables", async () => {
+    const tempRoot = makeTempRoot("vue-pom-csharp-selector-vars-");
 
-      // The locator must include key as a parameter, not just text.
-      expect(cs).toContain("string key");
-      // Locator body must use {key} interpolation.
-      expect(cs).toContain("items-check-{key}");
-      // The method must compile: key must not be an undeclared reference.
-      // (If key appears only in the template but not in the signature, C# throws CS0103.)
-      expect(cs).toMatch(/ItemsCheckByKeyInput\(string key/);
+    try {
+      const dt: IDataTestId = {
+        selectorValue: createPomStringPattern("items-check-${itemId}", "parameterized"),
+        pom: {
+          nativeRole: "input",
+          methodName: "ItemsCheckByKey",
+          selector: createPomStringPattern("items-check-${itemId}", "parameterized"),
+          // Simulate stale/manual IR that forgot to carry the selector variable name.
+          parameters: createPomParameters(["text", "string"], ["annotationText", "string = \"\""]),
+        },
+      };
+
+      const componentHierarchyMap = new Map<string, IComponentDependencies>([
+        [
+          "ItemsPage",
+          makeDeps({
+            filePath: path.join(tempRoot, "src", "views", "ItemsPage.vue"),
+            isView: true,
+            dataTestIdSet: new Set([dt]),
+          }),
+        ],
+      ]);
+
+      const outDir = path.join(tempRoot, "pom");
+      await expect(generateFiles(componentHierarchyMap, new Map(), null as any, {
+        outDir,
+        emitLanguages: ["csharp"],
+        csharp: { namespace: "Test.Generated" },
+      })).rejects.toThrow(/Missing selector parameter\(s\) "itemId"/);
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -690,12 +707,12 @@ describe("class-generation coverage", () => {
 
     try {
       const dt: IDataTestId = {
-        value: "TenantSelectBox-StateSelectedTenant-input",
+        selectorValue: createPomStringPattern("TenantSelectBox-StateSelectedTenant-input", "static"),
         pom: {
           nativeRole: "input",
           methodName: "StateSelectedTenant",
-          formattedDataTestId: "TenantSelectBox-StateSelectedTenant-input",
-          params: { text: "string", annotationText: "string = \"\"" },
+          selector: createPomStringPattern("TenantSelectBox-StateSelectedTenant-input", "static"),
+          parameters: createPomParameters(["text", "string"], ["annotationText", "string = \"\""]),
         },
       };
 
@@ -733,24 +750,24 @@ describe("class-generation coverage", () => {
 
     try {
       const keyedNav: IDataTestId = {
-        value: "NavHost-${value}-immynavitem",
+        selectorValue: createPomStringPattern("NavHost-${value}-immynavitem", "parameterized"),
         pom: {
           nativeRole: "button",
           methodName: "ValueByKey",
-          formattedDataTestId: "NavHost-${key}-immynavitem",
-          params: { key: "string" },
+          selector: createPomStringPattern("NavHost-${key}-immynavitem", "parameterized"),
+          parameters: createPomParameters(["key", "string"]),
         },
         targetPageObjectModelClass: "UsersPage",
       };
 
       const alternateNav: IDataTestId = {
-        value: "NavHost-SystemUpdate-routerlink",
+        selectorValue: createPomStringPattern("NavHost-SystemUpdate-routerlink", "static"),
         pom: {
           nativeRole: "button",
           methodName: "SystemUpdate",
-          formattedDataTestId: "NavHost-SystemUpdate-routerlink",
-          alternateFormattedDataTestIds: ["NavHost-Update-routerlink"],
-          params: {},
+          selector: createPomStringPattern("NavHost-SystemUpdate-routerlink", "static"),
+          alternateSelectors: [createPomStringPattern("NavHost-Update-routerlink", "static")],
+          parameters: [],
         },
         targetPageObjectModelClass: "SystemUpdatePage",
       };

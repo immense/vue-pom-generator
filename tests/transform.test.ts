@@ -1,5 +1,5 @@
 // @vitest-environment node
-import type { AttributeNode, DirectiveNode, ElementNode, ForNode, RootNode, TemplateChildNode } from '@vue/compiler-core'
+import type { AttributeNode, BindingMetadata, DirectiveNode, ElementNode, ForNode, RootNode, TemplateChildNode } from '@vue/compiler-core'
 import type { Node as BabelNode } from '@babel/types'
 
 import fs from 'node:fs'
@@ -9,12 +9,15 @@ import { fileURLToPath } from 'node:url'
 
 import type { CompilerOptions } from '@vue/compiler-dom'
 import type { IComponentDependencies, NativeWrappersMap } from '../utils'
-import { ConstantTypes, NodeTypes } from '@vue/compiler-core'
-import { baseCompile, parserOptions } from '@vue/compiler-dom'
+import { BindingTypes, ConstantTypes, NodeTypes } from '@vue/compiler-core'
+import { baseCompile, compile as compileDom, parserOptions } from '@vue/compiler-dom'
 import { parse as parseSfc } from '@vue/compiler-sfc'
 
 
 import { describe, expect, it } from 'vitest'
+import { createPomMethodSignature, createPomParameters } from '../pom-params'
+import { createPomStringPattern } from '../pom-patterns'
+import { createVuePluginWithTestIds } from '../plugin/vue-plugin'
 import { __internal, createTestIdTransform } from '../transform'
 
 
@@ -73,6 +76,47 @@ function compileAndCaptureCode(source: string, options: CompilerOptions & { file
   )
 
   return result.code
+}
+
+function compileWithRuntimeTemplateOptions(
+  source: string,
+  options: {
+    nativeWrappers?: NativeWrappersMap
+    bindingMetadata?: BindingMetadata
+  } = {},
+): string {
+  const componentHierarchyMap = new Map<string, IComponentDependencies>()
+  const { templateCompilerOptions } = createVuePluginWithTestIds({
+    existingIdBehavior: 'preserve',
+    nameCollisionBehavior: 'error',
+    nativeWrappers: options.nativeWrappers ?? {},
+    elementMetadata: new Map(),
+    semanticNameMap: new Map(),
+    componentHierarchyMap,
+    vueFilesPathMap: new Map(),
+    excludedComponents: [],
+    getViewsDirAbs: () => '/src/views',
+    testIdAttribute: 'data-testid',
+    loggerRef: {
+      current: {
+        info() {},
+        debug() {},
+        warn() {},
+      },
+    },
+    getSourceDirs: () => ['/src/views', '/src/components'],
+    getWrapperSearchRoots: () => [],
+    getProjectRoot: () => '/',
+  })
+
+  return compileDom(source, {
+    ...templateCompilerOptions,
+    filename: '/src/views/MyComp.vue',
+    inline: true,
+    cacheHandlers: true,
+    bindingMetadata: options.bindingMetadata,
+    mode: 'module',
+  }).code
 }
 
 function findFirstDataTestIdDirectiveExpAst(root: RootNode): BabelNode | null | false | undefined {
@@ -278,7 +322,7 @@ describe('createTestIdTransform', () => {
 
     const deps = componentHierarchyMap.get('MyComp')
     expect(deps).toBeTruthy()
-    expect(Array.from(deps!.dataTestIdSet).some(e => e.value === 'MyComp-Save-button')).toBe(true)
+    expect(Array.from(deps!.dataTestIdSet).some(e => e.selectorValue.formatted === 'MyComp-Save-button')).toBe(true)
   })
 
   it('preserves existing data-testid when existingIdBehavior is preserve', () => {
@@ -402,8 +446,78 @@ describe('createTestIdTransform', () => {
       },
     )
 
-    expect(code).toContain('MyComp-${`${_ctx.item.id}-line-${matches.lineNumber}`}-LineSelected-li')
+    expect(code).toContain('"data-testid": `MyComp-${_ctx.item.id}-line-${matches.lineNumber}-LineSelected-li`')
+    expect(code).not.toContain('${`${item.id}-line-${matches.lineNumber}`}')
     expect(code).not.toContain('_ctx._ctx.item.id')
+  })
+
+  it('preserves keyed template segments that start with literal text', () => {
+    const componentHierarchyMap = new Map()
+
+    const code = compileAndCaptureCode(
+      [
+        '<ul>',
+        '  <li',
+        '    v-for="item in items"',
+        '    :key="`line-${item.id}`"',
+        '    @click="select(item)"',
+        '  >',
+        '    {{ item.id }}',
+        '  </li>',
+        '</ul>',
+      ].join('\n'),
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views', { existingIdBehavior: 'preserve' })],
+      },
+    )
+
+    expect(code).toContain('"data-testid": `MyComp-line-${item.id}-Select-li`')
+    expect(code).not.toContain('${line-${item.id}}')
+  })
+
+  it('injects click instrumentation by default', () => {
+    const code = compileWithRuntimeTemplateOptions(
+      `
+        <ImmyTable>
+          <template #actions="{ item }">
+            <ImmyButton @click="remove(item)">Remove</ImmyButton>
+          </template>
+        </ImmyTable>
+      `,
+      {
+        nativeWrappers: { ImmyButton: { role: 'button' } },
+        bindingMetadata: {
+          remove: BindingTypes.SETUP_CONST,
+        },
+      },
+    )
+
+    expect(code).toContain('__testid_event__')
+    expect(code).toContain('"data-click-instrumented": "1"')
+    expect(code).toContain('"data-testid": `MyComp-${item.key ?? item.data?.id ?? item.id ?? item.value ?? item}-Remove-button`')
+    expect(code).not.toContain('__testid_click_event_strict__')
+  })
+
+  it('prefixes component-scope identifiers inside keyed router-link test ids', () => {
+    const componentHierarchyMap = new Map()
+
+    const code = compileAndCaptureCode(
+      `
+        <RouterLink :key="\`${'${'}item.name}-${'${'}item.url}\`" :to="item.url">
+          {{ item.name }}
+        </RouterLink>
+      `,
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+      },
+    )
+
+    expect(code).toContain('_ctx.item.name')
+    expect(code).toContain('_ctx.item.url')
+    expect(code).toContain('"data-testid": `MyComp-${_ctx.item.name}-${_ctx.item.url}--routerlink`')
+    expect(code).not.toContain('${`${item.name}-${item.url}`}')
   })
 
   it('ignores singleton :key values when generating click test ids', () => {
@@ -428,7 +542,7 @@ describe('createTestIdTransform', () => {
       '<button :key="activeTab" data-testid="target-visibility-selector" @click="select">Select</button>',
       {
         filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views', { existingIdBehavior: 'preserve' })],
       },
     )
 
@@ -609,10 +723,10 @@ describe('createTestIdTransform', () => {
 
     const primary = fieldValuePoms.find(p => p.emitPrimary !== false)
     const mergedSecondary = fieldValuePoms.find(p => p.emitPrimary === false)
-    expect(primary?.formattedDataTestId).toBe('DynamicFormField-FieldValue-input')
+    expect(primary?.selector).toEqual(createPomStringPattern('DynamicFormField-FieldValue-input', 'static'))
     expect(primary?.mergeKey).toContain('wrapper:ifgroup:')
     expect(primary?.mergeKey).toContain(':model:FieldValue')
-    expect(primary?.alternateFormattedDataTestIds).toBeUndefined()
+    expect(primary?.alternateSelectors).toBeUndefined()
     expect(mergedSecondary?.emitPrimary).toBe(false)
   })
 
@@ -623,7 +737,7 @@ describe('createTestIdTransform', () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set(),
-      generatedMethods: new Map([['clickShowMediaLibrary', { params: 'wait: boolean = true, annotationText: string = ""', argNames: ['wait', 'annotationText'] }]]),
+      generatedMethods: new Map([['clickShowMediaLibrary', createPomMethodSignature(createPomParameters(['wait', 'boolean = true'], ['annotationText', 'string = ""']))]]),
       reservedPomMemberNames: new Set(['ShowMediaLibraryButton', 'clickShowMediaLibrary']),
       isView: false,
     })
@@ -660,7 +774,7 @@ describe('createTestIdTransform', () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set(),
-      generatedMethods: new Map([['clickShowMediaLibrary', { params: 'wait: boolean = true, annotationText: string = ""', argNames: ['wait', 'annotationText'] }]]),
+      generatedMethods: new Map([['clickShowMediaLibrary', createPomMethodSignature(createPomParameters(['wait', 'boolean = true'], ['annotationText', 'string = ""']))]]),
       reservedPomMemberNames: new Set(['ShowMediaLibraryButton', 'clickShowMediaLibrary']),
       isView: false,
     })
@@ -701,7 +815,7 @@ describe('createTestIdTransform', () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set(),
-      generatedMethods: new Map([['clickRunDeploymentAction', { params: 'wait: boolean = true, annotationText: string = ""', argNames: ['wait', 'annotationText'] }]]),
+      generatedMethods: new Map([['clickRunDeploymentAction', createPomMethodSignature(createPomParameters(['wait', 'boolean = true'], ['annotationText', 'string = ""']))]]),
       reservedPomMemberNames: new Set(['RunDeploymentActionButton', 'clickRunDeploymentAction']),
       isView: false,
     })
@@ -771,29 +885,6 @@ describe('createTestIdTransform', () => {
     }).toThrow(/move complex inline logic into a named function/i)
   })
 
-  it('preserves the old permissive fallback when missingSemanticNameBehavior is explicitly ignore', () => {
-    const componentHierarchyMap = new Map<string, IComponentDependencies>()
-    const nativeWrappers: NativeWrappersMap = {
-      LoadButton: { role: 'button' },
-    }
-
-    expect(() => {
-      compileAndCaptureAst(
-        `
-          <LoadButton :handler="() => person && impersonateUser(person.userId!)">
-            Impersonate
-          </LoadButton>
-        `,
-        {
-          filename: '/src/views/RbacUserDetailsPage.vue',
-          nodeTransforms: [createTestIdTransform('RbacUserDetailsPage', componentHierarchyMap, nativeWrappers, [], '/src/views', {
-            missingSemanticNameBehavior: 'ignore',
-          })],
-        },
-      )
-    }).not.toThrow()
-  })
-
   it('emits per-key click methods when v-for iterates a static literal list', () => {
     const componentHierarchyMap = new Map()
 
@@ -808,13 +899,11 @@ describe('createTestIdTransform', () => {
     const deps = componentHierarchyMap.get('MyComp') as IComponentDependencies | undefined
     expect(deps).toBeTruthy()
 
-    const sigOne = deps?.generatedMethods?.get('clickOneButton') as { params: string, argNames: string[] } | null | undefined
-    expect(sigOne?.params).toBe('wait: boolean = true, annotationText: string = ""')
-    expect(sigOne?.argNames).toEqual(['wait', 'annotationText'])
+    const sigOne = deps?.generatedMethods?.get('clickOneButton')
+    expect(sigOne).toEqual(createPomMethodSignature(createPomParameters(['wait', 'boolean = true'], ['annotationText', 'string = ""'])))
 
-    const sigTwo = deps?.generatedMethods?.get('clickTwoButton') as { params: string, argNames: string[] } | null | undefined
-    expect(sigTwo?.params).toBe('wait: boolean = true, annotationText: string = ""')
-    expect(sigTwo?.argNames).toEqual(['wait', 'annotationText'])
+    const sigTwo = deps?.generatedMethods?.get('clickTwoButton')
+    expect(sigTwo).toEqual(createPomMethodSignature(createPomParameters(['wait', 'boolean = true'], ['annotationText', 'string = ""'])))
 
     // With the IR-based generator, v-for static literal keys are represented as extra click method specs.
     const extras = deps?.pomExtraMethods ?? []
@@ -823,18 +912,18 @@ describe('createTestIdTransform', () => {
     expect(one?.keyLiteral).toBe('One')
     expect(one?.selector).toEqual({
       kind: 'testId',
-      formattedDataTestId: 'MyComp-${key}-Select-button',
+      testId: createPomStringPattern('MyComp-${key}-Select-button', 'parameterized'),
     })
-    expect(one?.params).toEqual({ wait: 'boolean = true', annotationText: 'string = ""' })
+    expect(one?.parameters).toEqual(createPomParameters(['wait', 'boolean = true'], ['annotationText', 'string = ""']))
 
     const two = extras.find(m => m.kind === 'click' && m.name === 'clickTwoButton')
     expect(two).toBeTruthy()
     expect(two?.keyLiteral).toBe('Two')
     expect(two?.selector).toEqual({
       kind: 'testId',
-      formattedDataTestId: 'MyComp-${key}-Select-button',
+      testId: createPomStringPattern('MyComp-${key}-Select-button', 'parameterized'),
     })
-    expect(two?.params).toEqual({ wait: 'boolean = true', annotationText: 'string = ""' })
+    expect(two?.parameters).toEqual(createPomParameters(['wait', 'boolean = true'], ['annotationText', 'string = ""']))
   })
 
   it('treats v-for source with Math.random() as dynamic via constType', () => {
@@ -888,10 +977,10 @@ describe('createTestIdTransform', () => {
     expect(simpleParts.some(p => p.constType === ConstantTypes.NOT_CONSTANT)).toBe(true)
 
     // Also ensure our generator does NOT attempt static-list key narrowing here.
-    const deps = componentHierarchyMap.get('MyComp') as { generatedMethods?: Map<string, { params: string, argNames: string[] } | null> } | undefined
+    const deps = componentHierarchyMap.get('MyComp') as IComponentDependencies | undefined
     expect(deps).toBeTruthy()
-    const sig = deps?.generatedMethods?.get('clickDoThingByKey') as { params: string, argNames: string[] } | null | undefined
-    expect(sig?.params).toBe('key: string')
+    const sig = deps?.generatedMethods?.get('clickDoThingByKey')
+    expect(sig).toEqual(createPomMethodSignature(createPomParameters(['key', 'string'])))
   })
 
   it('does not populate exp.ast in this test harness even when prefixIdentifiers is enabled', () => {
@@ -945,6 +1034,41 @@ describe('createTestIdTransform', () => {
     expect(dataTestIdAttr?.value?.content).toBe('MyComp-SelectedGroup-vselect')
   })
 
+  it('registers v-select generated-method signatures from structured primary parameters', () => {
+    const componentHierarchyMap = new Map()
+    const nativeWrappers: NativeWrappersMap = {
+      'v-select': {
+        role: 'vselect',
+        requiresOptionDataTestIdPrefix: true,
+      },
+    }
+
+    compileAndCaptureAst(
+      readFixtureTemplate('MyComp_VSelect.vue'),
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, nativeWrappers, [], '/src/views')],
+      },
+    )
+
+    const deps = componentHierarchyMap.get('MyComp') as IComponentDependencies | undefined
+    expect(deps).toBeTruthy()
+
+    const signature = deps?.generatedMethods?.get('selectSelectedGroup')
+    expect(signature).toEqual(createPomMethodSignature(createPomParameters(
+      ['value', 'string'],
+      ['timeOut', 'number = 500'],
+      ['annotationText', 'string = ""'],
+    )))
+
+    const pom = Array.from(deps?.dataTestIdSet ?? []).find(entry => entry.pom?.methodName === 'SelectedGroup')?.pom
+    expect(pom?.parameters).toEqual(createPomParameters(
+      ['value', 'string'],
+      ['timeOut', 'number = 500'],
+      ['annotationText', 'string = ""'],
+    ))
+  })
+
   it('infers radio wrappers through nested local SFCs without nativeWrappers config', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-transform-'))
     const radioPath = path.join(tempRoot, 'src', 'components', 'ImmyRadio.vue')
@@ -993,11 +1117,11 @@ describe('createTestIdTransform', () => {
       name: 'selectDatabaseTypeCloud',
       selector: {
         kind: 'withinTestIdByLabel',
-        rootFormattedDataTestId: 'MyPage-DatabaseType-radio',
-        formattedLabel: 'Cloud',
+        rootTestId: createPomStringPattern('MyPage-DatabaseType-radio', 'static'),
+        label: createPomStringPattern('Cloud', 'static'),
         exact: true,
       },
-      params: { annotationText: 'string = ""' },
+      parameters: createPomParameters(['annotationText', 'string = ""']),
     })
   })
 
@@ -1075,11 +1199,11 @@ describe('createTestIdTransform', () => {
       name: 'selectDatabaseTypeCloud',
       selector: {
         kind: 'withinTestIdByLabel',
-        rootFormattedDataTestId: 'MyPage-DatabaseType-radio',
-        formattedLabel: 'Cloud',
+        rootTestId: createPomStringPattern('MyPage-DatabaseType-radio', 'static'),
+        label: createPomStringPattern('Cloud', 'static'),
         exact: true,
       },
-      params: { annotationText: 'string = ""' },
+      parameters: createPomParameters(['annotationText', 'string = ""']),
     })
   })
 })

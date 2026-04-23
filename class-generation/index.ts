@@ -9,6 +9,25 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { generateViewObjectModelMembers, generateViewObjectModelMethodContent } from "../method-generation";
+import {
+  createPomMethodSignature,
+  createPomParameterSpec,
+  getPomParameterArgumentNames,
+  normalizePomParameters,
+  toTypeScriptPomParameterStructures,
+  type PomMethodSignature,
+  type PomParameterSpec,
+} from "../pom-params";
+import {
+  bindCSharpPomPattern,
+  bindTypeScriptPomPattern,
+  isParameterizedPomPattern,
+  orderPomPatternParameters,
+  toCSharpPomPatternExpression,
+  toTypeScriptPomPatternExpression,
+  uniquePomStringPatterns,
+  type PomStringPattern,
+} from "../pom-patterns";
 import { introspectNuxtPages, parseRouterFileFromCwd } from "../router-introspection";
 import {
   addExportAll,
@@ -25,7 +44,6 @@ import {
   type GetAccessorDeclarationStructure,
   type MethodDeclarationStructure,
   type OptionalKind,
-  type ParameterDeclarationStructure,
   type PropertyDeclarationStructure,
   type TypeScriptClassMember,
   type TypeScriptSourceFile,
@@ -35,6 +53,7 @@ import {
   IDataTestId,
   PomExtraClickMethodSpec,
   PomPrimarySpec,
+  PomSelectorSpec,
   toPascalCase,
   upperFirst,
 } from "../utils";
@@ -59,128 +78,6 @@ class VuePomGeneratorError extends Error {
     super(normalized);
     this.name = "VuePomGeneratorError";
   }
-}
-
-function splitParameterList(parameters: string): string[] {
-  const parts: string[] = [];
-  let current = "";
-  let braceDepth = 0;
-  let bracketDepth = 0;
-  let parenDepth = 0;
-  let angleDepth = 0;
-  let inSingleQuote = false;
-  let inDoubleQuote = false;
-  let inTemplateString = false;
-
-  for (let index = 0; index < parameters.length; index += 1) {
-    const char = parameters[index];
-    const previous = index > 0 ? parameters[index - 1] : "";
-
-    if (char === "'" && !inDoubleQuote && !inTemplateString && previous !== "\\") {
-      inSingleQuote = !inSingleQuote;
-      current += char;
-      continue;
-    }
-    if (char === "\"" && !inSingleQuote && !inTemplateString && previous !== "\\") {
-      inDoubleQuote = !inDoubleQuote;
-      current += char;
-      continue;
-    }
-    if (char === "`" && !inSingleQuote && !inDoubleQuote && previous !== "\\") {
-      inTemplateString = !inTemplateString;
-      current += char;
-      continue;
-    }
-
-    if (inSingleQuote || inDoubleQuote || inTemplateString) {
-      current += char;
-      continue;
-    }
-
-    switch (char) {
-      case "{":
-        braceDepth += 1;
-        break;
-      case "}":
-        braceDepth -= 1;
-        break;
-      case "[":
-        bracketDepth += 1;
-        break;
-      case "]":
-        bracketDepth -= 1;
-        break;
-      case "(":
-        parenDepth += 1;
-        break;
-      case ")":
-        parenDepth -= 1;
-        break;
-      case "<":
-        angleDepth += 1;
-        break;
-      case ">":
-        angleDepth -= 1;
-        break;
-      case ",":
-        if (braceDepth === 0 && bracketDepth === 0 && parenDepth === 0 && angleDepth === 0) {
-          const trimmed = current.trim();
-          if (trimmed) {
-            parts.push(trimmed);
-          }
-          current = "";
-          continue;
-        }
-        break;
-      default:
-        break;
-    }
-
-    current += char;
-  }
-
-  const trimmed = current.trim();
-  if (trimmed) {
-    parts.push(trimmed);
-  }
-
-  return parts;
-}
-
-function parseParameterSignature(parameter: string): OptionalKind<ParameterDeclarationStructure> {
-  const colonIndex = parameter.indexOf(":");
-  if (colonIndex < 0) {
-    return { name: parameter.trim() };
-  }
-
-  const rawName = parameter.slice(0, colonIndex).trim();
-  const hasQuestionToken = rawName.endsWith("?");
-  const name = hasQuestionToken ? rawName.slice(0, -1).trim() : rawName;
-  const remainder = parameter.slice(colonIndex + 1).trim();
-  const initializerIndex = remainder.lastIndexOf("=");
-
-  if (initializerIndex < 0) {
-    return {
-      name,
-      hasQuestionToken,
-      type: remainder || undefined,
-    };
-  }
-
-  return {
-    name,
-    hasQuestionToken,
-    type: remainder.slice(0, initializerIndex).trim() || undefined,
-    initializer: remainder.slice(initializerIndex + 1).trim() || undefined,
-  };
-}
-
-function parseParameterSignatures(parameters: string): OptionalKind<ParameterDeclarationStructure>[] {
-  const trimmed = parameters.trim();
-  if (!trimmed) {
-    return [];
-  }
-  return splitParameterList(trimmed).map(parseParameterSignature);
 }
 
 function toPosixRelativePath(fromDir: string, toFile: string): string {
@@ -214,12 +111,7 @@ interface RouteMeta {
   template: string;
 }
 
-interface CustomPomMethodSignature {
-  params: string;
-  argNames: string[];
-}
-
-type CustomPomMethodSignatureMap = Map<string, CustomPomMethodSignature>;
+type CustomPomMethodSignatureMap = Map<string, PomMethodSignature>;
 
 interface CustomPomAttachment {
   className: string;
@@ -249,6 +141,27 @@ interface CustomPomImportResolution {
   methodSignaturesByClass: Map<string, CustomPomMethodSignatureMap>;
   availableClassIdentifiers: Set<string>;
   importSpecifiersByClass: Record<string, ResolvedCustomPomImportSpecifier>;
+}
+
+function createMissingCustomPomDirectoryError(configuredDir: string, resolvedDir: string): VuePomGeneratorError {
+  return new VuePomGeneratorError(
+    `Custom POM directory "${configuredDir}" does not exist.\n`
+    + `Resolved path: ${resolvedDir}\n`
+    + "Create the directory, point generation.playwright.customPoms.dir at the correct location, "
+    + "or remove the customPoms configuration.",
+  );
+}
+
+function createMissingCustomPomAttachmentClassError(
+  missingClassNames: string[],
+  configuredDir: string,
+): VuePomGeneratorError {
+  const renderedClassNames = missingClassNames.map(name => `"${name}"`).join(", ");
+  return new VuePomGeneratorError(
+    `Custom POM attachments reference missing helper classes: ${renderedClassNames}.\n`
+    + `Expected matching helper files/exports under "${configuredDir}".\n`
+    + "Add the missing helper classes or remove the corresponding generation.playwright.customPoms.attachments entries.",
+  );
 }
 
 function createCustomPomImportCollisionError(exportName: string, requested: string): VuePomGeneratorError {
@@ -429,27 +342,10 @@ function generateGoToSelfMethod(componentName: string): TypeScriptClassMember[] 
   ];
 }
 
-function formatMethodParams(params: Record<string, string> | undefined): string {
-  if (!params)
-    return "";
-
-  // Keep output stable and somewhat intuitive.
-  const preferredOrder = ["key", "value", "text", "timeOut", "annotationText", "wait"];
-
-  const entries = Object.entries(params);
-  if (!entries.length)
-    return "";
-
-  const score = (name: string) => {
-    const idx = preferredOrder.indexOf(name);
-    return idx < 0 ? 999 : idx;
-  };
-
-  return entries
-    .slice()
-    .sort((a, b) => score(a[0]) - score(b[0]) || a[0].localeCompare(b[0]))
-    .map(([name, typeExpr]) => `${name}: ${typeExpr}`)
-    .join(", ");
+function getSelectorPatterns(selector: PomSelectorSpec): PomStringPattern[] {
+  return selector.kind === "testId"
+    ? [selector.testId]
+    : [selector.rootTestId, selector.label];
 }
 
 function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScriptClassMember[] {
@@ -457,27 +353,24 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScr
     return [];
   }
 
-  const params = spec.params ?? {};
-  const signatureParams = formatMethodParams(params);
-  const parameters = parseParameterSignatures(signatureParams);
+  const selectorPatterns = getSelectorPatterns(spec.selector);
+  const signatureSpecs = orderPomPatternParameters(
+    spec.parameters,
+    selectorPatterns,
+    { omit: spec.keyLiteral !== undefined ? ["key"] : [] },
+  );
+  const parameters = toTypeScriptPomParameterStructures(signatureSpecs);
 
-  const hasAnnotationText = Object.prototype.hasOwnProperty.call(params, "annotationText");
-  const hasWait = Object.prototype.hasOwnProperty.call(params, "wait");
+  const hasAnnotationText = signatureSpecs.some(param => param.name === "annotationText");
+  const hasWait = signatureSpecs.some(param => param.name === "wait");
   const annotationArg = hasAnnotationText ? "annotationText" : "\"\"";
   const waitArg = hasWait ? "wait" : "true";
 
   if (spec.selector.kind === "testId") {
-    const needsTemplate = spec.selector.formattedDataTestId.includes("${");
-    const testIdExpr = needsTemplate
-      ? `\`${spec.selector.formattedDataTestId}\``
-      : JSON.stringify(spec.selector.formattedDataTestId);
-
-    if (needsTemplate) {
-      // handled below
-    }
+    const testIdBinding = bindTypeScriptPomPattern(spec.selector.testId, "testId");
 
     const clickArgs: string[] = [];
-    clickArgs.push(needsTemplate ? "testId" : testIdExpr);
+    clickArgs.push(testIdBinding.expression);
 
     if (hasAnnotationText || hasWait) {
       clickArgs.push(annotationArg);
@@ -495,8 +388,8 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScr
           if (spec.keyLiteral !== undefined) {
             writer.writeLine(`const key = ${JSON.stringify(spec.keyLiteral)};`);
           }
-          if (needsTemplate) {
-            writer.writeLine(`const testId = ${testIdExpr};`);
+          for (const statement of testIdBinding.setupStatements) {
+            writer.writeLine(statement);
           }
           writer.writeLine(`await this.clickByTestId(${clickArgs.join(", ")});`);
         },
@@ -504,17 +397,8 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScr
     ];
   }
 
-  const rootNeedsTemplate = spec.selector.rootFormattedDataTestId.includes("${");
-  const labelNeedsTemplate = spec.selector.formattedLabel.includes("${");
-  const rootExpr = rootNeedsTemplate
-    ? `\`${spec.selector.rootFormattedDataTestId}\``
-    : JSON.stringify(spec.selector.rootFormattedDataTestId);
-  const labelExpr = labelNeedsTemplate
-    ? `\`${spec.selector.formattedLabel}\``
-    : JSON.stringify(spec.selector.formattedLabel);
-
-  const rootArg = rootNeedsTemplate ? "rootTestId" : rootExpr;
-  const labelArg = labelNeedsTemplate ? "label" : labelExpr;
+  const rootBinding = bindTypeScriptPomPattern(spec.selector.rootTestId, "rootTestId");
+  const labelBinding = bindTypeScriptPomPattern(spec.selector.label, "label");
   return [
     createClassMethod({
       name: spec.name,
@@ -524,13 +408,13 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScr
         if (spec.keyLiteral !== undefined) {
           writer.writeLine(`const key = ${JSON.stringify(spec.keyLiteral)};`);
         }
-        if (rootNeedsTemplate) {
-          writer.writeLine(`const rootTestId = ${rootExpr};`);
+        for (const statement of rootBinding.setupStatements) {
+          writer.writeLine(statement);
         }
-        if (labelNeedsTemplate) {
-          writer.writeLine(`const label = ${labelExpr};`);
+        for (const statement of labelBinding.setupStatements) {
+          writer.writeLine(statement);
         }
-        writer.writeLine(`await this.clickWithinTestIdByLabel(${rootArg}, ${labelArg}, ${annotationArg}, ${waitArg});`);
+        writer.writeLine(`await this.clickWithinTestIdByLabel(${rootBinding.expression}, ${labelBinding.expression}, ${annotationArg}, ${waitArg});`);
       },
     }),
   ];
@@ -545,10 +429,10 @@ function generateMethodMembersFromPom(primary: PomPrimarySpec, targetPageObjectM
     targetPageObjectModelClass,
     primary.methodName,
     primary.nativeRole,
-    primary.formattedDataTestId,
-    primary.alternateFormattedDataTestIds,
+    primary.selector,
+    primary.alternateSelectors,
     primary.getterNameOverride,
-    primary.params ?? {},
+    primary.parameters,
   );
 }
 
@@ -565,17 +449,16 @@ function generateMethodsContentForDependencies(dependencies: IComponentDependenc
   // When we emit from IR, we must de-dupe here to avoid duplicate getters/methods.
   const seenPrimaryKeys = new Set<string>();
   const primarySpecs = primarySpecsAll.filter(({ pom, target }) => {
-    const stableParams = pom.params
-      ? Object.fromEntries(Object.entries(pom.params).sort((a, b) => a[0].localeCompare(b[0])))
-      : undefined;
-    const alternates = (pom.alternateFormattedDataTestIds ?? []).slice().sort();
+    const alternates = (pom.alternateSelectors ?? [])
+      .slice()
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
     const key = JSON.stringify({
       role: pom.nativeRole,
       methodName: pom.methodName,
       getterNameOverride: pom.getterNameOverride ?? null,
-      testId: pom.formattedDataTestId,
-      alternateTestIds: alternates.length ? alternates : undefined,
-      params: stableParams,
+      selector: pom.selector,
+      alternateSelectors: alternates.length ? alternates : undefined,
+      parameters: pom.parameters,
       target: target ?? null,
       emitPrimary: pom.emitPrimary ?? true,
     });
@@ -639,6 +522,8 @@ export interface GenerateFilesOptions {
    * Defaults to <projectRoot>/tests/playwright/pom/custom.
    */
   customPomDir?: string;
+  /** When true, fail generation if the configured customPomDir does not exist. */
+  requireCustomPomDir?: boolean;
 
   /**
    * Optional import aliases for handwritten POM helpers.
@@ -708,6 +593,7 @@ interface BaseGenerateContentOptions {
 
   projectRoot?: string;
   customPomDir?: string;
+  requireCustomPomDir?: boolean;
   customPomImportAliases?: Record<string, string>;
   customPomClassIdentifierMap?: Record<string, string>;
   customPomAvailableClassIdentifiers?: Set<string>;
@@ -747,6 +633,7 @@ export async function generateFiles(
     customPomAttachments = [],
     projectRoot,
     customPomDir,
+    requireCustomPomDir,
     customPomImportAliases,
     customPomImportNameCollisionBehavior = "error",
     testIdAttribute,
@@ -789,6 +676,7 @@ export async function generateFiles(
         customPomAttachments,
         projectRoot,
         customPomDir,
+        requireCustomPomDir,
         customPomImportAliases,
         customPomImportNameCollisionBehavior,
         testIdAttribute,
@@ -799,6 +687,7 @@ export async function generateFiles(
         customPomAttachments,
         projectRoot,
         customPomDir,
+        requireCustomPomDir,
         customPomImportAliases,
         customPomImportNameCollisionBehavior,
         testIdAttribute,
@@ -847,6 +736,7 @@ async function generateSplitTypeScriptFiles(
     customPomAttachments?: GenerateFilesOptions["customPomAttachments"];
     projectRoot?: GenerateFilesOptions["projectRoot"];
     customPomDir?: GenerateFilesOptions["customPomDir"];
+    requireCustomPomDir?: GenerateFilesOptions["requireCustomPomDir"];
     customPomImportAliases?: GenerateFilesOptions["customPomImportAliases"];
     customPomImportNameCollisionBehavior?: GenerateFilesOptions["customPomImportNameCollisionBehavior"];
     testIdAttribute?: GenerateFilesOptions["testIdAttribute"];
@@ -882,9 +772,15 @@ async function generateSplitTypeScriptFiles(
 
   const customPomImportResolution = resolveCustomPomImportResolution(generatedClassNames, projectRoot, {
     customPomDir: options.customPomDir,
+    requireCustomPomDir: options.requireCustomPomDir,
     customPomImportAliases: options.customPomImportAliases,
     customPomImportNameCollisionBehavior: options.customPomImportNameCollisionBehavior,
   });
+  assertCustomPomAttachmentsResolved(
+    options.customPomAttachments ?? [],
+    customPomImportResolution.classIdentifierMap,
+    options.customPomDir ?? "tests/playwright/pom/custom",
+  );
 
   const runtimeBasePagePath = path.join(base, "_pom-runtime", "class-generation", "base-page.ts");
   const files: GeneratedFileOutput[] = [];
@@ -1071,30 +967,9 @@ function buildGeneratedGitAttributesFiles(generatedFilePaths: string[]): Generat
     });
 }
 
-function toCSharpTestIdExpression(formattedDataTestId: string): string {
-  // Convert our `${var}` placeholder format into C# interpolated-string `{var}`.
-  const needsInterpolation = formattedDataTestId.includes("${");
-  if (!needsInterpolation) {
-    return JSON.stringify(formattedDataTestId);
-  }
-
-  const inner = formattedDataTestId.replace(/\$\{/g, "{");
-  // Use verbatim JSON escaping for quotes/backslashes, then adapt to C# string literal.
-  // JSON.stringify gives us a JS string literal with escapes, which is close enough for a C# normal string.
-  const quoted = JSON.stringify(inner);
-  return `$${quoted}`;
-}
-
-function toCSharpParam(paramTypeExpr: string): { type: string; defaultExpr?: string } {
-  const trimmed = (paramTypeExpr ?? "").trim();
-
-  // Handle default values: "boolean = true", "string = \"\"", "timeOut = 500".
-  const eqIdx = trimmed.indexOf("=");
-  const left = eqIdx >= 0 ? trimmed.slice(0, eqIdx).trim() : trimmed;
-  const right = eqIdx >= 0 ? trimmed.slice(eqIdx + 1).trim() : undefined;
-
+function toCSharpParam(param: PomParameterSpec): { type: string; defaultExpr?: string } {
   // Collapse union types to their widest practical type.
-  const typePart = left.includes("|") ? "string" : left;
+  const typePart = param.type?.includes("|") ? "string" : (param.type ?? "string");
 
   let type = "string";
   if (/(?:^|\s)boolean(?:\s|$)/.test(typePart))
@@ -1103,23 +978,21 @@ function toCSharpParam(paramTypeExpr: string): { type: string; defaultExpr?: str
     type = "string";
   else if (/(?:^|\s)number(?:\s|$)/.test(typePart))
     type = "int";
-  else if (/\d+/.test(typePart) && typePart === "")
-    type = "int";
   else if (/\btimeOut\b/i.test(typePart))
     type = "int";
 
   let defaultExpr: string | undefined;
-  if (right !== undefined) {
+  if (param.initializer !== undefined) {
     if (type === "bool") {
-      defaultExpr = right.includes("true") ? "true" : right.includes("false") ? "false" : undefined;
+      defaultExpr = param.initializer.includes("true") ? "true" : param.initializer.includes("false") ? "false" : undefined;
     }
     else if (type === "int") {
-      const m = right.match(/\d+/);
+      const m = param.initializer.match(/\d+/);
       defaultExpr = m ? m[0] : undefined;
     }
     else {
       // string defaults, keep empty string if detected.
-      if (right === "\"\"" || right === "\"\"" || right === "''") {
+      if (param.initializer === "\"\"" || param.initializer === "''") {
         defaultExpr = "\"\"";
       }
     }
@@ -1128,21 +1001,18 @@ function toCSharpParam(paramTypeExpr: string): { type: string; defaultExpr?: str
   return { type, defaultExpr };
 }
 
-function formatCSharpParams(params: Record<string, string> | undefined): { signature: string; argNames: string[] } {
-  if (!params)
-    return { signature: "", argNames: [] };
-
-  const entries = Object.entries(params);
-  if (!entries.length)
+function formatCSharpParams(params: readonly PomParameterSpec[] | undefined): { signature: string; argNames: string[] } {
+  const normalizedParams = normalizePomParameters(params);
+  if (!normalizedParams.length)
     return { signature: "", argNames: [] };
 
   const signatureParts: string[] = [];
   const argNames: string[] = [];
 
-  for (const [name, typeExpr] of entries) {
-    const { type, defaultExpr } = toCSharpParam(typeExpr);
-    argNames.push(name);
-    signatureParts.push(defaultExpr !== undefined ? `${type} ${name} = ${defaultExpr}` : `${type} ${name}`);
+  for (const param of normalizedParams) {
+    const { type, defaultExpr } = toCSharpParam(param);
+    argNames.push(param.name);
+    signatureParts.push(defaultExpr !== undefined ? `${type} ${param.name} = ${defaultExpr}` : `${type} ${param.name}`);
   }
 
   return { signature: signatureParts.join(", "), argNames };
@@ -1253,32 +1123,16 @@ function generateAggregatedCSharpFiles(
       const baseMethodName = upperFirst(pom.methodName);
       const baseGetterName = upperFirst(pom.getterNameOverride ?? pom.methodName);
       const locatorName = baseGetterName.endsWith(roleSuffix) ? baseGetterName : `${baseGetterName}${roleSuffix}`;
-      const testIdExpr = toCSharpTestIdExpression(pom.formattedDataTestId);
-
-      // Ensure all template variables referenced in formattedDataTestId (e.g. `${key}`)
-      // appear in the C# method signature.  utils.ts may omit `key` for input/select
-      // elements even when the test ID is dynamic, causing CS0103 compile errors.
-      const templateVarMatches = [...pom.formattedDataTestId.matchAll(/\$\{(\w+)\}/g)];
-      const templateVars = templateVarMatches.map(m => m[1]);
-      const augmentedParams: Record<string, string> = { ...pom.params };
-      for (const v of templateVars) {
-        if (!Object.prototype.hasOwnProperty.call(augmentedParams, v)) {
-          augmentedParams[v] = "string";
-        }
-      }
-      // Place template vars first so they precede text/value/annotationText.
-      const orderedParams: Record<string, string> = Object.fromEntries([
-        ...templateVars.map(v => [v, augmentedParams[v]] as [string, string]),
-        ...Object.entries(augmentedParams).filter(([k]) => !templateVars.includes(k)),
-      ]);
+      const selectorIsParameterized = isParameterizedPomPattern(pom.selector.patternKind);
+      const testIdExpr = toCSharpPomPatternExpression(pom.selector);
+      const orderedParams = orderPomPatternParameters(pom.parameters, [pom.selector]);
 
       const { signature, argNames } = formatCSharpParams(orderedParams);
       const args = argNames.join(", ");
 
-      const allTestIds = [pom.formattedDataTestId, ...(pom.alternateFormattedDataTestIds ?? [])]
-        .filter((v, idx, arr) => v && arr.indexOf(v) === idx);
+      const allTestIds = uniquePomStringPatterns(pom.selector, pom.alternateSelectors);
 
-      if (pom.formattedDataTestId.includes("${")) {
+      if (selectorIsParameterized) {
         chunks.push(`    public ILocator ${locatorName}(${signature}) => LocatorByTestId(${testIdExpr});`);
       }
       else {
@@ -1300,13 +1154,13 @@ function generateAggregatedCSharpFiles(
       if (target) {
         chunks.push(`    public async Task<${target}> ${actionName}(${sig})`);
         chunks.push("    {");
-        if (pom.formattedDataTestId.includes("${") || allTestIds.length <= 1) {
-          chunks.push(`        await ${locatorName}${pom.formattedDataTestId.includes("${") ? `(${args})` : ""}.ClickAsync();`);
+        if (selectorIsParameterized || allTestIds.length <= 1) {
+          chunks.push(`        await ${locatorName}${selectorIsParameterized ? `(${args})` : ""}.ClickAsync();`);
           chunks.push(`        return new ${target}(Page);`);
         }
         else {
           chunks.push("        Exception? lastError = null;");
-          chunks.push(`        foreach (var testId in new[] { ${allTestIds.map(toCSharpTestIdExpression).join(", ")} })`);
+          chunks.push(`        foreach (var testId in new[] { ${allTestIds.map(testId => toCSharpPomPatternExpression(testId)).join(", ")} })`);
           chunks.push("        {");
           chunks.push("            try");
           chunks.push("            {");
@@ -1332,7 +1186,7 @@ function generateAggregatedCSharpFiles(
       chunks.push(`    public async Task ${actionName}(${sig})`);
       chunks.push("    {");
 
-      const callSuffix = pom.formattedDataTestId.includes("${") ? `(${args})` : "";
+      const callSuffix = selectorIsParameterized ? `(${args})` : "";
 
       const emitActionCall = (locatorAccess: string) => {
         if (pom.nativeRole === "input") {
@@ -1351,9 +1205,9 @@ function generateAggregatedCSharpFiles(
         }
       };
 
-      if (!pom.formattedDataTestId.includes("${") && allTestIds.length > 1) {
+      if (!selectorIsParameterized && allTestIds.length > 1) {
         chunks.push("        Exception? lastError = null;");
-        chunks.push(`        foreach (var testId in new[] { ${allTestIds.map(toCSharpTestIdExpression).join(", ")} })`);
+        chunks.push(`        foreach (var testId in new[] { ${allTestIds.map(testId => toCSharpPomPatternExpression(testId)).join(", ")} })`);
         chunks.push("        {");
         chunks.push("            try");
         chunks.push("            {");
@@ -1406,7 +1260,12 @@ function generateAggregatedCSharpFiles(
     for (const extra of extras) {
       if (extra.kind !== "click")
         continue;
-      const { signature } = formatCSharpParams(extra.params);
+      const extraParams = orderPomPatternParameters(
+        extra.parameters,
+        getSelectorPatterns(extra.selector),
+        { omit: extra.keyLiteral !== undefined ? ["key"] : [] },
+      );
+      const { signature } = formatCSharpParams(extraParams);
 
       const extraName = upperFirst(extra.name);
 
@@ -1417,33 +1276,24 @@ function generateAggregatedCSharpFiles(
       }
 
       if (extra.selector.kind === "testId") {
-        const needsTemplate = extra.selector.formattedDataTestId.includes("${");
-        const testIdExpr = toCSharpTestIdExpression(extra.selector.formattedDataTestId);
-        if (needsTemplate) {
-          chunks.push(`        var testId = ${testIdExpr};`);
-          chunks.push("        await LocatorByTestId(testId).ClickAsync();");
+        const testIdBinding = bindCSharpPomPattern(extra.selector.testId, "testId");
+        for (const statement of testIdBinding.setupStatements) {
+          chunks.push(`        ${statement}`);
         }
-        else {
-          chunks.push(`        await LocatorByTestId(${testIdExpr}).ClickAsync();`);
-        }
+        chunks.push(`        await LocatorByTestId(${testIdBinding.expression}).ClickAsync();`);
       }
       else {
-        const rootNeedsTemplate = extra.selector.rootFormattedDataTestId.includes("${");
-        const labelNeedsTemplate = extra.selector.formattedLabel.includes("${");
-        const rootExpr = toCSharpTestIdExpression(extra.selector.rootFormattedDataTestId);
-        const labelExpr = toCSharpTestIdExpression(extra.selector.formattedLabel);
+        const rootBinding = bindCSharpPomPattern(extra.selector.rootTestId, "rootTestId");
+        const labelBinding = bindCSharpPomPattern(extra.selector.label, "label");
         const exactArg = extra.selector.exact === false ? "false" : "true";
 
-        if (rootNeedsTemplate) {
-          chunks.push(`        var rootTestId = ${rootExpr};`);
+        for (const statement of rootBinding.setupStatements) {
+          chunks.push(`        ${statement}`);
         }
-        if (labelNeedsTemplate) {
-          chunks.push(`        var label = ${labelExpr};`);
+        for (const statement of labelBinding.setupStatements) {
+          chunks.push(`        ${statement}`);
         }
-
-        const rootArg = rootNeedsTemplate ? "rootTestId" : rootExpr;
-        const labelArg = labelNeedsTemplate ? "label" : labelExpr;
-        chunks.push(`        await ClickWithinTestIdByLabelAsync(${rootArg}, ${labelArg}, ${exactArg});`);
+        chunks.push(`        await ClickWithinTestIdByLabelAsync(${rootBinding.expression}, ${labelBinding.expression}, ${exactArg});`);
       }
       chunks.push("    }");
       chunks.push("");
@@ -1789,8 +1639,8 @@ function prepareViewObjectModelClass(
       propertyName: a.propertyName,
       flatten: a.flatten ?? false,
       methodSignatures: a.flatten
-        ? (customPomMethodSignaturesByClass.get(a.className) ?? new Map<string, CustomPomMethodSignature>())
-        : new Map<string, CustomPomMethodSignature>(),
+        ? (customPomMethodSignaturesByClass.get(a.className) ?? new Map<string, PomMethodSignature>())
+        : new Map<string, PomMethodSignature>(),
     }));
 
   const widgetInstances = isView
@@ -1997,10 +1847,10 @@ function getViewPassthroughMethods(
   componentHierarchyMap: Map<string, IComponentDependencies>,
   blockedMethodNames: Set<string> = new Set(),
 ) {
-  const existingOnView = viewDependencies.generatedMethods ?? new Map<string, { params: string; argNames: string[] } | null>();
+  const existingOnView = viewDependencies.generatedMethods ?? new Map<string, PomMethodSignature | null>();
 
   // methodName -> candidates
-  const methodToChildren = new Map<string, Array<{ childProp: string; params: string; argNames: string[] }>>();
+  const methodToChildren = new Map<string, Array<{ childProp: string; signature: PomMethodSignature }>>();
 
   for (const child of childrenComponentSet) {
     const childDeps = componentHierarchyMap.get(child);
@@ -2023,7 +1873,7 @@ function getViewPassthroughMethods(
         continue;
 
       const list = methodToChildren.get(name) ?? [];
-      list.push({ childProp, params: sig.params, argNames: sig.argNames });
+      list.push({ childProp, signature: sig });
       methodToChildren.set(name, list);
     }
   }
@@ -2035,12 +1885,12 @@ function getViewPassthroughMethods(
   }
 
   return passthroughs.map(([methodName, candidates]) => {
-    const { childProp, params, argNames } = candidates[0];
-    const callArgs = argNames.join(", ");
+    const { childProp, signature } = candidates[0];
+    const callArgs = getPomParameterArgumentNames(signature.parameters).join(", ");
     return createClassMethod({
       name: methodName,
       isAsync: true,
-      parameters: parseParameterSignatures(params),
+      parameters: toTypeScriptPomParameterStructures(signature.parameters),
       statements: [
         `return await this.${childProp}.${methodName}(${callArgs});`,
       ],
@@ -2058,8 +1908,8 @@ function getAttachmentPassthroughMethods(
     return [];
   }
 
-  const existingOnClass = ownerDependencies.generatedMethods ?? new Map<string, { params: string; argNames: string[] } | null>();
-  const methodToAttachments = new Map<string, Array<{ propertyName: string; params: string; argNames: string[] }>>();
+  const existingOnClass = ownerDependencies.generatedMethods ?? new Map<string, PomMethodSignature | null>();
+  const methodToAttachments = new Map<string, Array<{ propertyName: string; signature: PomMethodSignature }>>();
 
   for (const attachment of attachmentsForThisClass) {
     if (!attachment.flatten) {
@@ -2074,8 +1924,7 @@ function getAttachmentPassthroughMethods(
       const list = methodToAttachments.get(methodName) ?? [];
       list.push({
         propertyName: attachment.propertyName,
-        params: signature.params,
-        argNames: signature.argNames,
+        signature,
       });
       methodToAttachments.set(methodName, list);
     }
@@ -2088,14 +1937,14 @@ function getAttachmentPassthroughMethods(
   }
 
   return passthroughs.map(([methodName, candidates]) => {
-    const { propertyName, params, argNames } = candidates[0];
-    const callArgs = argNames.join(", ");
+    const { propertyName, signature } = candidates[0];
+    const callArgs = getPomParameterArgumentNames(signature.parameters).join(", ");
     const invocation = callArgs
       ? `this.${propertyName}.${methodName}(${callArgs})`
       : `this.${propertyName}.${methodName}()`;
     return createClassMethod({
       name: methodName,
-      parameters: parseParameterSignatures(params),
+      parameters: toTypeScriptPomParameterStructures(signature.parameters),
       statements: [
         `return ${invocation};`,
       ],
@@ -2112,17 +1961,57 @@ function sliceNodeSource(source: string, node: { start?: number | null; end?: nu
   return snippet.length ? snippet : null;
 }
 
-function getCustomPomCallArgumentName(param: ClassMethod["params"][number]): string | null {
+function getTypeAnnotationSource(
+  source: string,
+  node: { typeAnnotation?: unknown },
+): string | undefined {
+  const rawTypeAnnotation = node.typeAnnotation;
+  if (!rawTypeAnnotation || typeof rawTypeAnnotation !== "object" || !("type" in rawTypeAnnotation) || rawTypeAnnotation.type !== "TSTypeAnnotation" || !("typeAnnotation" in rawTypeAnnotation)) {
+    return undefined;
+  }
+
+  const typeAnnotation = rawTypeAnnotation.typeAnnotation;
+  return typeAnnotation && typeof typeAnnotation === "object"
+    ? sliceNodeSource(source, typeAnnotation as { start?: number | null; end?: number | null }) ?? undefined
+    : undefined;
+}
+
+function getCustomPomParameterSpec(source: string, param: ClassMethod["params"][number]): PomParameterSpec | null {
   if (param.type === "Identifier") {
-    return param.name;
+    return createPomParameterSpec(param.name, getTypeAnnotationSource(source, param), {
+      hasQuestionToken: !!param.optional,
+    });
   }
 
   if (param.type === "AssignmentPattern") {
-    return param.left.type === "Identifier" ? param.left.name : null;
+    if (param.left.type !== "Identifier") {
+      return null;
+    }
+
+    const initializer = sliceNodeSource(source, param.right);
+    if (!initializer) {
+      return null;
+    }
+
+    return createPomParameterSpec(param.left.name, getTypeAnnotationSource(source, param.left), {
+      initializer,
+      hasQuestionToken: !!param.left.optional,
+    });
   }
 
   if (param.type === "RestElement") {
-    return param.argument.type === "Identifier" ? `...${param.argument.name}` : null;
+    if (param.argument.type !== "Identifier") {
+      return null;
+    }
+
+    const typeExpression = getTypeAnnotationSource(
+      source,
+      param,
+    ) ?? getTypeAnnotationSource(source, param.argument);
+
+    return createPomParameterSpec(param.argument.name, typeExpression, {
+      isRestParameter: true,
+    });
   }
 
   return null;
@@ -2165,8 +2054,7 @@ function extractCustomPomMethodSignatures(source: string, exportName: string): C
         continue;
       }
 
-      const params: string[] = [];
-      const argNames: string[] = [];
+      const parameters: PomParameterSpec[] = [];
       let supported = true;
 
       member.params.forEach((param) => {
@@ -2174,25 +2062,20 @@ function extractCustomPomMethodSignatures(source: string, exportName: string): C
           return;
         }
 
-        const paramSource = sliceNodeSource(source, param);
-        const argName = getCustomPomCallArgumentName(param);
-        if (!paramSource || !argName) {
+        const parameter = getCustomPomParameterSpec(source, param);
+        if (!parameter) {
           supported = false;
           return;
         }
 
-        params.push(paramSource);
-        argNames.push(argName);
+        parameters.push(parameter);
       });
 
       if (!supported) {
         continue;
       }
 
-      signatures.set(member.key.name, {
-        params: params.join(", "),
-        argNames,
-      });
+      signatures.set(member.key.name, createPomMethodSignature(parameters));
     }
   }
 
@@ -2390,6 +2273,7 @@ function resolveCustomPomImportResolution(
   projectRoot: string,
   options: {
     customPomDir?: GenerateFilesOptions["customPomDir"];
+    requireCustomPomDir?: GenerateFilesOptions["requireCustomPomDir"];
     customPomImportAliases?: GenerateFilesOptions["customPomImportAliases"];
     customPomImportNameCollisionBehavior?: GenerateFilesOptions["customPomImportNameCollisionBehavior"];
   } = {},
@@ -2430,6 +2314,9 @@ function resolveCustomPomImportResolution(
     : path.resolve(projectRoot, customDirRelOrAbs);
 
   if (!fs.existsSync(customDirAbs)) {
+    if (options.requireCustomPomDir) {
+      throw createMissingCustomPomDirectoryError(customDirRelOrAbs, customDirAbs);
+    }
     return {
       classIdentifierMap,
       methodSignaturesByClass,
@@ -2483,6 +2370,21 @@ function resolveCustomPomImportResolution(
   };
 }
 
+function assertCustomPomAttachmentsResolved(
+  attachments: readonly CustomPomAttachment[],
+  classIdentifierMap: Record<string, string>,
+  configuredDir: string,
+): void {
+  const missingClassNames = Array.from(new Set(
+    attachments
+      .map(attachment => attachment.className)
+      .filter(className => !Object.prototype.hasOwnProperty.call(classIdentifierMap, className)),
+  )).sort((left, right) => left.localeCompare(right));
+  if (missingClassNames.length > 0) {
+    throw createMissingCustomPomAttachmentClassError(missingClassNames, configuredDir);
+  }
+}
+
 function getComposedStubBody(
   targetClassName: string,
   availableClassNames: Set<string>,
@@ -2514,7 +2416,7 @@ function getComposedStubBody(
   if (!childClassNames.length)
     return undefined;
 
-  const methodToChildren = new Map<string, Array<{ child: string; params: string; argNames: string[] }>>();
+  const methodToChildren = new Map<string, Array<{ child: string; signature: PomMethodSignature }>>();
   for (const child of childClassNames) {
     const childDeps = depsByClassName.get(child);
     const methods = childDeps?.generatedMethods;
@@ -2525,7 +2427,7 @@ function getComposedStubBody(
       if (!sig)
         continue;
       const list = methodToChildren.get(name) ?? [];
-      list.push({ child, params: sig.params, argNames: sig.argNames });
+      list.push({ child, signature: sig });
       methodToChildren.set(name, list);
     }
   }
@@ -2535,13 +2437,13 @@ function getComposedStubBody(
     if (candidatesForMethod.length !== 1 || methodName === "constructor")
       continue;
 
-    const { child, params, argNames } = candidatesForMethod[0];
-    const callArgs = argNames.join(", ");
+    const { child, signature } = candidatesForMethod[0];
+    const callArgs = getPomParameterArgumentNames(signature.parameters).join(", ");
 
     passthroughMembers.push(createClassMethod({
       name: methodName,
       isAsync: true,
-      parameters: parseParameterSignatures(params),
+      parameters: toTypeScriptPomParameterStructures(signature.parameters),
       statements: [
         `return await this.${child}.${methodName}(${callArgs});`,
       ],
@@ -2579,6 +2481,7 @@ async function generateAggregatedFiles(
     customPomAttachments?: GenerateFilesOptions["customPomAttachments"];
     projectRoot?: GenerateFilesOptions["projectRoot"];
     customPomDir?: GenerateFilesOptions["customPomDir"];
+    requireCustomPomDir?: GenerateFilesOptions["requireCustomPomDir"];
     customPomImportAliases?: GenerateFilesOptions["customPomImportAliases"];
     customPomImportNameCollisionBehavior?: GenerateFilesOptions["customPomImportNameCollisionBehavior"];
     testIdAttribute?: GenerateFilesOptions["testIdAttribute"];
@@ -2624,9 +2527,15 @@ async function generateAggregatedFiles(
 
     const customPomImportResolution = resolveCustomPomImportResolution(generatedClassNames, projectRoot, {
       customPomDir: options.customPomDir,
+      requireCustomPomDir: options.requireCustomPomDir,
       customPomImportAliases: options.customPomImportAliases,
       customPomImportNameCollisionBehavior: options.customPomImportNameCollisionBehavior,
     });
+    assertCustomPomAttachmentsResolved(
+      options.customPomAttachments ?? [],
+      customPomImportResolution.classIdentifierMap,
+      options.customPomDir ?? "tests/playwright/pom/custom",
+    );
     const customPomClassIdentifierMap = customPomImportResolution.classIdentifierMap;
     const customPomMethodSignaturesByClass = customPomImportResolution.methodSignaturesByClass;
     const customPomAvailableClassIdentifiers = customPomImportResolution.availableClassIdentifiers;
@@ -2826,10 +2735,10 @@ function getWidgetInstancesForView(
   };
 
   for (const dt of dataTestIdSet) {
-    const raw = dt.value;
+    const raw = dt.selectorValue.formatted;
 
-    // Skip keyed/dynamic test ids; instance fields can't represent those ergonomically.
-    if (raw.includes("${")) {
+    // Skip parameterized test ids; instance fields can't represent those ergonomically.
+    if (isParameterizedPomPattern(dt.selectorValue.patternKind)) {
       continue;
     }
 

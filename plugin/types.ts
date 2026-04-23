@@ -3,11 +3,6 @@ import type { NativeWrappersMap } from "../utils";
 
 export type ExistingIdBehavior = "preserve" | "overwrite" | "error";
 export type VuePluginOwnership = "internal" | "external";
-export type MissingSemanticNameBehavior = "ignore" | "error";
-export interface ErrorBehaviorOptions {
-  missingSemanticNameBehavior?: MissingSemanticNameBehavior;
-}
-export type ErrorBehavior = MissingSemanticNameBehavior | ErrorBehaviorOptions;
 export type PlaywrightOutputStructure = "aggregated" | "split";
 
 /**
@@ -55,19 +50,6 @@ export interface VuePomGeneratorPluginOptions {
      */
     verbosity?: "silent" | "warn" | "info" | "debug";
   };
-
-  /**
-   * Controls strict/error behavior for generator checks.
-   *
-   * - `"ignore"`: keep permissive fallback behavior for all supported strictness checks
-   * - `"error"` (default): enable error-on-failure behavior for all supported strictness checks
-   * - `{ ... }`: override individual checks without enabling all of them
-   *
-   * Current scope: this first pass is intentionally narrow. The object form currently supports
-   * `missingSemanticNameBehavior`, which targets button-like wrappers with `:handler` during
-   * Playwright generation.
-   */
-  errorBehavior?: ErrorBehavior;
 
   /**
    * Configuration for injecting/deriving test ids from Vue templates.
@@ -130,8 +112,8 @@ export interface VuePomGeneratorPluginOptions {
     wrapperSearchRoots?: string[];
 
     /**
-     * What to do when the author already provided a test id attribute.
-     *
+      * What to do when the author already provided a test id attribute.
+      *
      * - `"preserve"` (default): keep the existing value
      * - `"overwrite"`: replace it with the generated value
      * - `"error"`: throw to force cleanup/migration
@@ -208,11 +190,11 @@ export interface VuePomGeneratorPluginOptions {
       * - Resolve collisions by adding a stable naming signal (distinct handler, distinct id/name, or
       *   structural change) rather than relying on silent suffixing.
       *
-     * - "error": throw and fail the compilation on the first collision encountered
-     * - "warn": log a warning and append a numeric suffix to disambiguate
-     * - "suffix": append a numeric suffix silently (default)
-     */
-    nameCollisionBehavior?: PomNameCollisionBehavior;
+      * - "error": throw and fail the compilation on the first collision encountered (default)
+      * - "warn": log a warning and append a numeric suffix to disambiguate
+      * - "suffix": append a numeric suffix silently
+      */
+     nameCollisionBehavior?: PomNameCollisionBehavior;
 
     /**
      * Absolute path to the BasePage template module to inline into generated output.

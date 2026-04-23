@@ -365,8 +365,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
 
       const api = viteVuePlugin?.api;
       if (!api) {
-        loggerRef.current.warn("[vue-pom-generator] Nuxt bridge could not find vite:vue plugin to patch.");
-        return;
+        throw new Error("[vue-pom-generator] Nuxt bridge could not find vite:vue plugin to patch.");
       }
 
       const currentOptions = api.options ?? {};

@@ -4,7 +4,7 @@ import type { PluginOption } from "vite";
 
 import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 import type { VuePomGeneratorLogger } from "./logger";
-import type { PlaywrightOutputStructure, PomNameCollisionBehavior, RouterModuleShimDefinition } from "./types";
+import type { ResolvedGenerationSupportOptions } from "./resolved-generation-options";
 import { createBuildProcessorPlugin } from "./support/build-plugin";
 import { createDevProcessorPlugin } from "./support/dev-plugin";
 import { createTestIdsVirtualModulesPlugin } from "./support/virtual-modules";
@@ -21,37 +21,9 @@ interface SupportFactoryOptions {
   getViewsDir: () => string;
   getSourceDirs: () => string[];
   getWrapperSearchRoots: () => string[];
-  nameCollisionBehavior?: PomNameCollisionBehavior;
-  missingSemanticNameBehavior?: "ignore" | "error";
-  /** How to handle existing data-testid attributes in the source. */
-  existingIdBehavior?: "preserve" | "overwrite" | "error";
-
-  /** Output directory for generated files (POMs + optional fixtures). */
-  outDir?: string;
-
-  /** Languages to emit POMs for. */
-  emitLanguages?: Array<"ts" | "csharp">;
-  typescriptOutputStructure?: PlaywrightOutputStructure;
-
-  csharp?: {
-    namespace?: string;
-  };
-
-  routerAwarePoms: boolean;
-  routerEntry?: string;
-  routerType?: "vue-router" | "nuxt";
-  routerModuleShims?: Record<string, RouterModuleShimDefinition>;
-
-  /** Generate Playwright fixtures alongside generated POMs. */
-  generateFixtures?: boolean | string | { outDir?: string };
-  customPomAttachments?: Array<{ className: string; propertyName: string; attachWhenUsesComponents: string[]; attachTo?: "views" | "components" | "both" | "pagesAndComponents"; flatten?: boolean }>;
+  generation: ResolvedGenerationSupportOptions;
   projectRootRef: { current: string };
   basePageClassPath?: string;
-  customPomDir?: string;
-  customPomImportAliases?: Record<string, string>;
-  customPomImportNameCollisionBehavior?: "error" | "alias";
-  testIdAttribute: string;
-
   loggerRef: { current: VuePomGeneratorLogger };
 }
 
@@ -68,27 +40,30 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     getViewsDir,
     getSourceDirs,
     getWrapperSearchRoots,
-    nameCollisionBehavior = "suffix",
-    missingSemanticNameBehavior = "error",
-    existingIdBehavior,
+    generation,
+    projectRootRef,
+    basePageClassPath: basePageClassPathOverride,
+    loggerRef,
+  } = options;
+  const {
     outDir,
     emitLanguages,
     typescriptOutputStructure,
     csharp,
+    generateFixtures,
+    customPomAttachments,
+    customPomDir,
+    requireCustomPomDir,
+    customPomImportAliases,
+    customPomImportNameCollisionBehavior,
+    nameCollisionBehavior,
+    existingIdBehavior,
+    testIdAttribute,
     routerAwarePoms,
     routerEntry,
     routerType,
     routerModuleShims,
-    generateFixtures,
-    customPomAttachments,
-    projectRootRef,
-    basePageClassPath: basePageClassPathOverride,
-    customPomDir,
-    customPomImportAliases,
-    customPomImportNameCollisionBehavior,
-    testIdAttribute,
-    loggerRef,
-  } = options;
+  } = generation;
 
   const resolveRouterEntry = () => {
     if (!routerAwarePoms)
@@ -127,27 +102,12 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     getSourceDirs,
     basePageClassPath,
     normalizedBasePagePath,
-    outDir,
-    emitLanguages,
-    typescriptOutputStructure,
-    csharp,
-    generateFixtures,
-    customPomAttachments,
+    generation,
     projectRootRef,
-    customPomDir,
-    customPomImportAliases,
-    customPomImportNameCollisionBehavior,
-    testIdAttribute,
-    nameCollisionBehavior,
-    missingSemanticNameBehavior,
-    existingIdBehavior,
     nativeWrappers,
     excludedComponents,
     getWrapperSearchRoots,
-    routerAwarePoms,
-    routerType,
     getResolvedRouterEntry: resolveRouterEntry,
-    routerModuleShims,
     loggerRef,
   });
 
@@ -163,23 +123,8 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     projectRootRef,
     normalizedBasePagePath,
     basePageClassPath,
-    outDir,
-    emitLanguages,
-    typescriptOutputStructure,
-    csharp,
-    generateFixtures,
-    customPomAttachments,
-    customPomDir,
-    customPomImportAliases,
-    customPomImportNameCollisionBehavior,
-    nameCollisionBehavior,
-    missingSemanticNameBehavior,
-    existingIdBehavior,
-    testIdAttribute,
-    routerAwarePoms,
-    routerType,
+    generation,
     getResolvedRouterEntry: resolveRouterEntry,
-    routerModuleShims,
     loggerRef,
   });
 

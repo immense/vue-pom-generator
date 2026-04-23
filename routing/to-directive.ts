@@ -13,6 +13,31 @@ interface RouteLocationLike {
   params?: Record<string, string | number>;
 }
 
+interface RouteLocationTarget {
+  name?: string;
+  path?: string;
+}
+
+export type RouteDirectiveTargetAnalysis =
+  | {
+    kind: "resolved";
+    rawSource: string;
+    target: string | RouteLocationTarget;
+    routeNameKey: string | null;
+    paramKeys: string[];
+  }
+  | {
+    kind: "unsupported";
+    rawSource: string | null;
+    reason: "missing-expression" | "dynamic-expression" | "missing-name-or-path";
+  }
+  | {
+    kind: "parse-error";
+    rawSource: string;
+    reason: "parse-error";
+    error: string;
+  };
+
 type ResolveToComponentNameFn = (to: RouteLocationLike | string) => string | null;
 
 function toPascalCaseRouteKey(value: string): string {
@@ -65,51 +90,86 @@ function buildPlaceholderParams(keys: string[]): Record<string, string> {
   return params;
 }
 
-function getRouteLocationLikeFromToDirective(toDirective: DirectiveNode): RouteLocationLike | string | null {
-  if (!toDirective.exp)
-    return null;
+const isNodeType = (node: object | null, type: string): node is { type: string } => {
+  return node !== null && (node as { type?: string }).type === type;
+};
 
-  // Parse the JS expression with Babel and extract supported shapes.
-  const exp = toDirective.exp;
-  const rawSource = stringifyExpression(exp).trim();
+const isStringLiteralNode = (node: object | null): node is { type: "StringLiteral"; value: string } => {
+  return isNodeType(node, "StringLiteral") && typeof (node as { value?: string }).value === "string";
+};
+
+const isIdentifierNode = (node: object | null): node is { type: "Identifier"; name: string } => {
+  return isNodeType(node, "Identifier") && typeof (node as { name?: string }).name === "string";
+};
+
+const isObjectPropertyNode = (node: object | null): node is { type: "ObjectProperty"; key: object; value: object } => {
+  if (!isNodeType(node, "ObjectProperty"))
+    return false;
+  const n = node as { key?: object; value?: object };
+  return typeof n.key === "object" && n.key !== null && typeof n.value === "object" && n.value !== null;
+};
+
+const isObjectExpressionNode = (node: object | null): node is { type: "ObjectExpression"; properties: object[] } => {
+  if (!isNodeType(node, "ObjectExpression"))
+    return false;
+  const n = node as { properties?: object[] };
+  return Array.isArray(n.properties);
+};
+
+function materializeResolvedRouteTarget(
+  target: string | RouteLocationTarget,
+  paramKeys: string[],
+): RouteLocationLike | string {
+  if (typeof target === "string")
+    return target;
+  if (!paramKeys.length)
+    return target;
+  return {
+    ...target,
+    params: buildPlaceholderParams(paramKeys),
+  };
+}
+
+export function analyzeToDirectiveTarget(toDirective: DirectiveNode): RouteDirectiveTargetAnalysis {
+  if (!toDirective.exp) {
+    return {
+      kind: "unsupported",
+      rawSource: null,
+      reason: "missing-expression",
+    };
+  }
+
+  const rawSource = stringifyExpression(toDirective.exp).trim();
 
   let expr: object;
   try {
     expr = parseExpression(rawSource, { plugins: ["typescript"] });
   }
-  catch {
-    return null;
+  catch (error) {
+    return {
+      kind: "parse-error",
+      rawSource,
+      reason: "parse-error",
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 
-  const isNodeType = (node: object | null, type: string): node is { type: string } => {
-    return node !== null && (node as { type?: string }).type === type;
-  };
-  const isStringLiteralNode = (node: object | null): node is { type: "StringLiteral"; value: string } => {
-    return isNodeType(node, "StringLiteral") && typeof (node as { value?: string }).value === "string";
-  };
-  const isIdentifierNode = (node: object | null): node is { type: "Identifier"; name: string } => {
-    return isNodeType(node, "Identifier") && typeof (node as { name?: string }).name === "string";
-  };
-  const isObjectPropertyNode = (node: object | null): node is { type: "ObjectProperty"; key: object; value: object } => {
-    if (!isNodeType(node, "ObjectProperty"))
-      return false;
-    const n = node as { key?: object; value?: object };
-    return typeof n.key === "object" && n.key !== null && typeof n.value === "object" && n.value !== null;
-  };
-  const isObjectExpressionNode = (node: object | null): node is { type: "ObjectExpression"; properties: object[] } => {
-    if (!isNodeType(node, "ObjectExpression"))
-      return false;
-    const n = node as { properties?: object[] };
-    return Array.isArray(n.properties);
-  };
-
   if (isStringLiteralNode(expr)) {
-    // :to="'/some/path'"
-    return expr.value;
+    return {
+      kind: "resolved",
+      rawSource,
+      target: expr.value,
+      routeNameKey: null,
+      paramKeys: [],
+    };
   }
 
   if (!isObjectExpressionNode(expr)) {
-    return null;
+    return {
+      kind: "unsupported",
+      rawSource,
+      reason: "dynamic-expression",
+    };
   }
 
   const getStringField = (fieldName: "name" | "path") => {
@@ -134,7 +194,7 @@ function getRouteLocationLikeFromToDirective(toDirective: DirectiveNode): RouteL
     return (isIdentifierNode(key) && key.name === "params") || (isStringLiteralNode(key) && key.value === "params");
   });
 
-  let params: Record<string, string> | undefined;
+  let paramKeys: string[] = [];
   if (paramsProp && isObjectPropertyNode(paramsProp) && isObjectExpressionNode(paramsProp.value as object)) {
     const keys: string[] = [];
     for (const prop of (paramsProp.value as { properties: object[] }).properties) {
@@ -146,35 +206,42 @@ function getRouteLocationLikeFromToDirective(toDirective: DirectiveNode): RouteL
       else if (isStringLiteralNode(key))
         keys.push(key.value);
     }
-    if (keys.length) {
-      params = buildPlaceholderParams(Array.from(new Set(keys)));
-    }
+    paramKeys = Array.from(new Set(keys));
   }
 
   if (name) {
-    // Keep the router-facing name as-is (spaces etc). Normalization is only for codegen naming.
-    return { name, params };
+    const trimmed = name.trim();
+    if (!trimmed.length) {
+      return {
+        kind: "unsupported",
+        rawSource,
+        reason: "missing-name-or-path",
+      };
+    }
+    return {
+      kind: "resolved",
+      rawSource,
+      target: { name },
+      routeNameKey: toPascalCaseRouteKey(trimmed),
+      paramKeys,
+    };
   }
+
   if (path) {
-    return { path, params };
+    return {
+      kind: "resolved",
+      rawSource,
+      target: { path },
+      routeNameKey: null,
+      paramKeys,
+    };
   }
-  return null;
-}
 
-function toDirectiveObjectFieldNameValue(toDirective: DirectiveNode): string | null {
-  const to = getRouteLocationLikeFromToDirective(toDirective);
-  if (!to || typeof to === "string")
-    return null;
-
-  const name = to.name;
-  if (typeof name !== "string")
-    return null;
-
-  const trimmed = name.trim();
-  if (!trimmed.length)
-    return null;
-
-  return toPascalCaseRouteKey(trimmed);
+  return {
+    kind: "unsupported",
+    rawSource,
+    reason: "missing-name-or-path",
+  };
 }
 
 /**
@@ -185,14 +252,8 @@ function toDirectiveObjectFieldNameValue(toDirective: DirectiveNode): string | n
  * - :to="someVar" (cannot be resolved statically; returns null)
  */
 export function getRouteNameKeyFromToDirective(toDirective: DirectiveNode): string | null {
-  // Prefer object-literal `name: '...'` parsing.
-  const objectName = toDirectiveObjectFieldNameValue(toDirective);
-  if (objectName)
-    return objectName;
-
-  // If Vue provided an AST, we can sometimes detect { name: '...' } without regex.
-  // Currently we keep this conservative: if it isn't a literal object with name, return null.
-  return null;
+  const analysis = analyzeToDirectiveTarget(toDirective);
+  return analysis.kind === "resolved" ? analysis.routeNameKey : null;
 }
 
 /**
@@ -201,18 +262,18 @@ export function getRouteNameKeyFromToDirective(toDirective: DirectiveNode): stri
  * Returns the Vue component identifier (e.g. `TenantDetailsPage`) when available.
  */
 export function tryResolveToDirectiveTargetComponentName(toDirective: DirectiveNode): string | null {
+  const analysis = analyzeToDirectiveTarget(toDirective);
+
   // Prefer router.resolve (more accurate; can handle path or name + placeholder params).
-  const to = getRouteLocationLikeFromToDirective(toDirective);
-  if (to && resolveToComponentName) {
-    const resolved = resolveToComponentName(to);
+  if (analysis.kind === "resolved" && resolveToComponentName) {
+    const resolved = resolveToComponentName(materializeResolvedRouteTarget(analysis.target, analysis.paramKeys));
     if (resolved)
       return resolved;
   }
 
   // Fallback: route name -> component map (best-effort)
-  const key = getRouteNameKeyFromToDirective(toDirective);
-  if (!key || !routeNameToComponentName)
+  if (analysis.kind !== "resolved" || !analysis.routeNameKey || !routeNameToComponentName)
     return null;
 
-  return routeNameToComponentName.get(key) ?? null;
+  return routeNameToComponentName.get(analysis.routeNameKey) ?? null;
 }
