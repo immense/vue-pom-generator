@@ -1,4 +1,4 @@
-import { createPomParameterSpec, normalizePomParameters, type PomParameterInput, type PomParameterSpec } from "./pom-params";
+import { normalizePomParameters, type PomParameterInput, type PomParameterSpec } from "./pom-params";
 
 export type PomPatternKind = "static" | "parameterized";
 
@@ -70,22 +70,36 @@ export function getPomPatternVariables(
   return out;
 }
 
-export function ensurePomPatternParameters(
+export function orderPomPatternParameters(
   params: PomParameterInput,
   patterns: readonly PomStringPattern[],
   options: {
     omit?: readonly string[];
-    defaultType?: string;
   } = {},
 ): PomParameterSpec[] {
   const currentParams = normalizePomParameters(params);
-  const defaultType = options.defaultType ?? "string";
   const orderedParams: PomParameterSpec[] = [];
   const seen = new Set<string>();
+  const missingParams: string[] = [];
 
   for (const variableName of getPomPatternVariables(patterns, options)) {
     seen.add(variableName);
-    orderedParams.push(currentParams.find(param => param.name === variableName) ?? createPomParameterSpec(variableName, defaultType));
+    const existingParam = currentParams.find(param => param.name === variableName);
+    if (!existingParam) {
+      missingParams.push(variableName);
+      continue;
+    }
+    orderedParams.push(existingParam);
+  }
+
+  if (missingParams.length > 0) {
+    const availableParams = currentParams.map(param => JSON.stringify(param.name)).join(", ") || "<none>";
+    const patternSummary = patterns.map(pattern => JSON.stringify(pattern.formatted)).join(", ");
+    throw new Error(
+      `[vue-pom-generator] Missing selector parameter(s) ${missingParams.map(name => JSON.stringify(name)).join(", ")} `
+      + `for parameterized pattern(s) ${patternSummary}. `
+      + `Available parameters: ${availableParams}.`,
+    );
   }
 
   for (const param of currentParams) {

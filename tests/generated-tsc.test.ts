@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import type { IComponentDependencies, IDataTestId } from "../utils";
 import { generateFiles } from "../class-generation";
-import { createPomMethodSignature, createPomParameters, fromLegacyPomParameterRecord } from "../pom-params";
+import { createPomMethodSignature, createPomParameters } from "../pom-params";
 import { createPomStringPattern } from "../pom-patterns";
 import { renderTypeScriptLines } from "../typescript-codegen";
 
@@ -38,6 +38,7 @@ function copyRepoFixture(rootDir: string, fixtureName: string, destinationRelati
 }
 
 function writePlaywrightTypeStub(rootDir: string) {
+  copyRepoFixture(rootDir, "playwright.d.ts", path.join("node_modules", "playwright", "index.d.ts"));
   copyRepoFixture(rootDir, "playwright-test.d.ts", path.join("node_modules", "@playwright", "test", "index.d.ts"));
 }
 
@@ -140,7 +141,7 @@ describe("generated output", () => {
     }
   });
 
-  it("typechecks parameterized input methods even when stale IR omits key params", async () => {
+  it("fails fast when parameterized input methods omit key params", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-keyed-input-"));
 
     writePlaywrightTypeStub(tempRoot);
@@ -156,8 +157,8 @@ describe("generated output", () => {
         nativeRole: "input",
         methodName: "ItemsCheckByKey",
         selector: createPomStringPattern("items-check-${key}", "parameterized"),
-        // Simulate stale IR that predates the structured selector object and forgot to carry `key`.
-        parameters: fromLegacyPomParameterRecord({ text: "string", annotationText: 'string = ""' }),
+        // Simulate stale/manual IR that forgot to carry the selector parameter.
+        parameters: createPomParameters(["text", "string"], ["annotationText", 'string = ""']),
       },
     };
 
@@ -171,24 +172,13 @@ describe("generated output", () => {
     };
 
     const outDir = path.join(tempRoot, "out");
-    await generateFiles(new Map([[componentName, deps]]), new Map(), basePagePath, {
+    await expect(generateFiles(new Map([[componentName, deps]]), new Map(), basePagePath, {
       outDir,
       projectRoot: tempRoot,
-    });
-
-    const generatedFilePath = path.join(outDir, "page-object-models.g.ts");
-    const generatedContent = fs.readFileSync(generatedFilePath, "utf8");
-    expect(generatedContent).toMatch(/async typeItemsCheckByKey\(key: string, text: string, annotationText: string = ""\)/);
-
-    const result = runTscNoEmit([generatedFilePath, basePagePath], { cwd: tempRoot });
-    if (result.status !== 0) {
-      const stdout = (result.stdout || "").toString();
-      const stderr = (result.stderr || "").toString();
-      throw new Error(`tsc failed (exit ${result.status})\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`);
-    }
+    })).rejects.toThrow(/Missing selector parameter\(s\) "key"/);
   });
 
-  it("typechecks parameterized input methods when selector vars are not named key", async () => {
+  it("fails fast when parameterized input methods omit non-key selector vars", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-selector-vars-"));
 
     writePlaywrightTypeStub(tempRoot);
@@ -205,7 +195,7 @@ describe("generated output", () => {
         methodName: "ItemsCheckByKey",
         selector: createPomStringPattern("items-check-${itemId}", "parameterized"),
         // Simulate stale/manual IR that forgot to carry the selector variable name.
-        parameters: fromLegacyPomParameterRecord({ text: "string", annotationText: 'string = ""' }),
+        parameters: createPomParameters(["text", "string"], ["annotationText", 'string = ""']),
       },
     };
 
@@ -219,22 +209,10 @@ describe("generated output", () => {
     };
 
     const outDir = path.join(tempRoot, "out");
-    await generateFiles(new Map([[componentName, deps]]), new Map(), basePagePath, {
+    await expect(generateFiles(new Map([[componentName, deps]]), new Map(), basePagePath, {
       outDir,
       projectRoot: tempRoot,
-    });
-
-    const generatedFilePath = path.join(outDir, "page-object-models.g.ts");
-    const generatedContent = fs.readFileSync(generatedFilePath, "utf8");
-    expect(generatedContent).toMatch(/async typeItemsCheckByKey\(itemId: string, text: string, annotationText: string = ""\)/);
-    expect(generatedContent).toContain("keyedLocators((itemId: string) => this.locatorByTestId(`items-check-${itemId}`))");
-
-    const result = runTscNoEmit([generatedFilePath, basePagePath], { cwd: tempRoot });
-    if (result.status !== 0) {
-      const stdout = (result.stdout || "").toString();
-      const stderr = (result.stderr || "").toString();
-      throw new Error(`tsc failed (exit ${result.status})\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`);
-    }
+    })).rejects.toThrow(/Missing selector parameter\(s\) "itemId"/);
   });
 
   it("typechecks split TypeScript output with barrel exports and stub targets", async () => {
@@ -544,7 +522,7 @@ describe("generated output", () => {
     }
   });
 
-  it("skips missing custom helper attachments and widget instances when no helper files exist", async () => {
+  it("fails when configured custom helper infrastructure is missing", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-"));
 
     writePlaywrightTypeStub(tempRoot);
@@ -581,10 +559,11 @@ describe("generated output", () => {
     const vueFilesPathMap = new Map<string, string>();
     const outDir = path.join(tempRoot, "out");
 
-    await generateFiles(componentHierarchyMap, vueFilesPathMap, basePagePath, {
+    await expect(generateFiles(componentHierarchyMap, vueFilesPathMap, basePagePath, {
       outDir,
       projectRoot: tempRoot,
       customPomDir: "tests/playwright/pom/custom",
+      requireCustomPomDir: true,
       customPomAttachments: [
         {
           className: "Grid",
@@ -600,25 +579,7 @@ describe("generated output", () => {
           flatten: true,
         },
       ],
-    });
-
-    const generatedFile = path.join(outDir, "page-object-models.g.ts");
-    const generatedContent = fs.readFileSync(generatedFile, "utf8");
-
-    expect(generatedContent).not.toContain("ToggleWidget");
-    expect(generatedContent).not.toContain("CheckboxWidget");
-    expect(generatedContent).not.toContain("new Grid(");
-    expect(generatedContent).not.toContain("new ConfirmationModal(");
-    expect(generatedContent).not.toContain("return this.grid.");
-    expect(generatedContent).not.toContain("return this.confirmationModal.");
-
-    const result = runTscNoEmit([generatedFile, basePagePath], { cwd: tempRoot });
-
-    if (result.status !== 0) {
-      const stdout = (result.stdout || "").toString();
-      const stderr = (result.stderr || "").toString();
-      throw new Error(`tsc failed (exit ${result.status})\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`);
-    }
+    })).rejects.toThrow(/Custom POM directory .* does not exist/i);
   });
 
   it("only emits view passthrough methods when the view has a single child component POM", async () => {

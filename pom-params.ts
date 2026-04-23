@@ -13,7 +13,6 @@ export interface PomMethodSignature {
   parameters: PomParameterSpec[];
 }
 
-export type PomLegacyParameterRecord = Record<string, string>;
 export type PomParameterInput = readonly PomParameterSpec[] | undefined;
 
 export function splitPomParameterTypeExpression(typeExpression: string): { type: string; initializer?: string } {
@@ -70,14 +69,6 @@ export function createPomParameters(...parameters: Array<PomParameterSpec | read
       isRestParameter: param.isRestParameter,
     });
   });
-}
-
-export function fromLegacyPomParameterRecord(params: PomLegacyParameterRecord | undefined): PomParameterSpec[] {
-  if (!params) {
-    return [];
-  }
-
-  return Object.entries(params).map(([name, typeExpression]) => createPomParameterSpec(name, typeExpression));
 }
 
 export function normalizePomParameters(params: PomParameterInput): PomParameterSpec[] {

@@ -14,6 +14,7 @@ import type { CompilerOptions } from "@vue/compiler-dom";
 import * as compilerDom from "@vue/compiler-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateFiles } from "../class-generation";
+import { resolveGenerationSupportOptions, type ResolvedGenerationSupportOptions } from "../plugin/resolved-generation-options";
 import { createDevProcessorPlugin } from "../plugin/support/dev-plugin";
 
 // Mock generateFiles so the dev plugin doesn't try to write real files
@@ -87,6 +88,11 @@ function makeDevPlugin(
   overrides?: Record<string, unknown>,
 ) {
   const basePageClassPath = path.join(projectRoot, "base-page.ts");
+  const generationOverrides = (overrides?.generation as Partial<ResolvedGenerationSupportOptions> | undefined) ?? {};
+  const overrideEntries = { ...(overrides ?? {}) };
+  delete overrideEntries.generation;
+  const existingIdBehaviorOverride = overrideEntries.existingIdBehavior as ResolvedGenerationSupportOptions["existingIdBehavior"] | undefined;
+  delete overrideEntries.existingIdBehavior;
   return createDevProcessorPlugin({
     nativeWrappers: {},
     excludedComponents: [],
@@ -99,10 +105,14 @@ function makeDevPlugin(
     projectRootRef: { current: projectRoot },
     normalizedBasePagePath: path.posix.normalize(basePageClassPath),
     basePageClassPath,
-    customPomAttachments: [],
-    nameCollisionBehavior: "error",
-    testIdAttribute: "data-testid",
-    routerAwarePoms: false,
+    generation: resolveGenerationSupportOptions({
+      customPomAttachments: [],
+      nameCollisionBehavior: "error",
+      existingIdBehavior: existingIdBehaviorOverride,
+      testIdAttribute: "data-testid",
+      routerAwarePoms: false,
+      ...generationOverrides,
+    }),
     getResolvedRouterEntry: () => undefined,
     loggerRef: {
       current: {
@@ -111,7 +121,7 @@ function makeDevPlugin(
         warn() {},
       },
     },
-    ...overrides,
+    ...overrideEntries,
   } as any);
 }
 

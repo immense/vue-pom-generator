@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveGenerationSupportOptions } from "../plugin/resolved-generation-options";
 import { createDevProcessorPlugin } from "../plugin/support/dev-plugin";
 import type { PlaywrightOutputStructure } from "../plugin/types";
 import type { IComponentDependencies, NativeWrappersMap } from "../utils";
@@ -11,7 +12,6 @@ import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 interface CreateTestIdTransformOptions {
   existingIdBehavior?: string;
   nameCollisionBehavior?: string;
-  missingSemanticNameBehavior?: string;
   testIdAttribute?: string;
   warn?: (message: string) => void;
   vueFilesPathMap?: Map<string, string>;
@@ -112,12 +112,13 @@ describe("dev processor option plumbing", () => {
         projectRootRef: { current: projectRoot },
         normalizedBasePagePath: path.posix.normalize(basePageClassPath),
         basePageClassPath,
-        customPomAttachments: [],
-        nameCollisionBehavior: "error",
-        missingSemanticNameBehavior: "error",
-        typescriptOutputStructure: "split",
-        testIdAttribute: "data-testid",
-        routerAwarePoms: false,
+        generation: resolveGenerationSupportOptions({
+          customPomAttachments: [],
+          nameCollisionBehavior: "error",
+          typescriptOutputStructure: "split",
+          testIdAttribute: "data-testid",
+          routerAwarePoms: false,
+        }),
         getResolvedRouterEntry: () => undefined,
         loggerRef: {
           current: {
@@ -147,9 +148,8 @@ describe("dev processor option plumbing", () => {
 
       expect(transformCall[4]).toBe(path.resolve(projectRoot, "src", "views"));
       expect(transformOptions).toMatchObject({
-        existingIdBehavior: "preserve",
+        existingIdBehavior: "error",
         nameCollisionBehavior: "error",
-        missingSemanticNameBehavior: "error",
         testIdAttribute: "data-testid",
         wrapperSearchRoots,
       });
@@ -176,7 +176,7 @@ describe("dev processor option plumbing", () => {
     }
   });
 
-  it("defaults missingSemanticNameBehavior to error when strictness is not overridden", async () => {
+  it("does not pass a legacy semantic fallback override into the transform", async () => {
     const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-dev-default-strict-"));
 
     try {
@@ -199,10 +199,12 @@ describe("dev processor option plumbing", () => {
         projectRootRef: { current: projectRoot },
         normalizedBasePagePath: path.posix.normalize(path.join(projectRoot, "base-page.ts")),
         basePageClassPath: path.join(projectRoot, "base-page.ts"),
-        customPomAttachments: [],
-        nameCollisionBehavior: "error",
-        testIdAttribute: "data-testid",
-        routerAwarePoms: false,
+        generation: resolveGenerationSupportOptions({
+          customPomAttachments: [],
+          nameCollisionBehavior: "error",
+          testIdAttribute: "data-testid",
+          routerAwarePoms: false,
+        }),
         getResolvedRouterEntry: () => undefined,
         loggerRef: {
           current: {
@@ -227,7 +229,7 @@ describe("dev processor option plumbing", () => {
         throw new Error("Expected createTestIdTransform to be called");
       }
 
-      expect(transformCall[5]?.missingSemanticNameBehavior).toBe("error");
+      expect(Object.prototype.hasOwnProperty.call(transformCall[5] ?? {}, "missingSemanticNameBehavior")).toBe(false);
     }
     finally {
       fs.rmSync(projectRoot, { recursive: true, force: true });
@@ -263,10 +265,12 @@ describe("dev processor option plumbing", () => {
         projectRootRef: { current: projectRoot },
         normalizedBasePagePath: path.posix.normalize(path.join(projectRoot, "base-page.ts")),
         basePageClassPath: path.join(projectRoot, "base-page.ts"),
-        customPomAttachments: [],
-        nameCollisionBehavior: "error",
-        testIdAttribute: "data-testid",
-        routerAwarePoms: false,
+        generation: resolveGenerationSupportOptions({
+          customPomAttachments: [],
+          nameCollisionBehavior: "error",
+          testIdAttribute: "data-testid",
+          routerAwarePoms: false,
+        }),
         getResolvedRouterEntry: () => undefined,
         loggerRef: {
           current: {

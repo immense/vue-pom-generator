@@ -21,6 +21,7 @@ import { createPomStringPattern } from "../pom-patterns";
 import {
   addComponentTestIds,
   applyResolvedDataTestId,
+  analyzeToDirectiveTarget,
   findDataTestIdAttribute,
   findTestIdAttribute,
   formatTagName,
@@ -241,6 +242,22 @@ function setBindAst(node: ElementNode, argName: string, expAstSource: string) {
     directiveNode.exp.ast = parseExpression(expAstSource, { plugins: ["typescript"] });
 }
 
+function clearBindAst(node: ElementNode, argName: string) {
+  const dir = node.props.find(
+    (p)  =>
+      p.type === NodeTypes.DIRECTIVE
+      && p.name === "bind"
+      && p.arg?.type === NodeTypes.SIMPLE_EXPRESSION
+      && p.arg.content === argName,
+  );
+  const directiveNode = dir as DirectiveNode;
+  if (!directiveNode || directiveNode === undefined || directiveNode.exp === undefined) {
+    throw new Error(`Missing :${argName} directive with SIMPLE_EXPRESSION`);
+  }
+  else
+    (directiveNode.exp as { ast?: unknown }).ast = null;
+}
+
 describe("utils.ts coverage", () => {
   it("covers simple type helpers and click detection", () => {
     expect(toPascalCase("hello world")).toBe("HelloWorld");
@@ -264,6 +281,12 @@ describe("utils.ts coverage", () => {
     const toDir = nodeHasToDirective(el);
     expect(toDir).toBeTruthy();
 
+    expect(analyzeToDirectiveTarget(toDir!)).toMatchObject({
+      kind: "resolved",
+      routeNameKey: "Users",
+      paramKeys: [],
+    });
+
     // Fallback map path
     setResolveToComponentNameFn(null);
     setRouteNameToComponentNameMap(new Map([["Users", "UsersPage"]]));
@@ -283,7 +306,28 @@ describe("utils.ts coverage", () => {
     const ast2 = parseTemplate("<RouterLink :to=\"{ name: 'users', params: { id: foo } }\">Users</RouterLink>");
     const el2 = firstElement(ast2);
     const toDir2 = nodeHasToDirective(el2);
+    expect(analyzeToDirectiveTarget(toDir2!)).toMatchObject({
+      kind: "resolved",
+      routeNameKey: "Users",
+      paramKeys: ["id"],
+    });
     expect(tryResolveToDirectiveTargetComponentName(toDir2!)).toBe("UsersViaResolve");
+  });
+
+  it("distinguishes unsupported and parse-error :to directive shapes", () => {
+    const unsupportedAst = parseTemplate("<RouterLink :to=\"routeTarget\">Users</RouterLink>");
+    const unsupportedDir = nodeHasToDirective(firstElement(unsupportedAst));
+    expect(analyzeToDirectiveTarget(unsupportedDir!)).toMatchObject({
+      kind: "unsupported",
+      reason: "dynamic-expression",
+    });
+
+    const parseErrorAst = parseTemplate("<RouterLink :to=\"foo(\">Users</RouterLink>");
+    const parseErrorDir = nodeHasToDirective(firstElement(parseErrorAst));
+    expect(analyzeToDirectiveTarget(parseErrorDir!)).toMatchObject({
+      kind: "parse-error",
+      reason: "parse-error",
+    });
   });
 
   it("derives :handler semanticNameHint from literal call arguments", () => {
@@ -708,6 +752,19 @@ describe("utils.ts coverage", () => {
     expect(info?.rawExpression).toBe("p.parameter.name");
   });
 
+  it("re-parses existing bound test ids through the shared Vue-expression AST helper when compiler ast is absent", () => {
+    const node = firstElement(parseTemplate("<div :data-testid=\"p.parameter.name\" />"));
+    clearBindAst(node, "data-testid");
+
+    const info = tryGetExistingElementDataTestId(node);
+    expect(info?.isDynamic).toBe(true);
+    expect(info?.isStaticLiteral).toBe(false);
+    expect(info?.value).toBe("p.parameter.name");
+    expect(info?.template).toBe("${p.parameter.name}");
+    expect(info?.templateExpressionCount).toBe(1);
+    expect(info?.rawExpression).toBe("p.parameter.name");
+  });
+
   it("throws when preserving an existing dynamic data-testid expression (unusable selector)", () => {
     const el = firstElement(parseTemplate("<button :data-testid=\"__props.name\" />"));
 
@@ -920,6 +977,7 @@ describe("utils.ts coverage", () => {
       keyInfo: null,
       testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
+      nameCollisionBehavior: "suffix",
       addHtmlAttribute: false,
       entryOverrides: { selectorValue: createPomStringPattern("MyComp-Foo-radio", "static") },
     });
@@ -947,6 +1005,7 @@ describe("utils.ts coverage", () => {
       keyInfo: null,
       testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
+      nameCollisionBehavior: "suffix",
       addHtmlAttribute: false,
       entryOverrides: { selectorValue: createPomStringPattern("MyComp-Foo-radio", "static") },
     });
@@ -980,6 +1039,7 @@ describe("utils.ts coverage", () => {
       keyInfo: null,
       testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
+      nameCollisionBehavior: "suffix",
       addHtmlAttribute: false,
     });
 
@@ -1003,6 +1063,7 @@ describe("utils.ts coverage", () => {
       keyInfo: null,
       testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
+      nameCollisionBehavior: "suffix",
       addHtmlAttribute: false,
     });
 

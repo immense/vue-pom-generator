@@ -20,9 +20,9 @@ import {
   type PomParameterSpec,
 } from "./pom-params";
 import {
-  ensurePomPatternParameters,
   getIndexedPomPatternVariable,
   hasPomPatternVariables,
+  orderPomPatternParameters,
   toTypeScriptPomPatternExpression,
   uniquePomStringPatterns,
   type PomStringPattern,
@@ -82,7 +82,7 @@ function generateClickMethod(
 ): TypeScriptClassMember[] {
   const name = `click${methodName}`;
   const noWaitName = `${name}NoWait`;
-  const selectorParams = ensurePomPatternParameters(parameters, [selector]);
+  const selectorParams = orderPomPatternParameters(parameters, [selector]);
   const hasSelectorVariables = hasPomPatternVariables(selector);
   const baseParameters = createParameters(selectorParams);
   const argsForForward = getPomParameterNames(selectorParams).join(", ");
@@ -154,7 +154,7 @@ function generateRadioMethod(
   parameters: PomParameterSpec[],
 ): TypeScriptClassMember[] {
   const name = `select${methodName}`;
-  const selectorParams = ensurePomPatternParameters(parameters, [selector]);
+  const selectorParams = orderPomPatternParameters(parameters, [selector]);
   const methodParameters = createParameters(selectorParams);
   const testIdExpr = toTypeScriptPomPatternExpression(selector);
 
@@ -171,7 +171,7 @@ function generateSelectMethod(
   parameters: PomParameterSpec[],
 ): TypeScriptClassMember[] {
   const name = `select${methodName}`;
-  const selectorParams = ensurePomPatternParameters(parameters, [selector]);
+  const selectorParams = orderPomPatternParameters(parameters, [selector]);
   const selectorExpr = `this.selectorForTestId(${toTypeScriptPomPatternExpression(selector)})`;
 
   return [
@@ -193,7 +193,7 @@ function generateVSelectMethod(
   parameters: PomParameterSpec[],
 ): TypeScriptClassMember[] {
   const name = `select${methodName}`;
-  const selectorParams = ensurePomPatternParameters(parameters, [selector]);
+  const selectorParams = orderPomPatternParameters(parameters, [selector]);
 
   return [
     createAsyncMethod(
@@ -212,7 +212,7 @@ function generateTypeMethod(
   parameters: PomParameterSpec[],
 ): TypeScriptClassMember[] {
   const name = `type${methodName}`;
-  const selectorParams = ensurePomPatternParameters(parameters, [selector]);
+  const selectorParams = orderPomPatternParameters(parameters, [selector]);
 
   return [
     createAsyncMethod(
@@ -249,7 +249,7 @@ function generateGetElementByDataTestId(
   const numericSuffix = baseName.startsWith(roleSuffix) ? baseName.slice(roleSuffix.length) : "";
   const hasRoleSuffix = baseName.endsWith(roleSuffix) || (baseName.startsWith(roleSuffix) && isAllDigits(numericSuffix));
   const propertyName = hasRoleSuffix ? `${baseName}` : `${baseName}${roleSuffix}`;
-  const selectorParams = ensurePomPatternParameters(parameters, [selector]);
+  const selectorParams = orderPomPatternParameters(parameters, [selector]);
   const indexedVariable = getIndexedPomPatternVariable(selector);
 
   if (indexedVariable) {
@@ -302,7 +302,7 @@ function generateNavigationMethod(args: {
     ? `goTo${upperFirst(baseMethodName)}`
     : `goTo${target.endsWith("Page") ? target.slice(0, -"Page".length) : target}`;
 
-  const selectorParams = ensurePomPatternParameters(parameters, [selector]);
+  const selectorParams = orderPomPatternParameters(parameters, [selector]);
   const methodParameters = createParameters(selectorParams);
   const alternates = uniquePomStringPatterns(selector, alternateSelectors).slice(1);
   const candidatesExpr = [toTypeScriptPomPatternExpression(selector), ...alternates.map(id => toTypeScriptPomPatternExpression(id))].join(", ");

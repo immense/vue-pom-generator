@@ -19,7 +19,7 @@ import { parseExpression } from "@babel/parser";
 import path from "node:path";
 import fs from "node:fs";
 import process from "node:process";
-import { TESTID_CLICK_EVENT_NAME, TESTID_CLICK_EVENT_STRICT_FLAG } from "./click-instrumentation";
+import { TESTID_CLICK_EVENT_NAME } from "./click-instrumentation";
 import {
   isAsciiDigitCode,
   isAsciiLetterCode,
@@ -754,16 +754,12 @@ function tryWrapClickDirectiveForTestEvents(
         __w.dispatchEvent(new __CustomEvent('${CLICK_EVENT_NAME}', { detail: { testId: __testId, phase, err: err ? String(err) : undefined } }));
       }
     } catch (e) {
-      // Instrumentation must never hide failures during e2e strict mode.
-      // In strict mode we rethrow so tests fail fast and the underlying problem is visible.
-      // Outside strict mode we log and continue so we don't break real user clicks.
+      // Instrumentation failures should never be silent. Log the root cause and fail fast.
       const __w = __win || (__target && __target.ownerDocument && __target.ownerDocument.defaultView);
       if (__w && __w.console && typeof __w.console.error === 'function') {
         __w.console.error('[testid-click-event] failed to emit ${CLICK_EVENT_NAME}', e);
       }
-      if (__w && (__w[${JSON.stringify(TESTID_CLICK_EVENT_STRICT_FLAG)}] === true)) {
-        throw e;
-      }
+      throw e;
     }
   };
     const __w2 = __win || (__target && __target.ownerDocument && __target.ownerDocument.defaultView);
@@ -806,16 +802,12 @@ function tryWrapClickDirectiveForTestEvents(
         __w.dispatchEvent(new __CustomEvent('${CLICK_EVENT_NAME}', { detail: { testId: __testId, phase, err: err ? String(err) : undefined } }));
       }
     } catch (e) {
-      // Instrumentation must never hide failures during e2e strict mode.
-      // In strict mode we rethrow so tests fail fast and the underlying problem is visible.
-      // Outside strict mode we log and continue so we don't break real user clicks.
+      // Instrumentation failures should never be silent. Log the root cause and fail fast.
       const __w = __win || (__target && __target.ownerDocument && __target.ownerDocument.defaultView);
       if (__w && __w.console && typeof __w.console.error === 'function') {
         __w.console.error('[testid-click-event] failed to emit ${CLICK_EVENT_NAME}', e);
       }
-      if (__w && (__w[${JSON.stringify(TESTID_CLICK_EVENT_STRICT_FLAG)}] === true)) {
-        throw e;
-      }
+      throw e;
     }
   };
     const __w2 = __win || (__target && __target.ownerDocument && __target.ownerDocument.defaultView);
@@ -868,16 +860,14 @@ export function createTestIdTransform(
     existingIdBehavior?: "preserve" | "overwrite" | "error";
     testIdAttribute?: string;
     nameCollisionBehavior?: "error" | "warn" | "suffix";
-    missingSemanticNameBehavior?: "ignore" | "error";
     warn?: (message: string) => void;
     vueFilesPathMap?: Map<string, string>;
     wrapperSearchRoots?: string[];
   } = {},
 ): NodeTransform {
-  const existingIdBehavior = options.existingIdBehavior ?? "preserve";
+  const existingIdBehavior = options.existingIdBehavior ?? "error";
   const testIdAttribute = (options.testIdAttribute || "data-testid").trim() || "data-testid";
-  const nameCollisionBehavior = options.nameCollisionBehavior ?? "suffix";
-  const missingSemanticNameBehavior = options.missingSemanticNameBehavior ?? "error";
+  const nameCollisionBehavior = options.nameCollisionBehavior ?? "error";
   const warn = options.warn;
   const vueFilesPathMap = options.vueFilesPathMap;
   const wrapperSearchRoots = options.wrapperSearchRoots ?? [];
@@ -1295,12 +1285,7 @@ export function createTestIdTransform(
     }) ?? null;
     const handlerInfo = handlerDirective ? nodeHandlerAttributeInfo(element) : null;
 
-    if (
-      missingSemanticNameBehavior === "error"
-      && nativeWrappers[element.tag]?.role === "button"
-      && handlerDirective
-      && !handlerInfo
-    ) {
+    if (nativeWrappers[element.tag]?.role === "button" && handlerDirective && !handlerInfo) {
       const loc = element.loc?.start;
       const locationHint = loc ? `${loc.line}:${loc.column}` : "unknown";
       const handlerSource = (handlerDirective.exp?.loc?.source ?? "").trim() || "<unknown>";
@@ -1310,8 +1295,7 @@ export function createTestIdTransform(
         + `Element: <${element.tag}>\n`
         + `Handler: ${handlerSource}\n\n`
         + `Fix: move complex inline logic into a named function (for example, const onAction = () => ...; then bind :handler="onAction"), `
-        + `or simplify the handler to a direct identifier/call the generator can name. `
-        + `You can also set errorBehavior = "ignore" to keep generic fallback behavior.`,
+        + `or simplify the handler to a direct identifier/call the generator can name.`,
       );
     }
 

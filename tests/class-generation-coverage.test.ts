@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import type { IComponentDependencies, IDataTestId } from "../utils";
 import { generateFiles } from "../class-generation";
-import { createPomMethodSignature, createPomParameters, fromLegacyPomParameterRecord } from "../pom-params";
+import { createPomMethodSignature, createPomParameters } from "../pom-params";
 import { createPomStringPattern } from "../pom-patterns";
 import { renderTypeScriptLines } from "../typescript-codegen";
 
@@ -629,13 +629,7 @@ describe("class-generation coverage", () => {
     }
   });
 
-  it("C#: dynamic-test-id input element generates key+text params so the locator compiles", async () => {
-    // Regression: when an <input> has :data-testid="`...-${key}`", the C# generator was
-    // emitting `(string text, string annotationText = "")` but the locator body referenced
-    // `{key}` — causing a CS0103 compile error.  Both params must appear together.
-    //
-    // Simulate stale IR where params lacks `key` even though the selector is parameterized.
-    // The C# generator must add it when the structured selector is parameterized.
+  it("C#: fails fast when parameterized selectors omit key params", async () => {
     const tempRoot = makeTempRoot("vue-pom-csharp-dyn-input-");
 
     try {
@@ -645,8 +639,7 @@ describe("class-generation coverage", () => {
           nativeRole: "input",
           methodName: "ItemsCheckByKey",
           selector: createPomStringPattern("items-check-${key}", "parameterized"),
-          // Broken params as currently produced by utils.ts: key is absent
-          parameters: fromLegacyPomParameterRecord({ text: "string", annotationText: "string = \"\"" }),
+          parameters: createPomParameters(["text", "string"], ["annotationText", "string = \"\""]),
         },
       };
 
@@ -662,31 +655,17 @@ describe("class-generation coverage", () => {
       ]);
 
       const outDir = path.join(tempRoot, "pom");
-      await generateFiles(componentHierarchyMap, new Map(), null as any, {
+      await expect(generateFiles(componentHierarchyMap, new Map(), null as any, {
         outDir,
         emitLanguages: ["csharp"],
         csharp: { namespace: "Test.Generated" },
-      });
-
-      const csFile = path.join(outDir, "page-object-models.g.cs");
-      const cs = readFile(csFile);
-      const csGitAttributesPath = path.join(outDir, ".gitattributes");
-      expect(fs.existsSync(csGitAttributesPath)).toBe(true);
-      expect(readFile(csGitAttributesPath)).toContain("page-object-models.g.cs linguist-generated");
-
-      // The locator must include key as a parameter, not just text.
-      expect(cs).toContain("string key");
-      // Locator body must use {key} interpolation.
-      expect(cs).toContain("items-check-{key}");
-      // The method must compile: key must not be an undeclared reference.
-      // (If key appears only in the template but not in the signature, C# throws CS0103.)
-      expect(cs).toMatch(/ItemsCheckByKeyInput\(string key/);
+      })).rejects.toThrow(/Missing selector parameter\(s\) "key"/);
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
   });
 
-  it("C#: parameterized selectors recover non-key template variables from structured metadata", async () => {
+  it("C#: fails fast when parameterized selectors omit non-key template variables", async () => {
     const tempRoot = makeTempRoot("vue-pom-csharp-selector-vars-");
 
     try {
@@ -697,7 +676,7 @@ describe("class-generation coverage", () => {
           methodName: "ItemsCheckByKey",
           selector: createPomStringPattern("items-check-${itemId}", "parameterized"),
           // Simulate stale/manual IR that forgot to carry the selector variable name.
-          parameters: fromLegacyPomParameterRecord({ text: "string", annotationText: "string = \"\"" }),
+          parameters: createPomParameters(["text", "string"], ["annotationText", "string = \"\""]),
         },
       };
 
@@ -713,18 +692,11 @@ describe("class-generation coverage", () => {
       ]);
 
       const outDir = path.join(tempRoot, "pom");
-      await generateFiles(componentHierarchyMap, new Map(), null as any, {
+      await expect(generateFiles(componentHierarchyMap, new Map(), null as any, {
         outDir,
         emitLanguages: ["csharp"],
         csharp: { namespace: "Test.Generated" },
-      });
-
-      const csFile = path.join(outDir, "page-object-models.g.cs");
-      const cs = readFile(csFile);
-
-      expect(cs).toContain("string itemId");
-      expect(cs).toContain("items-check-{itemId}");
-      expect(cs).toMatch(/ItemsCheckByKeyInput\(string itemId/);
+      })).rejects.toThrow(/Missing selector parameter\(s\) "itemId"/);
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

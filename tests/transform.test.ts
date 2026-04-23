@@ -468,7 +468,7 @@ describe('createTestIdTransform', () => {
       ].join('\n'),
       {
         filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views', { existingIdBehavior: 'preserve' })],
       },
     )
 
@@ -496,6 +496,7 @@ describe('createTestIdTransform', () => {
     expect(code).toContain('__testid_event__')
     expect(code).toContain('"data-click-instrumented": "1"')
     expect(code).toContain('"data-testid": `MyComp-${item.key ?? item.data?.id ?? item.id ?? item.value ?? item}-Remove-button`')
+    expect(code).not.toContain('__testid_click_event_strict__')
   })
 
   it('prefixes component-scope identifiers inside keyed router-link test ids', () => {
@@ -541,7 +542,7 @@ describe('createTestIdTransform', () => {
       '<button :key="activeTab" data-testid="target-visibility-selector" @click="select">Select</button>',
       {
         filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views', { existingIdBehavior: 'preserve' })],
       },
     )
 
@@ -882,29 +883,6 @@ describe('createTestIdTransform', () => {
         },
       )
     }).toThrow(/move complex inline logic into a named function/i)
-  })
-
-  it('preserves the old permissive fallback when missingSemanticNameBehavior is explicitly ignore', () => {
-    const componentHierarchyMap = new Map<string, IComponentDependencies>()
-    const nativeWrappers: NativeWrappersMap = {
-      LoadButton: { role: 'button' },
-    }
-
-    expect(() => {
-      compileAndCaptureAst(
-        `
-          <LoadButton :handler="() => person && impersonateUser(person.userId!)">
-            Impersonate
-          </LoadButton>
-        `,
-        {
-          filename: '/src/views/RbacUserDetailsPage.vue',
-          nodeTransforms: [createTestIdTransform('RbacUserDetailsPage', componentHierarchyMap, nativeWrappers, [], '/src/views', {
-            missingSemanticNameBehavior: 'ignore',
-          })],
-        },
-      )
-    }).not.toThrow()
   })
 
   it('emits per-key click methods when v-for iterates a static literal list', () => {

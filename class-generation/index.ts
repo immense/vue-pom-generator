@@ -21,8 +21,8 @@ import {
 import {
   bindCSharpPomPattern,
   bindTypeScriptPomPattern,
-  ensurePomPatternParameters,
   isParameterizedPomPattern,
+  orderPomPatternParameters,
   toCSharpPomPatternExpression,
   toTypeScriptPomPatternExpression,
   uniquePomStringPatterns,
@@ -141,6 +141,27 @@ interface CustomPomImportResolution {
   methodSignaturesByClass: Map<string, CustomPomMethodSignatureMap>;
   availableClassIdentifiers: Set<string>;
   importSpecifiersByClass: Record<string, ResolvedCustomPomImportSpecifier>;
+}
+
+function createMissingCustomPomDirectoryError(configuredDir: string, resolvedDir: string): VuePomGeneratorError {
+  return new VuePomGeneratorError(
+    `Custom POM directory "${configuredDir}" does not exist.\n`
+    + `Resolved path: ${resolvedDir}\n`
+    + "Create the directory, point generation.playwright.customPoms.dir at the correct location, "
+    + "or remove the customPoms configuration.",
+  );
+}
+
+function createMissingCustomPomAttachmentClassError(
+  missingClassNames: string[],
+  configuredDir: string,
+): VuePomGeneratorError {
+  const renderedClassNames = missingClassNames.map(name => `"${name}"`).join(", ");
+  return new VuePomGeneratorError(
+    `Custom POM attachments reference missing helper classes: ${renderedClassNames}.\n`
+    + `Expected matching helper files/exports under "${configuredDir}".\n`
+    + "Add the missing helper classes or remove the corresponding generation.playwright.customPoms.attachments entries.",
+  );
 }
 
 function createCustomPomImportCollisionError(exportName: string, requested: string): VuePomGeneratorError {
@@ -333,7 +354,7 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScr
   }
 
   const selectorPatterns = getSelectorPatterns(spec.selector);
-  const signatureSpecs = ensurePomPatternParameters(
+  const signatureSpecs = orderPomPatternParameters(
     spec.parameters,
     selectorPatterns,
     { omit: spec.keyLiteral !== undefined ? ["key"] : [] },
@@ -501,6 +522,8 @@ export interface GenerateFilesOptions {
    * Defaults to <projectRoot>/tests/playwright/pom/custom.
    */
   customPomDir?: string;
+  /** When true, fail generation if the configured customPomDir does not exist. */
+  requireCustomPomDir?: boolean;
 
   /**
    * Optional import aliases for handwritten POM helpers.
@@ -570,6 +593,7 @@ interface BaseGenerateContentOptions {
 
   projectRoot?: string;
   customPomDir?: string;
+  requireCustomPomDir?: boolean;
   customPomImportAliases?: Record<string, string>;
   customPomClassIdentifierMap?: Record<string, string>;
   customPomAvailableClassIdentifiers?: Set<string>;
@@ -609,6 +633,7 @@ export async function generateFiles(
     customPomAttachments = [],
     projectRoot,
     customPomDir,
+    requireCustomPomDir,
     customPomImportAliases,
     customPomImportNameCollisionBehavior = "error",
     testIdAttribute,
@@ -651,6 +676,7 @@ export async function generateFiles(
         customPomAttachments,
         projectRoot,
         customPomDir,
+        requireCustomPomDir,
         customPomImportAliases,
         customPomImportNameCollisionBehavior,
         testIdAttribute,
@@ -661,6 +687,7 @@ export async function generateFiles(
         customPomAttachments,
         projectRoot,
         customPomDir,
+        requireCustomPomDir,
         customPomImportAliases,
         customPomImportNameCollisionBehavior,
         testIdAttribute,
@@ -709,6 +736,7 @@ async function generateSplitTypeScriptFiles(
     customPomAttachments?: GenerateFilesOptions["customPomAttachments"];
     projectRoot?: GenerateFilesOptions["projectRoot"];
     customPomDir?: GenerateFilesOptions["customPomDir"];
+    requireCustomPomDir?: GenerateFilesOptions["requireCustomPomDir"];
     customPomImportAliases?: GenerateFilesOptions["customPomImportAliases"];
     customPomImportNameCollisionBehavior?: GenerateFilesOptions["customPomImportNameCollisionBehavior"];
     testIdAttribute?: GenerateFilesOptions["testIdAttribute"];
@@ -744,9 +772,15 @@ async function generateSplitTypeScriptFiles(
 
   const customPomImportResolution = resolveCustomPomImportResolution(generatedClassNames, projectRoot, {
     customPomDir: options.customPomDir,
+    requireCustomPomDir: options.requireCustomPomDir,
     customPomImportAliases: options.customPomImportAliases,
     customPomImportNameCollisionBehavior: options.customPomImportNameCollisionBehavior,
   });
+  assertCustomPomAttachmentsResolved(
+    options.customPomAttachments ?? [],
+    customPomImportResolution.classIdentifierMap,
+    options.customPomDir ?? "tests/playwright/pom/custom",
+  );
 
   const runtimeBasePagePath = path.join(base, "_pom-runtime", "class-generation", "base-page.ts");
   const files: GeneratedFileOutput[] = [];
@@ -1091,7 +1125,7 @@ function generateAggregatedCSharpFiles(
       const locatorName = baseGetterName.endsWith(roleSuffix) ? baseGetterName : `${baseGetterName}${roleSuffix}`;
       const selectorIsParameterized = isParameterizedPomPattern(pom.selector.patternKind);
       const testIdExpr = toCSharpPomPatternExpression(pom.selector);
-      const orderedParams = ensurePomPatternParameters(pom.parameters, [pom.selector]);
+      const orderedParams = orderPomPatternParameters(pom.parameters, [pom.selector]);
 
       const { signature, argNames } = formatCSharpParams(orderedParams);
       const args = argNames.join(", ");
@@ -1226,7 +1260,7 @@ function generateAggregatedCSharpFiles(
     for (const extra of extras) {
       if (extra.kind !== "click")
         continue;
-      const extraParams = ensurePomPatternParameters(
+      const extraParams = orderPomPatternParameters(
         extra.parameters,
         getSelectorPatterns(extra.selector),
         { omit: extra.keyLiteral !== undefined ? ["key"] : [] },
@@ -2239,6 +2273,7 @@ function resolveCustomPomImportResolution(
   projectRoot: string,
   options: {
     customPomDir?: GenerateFilesOptions["customPomDir"];
+    requireCustomPomDir?: GenerateFilesOptions["requireCustomPomDir"];
     customPomImportAliases?: GenerateFilesOptions["customPomImportAliases"];
     customPomImportNameCollisionBehavior?: GenerateFilesOptions["customPomImportNameCollisionBehavior"];
   } = {},
@@ -2279,6 +2314,9 @@ function resolveCustomPomImportResolution(
     : path.resolve(projectRoot, customDirRelOrAbs);
 
   if (!fs.existsSync(customDirAbs)) {
+    if (options.requireCustomPomDir) {
+      throw createMissingCustomPomDirectoryError(customDirRelOrAbs, customDirAbs);
+    }
     return {
       classIdentifierMap,
       methodSignaturesByClass,
@@ -2330,6 +2368,21 @@ function resolveCustomPomImportResolution(
     availableClassIdentifiers: new Set(Object.values(classIdentifierMap)),
     importSpecifiersByClass,
   };
+}
+
+function assertCustomPomAttachmentsResolved(
+  attachments: readonly CustomPomAttachment[],
+  classIdentifierMap: Record<string, string>,
+  configuredDir: string,
+): void {
+  const missingClassNames = Array.from(new Set(
+    attachments
+      .map(attachment => attachment.className)
+      .filter(className => !Object.prototype.hasOwnProperty.call(classIdentifierMap, className)),
+  )).sort((left, right) => left.localeCompare(right));
+  if (missingClassNames.length > 0) {
+    throw createMissingCustomPomAttachmentClassError(missingClassNames, configuredDir);
+  }
 }
 
 function getComposedStubBody(
@@ -2428,6 +2481,7 @@ async function generateAggregatedFiles(
     customPomAttachments?: GenerateFilesOptions["customPomAttachments"];
     projectRoot?: GenerateFilesOptions["projectRoot"];
     customPomDir?: GenerateFilesOptions["customPomDir"];
+    requireCustomPomDir?: GenerateFilesOptions["requireCustomPomDir"];
     customPomImportAliases?: GenerateFilesOptions["customPomImportAliases"];
     customPomImportNameCollisionBehavior?: GenerateFilesOptions["customPomImportNameCollisionBehavior"];
     testIdAttribute?: GenerateFilesOptions["testIdAttribute"];
@@ -2473,9 +2527,15 @@ async function generateAggregatedFiles(
 
     const customPomImportResolution = resolveCustomPomImportResolution(generatedClassNames, projectRoot, {
       customPomDir: options.customPomDir,
+      requireCustomPomDir: options.requireCustomPomDir,
       customPomImportAliases: options.customPomImportAliases,
       customPomImportNameCollisionBehavior: options.customPomImportNameCollisionBehavior,
     });
+    assertCustomPomAttachmentsResolved(
+      options.customPomAttachments ?? [],
+      customPomImportResolution.classIdentifierMap,
+      options.customPomDir ?? "tests/playwright/pom/custom",
+    );
     const customPomClassIdentifierMap = customPomImportResolution.classIdentifierMap;
     const customPomMethodSignaturesByClass = customPomImportResolution.methodSignaturesByClass;
     const customPomAvailableClassIdentifiers = customPomImportResolution.availableClassIdentifiers;

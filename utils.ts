@@ -69,11 +69,13 @@ import { createTypeScriptWriter } from "./typescript-codegen";
 export { isSimpleExpressionNode } from "./compiler/ast-guards";
 export type { RouterIntrospectionResult } from "./router-introspection";
 export {
+  analyzeToDirectiveTarget,
   getRouteNameKeyFromToDirective,
   setResolveToComponentNameFn,
   setRouteNameToComponentNameMap,
   tryResolveToDirectiveTargetComponentName,
 } from "./routing/to-directive";
+export type { RouteDirectiveTargetAnalysis } from "./routing/to-directive";
 
 function getDataTestIdFromGroupOption(text: string) {
   // eslint-disable-next-line no-restricted-syntax
@@ -2467,7 +2469,10 @@ export function tryGetExistingElementDataTestId(node: ElementNode, attributeName
   }
 
   const simpleExp = exp as SimpleExpressionNode;
-  const ast = simpleExp.ast;
+  const ast = tryGetVueExpressionAst(simpleExp, {
+    preferredViews: ["content", "loc", "compiled"],
+    plugins: ["typescript"],
+  });
 
   const unwrappedTemplateLiteral = tryUnwrapTemplateLiteralExpressionSource(simpleExp);
   if (unwrappedTemplateLiteral) {
@@ -2514,28 +2519,6 @@ export function tryGetExistingElementDataTestId(node: ElementNode, attributeName
   const raw = (simpleExp.content ?? "").trim();
   if (!raw) {
     return null;
-  }
-
-  const fallbackAst = (ast as BabelNode | null | false | undefined)
-    ?? tryGetVueExpressionAst(simpleExp, { preferredViews: ["content", "loc", "compiled"], plugins: ["typescript"] });
-
-  if (fallbackAst && typeof fallbackAst === "object" && "type" in fallbackAst && (fallbackAst as { type: string }).type === "StringLiteral") {
-    const sl = fallbackAst as { value?: string };
-    return { value: sl.value ?? "", isDynamic: false, isStaticLiteral: true };
-  }
-
-  const fallbackPreservableReference = tryGetPreservableDynamicReferenceExpression(fallbackAst);
-  if (fallbackPreservableReference) {
-    const templateValue = templateAttributeValue(`\${${fallbackPreservableReference}}`);
-    return {
-      value: fallbackPreservableReference,
-      isDynamic: true,
-      isStaticLiteral: false,
-      template: templateValue.template,
-      parsedTemplate: templateValue.parsedTemplate,
-      templateExpressionCount: 1,
-      rawExpression: fallbackPreservableReference,
-    };
   }
 
   return { value: raw, isDynamic: true, isStaticLiteral: false, rawExpression: raw };
@@ -2688,17 +2671,17 @@ export function applyResolvedDataTestId(args: {
   /**
    * How to handle an author-provided existing test id attribute when we encounter one.
    *
-   * - "preserve": keep the existing value (default)
+   * - "error": throw to force cleanup/migration (default)
+   * - "preserve": keep the existing value
    * - "overwrite": replace it with the generated value
-   * - "error": throw to force cleanup/migration
    */
   existingIdBehavior?: "preserve" | "overwrite" | "error";
 
   /**
    * Controls what happens when the generator would emit duplicate POM member names within the same class.
-   * - "error": throw and fail compilation
+   * - "error": throw and fail compilation (default)
    * - "warn": warn and append a suffix
-   * - "suffix": append a suffix silently (default)
+   * - "suffix": append a suffix silently
    */
   nameCollisionBehavior?: "error" | "warn" | "suffix";
 
@@ -2708,8 +2691,8 @@ export function applyResolvedDataTestId(args: {
   const addHtmlAttribute = args.addHtmlAttribute ?? true;
   const entryOverrides = args.entryOverrides ?? {};
   const testIdAttribute = args.testIdAttribute ?? "data-testid";
-  const existingIdBehavior = args.existingIdBehavior ?? "preserve";
-  const nameCollisionBehavior = args.nameCollisionBehavior ?? "suffix";
+  const existingIdBehavior = args.existingIdBehavior ?? "error";
+  const nameCollisionBehavior = args.nameCollisionBehavior ?? "error";
   const warn = args.warn;
 
   const getBestKeyAccessCandidates = (expr: string | null | undefined) => {
