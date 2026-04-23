@@ -477,17 +477,20 @@ describe("generated output", () => {
     );
     writeFile(
       path.join(tempRoot, "tests", "playwright", "pom", "custom", "Grid.ts"),
-      [
-        "export class Grid {",
-        "  constructor(_page: any, _owner: any) {}",
-        "  Search(text: string, options?: { timeoutMs?: number }) {",
-        "    return { text, options };",
-        "  }",
-        "  searchHighlight(text: string) {",
-        "    return text;",
-        "  }",
-        "}",
-      ].join("\n"),
+        [
+          "export class Grid {",
+          "  constructor(_page: any, _owner: any) {}",
+          "  Search(text: string, options?: { timeoutMs?: number }) {",
+          "    return { text, options };",
+          "  }",
+          "  SearchAll(...terms: string[]) {",
+          "    return terms;",
+          "  }",
+          "  searchHighlight(text: string) {",
+          "    return text;",
+          "  }",
+          "}",
+        ].join("\n"),
     );
 
     const deps: IComponentDependencies = {
@@ -527,6 +530,8 @@ describe("generated output", () => {
     expect(classBlock).toContain("grid: Grid;");
     expect(classBlock).toContain("Search(text: string, options?: { timeoutMs?: number }) {");
     expect(classBlock).toContain("return this.grid.Search(text, options);");
+    expect(classBlock).toContain("SearchAll(...terms: string[]) {");
+    expect(classBlock).toContain("return this.grid.SearchAll(...terms);");
     expect(classBlock).toContain("searchHighlight(text: string) {");
     expect(classBlock).toContain("return this.grid.searchHighlight(text);");
 

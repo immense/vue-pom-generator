@@ -10,9 +10,11 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { generateViewObjectModelMembers, generateViewObjectModelMethodContent } from "../method-generation";
 import {
-  formatTypeScriptPomParameters,
-  getPomParameterNames,
+  createPomMethodSignature,
+  createPomParameterSpec,
+  getPomParameterArgumentNames,
   normalizePomParameters,
+  toTypeScriptPomParameterStructures,
   type PomMethodSignature,
   type PomParameterSpec,
 } from "../pom-params";
@@ -42,7 +44,6 @@ import {
   type GetAccessorDeclarationStructure,
   type MethodDeclarationStructure,
   type OptionalKind,
-  type ParameterDeclarationStructure,
   type PropertyDeclarationStructure,
   type TypeScriptClassMember,
   type TypeScriptSourceFile,
@@ -79,128 +80,6 @@ class VuePomGeneratorError extends Error {
   }
 }
 
-function splitParameterList(parameters: string): string[] {
-  const parts: string[] = [];
-  let current = "";
-  let braceDepth = 0;
-  let bracketDepth = 0;
-  let parenDepth = 0;
-  let angleDepth = 0;
-  let inSingleQuote = false;
-  let inDoubleQuote = false;
-  let inTemplateString = false;
-
-  for (let index = 0; index < parameters.length; index += 1) {
-    const char = parameters[index];
-    const previous = index > 0 ? parameters[index - 1] : "";
-
-    if (char === "'" && !inDoubleQuote && !inTemplateString && previous !== "\\") {
-      inSingleQuote = !inSingleQuote;
-      current += char;
-      continue;
-    }
-    if (char === "\"" && !inSingleQuote && !inTemplateString && previous !== "\\") {
-      inDoubleQuote = !inDoubleQuote;
-      current += char;
-      continue;
-    }
-    if (char === "`" && !inSingleQuote && !inDoubleQuote && previous !== "\\") {
-      inTemplateString = !inTemplateString;
-      current += char;
-      continue;
-    }
-
-    if (inSingleQuote || inDoubleQuote || inTemplateString) {
-      current += char;
-      continue;
-    }
-
-    switch (char) {
-      case "{":
-        braceDepth += 1;
-        break;
-      case "}":
-        braceDepth -= 1;
-        break;
-      case "[":
-        bracketDepth += 1;
-        break;
-      case "]":
-        bracketDepth -= 1;
-        break;
-      case "(":
-        parenDepth += 1;
-        break;
-      case ")":
-        parenDepth -= 1;
-        break;
-      case "<":
-        angleDepth += 1;
-        break;
-      case ">":
-        angleDepth -= 1;
-        break;
-      case ",":
-        if (braceDepth === 0 && bracketDepth === 0 && parenDepth === 0 && angleDepth === 0) {
-          const trimmed = current.trim();
-          if (trimmed) {
-            parts.push(trimmed);
-          }
-          current = "";
-          continue;
-        }
-        break;
-      default:
-        break;
-    }
-
-    current += char;
-  }
-
-  const trimmed = current.trim();
-  if (trimmed) {
-    parts.push(trimmed);
-  }
-
-  return parts;
-}
-
-function parseParameterSignature(parameter: string): OptionalKind<ParameterDeclarationStructure> {
-  const colonIndex = parameter.indexOf(":");
-  if (colonIndex < 0) {
-    return { name: parameter.trim() };
-  }
-
-  const rawName = parameter.slice(0, colonIndex).trim();
-  const hasQuestionToken = rawName.endsWith("?");
-  const name = hasQuestionToken ? rawName.slice(0, -1).trim() : rawName;
-  const remainder = parameter.slice(colonIndex + 1).trim();
-  const initializerIndex = remainder.lastIndexOf("=");
-
-  if (initializerIndex < 0) {
-    return {
-      name,
-      hasQuestionToken,
-      type: remainder || undefined,
-    };
-  }
-
-  return {
-    name,
-    hasQuestionToken,
-    type: remainder.slice(0, initializerIndex).trim() || undefined,
-    initializer: remainder.slice(initializerIndex + 1).trim() || undefined,
-  };
-}
-
-function parseParameterSignatures(parameters: string): OptionalKind<ParameterDeclarationStructure>[] {
-  const trimmed = parameters.trim();
-  if (!trimmed) {
-    return [];
-  }
-  return splitParameterList(trimmed).map(parseParameterSignature);
-}
-
 function toPosixRelativePath(fromDir: string, toFile: string): string {
   let rel = path.relative(fromDir, toFile).replace(/\\/g, "/");
   if (!rel.startsWith(".")) {
@@ -232,12 +111,7 @@ interface RouteMeta {
   template: string;
 }
 
-interface CustomPomMethodSignature {
-  params: string;
-  argNames: string[];
-}
-
-type CustomPomMethodSignatureMap = Map<string, CustomPomMethodSignature>;
+type CustomPomMethodSignatureMap = Map<string, PomMethodSignature>;
 
 interface CustomPomAttachment {
   className: string;
@@ -464,8 +338,7 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScr
     selectorPatterns,
     { omit: spec.keyLiteral !== undefined ? ["key"] : [] },
   );
-  const signatureParams = formatTypeScriptPomParameters(signatureSpecs);
-  const parameters = parseParameterSignatures(signatureParams);
+  const parameters = toTypeScriptPomParameterStructures(signatureSpecs);
 
   const hasAnnotationText = signatureSpecs.some(param => param.name === "annotationText");
   const hasWait = signatureSpecs.some(param => param.name === "wait");
@@ -1062,7 +935,7 @@ function buildGeneratedGitAttributesFiles(generatedFilePaths: string[]): Generat
 
 function toCSharpParam(param: PomParameterSpec): { type: string; defaultExpr?: string } {
   // Collapse union types to their widest practical type.
-  const typePart = param.type.includes("|") ? "string" : param.type;
+  const typePart = param.type?.includes("|") ? "string" : (param.type ?? "string");
 
   let type = "string";
   if (/(?:^|\s)boolean(?:\s|$)/.test(typePart))
@@ -1732,8 +1605,8 @@ function prepareViewObjectModelClass(
       propertyName: a.propertyName,
       flatten: a.flatten ?? false,
       methodSignatures: a.flatten
-        ? (customPomMethodSignaturesByClass.get(a.className) ?? new Map<string, CustomPomMethodSignature>())
-        : new Map<string, CustomPomMethodSignature>(),
+        ? (customPomMethodSignaturesByClass.get(a.className) ?? new Map<string, PomMethodSignature>())
+        : new Map<string, PomMethodSignature>(),
     }));
 
   const widgetInstances = isView
@@ -1979,11 +1852,11 @@ function getViewPassthroughMethods(
 
   return passthroughs.map(([methodName, candidates]) => {
     const { childProp, signature } = candidates[0];
-    const callArgs = getPomParameterNames(signature.parameters).join(", ");
+    const callArgs = getPomParameterArgumentNames(signature.parameters).join(", ");
     return createClassMethod({
       name: methodName,
       isAsync: true,
-      parameters: parseParameterSignatures(formatTypeScriptPomParameters(signature.parameters)),
+      parameters: toTypeScriptPomParameterStructures(signature.parameters),
       statements: [
         `return await this.${childProp}.${methodName}(${callArgs});`,
       ],
@@ -2002,7 +1875,7 @@ function getAttachmentPassthroughMethods(
   }
 
   const existingOnClass = ownerDependencies.generatedMethods ?? new Map<string, PomMethodSignature | null>();
-  const methodToAttachments = new Map<string, Array<{ propertyName: string; signature: CustomPomMethodSignature }>>();
+  const methodToAttachments = new Map<string, Array<{ propertyName: string; signature: PomMethodSignature }>>();
 
   for (const attachment of attachmentsForThisClass) {
     if (!attachment.flatten) {
@@ -2031,13 +1904,13 @@ function getAttachmentPassthroughMethods(
 
   return passthroughs.map(([methodName, candidates]) => {
     const { propertyName, signature } = candidates[0];
-    const callArgs = signature.argNames.join(", ");
+    const callArgs = getPomParameterArgumentNames(signature.parameters).join(", ");
     const invocation = callArgs
       ? `this.${propertyName}.${methodName}(${callArgs})`
       : `this.${propertyName}.${methodName}()`;
     return createClassMethod({
       name: methodName,
-      parameters: parseParameterSignatures(signature.params),
+      parameters: toTypeScriptPomParameterStructures(signature.parameters),
       statements: [
         `return ${invocation};`,
       ],
@@ -2054,17 +1927,57 @@ function sliceNodeSource(source: string, node: { start?: number | null; end?: nu
   return snippet.length ? snippet : null;
 }
 
-function getCustomPomCallArgumentName(param: ClassMethod["params"][number]): string | null {
+function getTypeAnnotationSource(
+  source: string,
+  node: { typeAnnotation?: unknown },
+): string | undefined {
+  const rawTypeAnnotation = node.typeAnnotation;
+  if (!rawTypeAnnotation || typeof rawTypeAnnotation !== "object" || !("type" in rawTypeAnnotation) || rawTypeAnnotation.type !== "TSTypeAnnotation" || !("typeAnnotation" in rawTypeAnnotation)) {
+    return undefined;
+  }
+
+  const typeAnnotation = rawTypeAnnotation.typeAnnotation;
+  return typeAnnotation && typeof typeAnnotation === "object"
+    ? sliceNodeSource(source, typeAnnotation as { start?: number | null; end?: number | null }) ?? undefined
+    : undefined;
+}
+
+function getCustomPomParameterSpec(source: string, param: ClassMethod["params"][number]): PomParameterSpec | null {
   if (param.type === "Identifier") {
-    return param.name;
+    return createPomParameterSpec(param.name, getTypeAnnotationSource(source, param), {
+      hasQuestionToken: !!param.optional,
+    });
   }
 
   if (param.type === "AssignmentPattern") {
-    return param.left.type === "Identifier" ? param.left.name : null;
+    if (param.left.type !== "Identifier") {
+      return null;
+    }
+
+    const initializer = sliceNodeSource(source, param.right);
+    if (!initializer) {
+      return null;
+    }
+
+    return createPomParameterSpec(param.left.name, getTypeAnnotationSource(source, param.left), {
+      initializer,
+      hasQuestionToken: !!param.left.optional,
+    });
   }
 
   if (param.type === "RestElement") {
-    return param.argument.type === "Identifier" ? `...${param.argument.name}` : null;
+    if (param.argument.type !== "Identifier") {
+      return null;
+    }
+
+    const typeExpression = getTypeAnnotationSource(
+      source,
+      param,
+    ) ?? getTypeAnnotationSource(source, param.argument);
+
+    return createPomParameterSpec(param.argument.name, typeExpression, {
+      isRestParameter: true,
+    });
   }
 
   return null;
@@ -2107,8 +2020,7 @@ function extractCustomPomMethodSignatures(source: string, exportName: string): C
         continue;
       }
 
-      const params: string[] = [];
-      const argNames: string[] = [];
+      const parameters: PomParameterSpec[] = [];
       let supported = true;
 
       member.params.forEach((param) => {
@@ -2116,25 +2028,20 @@ function extractCustomPomMethodSignatures(source: string, exportName: string): C
           return;
         }
 
-        const paramSource = sliceNodeSource(source, param);
-        const argName = getCustomPomCallArgumentName(param);
-        if (!paramSource || !argName) {
+        const parameter = getCustomPomParameterSpec(source, param);
+        if (!parameter) {
           supported = false;
           return;
         }
 
-        params.push(paramSource);
-        argNames.push(argName);
+        parameters.push(parameter);
       });
 
       if (!supported) {
         continue;
       }
 
-      signatures.set(member.key.name, {
-        params: params.join(", "),
-        argNames,
-      });
+      signatures.set(member.key.name, createPomMethodSignature(parameters));
     }
   }
 
@@ -2478,12 +2385,12 @@ function getComposedStubBody(
       continue;
 
     const { child, signature } = candidatesForMethod[0];
-    const callArgs = getPomParameterNames(signature.parameters).join(", ");
+    const callArgs = getPomParameterArgumentNames(signature.parameters).join(", ");
 
     passthroughMembers.push(createClassMethod({
       name: methodName,
       isAsync: true,
-      parameters: parseParameterSignatures(formatTypeScriptPomParameters(signature.parameters)),
+      parameters: toTypeScriptPomParameterStructures(signature.parameters),
       statements: [
         `return await this.${child}.${methodName}(${callArgs});`,
       ],

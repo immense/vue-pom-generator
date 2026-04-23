@@ -13,7 +13,12 @@ import {
   type TypeScriptClassMember,
   type WriterFunction,
 } from "./typescript-codegen";
-import { getPomParameter, getPomParameterNames, normalizePomParameters, type PomParameterSpec } from "./pom-params";
+import {
+  getPomParameter,
+  getPomParameterNames,
+  toTypeScriptPomParameterStructures,
+  type PomParameterSpec,
+} from "./pom-params";
 import {
   ensurePomPatternParameters,
   getIndexedPomPatternVariable,
@@ -31,11 +36,7 @@ function upperFirst(value: string): string {
 }
 
 function createParameters(params: readonly PomParameterSpec[]): OptionalKind<ParameterDeclarationStructure>[] {
-  return normalizePomParameters(params).map(({ name, type, initializer }) => ({
-    name,
-    type: type || undefined,
-    initializer,
-  }));
+  return toTypeScriptPomParameterStructures(params);
 }
 
 function createInlineParameter(

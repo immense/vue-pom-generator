@@ -1,8 +1,12 @@
+import type { OptionalKind, ParameterDeclarationStructure } from "./typescript-codegen";
+
 export interface PomParameterSpec {
   name: string;
-  typeExpression: string;
-  type: string;
+  typeExpression?: string;
+  type?: string;
   initializer?: string;
+  hasQuestionToken?: boolean;
+  isRestParameter?: boolean;
 }
 
 export interface PomMethodSignature {
@@ -24,13 +28,26 @@ export function splitPomParameterTypeExpression(typeExpression: string): { type:
   };
 }
 
-export function createPomParameterSpec(name: string, typeExpression: string): PomParameterSpec {
-  const { type, initializer } = splitPomParameterTypeExpression(typeExpression);
+export function createPomParameterSpec(
+  name: string,
+  typeExpression?: string,
+  options: {
+    initializer?: string;
+    hasQuestionToken?: boolean;
+    isRestParameter?: boolean;
+  } = {},
+): PomParameterSpec {
+  const normalizedTypeExpression = typeExpression?.trim();
+  const { type, initializer } = normalizedTypeExpression
+    ? splitPomParameterTypeExpression(normalizedTypeExpression)
+    : { type: undefined, initializer: undefined };
   return {
     name,
-    typeExpression,
+    typeExpression: normalizedTypeExpression,
     type,
-    initializer,
+    initializer: options.initializer ?? initializer,
+    hasQuestionToken: options.hasQuestionToken,
+    isRestParameter: options.isRestParameter,
   };
 }
 
@@ -40,7 +57,11 @@ export function normalizePomParameters(params: PomParameterInput): PomParameterS
   }
 
   if (Array.isArray(params)) {
-    return params.map(param => ({ ...param }));
+    return params.map(param => createPomParameterSpec(param.name, param.typeExpression ?? param.type, {
+      initializer: param.initializer,
+      hasQuestionToken: param.hasQuestionToken,
+      isRestParameter: param.isRestParameter,
+    }));
   }
 
   return Object.entries(params).map(([name, typeExpression]) => createPomParameterSpec(name, typeExpression));
@@ -60,8 +81,28 @@ export function hasPomParameter(params: PomParameterInput, name: string): boolea
 
 export function formatTypeScriptPomParameters(params: PomParameterInput): string {
   return normalizePomParameters(params)
-    .map(param => `${param.name}: ${param.typeExpression}`)
+    .map((param) => {
+      const prefix = param.isRestParameter ? "..." : "";
+      const questionToken = param.hasQuestionToken ? "?" : "";
+      const typeExpression = param.typeExpression ? `: ${param.typeExpression}` : "";
+      const initializer = param.initializer !== undefined ? ` = ${param.initializer}` : "";
+      return `${prefix}${param.name}${questionToken}${typeExpression}${initializer}`;
+    })
     .join(", ");
+}
+
+export function toTypeScriptPomParameterStructures(params: PomParameterInput): OptionalKind<ParameterDeclarationStructure>[] {
+  return normalizePomParameters(params).map(param => ({
+    name: param.name,
+    type: param.type || undefined,
+    initializer: param.initializer,
+    hasQuestionToken: param.hasQuestionToken,
+    isRestParameter: param.isRestParameter,
+  }));
+}
+
+export function getPomParameterArgumentNames(params: PomParameterInput): string[] {
+  return normalizePomParameters(params).map(param => param.isRestParameter ? `...${param.name}` : param.name);
 }
 
 export function createPomMethodSignature(parameters: PomParameterInput): PomMethodSignature {
@@ -74,7 +115,9 @@ export function pomParameterSpecEquals(left: PomParameterSpec, right: PomParamet
   return left.name === right.name
     && left.typeExpression === right.typeExpression
     && left.type === right.type
-    && left.initializer === right.initializer;
+    && left.initializer === right.initializer
+    && left.hasQuestionToken === right.hasQuestionToken
+    && left.isRestParameter === right.isRestParameter;
 }
 
 export function pomParameterListEquals(left: PomParameterInput, right: PomParameterInput): boolean {
