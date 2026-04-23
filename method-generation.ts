@@ -94,8 +94,15 @@ function generateClickMethod(
     const clickMethod = createAsyncMethod(
       name,
       hasSelectorVariables
-        ? [...baseParameters, createInlineParameter("wait", { type: "boolean", initializer: "true" })]
-        : [createInlineParameter("wait", { type: "boolean", initializer: "true" })],
+        ? [
+            ...baseParameters,
+            createInlineParameter("wait", { type: "boolean", initializer: "true" }),
+            createInlineParameter("annotationText", { type: "string", initializer: "\"\"" }),
+          ]
+        : [
+            createInlineParameter("wait", { type: "boolean", initializer: "true" }),
+            createInlineParameter("annotationText", { type: "string", initializer: "\"\"" }),
+          ],
       (writer) => {
         writer.writeLine(`const candidates = [${candidatesExpr}] as const;`);
         writer.writeLine("let lastError: unknown;");
@@ -103,7 +110,7 @@ function generateClickMethod(
           writer.writeLine("const locator = this.locatorByTestId(testId);");
           writer.write("try ").block(() => {
             writer.write("if (await locator.count()) ").block(() => {
-              writer.writeLine("await this.clickLocator(locator, \"\", wait);");
+              writer.writeLine("await this.clickLocator(locator, annotationText, wait);");
               writer.writeLine("return;");
             });
           });
@@ -115,10 +122,12 @@ function generateClickMethod(
       },
     );
 
-    const noWaitArgs = argsForForward ? `${argsForForward}, false` : "false";
+    const noWaitArgs = argsForForward ? `${argsForForward}, false, annotationText` : "false, annotationText";
     const noWaitMethod = createAsyncMethod(
       noWaitName,
-      hasSelectorVariables ? baseParameters : [],
+      hasSelectorVariables
+        ? [...baseParameters, createInlineParameter("annotationText", { type: "string", initializer: "\"\"" })]
+        : [createInlineParameter("annotationText", { type: "string", initializer: "\"\"" })],
       (writer) => {
         writer.writeLine(`await this.${name}(${noWaitArgs});`);
       },
@@ -129,22 +138,45 @@ function generateClickMethod(
 
   if (hasSelectorVariables) {
     return [
-      createAsyncMethod(name, [...baseParameters, createInlineParameter("wait", { type: "boolean", initializer: "true" })], (writer) => {
-        writer.writeLine(`await this.clickByTestId(${primaryTestIdExpr}, "", wait);`);
-      }),
-      createAsyncMethod(noWaitName, baseParameters, (writer) => {
-        writer.writeLine(`await this.${name}(${argsForForward}, false);`);
-      }),
+      createAsyncMethod(
+        name,
+        [
+          ...baseParameters,
+          createInlineParameter("wait", { type: "boolean", initializer: "true" }),
+          createInlineParameter("annotationText", { type: "string", initializer: "\"\"" }),
+        ],
+        (writer) => {
+          writer.writeLine(`await this.clickByTestId(${primaryTestIdExpr}, annotationText, wait);`);
+        },
+      ),
+      createAsyncMethod(
+        noWaitName,
+        [...baseParameters, createInlineParameter("annotationText", { type: "string", initializer: "\"\"" })],
+        (writer) => {
+          writer.writeLine(`await this.${name}(${argsForForward}, false, annotationText);`);
+        },
+      ),
     ];
   }
 
   return [
-    createAsyncMethod(name, [createInlineParameter("wait", { type: "boolean", initializer: "true" })], (writer) => {
-      writer.writeLine(`await this.clickByTestId(${primaryTestIdExpr}, "", wait);`);
-    }),
-    createAsyncMethod(noWaitName, [], (writer) => {
-      writer.writeLine(`await this.${name}(false);`);
-    }),
+    createAsyncMethod(
+      name,
+      [
+        createInlineParameter("wait", { type: "boolean", initializer: "true" }),
+        createInlineParameter("annotationText", { type: "string", initializer: "\"\"" }),
+      ],
+      (writer) => {
+        writer.writeLine(`await this.clickByTestId(${primaryTestIdExpr}, annotationText, wait);`);
+      },
+    ),
+    createAsyncMethod(
+      noWaitName,
+      [createInlineParameter("annotationText", { type: "string", initializer: "\"\"" })],
+      (writer) => {
+        writer.writeLine(`await this.${name}(false, annotationText);`);
+      },
+    ),
   ];
 }
 

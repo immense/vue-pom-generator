@@ -34,6 +34,18 @@ interface InternalFactoryOptions {
   getProjectRoot: () => string;
 }
 
+type VueCompilerSfcNamespace = Awaited<typeof import("@vue/compiler-sfc")>;
+
+function resolveCompilerSfcParse(compilerSfc: VueCompilerSfcNamespace): VueCompilerSfcNamespace["parse"] {
+  const parse = compilerSfc.parse
+    ?? (compilerSfc as VueCompilerSfcNamespace & { default?: Partial<VueCompilerSfcNamespace> }).default?.parse;
+  if (typeof parse !== "function") {
+    throw new TypeError("[vue-pom-generator] Failed to resolve @vue/compiler-sfc.parse.");
+  }
+
+  return parse;
+}
+
 /**
  * Traverses the AST and extracts metadata from elements with data-testid attributes.
  * Since we run as a nodeTransform, we must use an exit hook on the ROOT node
@@ -298,7 +310,8 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
       const componentName = getComponentNameFromPath(cleanPath);
       loggerRef.current.debug(`Collecting metadata for ${cleanPath} (component: ${componentName})`);
 
-      const { parse } = await import("@vue/compiler-sfc");
+      const compilerSfc = await import("@vue/compiler-sfc");
+      const parse = resolveCompilerSfcParse(compilerSfc);
       const compilerDom = await import("@vue/compiler-dom");
       const compile = compilerDom.compile as (template: string, options: object) => object;
       const { descriptor } = parse(code, { filename: cleanPath });

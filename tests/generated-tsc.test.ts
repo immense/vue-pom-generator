@@ -670,7 +670,7 @@ describe("generated output", () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set([childAEntry]),
-      generatedMethods: new Map([["clickOnlyInAButton", createPomMethodSignature(createPomParameters(["wait", "boolean = true"]))]]),
+      generatedMethods: new Map([["clickOnlyInAButton", createPomMethodSignature(createPomParameters(["wait", "boolean = true"], ["annotationText", "string = \"\""]))]]),
       isView: false,
     };
 
@@ -679,7 +679,7 @@ describe("generated output", () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set([childBEntry]),
-      generatedMethods: new Map([["clickSomethingElseButton", createPomMethodSignature(createPomParameters(["wait", "boolean = true"]))]]),
+      generatedMethods: new Map([["clickSomethingElseButton", createPomMethodSignature(createPomParameters(["wait", "boolean = true"], ["annotationText", "string = \"\""]))]]),
       isView: false,
     };
 

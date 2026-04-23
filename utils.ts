@@ -3600,11 +3600,14 @@ export function applyResolvedDataTestId(args: {
           testId: selectorPattern,
         },
         keyLiteral: rawValue,
-        parameters: [createPomParameterSpec("wait", "boolean = true")],
+        parameters: [createPomParameterSpec("wait", "boolean = true"), createPomParameterSpec("annotationText", "string = \"\"")],
       });
 
       if (added) {
-        registerGeneratedMethodSignature(generatedName, createPomMethodSignature([createPomParameterSpec("wait", "boolean = true")]));
+        registerGeneratedMethodSignature(generatedName, createPomMethodSignature([
+          createPomParameterSpec("wait", "boolean = true"),
+          createPomParameterSpec("annotationText", "string = \"\""),
+        ]));
       }
     }
 

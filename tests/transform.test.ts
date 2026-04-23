@@ -737,7 +737,7 @@ describe('createTestIdTransform', () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set(),
-      generatedMethods: new Map([['clickShowMediaLibrary', createPomMethodSignature(createPomParameters(['wait', 'boolean = true']))]]),
+      generatedMethods: new Map([['clickShowMediaLibrary', createPomMethodSignature(createPomParameters(['wait', 'boolean = true'], ['annotationText', 'string = ""']))]]),
       reservedPomMemberNames: new Set(['ShowMediaLibraryButton', 'clickShowMediaLibrary']),
       isView: false,
     })
@@ -774,7 +774,7 @@ describe('createTestIdTransform', () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set(),
-      generatedMethods: new Map([['clickShowMediaLibrary', createPomMethodSignature(createPomParameters(['wait', 'boolean = true']))]]),
+      generatedMethods: new Map([['clickShowMediaLibrary', createPomMethodSignature(createPomParameters(['wait', 'boolean = true'], ['annotationText', 'string = ""']))]]),
       reservedPomMemberNames: new Set(['ShowMediaLibraryButton', 'clickShowMediaLibrary']),
       isView: false,
     })
@@ -815,7 +815,7 @@ describe('createTestIdTransform', () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set(),
-      generatedMethods: new Map([['clickRunDeploymentAction', createPomMethodSignature(createPomParameters(['wait', 'boolean = true']))]]),
+      generatedMethods: new Map([['clickRunDeploymentAction', createPomMethodSignature(createPomParameters(['wait', 'boolean = true'], ['annotationText', 'string = ""']))]]),
       reservedPomMemberNames: new Set(['RunDeploymentActionButton', 'clickRunDeploymentAction']),
       isView: false,
     })
@@ -900,10 +900,10 @@ describe('createTestIdTransform', () => {
     expect(deps).toBeTruthy()
 
     const sigOne = deps?.generatedMethods?.get('clickOneButton')
-    expect(sigOne).toEqual(createPomMethodSignature(createPomParameters(['wait', 'boolean = true'])))
+    expect(sigOne).toEqual(createPomMethodSignature(createPomParameters(['wait', 'boolean = true'], ['annotationText', 'string = ""'])))
 
     const sigTwo = deps?.generatedMethods?.get('clickTwoButton')
-    expect(sigTwo).toEqual(createPomMethodSignature(createPomParameters(['wait', 'boolean = true'])))
+    expect(sigTwo).toEqual(createPomMethodSignature(createPomParameters(['wait', 'boolean = true'], ['annotationText', 'string = ""'])))
 
     // With the IR-based generator, v-for static literal keys are represented as extra click method specs.
     const extras = deps?.pomExtraMethods ?? []
@@ -914,7 +914,7 @@ describe('createTestIdTransform', () => {
       kind: 'testId',
       testId: createPomStringPattern('MyComp-${key}-Select-button', 'parameterized'),
     })
-    expect(one?.parameters).toEqual(createPomParameters(['wait', 'boolean = true']))
+    expect(one?.parameters).toEqual(createPomParameters(['wait', 'boolean = true'], ['annotationText', 'string = ""']))
 
     const two = extras.find(m => m.kind === 'click' && m.name === 'clickTwoButton')
     expect(two).toBeTruthy()
@@ -923,7 +923,7 @@ describe('createTestIdTransform', () => {
       kind: 'testId',
       testId: createPomStringPattern('MyComp-${key}-Select-button', 'parameterized'),
     })
-    expect(two?.parameters).toEqual(createPomParameters(['wait', 'boolean = true']))
+    expect(two?.parameters).toEqual(createPomParameters(['wait', 'boolean = true'], ['annotationText', 'string = ""']))
   })
 
   it('treats v-for source with Math.random() as dynamic via constType', () => {

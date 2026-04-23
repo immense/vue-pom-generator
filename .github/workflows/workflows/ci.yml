@@ -179,7 +179,8 @@ jobs:
           # VS Code/Electron expects a DBus session bus. In containerized runs (e.g. act) the
           # inherited DBUS_SESSION_BUS_ADDRESS can be invalid (e.g. macOS 'launchd:'), causing
           # VS Code to exit before emitting the test server readiness line.
-          xvfb-run --auto-servernum --server-args='-screen 0 1280x1024x24' npm run demo:pw
+          XVFB_SCREEN_SIZE="$(node ./scripts/playwright-video-settings.mjs screen-size)"
+          xvfb-run --auto-servernum --server-args="-screen 0 ${XVFB_SCREEN_SIZE}" npm run demo:pw
 
           # Re-arrange the recorded video(s) into a stable, shareable layout for artifact upload.
           #
@@ -255,6 +256,8 @@ jobs:
               --max 1 \
               --name demo.mp4 \
               --dedupe
+
+            bash ./scripts/normalize-playwright-videos.sh docs/pw-videos
           fi
 
       - name: Convert staged videos to MP4 (dedupe)
@@ -283,6 +286,8 @@ jobs:
             --pattern '*.webm' \
             --max "${#webms[@]}" \
             --dedupe
+
+          bash ./scripts/normalize-playwright-videos.sh videos
 
           echo "Converted MP4s:"
           ls -la videos/*.mp4 || true
@@ -568,7 +573,8 @@ jobs:
       - name: Run tests (Xvfb)
         shell: bash
         run: |
-          xvfb-run --auto-servernum --server-args='-screen 0 1280x1024x24' npm test
+          XVFB_SCREEN_SIZE="$(node ./scripts/playwright-video-settings.mjs screen-size)"
+          xvfb-run --auto-servernum --server-args="-screen 0 ${XVFB_SCREEN_SIZE}" npm test
         env:
           CI: true
           PW_VSCODE_TEST_TRACE: '1'
@@ -719,7 +725,8 @@ jobs:
         env:
           PW_VSCODE_WAIT_FOR_LINE_TIMEOUT_MS: '10000'
         run: |
-          dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1280x1024x24' npm run demo:pw:update-readme
+          XVFB_SCREEN_SIZE="$(node ./scripts/playwright-video-settings.mjs screen-size)"
+          dbus-run-session -- xvfb-run --auto-servernum --server-args="-screen 0 ${XVFB_SCREEN_SIZE}" npm run demo:pw:update-readme
 
       - name: Generate Release Notes
         run: npm run release:notes
