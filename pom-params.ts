@@ -13,7 +13,9 @@ export interface PomMethodSignature {
   parameters: PomParameterSpec[];
 }
 
-export type PomParameterInput = Record<string, string> | readonly PomParameterSpec[] | undefined;
+export type PomLegacyParameterRecord = Record<string, string>;
+export type PomParameterInput = readonly PomParameterSpec[] | undefined;
+export type PomParameterSource = PomLegacyParameterRecord | PomParameterInput;
 
 export function splitPomParameterTypeExpression(typeExpression: string): { type: string; initializer?: string } {
   const trimmed = typeExpression.trim();
@@ -51,7 +53,7 @@ export function createPomParameterSpec(
   };
 }
 
-export function normalizePomParameters(params: PomParameterInput): PomParameterSpec[] {
+export function normalizePomParameters(params: PomParameterSource): PomParameterSpec[] {
   if (!params) {
     return [];
   }
@@ -103,18 +105,6 @@ export function setPomParameter(
 
 export function removePomParameter(params: PomParameterInput, name: string): PomParameterSpec[] {
   return normalizePomParameters(params).filter(param => param.name !== name);
-}
-
-export function formatTypeScriptPomParameters(params: PomParameterInput): string {
-  return normalizePomParameters(params)
-    .map((param) => {
-      const prefix = param.isRestParameter ? "..." : "";
-      const questionToken = param.hasQuestionToken ? "?" : "";
-      const typeExpression = param.typeExpression ? `: ${param.typeExpression}` : "";
-      const initializer = param.initializer !== undefined ? ` = ${param.initializer}` : "";
-      return `${prefix}${param.name}${questionToken}${typeExpression}${initializer}`;
-    })
-    .join(", ");
 }
 
 export function toTypeScriptPomParameterStructures(params: PomParameterInput): OptionalKind<ParameterDeclarationStructure>[] {

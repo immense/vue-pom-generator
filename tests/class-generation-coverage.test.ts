@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import type { IComponentDependencies, IDataTestId } from "../utils";
 import { generateFiles } from "../class-generation";
-import { createPomMethodSignature, normalizePomParameters } from "../pom-params";
+import { createPomMethodSignature, createPomParameterSpec, normalizePomParameters } from "../pom-params";
 import { createPomStringPattern } from "../pom-patterns";
 import { renderTypeScriptLines } from "../typescript-codegen";
 
@@ -270,7 +270,7 @@ describe("class-generation coverage", () => {
         isView: false,
         dataTestIdSet: new Set([{ selectorValue: createPomStringPattern("TenantDetailsEditForm-Name-input", "static") }]),
         generatedMethods: new Map([
-          ["typeTenantName", createPomMethodSignature({ name: "string" })],
+          ["typeTenantName", createPomMethodSignature([createPomParameterSpec("name", "string")])],
         ]),
       });
 
@@ -336,7 +336,7 @@ describe("class-generation coverage", () => {
         isView: false,
         dataTestIdSet: new Set([{ selectorValue: createPomStringPattern("TenantDetailsEditForm-Name-input", "static") }]),
         generatedMethods: new Map([
-          ["typeTenantName", createPomMethodSignature({ name: "string" })],
+          ["typeTenantName", createPomMethodSignature([createPomParameterSpec("name", "string")])],
         ]),
       });
 

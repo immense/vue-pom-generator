@@ -15,7 +15,7 @@ import { parse as parseSfc } from '@vue/compiler-sfc'
 
 
 import { describe, expect, it } from 'vitest'
-import { createPomMethodSignature, normalizePomParameters } from '../pom-params'
+import { createPomMethodSignature, createPomParameterSpec, normalizePomParameters } from '../pom-params'
 import { createPomStringPattern } from '../pom-patterns'
 import { createVuePluginWithTestIds } from '../plugin/vue-plugin'
 import { __internal, createTestIdTransform } from '../transform'
@@ -736,7 +736,7 @@ describe('createTestIdTransform', () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set(),
-      generatedMethods: new Map([['clickShowMediaLibrary', createPomMethodSignature({ wait: 'boolean = true' })]]),
+      generatedMethods: new Map([['clickShowMediaLibrary', createPomMethodSignature([createPomParameterSpec('wait', 'boolean = true')])]]),
       reservedPomMemberNames: new Set(['ShowMediaLibraryButton', 'clickShowMediaLibrary']),
       isView: false,
     })
@@ -773,7 +773,7 @@ describe('createTestIdTransform', () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set(),
-      generatedMethods: new Map([['clickShowMediaLibrary', createPomMethodSignature({ wait: 'boolean = true' })]]),
+      generatedMethods: new Map([['clickShowMediaLibrary', createPomMethodSignature([createPomParameterSpec('wait', 'boolean = true')])]]),
       reservedPomMemberNames: new Set(['ShowMediaLibraryButton', 'clickShowMediaLibrary']),
       isView: false,
     })
@@ -814,7 +814,7 @@ describe('createTestIdTransform', () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set(),
-      generatedMethods: new Map([['clickRunDeploymentAction', createPomMethodSignature({ wait: 'boolean = true' })]]),
+      generatedMethods: new Map([['clickRunDeploymentAction', createPomMethodSignature([createPomParameterSpec('wait', 'boolean = true')])]]),
       reservedPomMemberNames: new Set(['RunDeploymentActionButton', 'clickRunDeploymentAction']),
       isView: false,
     })
@@ -922,10 +922,10 @@ describe('createTestIdTransform', () => {
     expect(deps).toBeTruthy()
 
     const sigOne = deps?.generatedMethods?.get('clickOneButton')
-    expect(sigOne).toEqual(createPomMethodSignature({ wait: 'boolean = true' }))
+    expect(sigOne).toEqual(createPomMethodSignature([createPomParameterSpec('wait', 'boolean = true')]))
 
     const sigTwo = deps?.generatedMethods?.get('clickTwoButton')
-    expect(sigTwo).toEqual(createPomMethodSignature({ wait: 'boolean = true' }))
+    expect(sigTwo).toEqual(createPomMethodSignature([createPomParameterSpec('wait', 'boolean = true')]))
 
     // With the IR-based generator, v-for static literal keys are represented as extra click method specs.
     const extras = deps?.pomExtraMethods ?? []
@@ -1002,7 +1002,7 @@ describe('createTestIdTransform', () => {
     const deps = componentHierarchyMap.get('MyComp') as IComponentDependencies | undefined
     expect(deps).toBeTruthy()
     const sig = deps?.generatedMethods?.get('clickDoThingByKey')
-    expect(sig).toEqual(createPomMethodSignature({ key: 'string' }))
+    expect(sig).toEqual(createPomMethodSignature([createPomParameterSpec('key', 'string')]))
   })
 
   it('does not populate exp.ast in this test harness even when prefixIdentifiers is enabled', () => {
@@ -1077,11 +1077,11 @@ describe('createTestIdTransform', () => {
     expect(deps).toBeTruthy()
 
     const signature = deps?.generatedMethods?.get('selectSelectedGroup')
-    expect(signature).toEqual(createPomMethodSignature({
-      value: 'string',
-      timeOut: 'number = 500',
-      annotationText: 'string = ""',
-    }))
+    expect(signature).toEqual(createPomMethodSignature([
+      createPomParameterSpec('value', 'string'),
+      createPomParameterSpec('timeOut', 'number = 500'),
+      createPomParameterSpec('annotationText', 'string = ""'),
+    ]))
 
     const pom = Array.from(deps?.dataTestIdSet ?? []).find(entry => entry.pom?.methodName === 'SelectedGroup')?.pom
     expect(pom?.parameters).toEqual(normalizePomParameters({

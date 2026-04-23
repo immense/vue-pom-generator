@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import type { IComponentDependencies, IDataTestId } from "../utils";
 import { generateFiles } from "../class-generation";
-import { createPomMethodSignature, normalizePomParameters } from "../pom-params";
+import { createPomMethodSignature, createPomParameterSpec, normalizePomParameters } from "../pom-params";
 import { createPomStringPattern } from "../pom-patterns";
 import { renderTypeScriptLines } from "../typescript-codegen";
 
@@ -285,7 +285,7 @@ describe("generated output", () => {
         },
       }]),
       generatedMethods: new Map([
-        ["typeTenantName", createPomMethodSignature({ name: "string" })],
+        ["typeTenantName", createPomMethodSignature([createPomParameterSpec("name", "string")])],
       ]),
       isView: false,
     };
@@ -709,7 +709,7 @@ describe("generated output", () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set([childAEntry]),
-      generatedMethods: new Map([["clickOnlyInAButton", createPomMethodSignature({ wait: "boolean = true" })]]),
+      generatedMethods: new Map([["clickOnlyInAButton", createPomMethodSignature([createPomParameterSpec("wait", "boolean = true")])]]),
       isView: false,
     };
 
@@ -718,7 +718,7 @@ describe("generated output", () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set([childBEntry]),
-      generatedMethods: new Map([["clickSomethingElseButton", createPomMethodSignature({ wait: "boolean = true" })]]),
+      generatedMethods: new Map([["clickSomethingElseButton", createPomMethodSignature([createPomParameterSpec("wait", "boolean = true")])]]),
       isView: false,
     };
 
