@@ -16,7 +16,7 @@ If you already use Playwright with `getByTestId`, the point is simple: this pack
 - **Can generate Playwright fixtures** so tests can request `userListPage` instead of constructing `new UserListPage(page)` manually.
 - **Can fail fast on unnameable wrapper-button actions** so complex inline handlers do not silently degrade into low-signal generated APIs.
 - **Can emit a single C# POM file** for Playwright .NET consumers.
-- **Exposes `virtual:testids` and `virtual:pom-manifest`** so your app can inspect collected ids and generated POM metadata at runtime.
+- **Exposes `virtual:testids`, `virtual:pom-manifest`, and `virtual:webmcp-manifest`** so your app can inspect collected ids, generated POM metadata, and WebMCP-oriented tool metadata at runtime.
 - **Ships ESLint rules** to remove legacy manually-authored test ids, ban raw `page` fixture usage in spec callbacks, and discourage raw locator actions on generated getters.
 
 ## What this does not do
@@ -348,7 +348,7 @@ This is important if you are deciding whether the tool will fit into a real code
 
 - **Dev server:** on startup, it scans the configured Vue page/component/layout directories (or the directories resolved from Nuxt config in Nuxt mode), compiles each `.vue` file into a snapshot, writes the configured TypeScript outputs once, then batches add/change/delete events and regenerates incrementally.
 - **Build:** it generates from the richest build pass it sees, which matters because Vite can run multiple passes (for example SSR plus client). The generator avoids letting a thinner pass clobber a richer one.
-- **Always-on virtual modules:** `virtual:testids` and `virtual:pom-manifest` are registered whether generation is enabled or disabled.
+- **Always-on virtual modules:** `virtual:testids`, `virtual:pom-manifest`, and `virtual:webmcp-manifest` are registered whether generation is enabled or disabled.
 - **Generation can be disabled:** `generation: false` still keeps compile-time test-id injection and the virtual modules, but skips emitted POM files.
 
 ## Router-aware navigation: the real semantics
@@ -681,10 +681,11 @@ This package registers a Vite virtual module named `virtual:testids`.
 Usage:
 
 ```ts
-import { pomManifest, testIdManifest } from "virtual:testids";
+import { pomManifest, testIdManifest, webMcpManifest } from "virtual:testids";
 
 console.log(testIdManifest.UserEditorPage);
 console.log(pomManifest.UserEditorPage.entries);
+console.log(webMcpManifest.UserEditorPage.tools);
 ```
 
 What it contains:
@@ -692,6 +693,7 @@ What it contains:
 - an object keyed by component name
 - `testIdManifest`: each value is a sorted array of collected test ids for that component
 - `pomManifest`: richer per-component metadata including source file, generated locator/property names, and generated action names
+- `webMcpManifest`: WebMCP-oriented tool metadata derived from the same semantic graph, including suggested tool names, parameter descriptions, and action names
 - each manifest entry also carries `locatorDescription`, which matches the human-readable label used by generated Playwright locators
 - each manifest entry may also carry `accessibility`, a compile-time review signal with static metadata, accessible-name hints, and `needsReview`
 
@@ -701,6 +703,7 @@ What it is good for:
 - analytics / logging helpers that need the current generated ids
 - debugging what the generator has collected and generated
 - keeping manifest-driven tools aligned with the same locator descriptions shown in Playwright traces
+- bootstrapping WebMCP integration without scraping emitted POM files or walking the DOM at runtime
 
 What it is not:
 
@@ -724,6 +727,30 @@ What it contains:
 - an object keyed by component/page object model class name
 - for each component: source file, whether it is a view or component, sorted test ids, and rich entry metadata
 - for each entry: test id, semantic name, inferred role, generated property name, generated action names, collected compiler metadata when available, and accessibility review metadata when available
+
+## `virtual:webmcp-manifest`
+
+This package also registers `virtual:webmcp-manifest` for consumers that want a tool-oriented manifest aligned with WebMCP's declarative model.
+
+Usage:
+
+```ts
+import { webMcpManifest } from "virtual:webmcp-manifest";
+
+console.log(webMcpManifest.UserEditorPage.tools[0].toolName);
+console.log(webMcpManifest.UserEditorPage.tools[0].params);
+```
+
+What it contains:
+
+- an object keyed by component/page object model class name
+- for each component with form-like controls: one or more suggested tools
+- for each tool: `toolName`, `toolDescription`, parameter metadata with `toolParamDescription`, and any generated action names that can drive submission or follow-up behavior
+
+What it is not:
+
+- automatic DOM annotation with `toolname`, `tooldescription`, or `toolparamdescription`
+- a runtime crawler or a replacement for explicit WebMCP authoring when your UI semantics need manual curation
 
 ## ESLint rules that actually ship
 

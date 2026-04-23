@@ -39,12 +39,29 @@ describe("virtual:testids", () => {
           },
         },
         {
-          selectorValue: createPomStringPattern("foo-root", "static"),
+          selectorValue: createPomStringPattern("foo-name-input", "static"),
+          pom: {
+            nativeRole: "input",
+            methodName: "FooName",
+            selector: createPomStringPattern("foo-name-input", "static"),
+            parameters: [],
+          },
+        },
+        {
+          selectorValue: createPomStringPattern("foo-enabled-checkbox", "static"),
+          pom: {
+            nativeRole: "checkbox",
+            methodName: "FooEnabled",
+            selector: createPomStringPattern("foo-enabled-checkbox", "static"),
+            parameters: [],
+          },
+        },
+        {
+          selectorValue: createPomStringPattern("foo-save-button", "static"),
           pom: {
             nativeRole: "button",
-            methodName: "FooRoot",
-            getterNameOverride: "FooRootButton",
-            selector: createPomStringPattern("foo-root", "static"),
+            methodName: "SaveFoo",
+            selector: createPomStringPattern("foo-save-button", "static"),
             parameters: [],
           },
         },
@@ -85,6 +102,26 @@ describe("virtual:testids", () => {
           hasClickHandler: true,
           staticTextContent: "Save",
         }],
+        ["foo-name-input", {
+          testId: "foo-name-input",
+          semanticName: "foo name",
+          tag: "input",
+          tagType: 0,
+        }],
+        ["foo-enabled-checkbox", {
+          testId: "foo-enabled-checkbox",
+          semanticName: "enabled",
+          tag: "input",
+          tagType: 0,
+        }],
+        ["foo-save-button", {
+          testId: "foo-save-button",
+          semanticName: "save foo",
+          tag: "button",
+          tagType: 0,
+          hasClickHandler: true,
+          staticTextContent: "Save",
+        }],
       ])],
     ]);
 
@@ -101,12 +138,15 @@ describe("virtual:testids", () => {
 
     expect(code).toContain("export const testIdManifest");
     expect(code).toContain("export const pomManifest");
+    expect(code).toContain("export const webMcpManifest");
 
     expect(code).toContain("\"Bar\"");
     expect(code).toContain("\"bar\"");
     expect(code).toContain("\"Foo\"");
     expect(code).toContain("\"foo-${key}-button\"");
-    expect(code).toContain("\"foo-root\"");
+    expect(code).toContain("\"foo-name-input\"");
+    expect(code).toContain("\"foo-enabled-checkbox\"");
+    expect(code).toContain("\"foo-save-button\"");
     expect(code).toContain("\"generatedPropertyName\": \"FooButton\"");
     expect(code).toContain("\"generatedActionNames\": [");
     expect(code).toContain("\"clickFooByKey\"");
@@ -117,6 +157,13 @@ describe("virtual:testids", () => {
     expect(code).toContain("\"sourceFile\": \"/repo/src/views/Foo.vue\"");
     expect(code).toContain("\"kind\": \"view\"");
     expect(code).toContain("\"semanticName\": \"foo item\"");
+    expect(code).toContain("\"toolName\": \"foo\"");
+    expect(code).toContain("\"toolDescription\": \"Interact with Foo.\"");
+    expect(code).toContain("\"toolParamDescription\": \"foo name\"");
+    expect(code).toContain("\"toolParamDescription\": \"enabled\"");
+    expect(code).toContain("\"name\": \"name\"");
+    expect(code).toContain("\"name\": \"enabled\"");
+    expect(code).toContain("\"name\": \"clickSaveFoo\"");
 
     const resolvedPomManifest = await (plugin as any).resolveId?.("virtual:pom-manifest");
     const resolvedPomManifestId = typeof resolvedPomManifest === "string" ? resolvedPomManifest : resolvedPomManifest?.id;
@@ -128,6 +175,19 @@ describe("virtual:testids", () => {
     expect(pomManifestCode).toContain("\"generatedPropertyName\": \"FooButton\"");
     expect(pomManifestCode).toContain("\"locatorDescription\": \"Foo button\"");
     expect(pomManifestCode).toContain("\"accessibleNameSource\": \"text\"");
+
+    const resolvedWebMcpManifest = await (plugin as any).resolveId?.("virtual:webmcp-manifest");
+    const resolvedWebMcpManifestId = typeof resolvedWebMcpManifest === "string" ? resolvedWebMcpManifest : resolvedWebMcpManifest?.id;
+    const loadedWebMcpManifest = await (plugin as any).load?.(resolvedWebMcpManifestId);
+    const webMcpManifestCode = extractCode(loadedWebMcpManifest);
+
+    expect(webMcpManifestCode).toContain("export const webMcpManifest");
+    expect(webMcpManifestCode).not.toContain("export const testIdManifest");
+    expect(webMcpManifestCode).not.toContain("export const pomManifest");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"foo\"");
+    expect(webMcpManifestCode).toContain("\"toolParamDescription\": \"foo name\"");
+    expect(webMcpManifestCode).toContain("\"name\": \"clickSaveFoo\"");
+    expect(webMcpManifestCode).not.toContain("\"Bar\"");
 
     componentHierarchyMap.set("Baz", createDependencies(new Set([
       {

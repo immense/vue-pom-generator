@@ -6,7 +6,14 @@
 import type { AccessibilityAuditResult } from "./accessibility-audit";
 import { buildAccessibilityAudit } from "./accessibility-audit";
 import type { ElementMetadata } from "./metadata-collector";
-import { buildPomLocatorDescription, humanizePomMethodName } from "./pom-discoverability";
+import {
+  buildPomLocatorDescription,
+  humanizePomComponentName,
+  humanizePomMethodName,
+  normalizePomRoleLabel,
+  splitPomDiscoverabilityWords,
+  stripPomActionPrefix,
+} from "./pom-discoverability";
 import type { IComponentDependencies, IDataTestId, PomExtraClickMethodSpec, PomPrimarySpec } from "./utils";
 import { renderSourceFile, VariableDeclarationKind, type WriterFunction } from "./typescript-codegen";
 import { upperFirst } from "./utils";
@@ -43,6 +50,42 @@ type PomManifestComponent = {
 };
 
 type PomManifest = Record<string, PomManifestComponent>;
+
+type WebMcpManifestParameter = {
+  name: string;
+  role: string;
+  testId: string;
+  selectorPatternKind: "static" | "parameterized";
+  toolParamDescription: string;
+  generatedPropertyName: string | null;
+};
+
+type WebMcpManifestAction = {
+  name: string;
+  testId: string;
+  description: string;
+  targetPageObjectModelClass?: string;
+};
+
+type WebMcpManifestTool = {
+  toolName: string;
+  toolDescription: string;
+  params: WebMcpManifestParameter[];
+  actions: WebMcpManifestAction[];
+};
+
+type WebMcpManifestComponent = {
+  componentName: string;
+  className: string;
+  sourceFile: string;
+  kind: "component" | "view";
+  tools: WebMcpManifestTool[];
+};
+
+type WebMcpManifest = Record<string, WebMcpManifestComponent>;
+
+const WEB_MCP_PARAM_ROLES = new Set(["input", "select", "vselect", "checkbox", "radio"]);
+const WEB_MCP_ACTION_ROLES = new Set(["button", "toggle"]);
 
 function removeByKeySegment(value: string): string {
   const idx = value.indexOf("ByKey");
@@ -92,6 +135,139 @@ function getGeneratedActionName(entry: IDataTestId, pom: PomPrimarySpec): string
     default:
       return `click${methodNameUpper}`;
   }
+}
+
+function removeLeadingWords(words: readonly string[], prefixWords: readonly string[]): string[] {
+  if (!prefixWords.length || words.length < prefixWords.length) {
+    return [...words];
+  }
+
+  for (let i = 0; i < prefixWords.length; i += 1) {
+    if (words[i] !== prefixWords[i]) {
+      return [...words];
+    }
+  }
+
+  return words.slice(prefixWords.length);
+}
+
+function removeTrailingWord(words: readonly string[], trailingWord: string | null): string[] {
+  if (!trailingWord || !words.length || words[words.length - 1] !== trailingWord) {
+    return [...words];
+  }
+
+  return words.slice(0, -1);
+}
+
+function toSnakeCase(words: readonly string[]): string {
+  return words.join("_");
+}
+
+function toCamelCase(words: readonly string[]): string {
+  if (!words.length) {
+    return "";
+  }
+
+  return words[0] + words.slice(1).map(word => upperFirst(word)).join("");
+}
+
+function getComponentWords(componentName: string): string[] {
+  const words = splitPomDiscoverabilityWords(humanizePomComponentName(componentName));
+  return words.length ? words : splitPomDiscoverabilityWords(componentName);
+}
+
+function getWebMcpParamName(entry: PomManifestEntry, componentWords: readonly string[]): string {
+  const baseWords = splitPomDiscoverabilityWords(entry.generatedPropertyName || entry.semanticName || entry.testId);
+  const roleWord = entry.inferredRole ? normalizePomRoleLabel(entry.inferredRole).toLowerCase() : null;
+  const withoutComponentWords = removeLeadingWords(baseWords, componentWords);
+  const preferredWords = removeTrailingWord(withoutComponentWords, roleWord);
+  const fallbackWords = removeTrailingWord(baseWords, roleWord);
+  const words = preferredWords.length
+    ? preferredWords
+    : fallbackWords.length
+      ? fallbackWords
+      : [entry.inferredRole === "checkbox" ? "checked" : "value"];
+
+  return toCamelCase(words);
+}
+
+function buildWebMcpActions(entries: readonly PomManifestEntry[]): WebMcpManifestAction[] {
+  const actions = new Map<string, WebMcpManifestAction>();
+
+  for (const entry of entries) {
+    if (!entry.generatedActionNames.length) {
+      continue;
+    }
+
+    const canDriveAction = (entry.inferredRole && WEB_MCP_ACTION_ROLES.has(entry.inferredRole))
+      || !!entry.targetPageObjectModelClass;
+    if (!canDriveAction) {
+      continue;
+    }
+
+    for (const actionName of entry.generatedActionNames) {
+      if (actions.has(actionName)) {
+        continue;
+      }
+
+      actions.set(actionName, {
+        name: actionName,
+        testId: entry.testId,
+        description: upperFirst(humanizePomMethodName(stripPomActionPrefix(actionName))),
+        ...(entry.targetPageObjectModelClass ? { targetPageObjectModelClass: entry.targetPageObjectModelClass } : {}),
+      });
+    }
+  }
+
+  return Array.from(actions.values()).sort((a, b) => a.name.localeCompare(b.name) || a.testId.localeCompare(b.testId));
+}
+
+export function buildWebMcpManifestFromPomManifest(pomManifest: PomManifest): WebMcpManifest {
+  const webMcpEntries = Object.entries(pomManifest)
+    .map(([componentName, component]) => {
+      const componentWords = getComponentWords(componentName);
+      const params = component.entries
+        .filter(entry => entry.inferredRole && WEB_MCP_PARAM_ROLES.has(entry.inferredRole))
+        .map(entry => ({
+          name: getWebMcpParamName(entry, componentWords),
+          role: entry.inferredRole!,
+          testId: entry.testId,
+          selectorPatternKind: entry.selectorPatternKind,
+          toolParamDescription: entry.semanticName,
+          generatedPropertyName: entry.generatedPropertyName,
+        } satisfies WebMcpManifestParameter))
+        .sort((a, b) => a.name.localeCompare(b.name) || a.testId.localeCompare(b.testId));
+
+      if (!params.length) {
+        return null;
+      }
+
+      const componentLabel = upperFirst(humanizePomComponentName(componentName) || componentName);
+      const tools: WebMcpManifestTool[] = [{
+        toolName: toSnakeCase(componentWords),
+        toolDescription: `Interact with ${componentLabel}.`,
+        params,
+        actions: buildWebMcpActions(component.entries),
+      }];
+
+      return [componentName, {
+        componentName,
+        className: component.className,
+        sourceFile: component.sourceFile,
+        kind: component.kind,
+        tools,
+      } satisfies WebMcpManifestComponent] as const;
+    })
+    .filter((entry): entry is readonly [string, WebMcpManifestComponent] => entry !== null);
+
+  return Object.fromEntries(webMcpEntries);
+}
+
+export function buildWebMcpManifest(
+  componentHierarchyMap: Map<string, IComponentDependencies>,
+  elementMetadata: Map<string, Map<string, ElementMetadata>>,
+): WebMcpManifest {
+  return buildWebMcpManifestFromPomManifest(buildPomManifest(componentHierarchyMap, elementMetadata));
 }
 
 function matchesPrimarySelector(extraMethod: PomExtraClickMethodSpec, pom: PomPrimarySpec): boolean {
@@ -206,6 +382,7 @@ export function generateTestIdsModule(
 ): string {
   const pomManifest = buildPomManifest(componentHierarchyMap, elementMetadata);
   const testIdManifest = buildTestIdManifest(pomManifest);
+  const webMcpManifest = buildWebMcpManifestFromPomManifest(pomManifest);
 
   return renderSourceFile("virtual-testids.ts", (sourceFile) => {
     sourceFile.addStatements("// Virtual module: test id manifest");
@@ -223,6 +400,14 @@ export function generateTestIdsModule(
       declarations: [{
         name: "pomManifest",
         initializer: writeConstJson(pomManifest),
+      }],
+    });
+    sourceFile.addVariableStatement({
+      declarationKind: VariableDeclarationKind.Const,
+      isExported: true,
+      declarations: [{
+        name: "webMcpManifest",
+        initializer: writeConstJson(webMcpManifest),
       }],
     });
     sourceFile.addTypeAlias({
@@ -244,6 +429,16 @@ export function generateTestIdsModule(
       isExported: true,
       name: "PomManifestComponentName",
       type: "keyof PomManifest",
+    });
+    sourceFile.addTypeAlias({
+      isExported: true,
+      name: "WebMcpManifest",
+      type: "typeof webMcpManifest",
+    });
+    sourceFile.addTypeAlias({
+      isExported: true,
+      name: "WebMcpManifestComponentName",
+      type: "keyof WebMcpManifest",
     });
   });
 }
@@ -273,6 +468,35 @@ export function generatePomManifestModule(
       isExported: true,
       name: "PomManifestComponentName",
       type: "keyof PomManifest",
+    });
+  });
+}
+
+export function generateWebMcpManifestModule(
+  componentHierarchyMap: Map<string, IComponentDependencies>,
+  elementMetadata: Map<string, Map<string, ElementMetadata>>,
+): string {
+  const webMcpManifest = buildWebMcpManifest(componentHierarchyMap, elementMetadata);
+
+  return renderSourceFile("virtual-webmcp-manifest.ts", (sourceFile) => {
+    sourceFile.addStatements("// Virtual module: WebMCP tool manifest");
+    sourceFile.addVariableStatement({
+      declarationKind: VariableDeclarationKind.Const,
+      isExported: true,
+      declarations: [{
+        name: "webMcpManifest",
+        initializer: writeConstJson(webMcpManifest),
+      }],
+    });
+    sourceFile.addTypeAlias({
+      isExported: true,
+      name: "WebMcpManifest",
+      type: "typeof webMcpManifest",
+    });
+    sourceFile.addTypeAlias({
+      isExported: true,
+      name: "WebMcpManifestComponentName",
+      type: "keyof WebMcpManifest",
     });
   });
 }
