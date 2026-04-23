@@ -16,6 +16,7 @@ import { baseCompile, parse, parserOptions } from "@vue/compiler-dom";
 
 import { parseExpression } from "@babel/parser";
 
+import { createPomMethodSignature } from "../pom-params";
 import { createPomStringPattern } from "../pom-patterns";
 import {
   addComponentTestIds,
@@ -987,7 +988,7 @@ describe("utils.ts coverage", () => {
     expect(prev).not.toBeUndefined();
 
     // Force a collision on the next registration pass.
-    deps.generatedMethods!.set(some, { params: "x: number", argNames: ["x"] });
+    deps.generatedMethods!.set(some, createPomMethodSignature({ x: "number" }));
 
     applyResolvedDataTestId({
       element: el,
@@ -1007,11 +1008,10 @@ describe("utils.ts coverage", () => {
 
     // Because dynamic options use ensureUniqueGeneratedName, collisions produce a suffixed name
     // rather than poisoning the original signature.
-    expect(deps.generatedMethods!.get(some)).toEqual({ params: "x: number", argNames: ["x"] });
-    expect(deps.generatedMethods!.get("selectRadio2")).toEqual({
-      params: "value: string, annotationText: string = \"\"",
-      argNames: ["value", "annotationText"],
-    });
+    expect(deps.generatedMethods!.get(some)).toEqual(createPomMethodSignature({ x: "number" }));
+    expect(deps.generatedMethods!.get("selectRadio2")).toEqual(
+      createPomMethodSignature({ value: "string", annotationText: "string = \"\"" }),
+    );
 
     // Dynamic options should be represented as a single extra method that interpolates `${value}`.
     const extras = deps.pomExtraMethods ?? [];

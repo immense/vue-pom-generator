@@ -13,7 +13,7 @@ import {
   type TypeScriptClassMember,
   type WriterFunction,
 } from "./typescript-codegen";
-import { getPomParameterNames, normalizePomParameters } from "./pom-params";
+import { getPomParameter, getPomParameterNames, normalizePomParameters, type PomParameterSpec } from "./pom-params";
 import {
   ensurePomPatternParameters,
   getIndexedPomPatternVariable,
@@ -30,7 +30,7 @@ function upperFirst(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-function createParameters(params: Record<string, string>): OptionalKind<ParameterDeclarationStructure>[] {
+function createParameters(params: readonly PomParameterSpec[]): OptionalKind<ParameterDeclarationStructure>[] {
   return normalizePomParameters(params).map(({ name, type, initializer }) => ({
     name,
     type: type || undefined,
@@ -77,11 +77,11 @@ function generateClickMethod(
   methodName: string,
   selector: PomStringPattern,
   alternateSelectors: PomStringPattern[] | undefined,
-  params: Record<string, string>,
+  parameters: PomParameterSpec[],
 ): TypeScriptClassMember[] {
   const name = `click${methodName}`;
   const noWaitName = `${name}NoWait`;
-  const selectorParams = ensurePomPatternParameters(params, [selector]);
+  const selectorParams = ensurePomPatternParameters(parameters, [selector]);
   const hasSelectorVariables = hasPomPatternVariables(selector);
   const baseParameters = createParameters(selectorParams);
   const argsForForward = getPomParameterNames(selectorParams).join(", ");
@@ -150,15 +150,15 @@ function generateClickMethod(
 function generateRadioMethod(
   methodName: string,
   selector: PomStringPattern,
-  params: Record<string, string>,
+  parameters: PomParameterSpec[],
 ): TypeScriptClassMember[] {
   const name = `select${methodName}`;
-  const selectorParams = ensurePomPatternParameters(params, [selector]);
-  const parameters = createParameters(selectorParams);
+  const selectorParams = ensurePomPatternParameters(parameters, [selector]);
+  const methodParameters = createParameters(selectorParams);
   const testIdExpr = toTypeScriptPomPatternExpression(selector);
 
   return [
-    createAsyncMethod(name, parameters, (writer) => {
+    createAsyncMethod(name, methodParameters, (writer) => {
       writer.writeLine(`await this.clickByTestId(${testIdExpr}, annotationText);`);
     }),
   ];
@@ -167,10 +167,10 @@ function generateRadioMethod(
 function generateSelectMethod(
   methodName: string,
   selector: PomStringPattern,
-  params: Record<string, string>,
+  parameters: PomParameterSpec[],
 ): TypeScriptClassMember[] {
   const name = `select${methodName}`;
-  const selectorParams = ensurePomPatternParameters(params, [selector]);
+  const selectorParams = ensurePomPatternParameters(parameters, [selector]);
   const selectorExpr = `this.selectorForTestId(${toTypeScriptPomPatternExpression(selector)})`;
 
   return [
@@ -189,10 +189,10 @@ function generateSelectMethod(
 function generateVSelectMethod(
   methodName: string,
   selector: PomStringPattern,
-  params: Record<string, string>,
+  parameters: PomParameterSpec[],
 ): TypeScriptClassMember[] {
   const name = `select${methodName}`;
-  const selectorParams = ensurePomPatternParameters(params, [selector]);
+  const selectorParams = ensurePomPatternParameters(parameters, [selector]);
 
   return [
     createAsyncMethod(
@@ -208,10 +208,10 @@ function generateVSelectMethod(
 function generateTypeMethod(
   methodName: string,
   selector: PomStringPattern,
-  params: Record<string, string>,
+  parameters: PomParameterSpec[],
 ): TypeScriptClassMember[] {
   const name = `type${methodName}`;
-  const selectorParams = ensurePomPatternParameters(params, [selector]);
+  const selectorParams = ensurePomPatternParameters(parameters, [selector]);
 
   return [
     createAsyncMethod(
@@ -241,18 +241,18 @@ function generateGetElementByDataTestId(
   selector: PomStringPattern,
   alternateSelectors: PomStringPattern[] | undefined,
   getterNameOverride: string | undefined,
-  params: Record<string, string>,
+  parameters: PomParameterSpec[],
 ): TypeScriptClassMember[] {
   const roleSuffix = upperFirst(nativeRole || "Element");
   const baseName = upperFirst(methodName);
   const numericSuffix = baseName.startsWith(roleSuffix) ? baseName.slice(roleSuffix.length) : "";
   const hasRoleSuffix = baseName.endsWith(roleSuffix) || (baseName.startsWith(roleSuffix) && isAllDigits(numericSuffix));
   const propertyName = hasRoleSuffix ? `${baseName}` : `${baseName}${roleSuffix}`;
-  const selectorParams = ensurePomPatternParameters(params, [selector]);
+  const selectorParams = ensurePomPatternParameters(parameters, [selector]);
   const indexedVariable = getIndexedPomPatternVariable(selector);
 
   if (indexedVariable) {
-    const keyType = selectorParams[indexedVariable] || "string";
+    const keyType = getPomParameter(selectorParams, indexedVariable)?.typeExpression || "string";
     const keyedPropertyName = getterNameOverride ?? removeByKeySegment(propertyName);
     return [
       createClassGetter({
@@ -293,25 +293,25 @@ function generateNavigationMethod(args: {
   baseMethodName: string;
   selector: PomStringPattern;
   alternateSelectors?: PomStringPattern[];
-  params: Record<string, string>;
+  parameters: PomParameterSpec[];
 }): TypeScriptClassMember[] {
-  const { targetPageObjectModelClass: target, baseMethodName, selector, alternateSelectors, params } = args;
+  const { targetPageObjectModelClass: target, baseMethodName, selector, alternateSelectors, parameters } = args;
 
   const methodName = baseMethodName
     ? `goTo${upperFirst(baseMethodName)}`
     : `goTo${target.endsWith("Page") ? target.slice(0, -"Page".length) : target}`;
 
-  const selectorParams = ensurePomPatternParameters(params, [selector]);
-  const parameters = createParameters(selectorParams);
+  const selectorParams = ensurePomPatternParameters(parameters, [selector]);
+  const methodParameters = createParameters(selectorParams);
   const alternates = uniquePomStringPatterns(selector, alternateSelectors).slice(1);
   const candidatesExpr = [toTypeScriptPomPatternExpression(selector), ...alternates.map(id => toTypeScriptPomPatternExpression(id))].join(", ");
 
   if (alternates.length > 0) {
     return [
-      createClassMethod({
-        name: methodName,
-        parameters,
-        returnType: `Fluent<${target}>`,
+        createClassMethod({
+          name: methodName,
+          parameters: methodParameters,
+          returnType: `Fluent<${target}>`,
         statements: (writer) => {
           writer.write("return this.fluent(async () => ").block(() => {
             writer.writeLine(`const candidates = [${candidatesExpr}] as const;`);
@@ -339,7 +339,7 @@ function generateNavigationMethod(args: {
   return [
     createClassMethod({
       name: methodName,
-      parameters,
+      parameters: methodParameters,
       returnType: `Fluent<${target}>`,
       statements: (writer) => {
         writer.write("return this.fluent(async () => ").block(() => {
@@ -359,7 +359,7 @@ export function generateViewObjectModelMembers(
   selector: PomStringPattern,
   alternateSelectors: PomStringPattern[] | undefined,
   getterNameOverride: string | undefined,
-  params: Record<string, string>,
+  parameters: PomParameterSpec[],
 ): TypeScriptClassMember[] {
   const baseMethodName = (nativeRole === "radio")
     ? (methodName || "Radio")
@@ -371,7 +371,7 @@ export function generateViewObjectModelMembers(
     selector,
     alternateSelectors,
     getterNameOverride,
-    params,
+    parameters,
   );
 
   if (targetPageObjectModelClass) {
@@ -382,25 +382,25 @@ export function generateViewObjectModelMembers(
         baseMethodName,
         selector,
         alternateSelectors,
-        params,
+        parameters,
       }),
     ];
   }
 
   if (nativeRole === "select") {
-    return [...members, ...generateSelectMethod(baseMethodName, selector, params)];
+    return [...members, ...generateSelectMethod(baseMethodName, selector, parameters)];
   }
   if (nativeRole === "vselect") {
-    return [...members, ...generateVSelectMethod(baseMethodName, selector, params)];
+    return [...members, ...generateVSelectMethod(baseMethodName, selector, parameters)];
   }
   if (nativeRole === "input") {
-    return [...members, ...generateTypeMethod(baseMethodName, selector, params)];
+    return [...members, ...generateTypeMethod(baseMethodName, selector, parameters)];
   }
   if (nativeRole === "radio") {
-    return [...members, ...generateRadioMethod(baseMethodName || "Radio", selector, params)];
+    return [...members, ...generateRadioMethod(baseMethodName || "Radio", selector, parameters)];
   }
 
-  return [...members, ...generateClickMethod(baseMethodName, selector, alternateSelectors, params)];
+  return [...members, ...generateClickMethod(baseMethodName, selector, alternateSelectors, parameters)];
 }
 
 export function generateViewObjectModelMethodContent(
@@ -410,7 +410,7 @@ export function generateViewObjectModelMethodContent(
   selector: PomStringPattern,
   alternateSelectors: PomStringPattern[] | undefined,
   getterNameOverride: string | undefined,
-  params: Record<string, string>,
+  parameters: PomParameterSpec[],
 ) {
   return renderClassMembers(
     generateViewObjectModelMembers(
@@ -420,7 +420,7 @@ export function generateViewObjectModelMethodContent(
       selector,
       alternateSelectors,
       getterNameOverride,
-      params,
+      parameters,
     ),
   );
 }

@@ -54,6 +54,14 @@ import {
 } from "@babel/types";
 import { parse, parseExpression } from "@babel/parser";
 import { createPomStringPattern, pomStringPatternEquals, type PomPatternKind, type PomStringPattern } from "./pom-patterns";
+import {
+  createPomMethodSignature,
+  createPomParameterSpec,
+  normalizePomParameters,
+  pomMethodSignatureEquals,
+  type PomMethodSignature,
+  type PomParameterSpec,
+} from "./pom-params";
 import { createTypeScriptWriter } from "./typescript-codegen";
 
 export { isSimpleExpressionNode } from "./compiler/ast-guards";
@@ -3049,8 +3057,8 @@ export function applyResolvedDataTestId(args: {
       }
     }
 
-    if (selectorIsParameterized && !Object.prototype.hasOwnProperty.call(existingPom.params, "key")) {
-      existingPom.params.key = keyTypeFromValues;
+    if (selectorIsParameterized && !existingPom.parameters.some(param => param.name === "key")) {
+      existingPom.parameters = [createPomParameterSpec("key", keyTypeFromValues), ...existingPom.parameters];
     }
 
     return true;
@@ -3244,6 +3252,7 @@ export function applyResolvedDataTestId(args: {
   if (keyTypeFromValues !== "string" && Object.prototype.hasOwnProperty.call(params, "key")) {
     params.key = keyTypeFromValues;
   }
+  const normalizedParameters = normalizePomParameters(params);
 
   // 3) Apply attribute (only when we generated it) and register for POM generation.
   if (addHtmlAttribute && !fromExisting) {
@@ -3269,7 +3278,7 @@ export function applyResolvedDataTestId(args: {
     selector: selectorPattern,
     alternateSelectors: undefined,
     mergeKey: args.pomMergeKey,
-    params,
+    parameters: normalizedParameters,
     keyValuesOverride: args.keyValuesOverride ?? null,
     // emitPrimary defaults to true; special cases (including merge) may set it to false below.
   };
@@ -3314,41 +3323,37 @@ export function applyResolvedDataTestId(args: {
 
     if (isNavigation) {
       if (needsKey) {
-        return { params: `key: ${keyType}`, argNames: ["key"] };
+        return createPomMethodSignature({ key: keyType });
       }
-      return { params: "", argNames: [] };
+      return createPomMethodSignature([]);
     }
 
     switch (role) {
       case "input":
         return needsKey
-          ? { params: `key: ${keyType}, text: string, annotationText: string = ""`, argNames: ["key", "text", "annotationText"] }
-          : { params: "text: string, annotationText: string = \"\"", argNames: ["text", "annotationText"] };
+          ? createPomMethodSignature({ key: keyType, text: "string", annotationText: "string = \"\"" })
+          : createPomMethodSignature({ text: "string", annotationText: "string = \"\"" });
       case "select":
         return needsKey
-          ? { params: `key: ${keyType}, value: string, annotationText: string = ""`, argNames: ["key", "value", "annotationText"] }
-          : { params: "value: string, annotationText: string = \"\"", argNames: ["value", "annotationText"] };
+          ? createPomMethodSignature({ key: keyType, value: "string", annotationText: "string = \"\"" })
+          : createPomMethodSignature({ value: "string", annotationText: "string = \"\"" });
       case "vselect":
         return needsKey
-          ? { params: `key: ${keyType}, value: string, timeOut = 500`, argNames: ["key", "value", "timeOut"] }
-          : { params: "value: string, timeOut = 500", argNames: ["value", "timeOut"] };
+          ? createPomMethodSignature({ key: keyType, value: "string", timeOut: "number = 500" })
+          : createPomMethodSignature({ value: "string", timeOut: "number = 500" });
       case "radio":
         return needsKey
-          ? { params: `key: ${keyType}, annotationText: string = ""`, argNames: ["key", "annotationText"] }
-          : { params: "annotationText: string = \"\"", argNames: ["annotationText"] };
+          ? createPomMethodSignature({ key: keyType, annotationText: "string = \"\"" })
+          : createPomMethodSignature({ annotationText: "string = \"\"" });
       default:
         if (needsKey) {
-          return { params: `key: ${keyType}`, argNames: ["key"] };
+          return createPomMethodSignature({ key: keyType });
         }
-        return { params: "", argNames: [] };
+        return createPomMethodSignature([]);
     }
   };
 
   const registerPrimaryOnce = (pom: PomPrimarySpec) => {
-    const stableParams = pom.params
-      ? Object.fromEntries(Object.entries(pom.params).sort((a, b) => a[0].localeCompare(b[0])))
-      : undefined;
-
     const alternates = (pom.alternateSelectors ?? [])
       .slice()
       .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
@@ -3361,7 +3366,7 @@ export function applyResolvedDataTestId(args: {
         getterNameOverride: pom.getterNameOverride ?? null,
         selector: pom.selector,
         alternateSelectors: alternates.length ? alternates : undefined,
-        params: stableParams,
+        parameters: pom.parameters,
         target: dataTestIdEntry.targetPageObjectModelClass ?? null,
         emitPrimary: pom.emitPrimary ?? true,
     });
@@ -3377,15 +3382,11 @@ export function applyResolvedDataTestId(args: {
   };
 
   const addExtraClickMethod = (spec: PomExtraClickMethodSpec): boolean => {
-    const stableParams = spec.params
-      ? Object.fromEntries(Object.entries(spec.params).sort((a, b) => a[0].localeCompare(b[0])))
-      : undefined;
-
     // IMPORTANT:
-    // De-dupe based on semantic identity (testId+params+keyLiteral), not the emitted method name.
+    // De-dupe based on semantic identity (testId+parameters+keyLiteral), not the emitted method name.
     // This prevents repeated passes over the same element from generating new unique names
     // (e.g. selectFoo -> selectFoo2) and growing the output.
-    const key = JSON.stringify({ kind: spec.kind, selector: spec.selector, keyLiteral: spec.keyLiteral ?? null, params: stableParams });
+    const key = JSON.stringify({ kind: spec.kind, selector: spec.selector, keyLiteral: spec.keyLiteral ?? null, parameters: spec.parameters });
     const seen = args.generatedMethodContentByComponent.get(args.parentComponentName) ?? new Set<string>();
     if (!args.generatedMethodContentByComponent.has(args.parentComponentName)) {
       args.generatedMethodContentByComponent.set(args.parentComponentName, seen);
@@ -3399,8 +3400,8 @@ export function applyResolvedDataTestId(args: {
     return true;
   };
 
-  const registerGeneratedMethodSignature = (name: string, signature: { params: string; argNames: string[] } | null) => {
-    args.dependencies.generatedMethods ??= new Map<string, { params: string; argNames: string[] } | null>();
+  const registerGeneratedMethodSignature = (name: string, signature: PomMethodSignature | null) => {
+    args.dependencies.generatedMethods ??= new Map<string, PomMethodSignature | null>();
     const prev = args.dependencies.generatedMethods.get(name);
     if (prev === undefined) {
       args.dependencies.generatedMethods.set(name, signature);
@@ -3409,7 +3410,7 @@ export function applyResolvedDataTestId(args: {
     if (prev === null) {
       return;
     }
-    if (signature === null || prev.params !== signature.params) {
+    if (signature === null || !pomMethodSignatureEquals(prev, signature)) {
       args.dependencies.generatedMethods.set(name, null);
     }
   };
@@ -3566,11 +3567,11 @@ export function applyResolvedDataTestId(args: {
             label: createPomStringPattern(label, "static"),
             exact: true,
           },
-          params: { annotationText: `string = ""` },
+          parameters: normalizePomParameters({ annotationText: `string = ""` }),
         });
 
         if (added) {
-          registerGeneratedMethodSignature(generatedName, { params: `annotationText: string = ""`, argNames: ["annotationText"] });
+          registerGeneratedMethodSignature(generatedName, createPomMethodSignature({ annotationText: `string = ""` }));
         }
       }
 
@@ -3596,11 +3597,11 @@ export function applyResolvedDataTestId(args: {
         label: createPomStringPattern("${value}", "parameterized"),
         exact: true,
       },
-      params: { value: "string", annotationText: `string = ""` },
+      parameters: normalizePomParameters({ value: "string", annotationText: `string = ""` }),
     });
 
     if (added) {
-      registerGeneratedMethodSignature(generatedName, { params: `value: string, annotationText: string = ""`, argNames: ["value", "annotationText"] });
+      registerGeneratedMethodSignature(generatedName, createPomMethodSignature({ value: "string", annotationText: `string = ""` }));
     }
     return { selectorValue: dataTestId, runtimeValue: runtimeDataTestId, fromExisting };
   }
@@ -3649,11 +3650,11 @@ export function applyResolvedDataTestId(args: {
           testId: selectorPattern,
         },
         keyLiteral: rawValue,
-        params: { wait: "boolean = true" },
+        parameters: normalizePomParameters({ wait: "boolean = true" }),
       });
 
       if (added) {
-        registerGeneratedMethodSignature(generatedName, { params: `wait: boolean = true`, argNames: ["wait"] });
+        registerGeneratedMethodSignature(generatedName, createPomMethodSignature({ wait: "boolean = true" }));
       }
     }
 
@@ -3707,8 +3708,8 @@ export interface DataTestIdEntryOverrides {
  * Structured representation of a generated element for POM emission.
  *
  * - `selector` carries both the rendered selector text and whether it is static or parameterized.
- * - `params` is TypeScript-flavored today because TS is our reference emitter;
- *   C# emission maps these params to C# types.
+ * - `parameters` are TypeScript-flavored today because TS is our reference emitter;
+ *   C# emission maps these parameters to C# types.
  */
 export interface PomPrimarySpec {
   nativeRole: NativeRole;
@@ -3723,8 +3724,8 @@ export interface PomPrimarySpec {
 
   /** Optional key used to decide whether distinct elements should be merged into one POM member. */
   mergeKey?: string;
-  /** TypeScript param blocks used by the TS emitter (and signature metadata). */
-  params: Record<string, string>;
+  /** Structured method parameters used by emitters and signature metadata. */
+  parameters: PomParameterSpec[];
   /** Optional enum values for key when derived from a static v-for list. */
   keyValuesOverride?: string[] | null;
 
@@ -3760,7 +3761,7 @@ export interface PomExtraClickMethodSpec {
   selector: PomSelectorSpec;
   /** Optional fixed key to substitute into `${key}` in the method body. */
   keyLiteral?: string;
-  params: Record<string, string>;
+  parameters: PomParameterSpec[];
 }
 
 export interface IComponentDependencies {
@@ -3784,10 +3785,10 @@ export interface IComponentDependencies {
    * without re-parsing the generated TypeScript.
    *
    * - key: method name
-   * - value: { params, argNames } when the signature is known and consistent
+   * - value: structured parameters when the signature is known and consistent
    *          null when multiple distinct signatures were observed for the same name
    */
-  generatedMethods?: Map<string, { params: string; argNames: string[] } | null>;
+  generatedMethods?: Map<string, PomMethodSignature | null>;
   isView?: boolean;
 
   /**

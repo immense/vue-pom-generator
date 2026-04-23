@@ -1,3 +1,5 @@
+import { createPomParameterSpec, normalizePomParameters, type PomParameterInput, type PomParameterSpec } from "./pom-params";
+
 export type PomPatternKind = "static" | "parameterized";
 
 export function isParameterizedPomPattern(kind: PomPatternKind): boolean {
@@ -69,32 +71,32 @@ export function getPomPatternVariables(
 }
 
 export function ensurePomPatternParameters(
-  params: Record<string, string> | undefined,
+  params: PomParameterInput,
   patterns: readonly PomStringPattern[],
   options: {
     omit?: readonly string[];
     defaultType?: string;
   } = {},
-): Record<string, string> {
-  const currentParams = params ?? {};
+): PomParameterSpec[] {
+  const currentParams = normalizePomParameters(params);
   const defaultType = options.defaultType ?? "string";
-  const orderedEntries: [string, string][] = [];
+  const orderedParams: PomParameterSpec[] = [];
   const seen = new Set<string>();
 
   for (const variableName of getPomPatternVariables(patterns, options)) {
     seen.add(variableName);
-    orderedEntries.push([variableName, currentParams[variableName] ?? defaultType]);
+    orderedParams.push(currentParams.find(param => param.name === variableName) ?? createPomParameterSpec(variableName, defaultType));
   }
 
-  for (const [name, typeExpr] of Object.entries(currentParams)) {
-    if (seen.has(name)) {
+  for (const param of currentParams) {
+    if (seen.has(param.name)) {
       continue;
     }
-    seen.add(name);
-    orderedEntries.push([name, typeExpr]);
+    seen.add(param.name);
+    orderedParams.push(param);
   }
 
-  return Object.fromEntries(orderedEntries);
+  return orderedParams;
 }
 
 export function getIndexedPomPatternVariable(pattern: PomStringPattern): string | null {

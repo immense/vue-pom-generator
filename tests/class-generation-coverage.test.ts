@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import type { IComponentDependencies, IDataTestId } from "../utils";
 import { generateFiles } from "../class-generation";
+import { createPomMethodSignature, normalizePomParameters } from "../pom-params";
 import { createPomStringPattern } from "../pom-patterns";
 import { renderTypeScriptLines } from "../typescript-codegen";
 
@@ -269,7 +270,7 @@ describe("class-generation coverage", () => {
         isView: false,
         dataTestIdSet: new Set([{ selectorValue: createPomStringPattern("TenantDetailsEditForm-Name-input", "static") }]),
         generatedMethods: new Map([
-          ["typeTenantName", { params: "name: string", argNames: ["name"] }],
+          ["typeTenantName", createPomMethodSignature({ name: "string" })],
         ]),
       });
 
@@ -335,7 +336,7 @@ describe("class-generation coverage", () => {
         isView: false,
         dataTestIdSet: new Set([{ selectorValue: createPomStringPattern("TenantDetailsEditForm-Name-input", "static") }]),
         generatedMethods: new Map([
-          ["typeTenantName", { params: "name: string", argNames: ["name"] }],
+          ["typeTenantName", createPomMethodSignature({ name: "string" })],
         ]),
       });
 
@@ -645,7 +646,7 @@ describe("class-generation coverage", () => {
           methodName: "ItemsCheckByKey",
           selector: createPomStringPattern("items-check-${key}", "parameterized"),
           // Broken params as currently produced by utils.ts: key is absent
-          params: { text: "string", annotationText: "string = \"\"" },
+          parameters: normalizePomParameters({ text: "string", annotationText: "string = \"\"" }),
         },
       };
 
@@ -696,7 +697,7 @@ describe("class-generation coverage", () => {
           methodName: "ItemsCheckByKey",
           selector: createPomStringPattern("items-check-${itemId}", "parameterized"),
           // Simulate stale/manual IR that forgot to carry the selector variable name.
-          params: { text: "string", annotationText: "string = \"\"" },
+          parameters: normalizePomParameters({ text: "string", annotationText: "string = \"\"" }),
         },
       };
 
@@ -739,7 +740,7 @@ describe("class-generation coverage", () => {
           nativeRole: "input",
           methodName: "StateSelectedTenant",
           selector: createPomStringPattern("TenantSelectBox-StateSelectedTenant-input", "static"),
-          params: { text: "string", annotationText: "string = \"\"" },
+          parameters: normalizePomParameters({ text: "string", annotationText: "string = \"\"" }),
         },
       };
 
@@ -782,7 +783,7 @@ describe("class-generation coverage", () => {
           nativeRole: "button",
           methodName: "ValueByKey",
           selector: createPomStringPattern("NavHost-${key}-immynavitem", "parameterized"),
-          params: { key: "string" },
+          parameters: normalizePomParameters({ key: "string" }),
         },
         targetPageObjectModelClass: "UsersPage",
       };
@@ -794,7 +795,7 @@ describe("class-generation coverage", () => {
           methodName: "SystemUpdate",
           selector: createPomStringPattern("NavHost-SystemUpdate-routerlink", "static"),
           alternateSelectors: [createPomStringPattern("NavHost-Update-routerlink", "static")],
-          params: {},
+          parameters: [],
         },
         targetPageObjectModelClass: "SystemUpdatePage",
       };

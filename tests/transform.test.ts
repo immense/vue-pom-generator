@@ -15,6 +15,7 @@ import { parse as parseSfc } from '@vue/compiler-sfc'
 
 
 import { describe, expect, it } from 'vitest'
+import { createPomMethodSignature, normalizePomParameters } from '../pom-params'
 import { createPomStringPattern } from '../pom-patterns'
 import { createVuePluginWithTestIds } from '../plugin/vue-plugin'
 import { __internal, createTestIdTransform } from '../transform'
@@ -735,7 +736,7 @@ describe('createTestIdTransform', () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set(),
-      generatedMethods: new Map([['clickShowMediaLibrary', { params: 'wait: boolean = true', argNames: ['wait'] }]]),
+      generatedMethods: new Map([['clickShowMediaLibrary', createPomMethodSignature({ wait: 'boolean = true' })]]),
       reservedPomMemberNames: new Set(['ShowMediaLibraryButton', 'clickShowMediaLibrary']),
       isView: false,
     })
@@ -772,7 +773,7 @@ describe('createTestIdTransform', () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set(),
-      generatedMethods: new Map([['clickShowMediaLibrary', { params: 'wait: boolean = true', argNames: ['wait'] }]]),
+      generatedMethods: new Map([['clickShowMediaLibrary', createPomMethodSignature({ wait: 'boolean = true' })]]),
       reservedPomMemberNames: new Set(['ShowMediaLibraryButton', 'clickShowMediaLibrary']),
       isView: false,
     })
@@ -813,7 +814,7 @@ describe('createTestIdTransform', () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set(),
-      generatedMethods: new Map([['clickRunDeploymentAction', { params: 'wait: boolean = true', argNames: ['wait'] }]]),
+      generatedMethods: new Map([['clickRunDeploymentAction', createPomMethodSignature({ wait: 'boolean = true' })]]),
       reservedPomMemberNames: new Set(['RunDeploymentActionButton', 'clickRunDeploymentAction']),
       isView: false,
     })
@@ -920,13 +921,11 @@ describe('createTestIdTransform', () => {
     const deps = componentHierarchyMap.get('MyComp') as IComponentDependencies | undefined
     expect(deps).toBeTruthy()
 
-    const sigOne = deps?.generatedMethods?.get('clickOneButton') as { params: string, argNames: string[] } | null | undefined
-    expect(sigOne?.params).toBe('wait: boolean = true')
-    expect(sigOne?.argNames).toEqual(['wait'])
+    const sigOne = deps?.generatedMethods?.get('clickOneButton')
+    expect(sigOne).toEqual(createPomMethodSignature({ wait: 'boolean = true' }))
 
-    const sigTwo = deps?.generatedMethods?.get('clickTwoButton') as { params: string, argNames: string[] } | null | undefined
-    expect(sigTwo?.params).toBe('wait: boolean = true')
-    expect(sigTwo?.argNames).toEqual(['wait'])
+    const sigTwo = deps?.generatedMethods?.get('clickTwoButton')
+    expect(sigTwo).toEqual(createPomMethodSignature({ wait: 'boolean = true' }))
 
     // With the IR-based generator, v-for static literal keys are represented as extra click method specs.
     const extras = deps?.pomExtraMethods ?? []
@@ -937,7 +936,7 @@ describe('createTestIdTransform', () => {
       kind: 'testId',
       testId: createPomStringPattern('MyComp-${key}-Select-button', 'parameterized'),
     })
-    expect(one?.params).toEqual({ wait: 'boolean = true' })
+    expect(one?.parameters).toEqual(normalizePomParameters({ wait: 'boolean = true' }))
 
     const two = extras.find(m => m.kind === 'click' && m.name === 'clickTwoButton')
     expect(two).toBeTruthy()
@@ -946,7 +945,7 @@ describe('createTestIdTransform', () => {
       kind: 'testId',
       testId: createPomStringPattern('MyComp-${key}-Select-button', 'parameterized'),
     })
-    expect(two?.params).toEqual({ wait: 'boolean = true' })
+    expect(two?.parameters).toEqual(normalizePomParameters({ wait: 'boolean = true' }))
   })
 
   it('treats v-for source with Math.random() as dynamic via constType', () => {
@@ -1000,10 +999,10 @@ describe('createTestIdTransform', () => {
     expect(simpleParts.some(p => p.constType === ConstantTypes.NOT_CONSTANT)).toBe(true)
 
     // Also ensure our generator does NOT attempt static-list key narrowing here.
-    const deps = componentHierarchyMap.get('MyComp') as { generatedMethods?: Map<string, { params: string, argNames: string[] } | null> } | undefined
+    const deps = componentHierarchyMap.get('MyComp') as IComponentDependencies | undefined
     expect(deps).toBeTruthy()
-    const sig = deps?.generatedMethods?.get('clickDoThingByKey') as { params: string, argNames: string[] } | null | undefined
-    expect(sig?.params).toBe('key: string')
+    const sig = deps?.generatedMethods?.get('clickDoThingByKey')
+    expect(sig).toEqual(createPomMethodSignature({ key: 'string' }))
   })
 
   it('does not populate exp.ast in this test harness even when prefixIdentifiers is enabled', () => {
@@ -1109,7 +1108,7 @@ describe('createTestIdTransform', () => {
         label: createPomStringPattern('Cloud', 'static'),
         exact: true,
       },
-      params: { annotationText: 'string = ""' },
+      parameters: normalizePomParameters({ annotationText: 'string = ""' }),
     })
   })
 
@@ -1191,7 +1190,7 @@ describe('createTestIdTransform', () => {
         label: createPomStringPattern('Cloud', 'static'),
         exact: true,
       },
-      params: { annotationText: 'string = ""' },
+      parameters: normalizePomParameters({ annotationText: 'string = ""' }),
     })
   })
 })

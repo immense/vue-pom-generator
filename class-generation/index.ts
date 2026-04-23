@@ -9,7 +9,13 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { generateViewObjectModelMembers, generateViewObjectModelMethodContent } from "../method-generation";
-import { formatTypeScriptPomParameters, normalizePomParameters, type PomParameterSpec } from "../pom-params";
+import {
+  formatTypeScriptPomParameters,
+  getPomParameterNames,
+  normalizePomParameters,
+  type PomMethodSignature,
+  type PomParameterSpec,
+} from "../pom-params";
 import {
   bindCSharpPomPattern,
   bindTypeScriptPomPattern,
@@ -453,16 +459,16 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScr
   }
 
   const selectorPatterns = getSelectorPatterns(spec.selector);
-  const params = ensurePomPatternParameters(
-    spec.params,
+  const signatureSpecs = ensurePomPatternParameters(
+    spec.parameters,
     selectorPatterns,
     { omit: spec.keyLiteral !== undefined ? ["key"] : [] },
   );
-  const signatureParams = formatTypeScriptPomParameters(params);
+  const signatureParams = formatTypeScriptPomParameters(signatureSpecs);
   const parameters = parseParameterSignatures(signatureParams);
 
-  const hasAnnotationText = Object.prototype.hasOwnProperty.call(params, "annotationText");
-  const hasWait = Object.prototype.hasOwnProperty.call(params, "wait");
+  const hasAnnotationText = signatureSpecs.some(param => param.name === "annotationText");
+  const hasWait = signatureSpecs.some(param => param.name === "wait");
   const annotationArg = hasAnnotationText ? "annotationText" : "\"\"";
   const waitArg = hasWait ? "wait" : "true";
 
@@ -532,7 +538,7 @@ function generateMethodMembersFromPom(primary: PomPrimarySpec, targetPageObjectM
     primary.selector,
     primary.alternateSelectors,
     primary.getterNameOverride,
-    primary.params ?? {},
+    primary.parameters,
   );
 }
 
@@ -549,9 +555,6 @@ function generateMethodsContentForDependencies(dependencies: IComponentDependenc
   // When we emit from IR, we must de-dupe here to avoid duplicate getters/methods.
   const seenPrimaryKeys = new Set<string>();
   const primarySpecs = primarySpecsAll.filter(({ pom, target }) => {
-    const stableParams = pom.params
-      ? Object.fromEntries(Object.entries(pom.params).sort((a, b) => a[0].localeCompare(b[0])))
-      : undefined;
     const alternates = (pom.alternateSelectors ?? [])
       .slice()
       .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
@@ -561,7 +564,7 @@ function generateMethodsContentForDependencies(dependencies: IComponentDependenc
       getterNameOverride: pom.getterNameOverride ?? null,
       selector: pom.selector,
       alternateSelectors: alternates.length ? alternates : undefined,
-      params: stableParams,
+      parameters: pom.parameters,
       target: target ?? null,
       emitPrimary: pom.emitPrimary ?? true,
     });
@@ -1091,7 +1094,7 @@ function toCSharpParam(param: PomParameterSpec): { type: string; defaultExpr?: s
   return { type, defaultExpr };
 }
 
-function formatCSharpParams(params: Record<string, string> | undefined): { signature: string; argNames: string[] } {
+function formatCSharpParams(params: readonly PomParameterSpec[] | undefined): { signature: string; argNames: string[] } {
   const normalizedParams = normalizePomParameters(params);
   if (!normalizedParams.length)
     return { signature: "", argNames: [] };
@@ -1215,7 +1218,7 @@ function generateAggregatedCSharpFiles(
       const locatorName = baseGetterName.endsWith(roleSuffix) ? baseGetterName : `${baseGetterName}${roleSuffix}`;
       const selectorIsParameterized = isParameterizedPomPattern(pom.selector.patternKind);
       const testIdExpr = toCSharpPomPatternExpression(pom.selector);
-      const orderedParams = ensurePomPatternParameters(pom.params, [pom.selector]);
+      const orderedParams = ensurePomPatternParameters(pom.parameters, [pom.selector]);
 
       const { signature, argNames } = formatCSharpParams(orderedParams);
       const args = argNames.join(", ");
@@ -1351,7 +1354,7 @@ function generateAggregatedCSharpFiles(
       if (extra.kind !== "click")
         continue;
       const extraParams = ensurePomPatternParameters(
-        extra.params,
+        extra.parameters,
         getSelectorPatterns(extra.selector),
         { omit: extra.keyLiteral !== undefined ? ["key"] : [] },
       );
@@ -1937,10 +1940,10 @@ function getViewPassthroughMethods(
   componentHierarchyMap: Map<string, IComponentDependencies>,
   blockedMethodNames: Set<string> = new Set(),
 ) {
-  const existingOnView = viewDependencies.generatedMethods ?? new Map<string, { params: string; argNames: string[] } | null>();
+  const existingOnView = viewDependencies.generatedMethods ?? new Map<string, PomMethodSignature | null>();
 
   // methodName -> candidates
-  const methodToChildren = new Map<string, Array<{ childProp: string; params: string; argNames: string[] }>>();
+  const methodToChildren = new Map<string, Array<{ childProp: string; signature: PomMethodSignature }>>();
 
   for (const child of childrenComponentSet) {
     const childDeps = componentHierarchyMap.get(child);
@@ -1963,7 +1966,7 @@ function getViewPassthroughMethods(
         continue;
 
       const list = methodToChildren.get(name) ?? [];
-      list.push({ childProp, params: sig.params, argNames: sig.argNames });
+      list.push({ childProp, signature: sig });
       methodToChildren.set(name, list);
     }
   }
@@ -1975,12 +1978,12 @@ function getViewPassthroughMethods(
   }
 
   return passthroughs.map(([methodName, candidates]) => {
-    const { childProp, params, argNames } = candidates[0];
-    const callArgs = argNames.join(", ");
+    const { childProp, signature } = candidates[0];
+    const callArgs = getPomParameterNames(signature.parameters).join(", ");
     return createClassMethod({
       name: methodName,
       isAsync: true,
-      parameters: parseParameterSignatures(params),
+      parameters: parseParameterSignatures(formatTypeScriptPomParameters(signature.parameters)),
       statements: [
         `return await this.${childProp}.${methodName}(${callArgs});`,
       ],
@@ -1998,8 +2001,8 @@ function getAttachmentPassthroughMethods(
     return [];
   }
 
-  const existingOnClass = ownerDependencies.generatedMethods ?? new Map<string, { params: string; argNames: string[] } | null>();
-  const methodToAttachments = new Map<string, Array<{ propertyName: string; params: string; argNames: string[] }>>();
+  const existingOnClass = ownerDependencies.generatedMethods ?? new Map<string, PomMethodSignature | null>();
+  const methodToAttachments = new Map<string, Array<{ propertyName: string; signature: CustomPomMethodSignature }>>();
 
   for (const attachment of attachmentsForThisClass) {
     if (!attachment.flatten) {
@@ -2014,8 +2017,7 @@ function getAttachmentPassthroughMethods(
       const list = methodToAttachments.get(methodName) ?? [];
       list.push({
         propertyName: attachment.propertyName,
-        params: signature.params,
-        argNames: signature.argNames,
+        signature,
       });
       methodToAttachments.set(methodName, list);
     }
@@ -2028,14 +2030,14 @@ function getAttachmentPassthroughMethods(
   }
 
   return passthroughs.map(([methodName, candidates]) => {
-    const { propertyName, params, argNames } = candidates[0];
-    const callArgs = argNames.join(", ");
+    const { propertyName, signature } = candidates[0];
+    const callArgs = signature.argNames.join(", ");
     const invocation = callArgs
       ? `this.${propertyName}.${methodName}(${callArgs})`
       : `this.${propertyName}.${methodName}()`;
     return createClassMethod({
       name: methodName,
-      parameters: parseParameterSignatures(params),
+      parameters: parseParameterSignatures(signature.params),
       statements: [
         `return ${invocation};`,
       ],
@@ -2454,7 +2456,7 @@ function getComposedStubBody(
   if (!childClassNames.length)
     return undefined;
 
-  const methodToChildren = new Map<string, Array<{ child: string; params: string; argNames: string[] }>>();
+  const methodToChildren = new Map<string, Array<{ child: string; signature: PomMethodSignature }>>();
   for (const child of childClassNames) {
     const childDeps = depsByClassName.get(child);
     const methods = childDeps?.generatedMethods;
@@ -2465,7 +2467,7 @@ function getComposedStubBody(
       if (!sig)
         continue;
       const list = methodToChildren.get(name) ?? [];
-      list.push({ child, params: sig.params, argNames: sig.argNames });
+      list.push({ child, signature: sig });
       methodToChildren.set(name, list);
     }
   }
@@ -2475,13 +2477,13 @@ function getComposedStubBody(
     if (candidatesForMethod.length !== 1 || methodName === "constructor")
       continue;
 
-    const { child, params, argNames } = candidatesForMethod[0];
-    const callArgs = argNames.join(", ");
+    const { child, signature } = candidatesForMethod[0];
+    const callArgs = getPomParameterNames(signature.parameters).join(", ");
 
     passthroughMembers.push(createClassMethod({
       name: methodName,
       isAsync: true,
-      parameters: parseParameterSignatures(params),
+      parameters: parseParameterSignatures(formatTypeScriptPomParameters(signature.parameters)),
       statements: [
         `return await this.${child}.${methodName}(${callArgs});`,
       ],

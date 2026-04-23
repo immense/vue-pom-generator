@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import type { IComponentDependencies, IDataTestId } from "../utils";
 import { generateFiles } from "../class-generation";
+import { createPomMethodSignature, normalizePomParameters } from "../pom-params";
 import { createPomStringPattern } from "../pom-patterns";
 import { renderTypeScriptLines } from "../typescript-codegen";
 
@@ -87,7 +88,7 @@ describe("generated output", () => {
         nativeRole: "button",
         methodName: "SaveButton",
         selector: createPomStringPattern(formattedDataTestId, "parameterized"),
-        params: { key: "string" },
+        parameters: normalizePomParameters({ key: "string" }),
       },
     };
 
@@ -106,7 +107,7 @@ describe("generated output", () => {
             label: createPomStringPattern("Cloud", "static"),
             exact: true,
           },
-          params: { annotationText: "string = \"\"" },
+          parameters: normalizePomParameters({ annotationText: "string = \"\"" }),
         },
       ],
       generatedMethods: new Map(),
@@ -156,7 +157,7 @@ describe("generated output", () => {
         methodName: "ItemsCheckByKey",
         selector: createPomStringPattern("items-check-${key}", "parameterized"),
         // Simulate stale IR that predates the structured selector object and forgot to carry `key`.
-        params: { text: "string", annotationText: 'string = ""' },
+        parameters: normalizePomParameters({ text: "string", annotationText: 'string = ""' }),
       },
     };
 
@@ -204,7 +205,7 @@ describe("generated output", () => {
         methodName: "ItemsCheckByKey",
         selector: createPomStringPattern("items-check-${itemId}", "parameterized"),
         // Simulate stale/manual IR that forgot to carry the selector variable name.
-        params: { text: "string", annotationText: 'string = ""' },
+        parameters: normalizePomParameters({ text: "string", annotationText: 'string = ""' }),
       },
     };
 
@@ -257,7 +258,7 @@ describe("generated output", () => {
         nativeRole: "button",
         methodName: "NewTenant",
         selector: createPomStringPattern("TenantListPage-NewTenant-routerlink", "static"),
-        params: {},
+        parameters: [],
       },
     };
 
@@ -280,11 +281,11 @@ describe("generated output", () => {
           nativeRole: "input",
           methodName: "TenantName",
           selector: createPomStringPattern("TenantDetailsEditForm-Name-input", "static"),
-          params: { text: "string", annotationText: 'string = ""' },
+          parameters: normalizePomParameters({ text: "string", annotationText: 'string = ""' }),
         },
       }]),
       generatedMethods: new Map([
-        ["typeTenantName", { params: "name: string", argNames: ["name"] }],
+        ["typeTenantName", createPomMethodSignature({ name: "string" })],
       ]),
       isView: false,
     };
@@ -675,7 +676,7 @@ describe("generated output", () => {
         nativeRole: "button",
         methodName: "OnlyInAButton",
         selector: createPomStringPattern("ChildA-OnlyInA-button", "static"),
-        params: {},
+        parameters: [],
       },
     };
 
@@ -685,7 +686,7 @@ describe("generated output", () => {
         nativeRole: "button",
         methodName: "SomethingElseButton",
         selector: createPomStringPattern("ChildB-SomethingElse-button", "static"),
-        params: {},
+        parameters: [],
       },
     };
 
@@ -703,7 +704,7 @@ describe("generated output", () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set([childAEntry]),
-      generatedMethods: new Map([["clickOnlyInAButton", { params: "wait: boolean = true", argNames: ["wait"] }]]),
+      generatedMethods: new Map([["clickOnlyInAButton", createPomMethodSignature({ wait: "boolean = true" })]]),
       isView: false,
     };
 
@@ -712,7 +713,7 @@ describe("generated output", () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set([childBEntry]),
-      generatedMethods: new Map([["clickSomethingElseButton", { params: "wait: boolean = true", argNames: ["wait"] }]]),
+      generatedMethods: new Map([["clickSomethingElseButton", createPomMethodSignature({ wait: "boolean = true" })]]),
       isView: false,
     };
 
