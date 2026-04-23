@@ -97,6 +97,7 @@ function compileWithRuntimeTemplateOptions(
     excludedComponents: [],
     getViewsDirAbs: () => '/src/views',
     testIdAttribute: 'data-testid',
+    accessibilityAudit: false,
     loggerRef: {
       current: {
         info() {},

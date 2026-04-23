@@ -7,7 +7,9 @@ import type { PluginOption } from "vite";
 import type { ElementNode, NodeTransform, RootNode, TemplateChildNode, TransformContext } from "@vue/compiler-core";
 import { NodeTypes } from "@vue/compiler-core";
 
+import { collectAccessibilityReviewWarnings } from "../accessibility-audit";
 import { findDataTestIdProp, tryCreateElementMetadata } from "../compiler-metadata-utils";
+import { buildPomManifest } from "../manifest-generator";
 import type { ElementMetadata } from "../metadata-collector";
 import { createTestIdTransform } from "../transform";
 import type { IComponentDependencies, NativeWrappersMap } from "../utils";
@@ -28,6 +30,7 @@ interface InternalFactoryOptions {
   excludedComponents: string[];
   getViewsDirAbs: () => string;
   testIdAttribute: string;
+  accessibilityAudit: boolean;
   loggerRef: { current: VuePomGeneratorLogger };
   getSourceDirs: () => string[];
   getWrapperSearchRoots: () => string[];
@@ -57,7 +60,7 @@ function extractMetadataAfterTransform(
   elementMetadata: Map<string, Map<string, ElementMetadata>>,
   semanticNameMap: Map<string, string>,
   testIdAttribute: string,
-): void {
+): Map<string, ElementMetadata> {
   const componentMetadata = new Map<string, ElementMetadata>();
 
   function traverseNode(node: RootNode | TemplateChildNode): void {
@@ -105,6 +108,7 @@ function extractMetadataAfterTransform(
   if (componentMetadata.size > 0) {
     elementMetadata.set(componentName, componentMetadata);
   }
+  return componentMetadata;
 }
 
 export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
@@ -125,11 +129,13 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     excludedComponents,
     getViewsDirAbs,
     testIdAttribute,
+    accessibilityAudit,
     loggerRef,
     getSourceDirs,
     getWrapperSearchRoots,
     getProjectRoot,
   } = options;
+  const lastAccessibilityWarningSignatureByComponent = new Map<string, string>();
 
   const getComponentNameFromPath = (filename: string): string => {
     return resolveComponentNameFromPath({
@@ -231,13 +237,41 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
 
           // Return an exit hook to extract metadata after all other transforms (including our own) have run.
           return () => {
-            extractMetadataAfterTransform(
+            const componentMetadata = extractMetadataAfterTransform(
               node as RootNode,
               componentName,
               elementMetadata,
               semanticNameMap,
               testIdAttribute,
             );
+
+            if (!accessibilityAudit) {
+              return;
+            }
+
+            const dependencies = componentHierarchyMap.get(componentName);
+            if (!dependencies || componentMetadata.size === 0) {
+              return;
+            }
+
+            const manifest = buildPomManifest(
+              new Map([[componentName, dependencies]]),
+              new Map([[componentName, componentMetadata]]),
+            );
+            const warnings = collectAccessibilityReviewWarnings(manifest);
+            const signature = warnings.join("\n");
+            if (!signature) {
+              lastAccessibilityWarningSignatureByComponent.delete(componentName);
+              return;
+            }
+            if (lastAccessibilityWarningSignatureByComponent.get(componentName) === signature) {
+              return;
+            }
+
+            lastAccessibilityWarningSignatureByComponent.set(componentName, signature);
+            for (const warning of warnings) {
+              loggerRef.current.warn(warning);
+            }
           };
         }
 

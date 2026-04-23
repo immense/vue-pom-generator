@@ -29,6 +29,7 @@ export interface ResolvedGenerationSupportOptions {
   nameCollisionBehavior: PomNameCollisionBehavior;
   existingIdBehavior: ExistingIdBehavior;
   testIdAttribute: string;
+  accessibilityAudit: boolean;
   routerAwarePoms: boolean;
   routerEntry?: string;
   routerType?: "vue-router" | "nuxt";
@@ -52,6 +53,7 @@ export function resolveGenerationSupportOptions(
     nameCollisionBehavior: options.nameCollisionBehavior ?? "error",
     existingIdBehavior: options.existingIdBehavior ?? "error",
     testIdAttribute: (options.testIdAttribute ?? "data-testid").trim() || "data-testid",
+    accessibilityAudit: options.accessibilityAudit ?? false,
     routerAwarePoms: options.routerAwarePoms ?? false,
     routerEntry: options.routerEntry,
     routerType: options.routerType ?? "vue-router",

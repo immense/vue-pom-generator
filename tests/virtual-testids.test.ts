@@ -83,6 +83,7 @@ describe("virtual:testids", () => {
           tag: "button",
           tagType: 0,
           hasClickHandler: true,
+          staticTextContent: "Save",
         }],
       ])],
     ]);
@@ -111,6 +112,8 @@ describe("virtual:testids", () => {
     expect(code).toContain("\"clickFooByKey\"");
     expect(code).toContain("\"clickFirstFoo\"");
     expect(code).toContain("\"locatorDescription\": \"Foo button\"");
+    expect(code).toContain("\"accessibleNameSource\": \"text\"");
+    expect(code).toContain("\"needsReview\": false");
     expect(code).toContain("\"sourceFile\": \"/repo/src/views/Foo.vue\"");
     expect(code).toContain("\"kind\": \"view\"");
     expect(code).toContain("\"semanticName\": \"foo item\"");
@@ -124,6 +127,7 @@ describe("virtual:testids", () => {
     expect(pomManifestCode).not.toContain("export const testIdManifest");
     expect(pomManifestCode).toContain("\"generatedPropertyName\": \"FooButton\"");
     expect(pomManifestCode).toContain("\"locatorDescription\": \"Foo button\"");
+    expect(pomManifestCode).toContain("\"accessibleNameSource\": \"text\"");
 
     componentHierarchyMap.set("Baz", createDependencies(new Set([
       {

@@ -693,6 +693,7 @@ What it contains:
 - `testIdManifest`: each value is a sorted array of collected test ids for that component
 - `pomManifest`: richer per-component metadata including source file, generated locator/property names, and generated action names
 - each manifest entry also carries `locatorDescription`, which matches the human-readable label used by generated Playwright locators
+- each manifest entry may also carry `accessibility`, a compile-time review signal with static metadata, accessible-name hints, and `needsReview`
 
 What it is good for:
 
@@ -722,7 +723,7 @@ What it contains:
 
 - an object keyed by component/page object model class name
 - for each component: source file, whether it is a view or component, sorted test ids, and rich entry metadata
-- for each entry: test id, semantic name, inferred role, generated property name, generated action names, and collected compiler metadata when available
+- for each entry: test id, semantic name, inferred role, generated property name, generated action names, collected compiler metadata when available, and accessibility review metadata when available
 
 ## ESLint rules that actually ship
 
@@ -1053,6 +1054,13 @@ Set `generation: false` to keep injection and `virtual:testids` but skip emitted
 - **Why it exists:** some teams want to own or customize the generated runtime base class.
 - **Benefit:** you can keep your own BasePage implementation while still using the generator.
 - **Without it:** the package uses its bundled `class-generation/BasePage.ts`.
+
+#### `generation.accessibilityAudit`
+
+- **What it does:** emits warnings for generated interactive elements whose accessible-name signals look weak or unverifiable from compile-time metadata.
+- **Why it exists:** generated POM coverage can look healthy while the underlying control still needs an accessibility review.
+- **Benefit:** gives you an opt-in review signal without auto-injecting ARIA or guessing runtime behavior.
+- **Without it:** accessibility review metadata can still appear in `pomManifest`, but no warnings are emitted during compilation.
 
 ### `generation.router`
 
