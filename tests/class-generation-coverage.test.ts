@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import type { IComponentDependencies, IDataTestId } from "../utils";
 import { generateFiles } from "../class-generation";
-import { createPomMethodSignature, createPomParameters } from "../pom-params";
+import { createPomMethodSignature, createPomParameters, fromLegacyPomParameterRecord } from "../pom-params";
 import { createPomStringPattern } from "../pom-patterns";
 import { renderTypeScriptLines } from "../typescript-codegen";
 
@@ -646,7 +646,7 @@ describe("class-generation coverage", () => {
           methodName: "ItemsCheckByKey",
           selector: createPomStringPattern("items-check-${key}", "parameterized"),
           // Broken params as currently produced by utils.ts: key is absent
-          parameters: createPomParameters(["text", "string"], ["annotationText", "string = \"\""]),
+          parameters: fromLegacyPomParameterRecord({ text: "string", annotationText: "string = \"\"" }),
         },
       };
 
@@ -697,7 +697,7 @@ describe("class-generation coverage", () => {
           methodName: "ItemsCheckByKey",
           selector: createPomStringPattern("items-check-${itemId}", "parameterized"),
           // Simulate stale/manual IR that forgot to carry the selector variable name.
-          parameters: createPomParameters(["text", "string"], ["annotationText", "string = \"\""]),
+          parameters: fromLegacyPomParameterRecord({ text: "string", annotationText: "string = \"\"" }),
         },
       };
 

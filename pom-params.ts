@@ -15,7 +15,6 @@ export interface PomMethodSignature {
 
 export type PomLegacyParameterRecord = Record<string, string>;
 export type PomParameterInput = readonly PomParameterSpec[] | undefined;
-export type PomParameterSource = PomLegacyParameterRecord | PomParameterInput;
 
 export function splitPomParameterTypeExpression(typeExpression: string): { type: string; initializer?: string } {
   const trimmed = typeExpression.trim();
@@ -73,20 +72,24 @@ export function createPomParameters(...parameters: Array<PomParameterSpec | read
   });
 }
 
-export function normalizePomParameters(params: PomParameterSource): PomParameterSpec[] {
+export function fromLegacyPomParameterRecord(params: PomLegacyParameterRecord | undefined): PomParameterSpec[] {
   if (!params) {
     return [];
   }
 
-  if (Array.isArray(params)) {
-    return params.map(param => createPomParameterSpec(param.name, param.typeExpression ?? param.type, {
-      initializer: param.initializer,
-      hasQuestionToken: param.hasQuestionToken,
-      isRestParameter: param.isRestParameter,
-    }));
+  return Object.entries(params).map(([name, typeExpression]) => createPomParameterSpec(name, typeExpression));
+}
+
+export function normalizePomParameters(params: PomParameterInput): PomParameterSpec[] {
+  if (!params) {
+    return [];
   }
 
-  return Object.entries(params).map(([name, typeExpression]) => createPomParameterSpec(name, typeExpression));
+  return params.map(param => createPomParameterSpec(param.name, param.typeExpression ?? param.type, {
+    initializer: param.initializer,
+    hasQuestionToken: param.hasQuestionToken,
+    isRestParameter: param.isRestParameter,
+  }));
 }
 
 export function getPomParameterNames(params: PomParameterInput): string[] {
