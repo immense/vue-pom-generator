@@ -3,6 +3,8 @@
  * Generates TypeScript types and manifests from collected test IDs
  */
 
+import type { AccessibilityAuditResult } from "./accessibility-audit";
+import { buildAccessibilityAudit } from "./accessibility-audit";
 import type { ElementMetadata } from "./metadata-collector";
 import { buildPomLocatorDescription, humanizePomMethodName } from "./pom-discoverability";
 import type { IComponentDependencies, IDataTestId, PomExtraClickMethodSpec, PomPrimarySpec } from "./utils";
@@ -15,6 +17,7 @@ type PomManifestEntry = {
   semanticName: string;
   locatorDescription: string;
   inferredRole: string | null;
+  accessibility?: AccessibilityAuditResult;
   generatedPropertyName: string | null;
   generatedActionName: string | null;
   generatedActionNames: string[];
@@ -121,6 +124,7 @@ function getManifestEntry(
     ...(generatedActionName ? [generatedActionName] : []),
     ...extraActionNames.filter(name => name !== generatedActionName),
   ]));
+  const accessibility = buildAccessibilityAudit(metadata, pom?.nativeRole ?? null);
 
   return {
     testId,
@@ -134,6 +138,7 @@ function getManifestEntry(
       })
       : componentName,
     inferredRole: pom?.nativeRole ?? null,
+    ...(accessibility ? { accessibility } : {}),
     generatedPropertyName: pom ? getGeneratedPropertyName(pom) : null,
     generatedActionName,
     generatedActionNames,

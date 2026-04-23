@@ -8,8 +8,9 @@ import type { Plugin } from 'vite'
 import { createVuePluginWithTestIds } from '../plugin/vue-plugin'
 import type { IComponentDependencies, NativeWrappersMap } from '../utils'
 
-function createMetadataCollector(nativeWrappers: NativeWrappersMap = {}) {
+function createMetadataCollector(nativeWrappers: NativeWrappersMap = {}, options: { accessibilityAudit?: boolean } = {}) {
   const componentHierarchyMap = new Map<string, IComponentDependencies>()
+  const warnings: string[] = []
   const { metadataCollectorPlugin } = createVuePluginWithTestIds({
     existingIdBehavior: 'preserve',
     nameCollisionBehavior: 'error',
@@ -21,11 +22,14 @@ function createMetadataCollector(nativeWrappers: NativeWrappersMap = {}) {
     excludedComponents: [],
     getViewsDirAbs: () => path.resolve(process.cwd(), 'src/views'),
     testIdAttribute: 'data-testid',
+    accessibilityAudit: options.accessibilityAudit ?? false,
     loggerRef: {
       current: {
         info() {},
         debug() {},
-        warn() {},
+        warn(message) {
+          warnings.push(message)
+        },
       },
     },
     getSourceDirs: () => ['.'],
@@ -40,6 +44,7 @@ function createMetadataCollector(nativeWrappers: NativeWrappersMap = {}) {
 
   return {
     componentHierarchyMap,
+    warnings,
     transform: plugin.transform as (this: object, code: string, id: string) => Promise<unknown>,
   }
 }
@@ -67,5 +72,15 @@ describe('metadata collector compile state', () => {
     const generatedMethods = Array.from(componentHierarchyMap.get('Sidebar')?.generatedMethods?.keys() ?? [])
     expect(generatedMethods).toContain('clickValueButtonByKey')
     expect(generatedMethods).not.toContain('clickButtonByKey')
+  })
+
+  it('emits accessibility review warnings when enabled and compile-time signals are weak', async () => {
+    const { warnings, transform } = createMetadataCollector({}, { accessibilityAudit: true })
+    const id = path.resolve(process.cwd(), 'SearchForm.vue')
+
+    await transform.call({}, '<template><input v-model=\"search\" /></template>', id)
+
+    expect(warnings.some(message => message.includes('Accessibility review suggested'))).toBe(true)
+    expect(warnings.some(message => message.includes('SearchForm.SearchInput'))).toBe(true)
   })
 })

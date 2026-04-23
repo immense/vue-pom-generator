@@ -203,6 +203,14 @@ export interface VuePomGeneratorPluginOptions {
     basePageClassPath?: string;
 
     /**
+     * When true, emit accessibility-review warnings for generated interactive elements whose
+     * accessible-name signals look weak or unverifiable from compile-time metadata.
+     *
+     * This does not inject ARIA. It only reports findings.
+     */
+    accessibilityAudit?: boolean;
+
+    /**
      * Router integration used for resolving `:to` directives and emitting navigation helpers.
      *
      * If omitted, router introspection is disabled.

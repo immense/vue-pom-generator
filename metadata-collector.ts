@@ -16,7 +16,7 @@ import { findDataTestIdProp, getTestIdFromProp, tryCreateElementMetadata } from 
 
 export interface ElementMetadata {
   testId: string;
-  semanticName: string; // Semantic property name (e.g., "create", "tenantName") extracted during transform
+  semanticName?: string; // Semantic property name (e.g., "create", "tenantName") extracted during transform
   tag: string;
   tagType: ElementTypes;
   patchFlag?: number;
@@ -25,6 +25,10 @@ export interface ElementMetadata {
   hasDynamicClass?: boolean;
   hasDynamicStyle?: boolean;
   hasDynamicText?: boolean;
+  staticAriaLabel?: string;
+  staticRole?: string;
+  staticTitle?: string;
+  staticTextContent?: string;
 }
 
 /**

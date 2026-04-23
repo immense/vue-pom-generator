@@ -3,6 +3,7 @@ import type {
   DirectiveNode,
   ElementNode,
   SimpleExpressionNode,
+  TemplateChildNode,
   VNodeCall,
 } from "@vue/compiler-core";
 import { NodeTypes } from "@vue/compiler-core";
@@ -86,6 +87,38 @@ export function parseDynamicProps(dynamicProps: string | SimpleExpressionNode | 
   return undefined;
 }
 
+function findStaticAttributeValue(element: ElementNode, attributeName: string): string | undefined {
+  const attribute = element.props.find((prop): prop is AttributeNode =>
+    prop.type === NodeTypes.ATTRIBUTE && prop.name === attributeName,
+  );
+  const value = attribute?.value?.content?.trim();
+  return value ? value : undefined;
+}
+
+function collectStaticTextContent(children: readonly TemplateChildNode[]): string | undefined {
+  const parts: string[] = [];
+
+  const visit = (nodes: readonly TemplateChildNode[]) => {
+    for (const node of nodes) {
+      if (node.type === NodeTypes.TEXT) {
+        const text = node.content.replace(/\s+/g, " ").trim();
+        if (text) {
+          parts.push(text);
+        }
+        continue;
+      }
+
+      if (node.type === NodeTypes.ELEMENT) {
+        visit((node as ElementNode).children);
+      }
+    }
+  };
+
+  visit(children);
+  const text = parts.join(" ").replace(/\s+/g, " ").trim();
+  return text || undefined;
+}
+
 export function tryCreateElementMetadata(args: {
   element: ElementNode;
   semanticNameMap: Map<string, string>;
@@ -127,17 +160,9 @@ export function tryCreateElementMetadata(args: {
     }
   }
 
-  const semanticName = semanticNameMap.get(testId);
-  if (!semanticName) {
-    if (debug) {
-      // console.warn(`${debugPrefix} ⚠️ No semantic name found for testId="${testId}"`);
-    }
-    return null;
-  }
-
   const metadata: ElementMetadata = {
     testId,
-    semanticName,
+    semanticName: semanticNameMap.get(testId),
     tag: element.tag,
     tagType: element.tagType,
     patchFlag,
@@ -147,6 +172,10 @@ export function tryCreateElementMetadata(args: {
     hasDynamicClass: patchFlag ? Boolean(patchFlag & 2) : undefined,
     hasDynamicStyle: patchFlag ? Boolean(patchFlag & 4) : undefined,
     hasDynamicText: patchFlag ? Boolean(patchFlag & 1) : undefined,
+    staticAriaLabel: findStaticAttributeValue(element, "aria-label"),
+    staticRole: findStaticAttributeValue(element, "role"),
+    staticTitle: findStaticAttributeValue(element, "title"),
+    staticTextContent: collectStaticTextContent(element.children),
   };
 
   if (debug) {
