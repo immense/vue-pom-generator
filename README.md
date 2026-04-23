@@ -15,7 +15,7 @@ If you already use Playwright with `getByTestId`, the point is simple: this pack
 - **Can generate Playwright fixtures** so tests can request `userListPage` instead of constructing `new UserListPage(page)` manually.
 - **Can fail fast on unnameable wrapper-button actions** so complex inline handlers do not silently degrade into low-signal generated APIs.
 - **Can emit a single C# POM file** for Playwright .NET consumers.
-- **Exposes `virtual:testids`** so your app can import the current collected test-id manifest at runtime.
+- **Exposes `virtual:testids` and `virtual:pom-manifest`** so your app can inspect collected ids and generated POM metadata at runtime.
 - **Ships ESLint rules** to remove legacy manually-authored test ids, ban raw `page` fixture usage in spec callbacks, and discourage raw locator actions on generated getters.
 
 ## What this does not do
@@ -347,8 +347,8 @@ This is important if you are deciding whether the tool will fit into a real code
 
 - **Dev server:** on startup, it scans the configured Vue page/component/layout directories (or the directories resolved from Nuxt config in Nuxt mode), compiles each `.vue` file into a snapshot, writes the configured TypeScript outputs once, then batches add/change/delete events and regenerates incrementally.
 - **Build:** it generates from the richest build pass it sees, which matters because Vite can run multiple passes (for example SSR plus client). The generator avoids letting a thinner pass clobber a richer one.
-- **Always-on virtual module:** `virtual:testids` is registered whether generation is enabled or disabled.
-- **Generation can be disabled:** `generation: false` still keeps compile-time test-id injection and the virtual module, but skips emitted POM files.
+- **Always-on virtual modules:** `virtual:testids` and `virtual:pom-manifest` are registered whether generation is enabled or disabled.
+- **Generation can be disabled:** `generation: false` still keeps compile-time test-id injection and the virtual modules, but skips emitted POM files.
 
 ## Router-aware navigation: the real semantics
 
@@ -680,26 +680,46 @@ This package registers a Vite virtual module named `virtual:testids`.
 Usage:
 
 ```ts
-import { testIdManifest } from "virtual:testids";
+import { pomManifest, testIdManifest } from "virtual:testids";
 
 console.log(testIdManifest.UserEditorPage);
+console.log(pomManifest.UserEditorPage.entries);
 ```
 
 What it contains:
 
 - an object keyed by component name
-- each value is a sorted array of collected test ids for that component
+- `testIdManifest`: each value is a sorted array of collected test ids for that component
+- `pomManifest`: richer per-component metadata including source file, generated locator/property names, and generated action names
 
 What it is good for:
 
 - runtime inspection
 - analytics / logging helpers that need the current generated ids
-- debugging what the generator has collected
+- debugging what the generator has collected and generated
 
 What it is not:
 
-- a full metadata export
 - a generated source file on disk
+
+## `virtual:pom-manifest`
+
+This package also registers `virtual:pom-manifest` for consumers that only want the richer discoverability surface.
+
+Usage:
+
+```ts
+import { pomManifest } from "virtual:pom-manifest";
+
+console.log(pomManifest.UserEditorPage.sourceFile);
+console.log(pomManifest.UserEditorPage.entries.map(entry => entry.generatedActionNames));
+```
+
+What it contains:
+
+- an object keyed by component/page object model class name
+- for each component: source file, whether it is a view or component, sorted test ids, and rich entry metadata
+- for each entry: test id, semantic name, inferred role, generated property name, generated action names, and collected compiler metadata when available
 
 ## ESLint rules that actually ship
 
