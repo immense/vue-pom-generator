@@ -53,6 +53,26 @@ export function createPomParameterSpec(
   };
 }
 
+function isPomParameterEntry(
+  parameter: PomParameterSpec | readonly [string, string],
+): parameter is readonly [string, string] {
+  return Array.isArray(parameter);
+}
+
+export function createPomParameters(...parameters: Array<PomParameterSpec | readonly [string, string]>): PomParameterSpec[] {
+  return parameters.map((param) => {
+    if (isPomParameterEntry(param)) {
+      return createPomParameterSpec(param[0], param[1]);
+    }
+
+    return createPomParameterSpec(param.name, param.typeExpression ?? param.type, {
+      initializer: param.initializer,
+      hasQuestionToken: param.hasQuestionToken,
+      isRestParameter: param.isRestParameter,
+    });
+  });
+}
+
 export function normalizePomParameters(params: PomParameterSource): PomParameterSpec[] {
   if (!params) {
     return [];
