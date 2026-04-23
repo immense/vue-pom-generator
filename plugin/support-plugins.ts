@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PluginOption } from "vite";
 
+import type { ElementMetadata } from "../metadata-collector";
 import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 import type { VuePomGeneratorLogger } from "./logger";
 import type { ResolvedGenerationSupportOptions } from "./resolved-generation-options";
@@ -10,8 +11,8 @@ import { createDevProcessorPlugin } from "./support/dev-plugin";
 import { createTestIdsVirtualModulesPlugin } from "./support/virtual-modules";
 
 interface SupportFactoryOptions {
-  componentTestIds: Map<string, Set<string>>;
   componentHierarchyMap: Map<string, IComponentDependencies>;
+  elementMetadata: Map<string, Map<string, ElementMetadata>>;
   vueFilesPathMap: Map<string, string>;
   nativeWrappers: NativeWrappersMap;
   excludedComponents: string[];
@@ -29,8 +30,8 @@ interface SupportFactoryOptions {
 
 export function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
   const {
-    componentTestIds,
     componentHierarchyMap,
+    elementMetadata,
     vueFilesPathMap,
     nativeWrappers,
     excludedComponents,
@@ -128,7 +129,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     loggerRef,
   });
 
-  const virtualModules = createTestIdsVirtualModulesPlugin(componentTestIds);
+  const virtualModules = createTestIdsVirtualModulesPlugin(componentHierarchyMap, elementMetadata);
 
   return [tsProcessor, devProcessor, virtualModules];
 }

@@ -28,6 +28,7 @@ import {
   uniquePomStringPatterns,
   type PomStringPattern,
 } from "../pom-patterns";
+import { buildPomLocatorDescription, stripPomActionPrefix } from "../pom-discoverability";
 import { introspectNuxtPages, parseRouterFileFromCwd } from "../router-introspection";
 import {
   addExportAll,
@@ -348,7 +349,7 @@ function getSelectorPatterns(selector: PomSelectorSpec): PomStringPattern[] {
     : [selector.rootTestId, selector.label];
 }
 
-function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScriptClassMember[] {
+function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec, componentName: string): TypeScriptClassMember[] {
   if (spec.kind !== "click") {
     return [];
   }
@@ -365,19 +366,14 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScr
   const hasWait = signatureSpecs.some(param => param.name === "wait");
   const annotationArg = hasAnnotationText ? "annotationText" : "\"\"";
   const waitArg = hasWait ? "wait" : "true";
+  const locatorDescription = JSON.stringify(buildPomLocatorDescription({
+    componentName,
+    methodName: stripPomActionPrefix(spec.name),
+    nativeRole: "button",
+  }));
 
   if (spec.selector.kind === "testId") {
     const testIdBinding = bindTypeScriptPomPattern(spec.selector.testId, "testId");
-
-    const clickArgs: string[] = [];
-    clickArgs.push(testIdBinding.expression);
-
-    if (hasAnnotationText || hasWait) {
-      clickArgs.push(annotationArg);
-    }
-    if (hasWait) {
-      clickArgs.push(waitArg);
-    }
 
     return [
       createClassMethod({
@@ -391,7 +387,7 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScr
           for (const statement of testIdBinding.setupStatements) {
             writer.writeLine(statement);
           }
-          writer.writeLine(`await this.clickByTestId(${clickArgs.join(", ")});`);
+          writer.writeLine(`await this.clickByTestId(${testIdBinding.expression}, ${annotationArg}, ${waitArg}, ${locatorDescription});`);
         },
       }),
     ];
@@ -414,18 +410,23 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec): TypeScr
         for (const statement of labelBinding.setupStatements) {
           writer.writeLine(statement);
         }
-        writer.writeLine(`await this.clickWithinTestIdByLabel(${rootBinding.expression}, ${labelBinding.expression}, ${annotationArg}, ${waitArg});`);
+        writer.writeLine(`await this.clickWithinTestIdByLabel(${rootBinding.expression}, ${labelBinding.expression}, ${annotationArg}, ${waitArg}, { description: ${locatorDescription} });`);
       },
     }),
   ];
 }
 
-function generateMethodMembersFromPom(primary: PomPrimarySpec, targetPageObjectModelClass?: string): TypeScriptClassMember[] {
+function generateMethodMembersFromPom(
+  componentName: string,
+  primary: PomPrimarySpec,
+  targetPageObjectModelClass?: string,
+): TypeScriptClassMember[] {
   if (primary.emitPrimary === false) {
     return [];
   }
 
   return generateViewObjectModelMembers(
+    componentName,
     targetPageObjectModelClass,
     primary.methodName,
     primary.nativeRole,
@@ -436,7 +437,7 @@ function generateMethodMembersFromPom(primary: PomPrimarySpec, targetPageObjectM
   );
 }
 
-function generateMethodsContentForDependencies(dependencies: IComponentDependencies): TypeScriptClassMember[] {
+function generateMethodsContentForDependencies(componentName: string, dependencies: IComponentDependencies): TypeScriptClassMember[] {
   const entries = Array.from(dependencies.dataTestIdSet ?? []);
   const primarySpecsAll = entries
     .map(e => ({ pom: e.pom, target: e.targetPageObjectModelClass }))
@@ -475,11 +476,11 @@ function generateMethodsContentForDependencies(dependencies: IComponentDependenc
 
   const members: TypeScriptClassMember[] = [];
   for (const { pom, target } of primarySpecs) {
-    members.push(...generateMethodMembersFromPom(pom, target));
+    members.push(...generateMethodMembersFromPom(componentName, pom, target));
   }
 
   for (const extra of extras) {
-    members.push(...generateExtraClickMethodMembers(extra));
+    members.push(...generateExtraClickMethodMembers(extra, componentName));
   }
 
   return members;
@@ -1698,7 +1699,7 @@ function prepareViewObjectModelClass(
     members.push(...generateGoToSelfMethod(className));
   }
 
-  members.push(...generateMethodsContentForDependencies(dependencies));
+  members.push(...generateMethodsContentForDependencies(componentName, dependencies));
 
   return {
     className,

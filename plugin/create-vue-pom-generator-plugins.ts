@@ -193,7 +193,6 @@ interface ViteVuePluginLike {
 }
 
 interface SharedGeneratorState {
-  componentTestIds: Map<string, Set<string>>;
   elementMetadata: Map<string, Map<string, ElementMetadata>>;
   semanticNameMap: Map<string, string>;
   componentHierarchyMap: Map<string, IComponentDependencies>;
@@ -210,7 +209,6 @@ function getSharedGeneratorState(key: string): SharedGeneratorState {
   let state = sharedGeneratorStateRegistry.get(key);
   if (!state) {
     state = {
-      componentTestIds: new Map<string, Set<string>>(),
       elementMetadata: new Map<string, Map<string, ElementMetadata>>(),
       semanticNameMap: new Map<string, string>(),
       componentHierarchyMap: new Map<string, IComponentDependencies>(),
@@ -448,7 +446,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
   const getViewsDirAbs = () => resolveFromProjectRoot(projectRootRef.current, getViewsDir());
   const getWrapperSearchRootsAbs = () => getWrapperSearchRoots().map(root => resolveFromProjectRoot(projectRootRef.current, root));
 
-  const { componentTestIds, elementMetadata, semanticNameMap, componentHierarchyMap, vueFilesPathMap } = sharedState;
+  const { elementMetadata, semanticNameMap, componentHierarchyMap, vueFilesPathMap } = sharedState;
 
   const { metadataCollectorPlugin, internalVuePlugin, templateCompilerOptions } = createVuePluginWithTestIds({
     vueOptions,
@@ -470,8 +468,8 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
   templateCompilerOptionsForResolvedPlugin = templateCompilerOptions;
 
   const supportPlugins = createSupportPlugins({
-    componentTestIds,
     componentHierarchyMap,
+    elementMetadata,
     vueFilesPathMap,
     nativeWrappers,
     excludedComponents,
@@ -502,7 +500,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
   ];
 
   if (!generationEnabled) {
-    const virtualModules = createTestIdsVirtualModulesPlugin(componentTestIds);
+    const virtualModules = createTestIdsVirtualModulesPlugin(componentHierarchyMap, elementMetadata);
     return [
       configPlugin,
       metadataCollectorPlugin,
