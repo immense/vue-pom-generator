@@ -890,6 +890,97 @@ describe('createTestIdTransform', () => {
     expect(deps?.generatedMethods?.has('clickImpersonateUser')).toBe(true)
   })
 
+  it('drops redundant click prefixes from direct wrapper handler names', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const nativeWrappers: NativeWrappersMap = {
+      LoadButton: { role: 'button' },
+    }
+
+    expect(() => {
+      compileAndCaptureAst(
+        `
+          <LoadButton :handler="clickSave">
+            Save
+          </LoadButton>
+        `,
+        {
+          filename: '/src/views/SavePage.vue',
+          nodeTransforms: [createTestIdTransform('SavePage', componentHierarchyMap, nativeWrappers, [], '/src/views')],
+        },
+      )
+    }).not.toThrow()
+
+    const deps = componentHierarchyMap.get('SavePage') as IComponentDependencies | undefined
+    expect(deps).toBeTruthy()
+    expect(deps?.generatedMethods?.has('clickSave')).toBe(true)
+    expect(deps?.generatedMethods?.has('clickClickSave')).toBe(false)
+
+    const methodNames = Array.from(deps?.dataTestIdSet ?? [])
+      .map(e => e.pom?.methodName)
+      .filter((name): name is string => !!name)
+    expect(methodNames).toContain('Save')
+    expect(methodNames).not.toContain('ClickSave')
+  })
+
+  it('prefers author-facing alternates when a wrapper handler hint collapses to click', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const nativeWrappers: NativeWrappersMap = {
+      LoadButton: { role: 'button' },
+    }
+
+    expect(() => {
+      compileAndCaptureAst(
+        `
+          <LoadButton :handler="clickClick">
+            Load
+          </LoadButton>
+        `,
+        {
+          filename: '/src/views/LoadPage.vue',
+          nodeTransforms: [createTestIdTransform('LoadPage', componentHierarchyMap, nativeWrappers, [], '/src/views')],
+        },
+      )
+    }).not.toThrow()
+
+    const deps = componentHierarchyMap.get('LoadPage') as IComponentDependencies | undefined
+    expect(deps).toBeTruthy()
+    expect(deps?.generatedMethods?.has('clickLoad')).toBe(true)
+    expect(deps?.generatedMethods?.has('clickClick')).toBe(false)
+
+    const methodNames = Array.from(deps?.dataTestIdSet ?? [])
+      .map(e => e.pom?.methodName)
+      .filter((name): name is string => !!name)
+    expect(methodNames).toContain('Load')
+    expect(methodNames).not.toContain('Click')
+  })
+
+  it('falls back to the component name for non-view click-only buttons', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+
+    expect(() => {
+      compileAndCaptureAst(
+        `
+          <button @click="clickClick" />
+        `,
+        {
+          filename: '/src/components/LoadButton.vue',
+          nodeTransforms: [createTestIdTransform('LoadButton', componentHierarchyMap, {}, [], '/src/views')],
+        },
+      )
+    }).not.toThrow()
+
+    const deps = componentHierarchyMap.get('LoadButton') as IComponentDependencies | undefined
+    expect(deps).toBeTruthy()
+    expect(deps?.generatedMethods?.has('clickLoadButton')).toBe(true)
+    expect(deps?.generatedMethods?.has('clickButton')).toBe(false)
+    expect(deps?.generatedMethods?.has('clickClick')).toBe(false)
+
+    const methodNames = Array.from(deps?.dataTestIdSet ?? [])
+      .map(e => e.pom?.methodName)
+      .filter((name): name is string => !!name)
+    expect(methodNames).toContain('LoadButton')
+  })
+
   it('emits per-key click methods when v-for iterates a static literal list', () => {
     const componentHierarchyMap = new Map()
 

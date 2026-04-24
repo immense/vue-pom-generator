@@ -2908,7 +2908,82 @@ export function applyResolvedDataTestId(args: {
   const selectorPattern = createPomStringPattern(formattedDataTestIdForPom, selectorPatternKind);
   const selectorIsParameterized = selectorPatternKind === "parameterized";
 
-  const deriveBaseMethodNameFromHint = (hint: string | undefined) => {
+  const getPrimaryActionTransportPrefix = () => {
+    if (targetPageObjectModelClass) {
+      return "GoTo";
+    }
+
+    switch (normalizedRole) {
+      case "input":
+        return "Type";
+      case "select":
+      case "vselect":
+      case "radio":
+        return "Select";
+      default:
+        return "Click";
+    }
+  };
+
+  const hasPascalWordPrefix = (value: string, prefix: string) => {
+    if (!value.startsWith(prefix)) {
+      return false;
+    }
+    if (value.length === prefix.length) {
+      return true;
+    }
+    const nextCode = value.charCodeAt(prefix.length);
+    return isAsciiUppercaseLetterCode(nextCode) || isAsciiDigitCode(nextCode);
+  };
+
+  const stripRedundantPrimaryActionPrefix = (value: string) => {
+    const prefix = getPrimaryActionTransportPrefix();
+    let remaining = value;
+    while (remaining && hasPascalWordPrefix(remaining, prefix)) {
+      remaining = remaining.slice(prefix.length);
+    }
+    return remaining;
+  };
+
+  const getRoleFallbackMethodName = () => {
+    const roleName = upperFirst(toPascalCase(normalizedRole));
+    return roleName || "Element";
+  };
+
+  const getComponentFallbackMethodName = () => {
+    if (args.dependencies.isView) {
+      return null;
+    }
+
+    const componentName = safeMethodNameFromParts([args.parentComponentName]);
+    if (componentName === "Element") {
+      return null;
+    }
+
+    const fallbackSuffixes = targetPageObjectModelClass
+      ? ["Link", "Button"]
+      : normalizedRole === "input"
+        ? ["Input", "Field", "Editor"]
+        : normalizedRole === "select" || normalizedRole === "vselect"
+          ? ["Select", "Dropdown", "Picker"]
+          : normalizedRole === "radio"
+            ? ["Radio", "RadioGroup"]
+            : normalizedRole === "checkbox"
+              ? ["Checkbox"]
+              : normalizedRole === "toggle"
+                ? ["Toggle", "Switch"]
+                : ["Button", "Link"];
+
+    return fallbackSuffixes.some(suffix => componentName.endsWith(suffix) && componentName.length > suffix.length)
+      ? componentName
+      : null;
+  };
+
+  const getPreferredFallbackMethodName = () => {
+    return getComponentFallbackMethodName() ?? getRoleFallbackMethodName();
+  };
+
+  const deriveBaseMethodNameFromHint = (hint: string | undefined, options?: { allowRoleFallback?: boolean }): string | null => {
     const hintRaw = (hint ?? "").trim();
     const trimEdgeSeparators = (value: string): string => {
       if (!value) {
@@ -2930,19 +3005,23 @@ export function applyResolvedDataTestId(args: {
 
     // If we have no hint, fall back to a role-based name.
     if (!hintClean) {
-      const roleName = upperFirst(toPascalCase(normalizedRole));
-      return roleName || "Element";
+      return options?.allowRoleFallback === false ? null : getPreferredFallbackMethodName();
     }
 
     // Convert to a safe identifier-ish PascalCase.
     // We intentionally do NOT split/interpret `data-testid` values here.
-    const name = toPascalCase(hintClean);
-    const safe = safeMethodNameFromParts([name]);
-    return safe || "Element";
+    const name = safeMethodNameFromParts([toPascalCase(hintClean)]);
+    const strippedName = stripRedundantPrimaryActionPrefix(name);
+    if (!strippedName) {
+      return options?.allowRoleFallback === false ? null : getPreferredFallbackMethodName();
+    }
+
+    const safe = safeMethodNameFromParts([strippedName]);
+    return safe || (options?.allowRoleFallback === false ? null : getPreferredFallbackMethodName());
   };
 
-  const deriveBaseMethodName = () => {
-    return deriveBaseMethodNameFromHint(args.semanticNameHint);
+  const deriveBaseMethodName = (): string => {
+    return deriveBaseMethodNameFromHint(args.semanticNameHint) ?? getPreferredFallbackMethodName();
   };
 
   // Ensure the primary method name is unique within the class.
@@ -3111,9 +3190,7 @@ export function applyResolvedDataTestId(args: {
   let collisionDetails: { getterName: string; actionName: string } | null = null;
   let collisionHint: string | null = null;
 
-  // Try each hint candidate. In error mode, we only try suffix=1 for each hint.
-  for (const hint of hintCandidates) {
-    const base = hint ? deriveBaseMethodNameFromHint(hint) : deriveBaseMethodName();
+  const tryClaimMethodNameForBase = (base: string, hint: string | undefined) => {
     let suffix = 1;
 
     while (true) {
@@ -3153,7 +3230,7 @@ export function applyResolvedDataTestId(args: {
       if (conflicts && nameCollisionBehavior === "error" && tryMergeWithExistingPrimary(actionName)) {
         methodName = candidate;
         mergedIntoExisting = true;
-        break;
+        return true;
       }
 
       // In strict mode (error), prefer trying role-suffixed candidates over hint alternates
@@ -3197,7 +3274,7 @@ export function applyResolvedDataTestId(args: {
             getterNameOverride = chosenGetterOverrideWithRoleSuffix;
             reservedMembers.add(chosenGetterNameWithRoleSuffix);
             reservedMembers.add(actionNameWithRoleSuffix);
-            break;
+            return true;
           }
         }
       }
@@ -3221,7 +3298,7 @@ export function applyResolvedDataTestId(args: {
 
         reservedMembers.add(chosenGetterName);
         reservedMembers.add(actionName);
-        break;
+        return true;
       }
 
       if (!collisionDetails) {
@@ -3231,15 +3308,37 @@ export function applyResolvedDataTestId(args: {
 
       // In error mode, do not suffix; instead, try the next hint candidate.
       if (nameCollisionBehavior === "error") {
-        break;
+        return false;
       }
 
       suffix += 1;
+    }
+  };
+
+  // Try each hint candidate. In error mode, we only try suffix=1 for each hint.
+  let attemptedUsableHint = false;
+  let skippedUnusableHint = false;
+  for (const hint of hintCandidates) {
+    const base = hint
+      ? deriveBaseMethodNameFromHint(hint, { allowRoleFallback: false })
+      : deriveBaseMethodName();
+    if (!base) {
+      skippedUnusableHint = true;
+      continue;
+    }
+
+    attemptedUsableHint = true;
+    if (tryClaimMethodNameForBase(base, hint)) {
+      break;
     }
 
     if (methodName) {
       break;
     }
+  }
+
+  if (!methodName && skippedUnusableHint && !attemptedUsableHint) {
+    tryClaimMethodNameForBase(deriveBaseMethodName(), undefined);
   }
 
   if (!methodName) {
