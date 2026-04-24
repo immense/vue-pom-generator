@@ -472,6 +472,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
   const supportPlugins = createSupportPlugins({
     componentHierarchyMap,
     elementMetadata,
+    semanticNameMap,
     vueFilesPathMap,
     nativeWrappers,
     excludedComponents,
@@ -502,7 +503,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
   ];
 
   if (!generationEnabled) {
-    const virtualModules = createTestIdsVirtualModulesPlugin(componentHierarchyMap, elementMetadata);
+    const virtualModules = createTestIdsVirtualModulesPlugin(componentHierarchyMap, elementMetadata, testIdAttribute);
     return [
       configPlugin,
       metadataCollectorPlugin,

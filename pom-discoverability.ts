@@ -16,6 +16,10 @@ function splitDiscoverabilityWords(value: string): string[] {
     .filter(Boolean);
 }
 
+export function splitPomDiscoverabilityWords(value: string): string[] {
+  return splitDiscoverabilityWords(value);
+}
+
 function joinDiscoverabilityWords(words: readonly string[]): string {
   return words.join(" ").replace(/\s+/g, " ").trim();
 }

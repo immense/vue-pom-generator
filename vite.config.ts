@@ -9,6 +9,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         index: "./index.ts",
+        "webmcp-runtime": "./webmcp-runtime.ts",
         // eslint sub-export: import "@immense/vue-pom-generator/eslint"
         "eslint/index": "./eslint/index.ts",
       },

@@ -24,6 +24,11 @@
       "import": "./dist/index.mjs",
       "require": "./dist/index.cjs"
     },
+    "./webmcp-runtime": {
+      "types": "./dist/webmcp-runtime.d.ts",
+      "import": "./dist/webmcp-runtime.mjs",
+      "require": "./dist/webmcp-runtime.cjs"
+    },
     "./eslint": {
       "types": "./dist/eslint/index.d.ts",
       "import": "./dist/eslint/index.mjs",
@@ -77,6 +82,7 @@
     "@babel/types": "^7.28.5",
     "@floating-ui/core": "^1.7.5",
     "@github/copilot-sdk": "^0.1.8",
+    "@mcp-b/global": "^2.2.0",
     "@playwright/test": "1.59.1",
     "@types/jsdom": "^27.0.0",
     "@types/node": "^24.1.0",
@@ -91,7 +97,9 @@
     "vite": "^7.3.1",
     "vitest": "^4.0.16",
     "vue-eslint-parser": "^10.2.0",
-    "vue-router": "^4.2.5"
+    "vue-router": "^4.2.5",
+    "zod": "^3.25.76",
+    "zod-to-json-schema": "^3.25.2"
   },
   "license": "MIT"
 }

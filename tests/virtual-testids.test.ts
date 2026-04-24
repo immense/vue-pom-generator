@@ -39,27 +39,55 @@ describe("virtual:testids", () => {
           },
         },
         {
-          selectorValue: createPomStringPattern("foo-root", "static"),
+          selectorValue: createPomStringPattern("foo-name-input", "static"),
+          pom: {
+            nativeRole: "input",
+            methodName: "FooName",
+            selector: createPomStringPattern("foo-name-input", "static"),
+            parameters: [],
+          },
+        },
+        {
+          selectorValue: createPomStringPattern("foo-enabled-checkbox", "static"),
+          pom: {
+            nativeRole: "checkbox",
+            methodName: "FooEnabled",
+            selector: createPomStringPattern("foo-enabled-checkbox", "static"),
+            parameters: [],
+          },
+        },
+        {
+          selectorValue: createPomStringPattern("foo-save-button", "static"),
           pom: {
             nativeRole: "button",
-            methodName: "FooRoot",
-            getterNameOverride: "FooRootButton",
-            selector: createPomStringPattern("foo-root", "static"),
+            methodName: "SaveFoo",
+            selector: createPomStringPattern("foo-save-button", "static"),
             parameters: [],
           },
         },
       ]), {
         filePath: "/repo/src/views/Foo.vue",
         isView: true,
-        pomExtraMethods: [{
-          kind: "click",
-          name: "clickFirstFoo",
-          selector: {
-            kind: "testId",
-            testId: createPomStringPattern("foo-${key}-button", "parameterized"),
+        pomExtraMethods: [
+          {
+            kind: "click",
+            name: "clickFirstFoo",
+            selector: {
+              kind: "testId",
+              testId: createPomStringPattern("foo-${key}-button", "parameterized"),
+            },
+            parameters: [createPomParameterSpec("key", "string")],
           },
-          parameters: [createPomParameterSpec("key", "string")],
-        }],
+          {
+            kind: "click",
+            name: "clickSetShowStickyActions",
+            selector: {
+              kind: "testId",
+              testId: createPomStringPattern("foo-save-button", "static"),
+            },
+            parameters: [],
+          },
+        ],
       })],
       ["Bar", createDependencies(new Set([
         {
@@ -74,6 +102,73 @@ describe("virtual:testids", () => {
       ]), {
         filePath: "/repo/src/components/Bar.vue",
       })],
+      ["BarPage", createDependencies(new Set([
+        {
+          selectorValue: createPomStringPattern("bar-page-refresh-button", "static"),
+          pom: {
+            nativeRole: "button",
+            methodName: "RefreshBarPage",
+            selector: createPomStringPattern("bar-page-refresh-button", "static"),
+            parameters: [],
+          },
+        },
+      ]), {
+        filePath: "/repo/src/views/BarPage.vue",
+        isView: true,
+      })],
+      ["LoadButton", createDependencies(new Set([
+        {
+          selectorValue: createPomStringPattern("LoadButton-Click-button", "static"),
+          pom: {
+            nativeRole: "button",
+            methodName: "Click",
+            selector: createPomStringPattern("LoadButton-Click-button", "static"),
+            parameters: [],
+          },
+        },
+      ]), {
+        filePath: "/repo/src/components/LoadButton.vue",
+      })],
+      ["DynamicFormField", createDependencies(new Set([
+        {
+          selectorValue: createPomStringPattern("DynamicFormField-FieldValue-checkbox", "static"),
+          pom: {
+            nativeRole: "checkbox",
+            methodName: "FieldValueCheckbox",
+            selector: createPomStringPattern("DynamicFormField-FieldValue-checkbox", "static"),
+            parameters: [],
+          },
+        },
+        {
+          selectorValue: createPomStringPattern("DynamicFormField-FieldValue-input", "static"),
+          pom: {
+            nativeRole: "input",
+            methodName: "FieldValue",
+            selector: createPomStringPattern("DynamicFormField-FieldValue-input", "static"),
+            parameters: [],
+          },
+        },
+        {
+          selectorValue: createPomStringPattern("DynamicFormField-FieldValue-input", "static"),
+          pom: {
+            nativeRole: "input",
+            methodName: "FieldValue",
+            selector: createPomStringPattern("DynamicFormField-FieldValue-input", "static"),
+            parameters: [],
+          },
+        },
+        {
+          selectorValue: createPomStringPattern("DynamicFormField-FieldValue-radio", "static"),
+          pom: {
+            nativeRole: "radio",
+            methodName: "FieldValueRadio",
+            selector: createPomStringPattern("DynamicFormField-FieldValue-radio", "static"),
+            parameters: [],
+          },
+        },
+      ]), {
+        filePath: "/repo/src/components/DynamicFormField.vue",
+      })],
     ]);
     const elementMetadata = new Map([
       ["Foo", new Map([
@@ -85,10 +180,40 @@ describe("virtual:testids", () => {
           hasClickHandler: true,
           staticTextContent: "Save",
         }],
+        ["foo-name-input", {
+          testId: "foo-name-input",
+          semanticName: "foo name",
+          tag: "input",
+          tagType: 0,
+        }],
+        ["foo-enabled-checkbox", {
+          testId: "foo-enabled-checkbox",
+          semanticName: "enabled",
+          tag: "input",
+          tagType: 0,
+        }],
+        ["foo-save-button", {
+          testId: "foo-save-button",
+          semanticName: "save foo",
+          tag: "button",
+          tagType: 0,
+          hasClickHandler: true,
+          staticTextContent: "Save",
+        }],
+      ])],
+      ["LoadButton", new Map([
+        ["LoadButton-Click-button", {
+          testId: "LoadButton-Click-button",
+          semanticName: "click",
+          tag: "button",
+          tagType: 0,
+          hasClickHandler: true,
+          staticTextContent: "Load",
+        }],
       ])],
     ]);
 
-    const plugin = createTestIdsVirtualModulesPlugin(componentHierarchyMap, elementMetadata);
+    const plugin = createTestIdsVirtualModulesPlugin(componentHierarchyMap, elementMetadata, "data-qa");
     expect(typeof plugin).toBe("object");
 
     const resolved = await (plugin as any).resolveId?.("virtual:testids");
@@ -101,12 +226,15 @@ describe("virtual:testids", () => {
 
     expect(code).toContain("export const testIdManifest");
     expect(code).toContain("export const pomManifest");
+    expect(code).toContain("export const webMcpManifest");
 
     expect(code).toContain("\"Bar\"");
     expect(code).toContain("\"bar\"");
     expect(code).toContain("\"Foo\"");
     expect(code).toContain("\"foo-${key}-button\"");
-    expect(code).toContain("\"foo-root\"");
+    expect(code).toContain("\"foo-name-input\"");
+    expect(code).toContain("\"foo-enabled-checkbox\"");
+    expect(code).toContain("\"foo-save-button\"");
     expect(code).toContain("\"generatedPropertyName\": \"FooButton\"");
     expect(code).toContain("\"generatedActionNames\": [");
     expect(code).toContain("\"clickFooByKey\"");
@@ -117,6 +245,16 @@ describe("virtual:testids", () => {
     expect(code).toContain("\"sourceFile\": \"/repo/src/views/Foo.vue\"");
     expect(code).toContain("\"kind\": \"view\"");
     expect(code).toContain("\"semanticName\": \"foo item\"");
+    expect(code).toContain("\"toolName\": \"save_foo\"");
+    expect(code).toContain("\"toolDescription\": \"Click save foo on Foo.\"");
+    expect(code).toContain("\"toolAutoSubmit\": true");
+    expect(code).toContain("\"toolParamDescription\": \"foo name\"");
+    expect(code).toContain("\"toolParamDescription\": \"enabled\"");
+    expect(code).toContain("\"name\": \"name\"");
+    expect(code).toContain("\"name\": \"enabled\"");
+    expect(code).toContain("\"name\": \"clickSaveFoo\"");
+    expect(code).toContain("\"selectorTemplateVariables\": [");
+    expect(code).toContain("\"key\"");
 
     const resolvedPomManifest = await (plugin as any).resolveId?.("virtual:pom-manifest");
     const resolvedPomManifestId = typeof resolvedPomManifest === "string" ? resolvedPomManifest : resolvedPomManifest?.id;
@@ -128,6 +266,47 @@ describe("virtual:testids", () => {
     expect(pomManifestCode).toContain("\"generatedPropertyName\": \"FooButton\"");
     expect(pomManifestCode).toContain("\"locatorDescription\": \"Foo button\"");
     expect(pomManifestCode).toContain("\"accessibleNameSource\": \"text\"");
+
+    const resolvedWebMcpManifest = await (plugin as any).resolveId?.("virtual:webmcp-manifest");
+    const resolvedWebMcpManifestId = typeof resolvedWebMcpManifest === "string" ? resolvedWebMcpManifest : resolvedWebMcpManifest?.id;
+    const loadedWebMcpManifest = await (plugin as any).load?.(resolvedWebMcpManifestId);
+    const webMcpManifestCode = extractCode(loadedWebMcpManifest);
+
+    expect(webMcpManifestCode).toContain("export const webMcpManifest");
+    expect(webMcpManifestCode).not.toContain("export const testIdManifest");
+    expect(webMcpManifestCode).not.toContain("export const pomManifest");
+    expect(webMcpManifestCode).toContain("\"Bar\"");
+    expect(webMcpManifestCode).toContain("\"BarPage\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"foo_by_key\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"first_foo\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"save_foo\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"load_button\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"show_sticky_actions\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"bar\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"refresh_bar_page\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"dynamic_form_field\"");
+    expect(webMcpManifestCode).toContain("\"name\": \"fieldValueCheckbox\"");
+    expect(webMcpManifestCode).toContain("\"name\": \"fieldValueInput\"");
+    expect(webMcpManifestCode).toContain("\"name\": \"fieldValueRadio\"");
+    expect(webMcpManifestCode).toContain("\"toolAutoSubmit\": true");
+    expect(webMcpManifestCode).toContain("\"toolParamDescription\": \"foo name\"");
+    expect(webMcpManifestCode).toContain("\"name\": \"clickSaveFoo\"");
+
+    const resolvedWebMcpBridge = await (plugin as any).resolveId?.("virtual:webmcp-bridge");
+    const resolvedWebMcpBridgeId = typeof resolvedWebMcpBridge === "string" ? resolvedWebMcpBridge : resolvedWebMcpBridge?.id;
+    const loadedWebMcpBridge = await (plugin as any).load?.(resolvedWebMcpBridgeId);
+    const webMcpBridgeCode = extractCode(loadedWebMcpBridge);
+
+    expect(webMcpBridgeCode).toContain("registerWebMcpManifestTools");
+    expect(webMcpBridgeCode).toContain("registerRouteScopedWebMcpManifestTools");
+    expect(webMcpBridgeCode).toContain("registerGeneratedWebMcpTools");
+    expect(webMcpBridgeCode).toContain("options.router");
+    expect(webMcpBridgeCode).toContain("webMcpTestIdAttribute");
+    expect(webMcpBridgeCode).toContain("\"data-qa\"");
+    expect(webMcpBridgeCode).toContain("@immense/vue-pom-generator/webmcp-runtime");
+    expect(webMcpBridgeCode).toContain("import.meta.hot");
+    expect(webMcpBridgeCode).not.toContain("import type");
+    expect(webMcpBridgeCode).not.toContain("export type");
 
     componentHierarchyMap.set("Baz", createDependencies(new Set([
       {

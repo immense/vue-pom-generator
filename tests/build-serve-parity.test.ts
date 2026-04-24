@@ -94,6 +94,10 @@ function makeDevPlugin(
   const existingIdBehaviorOverride = overrideEntries.existingIdBehavior as ResolvedGenerationSupportOptions["existingIdBehavior"] | undefined;
   delete overrideEntries.existingIdBehavior;
   return createDevProcessorPlugin({
+    elementMetadata: new Map(),
+    semanticNameMap: new Map(),
+    componentHierarchyMap: new Map(),
+    vueFilesPathMap: new Map(),
     nativeWrappers: {},
     excludedComponents: [],
     getPageDirs: () => ["src/views"],

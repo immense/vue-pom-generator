@@ -1253,14 +1253,15 @@ export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInf
   }
 
   const exp = handlerDirective.exp as SimpleExpressionNode | CompoundExpressionNode;
-  const source = getVueExpressionSource(exp, "content", "compiled");
-  if (!source) {
+  const transformedSource = getVueExpressionSource(exp, "content", "compiled");
+  const authorSource = getVueExpressionSource(exp, "loc", "content", "compiled");
+  if (!authorSource) {
     return null;
   }
 
   // Use a source-based key so identical handler expressions can converge.
   // NOTE: We intentionally do not normalize via regex/string parsing helpers in this package.
-  const mergeKey = `handler:expr:${source}`;
+  const mergeKey = `handler:expr:${authorSource}`;
 
   const expr = tryGetDirectiveBabelAst(handlerDirective, {
     preferredViews: ["content", "compiled"],
@@ -1269,10 +1270,9 @@ export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInf
     // That is fine for Vue codegen, but our semantic-name extraction needs a normal Babel parse tree.
     preferExistingAst: false,
   });
-  if (!expr) {
-    // Even if parsing fails, still provide a merge identity.
-    return null;
-  }
+  const fallbackExpr = transformedSource !== authorSource
+    ? tryParseBabelExpressionFromSource(authorSource, ["typescript", "jsx"])
+    : null;
 
   const isNodeType = (node: object | null, type: string): node is { type: string } => {
     return node !== null && (node as { type?: string }).type === type;
@@ -1355,6 +1355,25 @@ export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInf
     return typeof n.computed === "boolean"
       && typeof n.key === "object" && n.key !== null
       && typeof n.value === "object" && n.value !== null;
+  };
+  const isLogicalExpressionNode = (node: object | null): node is { type: "LogicalExpression"; right: object } => {
+    if (!isNodeType(node, "LogicalExpression"))
+      return false;
+    const n = node as { right?: object };
+    return typeof n.right === "object" && n.right !== null;
+  };
+  const isConditionalExpressionNode = (node: object | null): node is { type: "ConditionalExpression"; consequent: object; alternate: object } => {
+    if (!isNodeType(node, "ConditionalExpression"))
+      return false;
+    const n = node as { consequent?: object; alternate?: object };
+    return typeof n.consequent === "object" && n.consequent !== null
+      && typeof n.alternate === "object" && n.alternate !== null;
+  };
+  const isSequenceExpressionNode = (node: object | null): node is { type: "SequenceExpression"; expressions: object[] } => {
+    if (!isNodeType(node, "SequenceExpression"))
+      return false;
+    const n = node as { expressions?: object[] };
+    return Array.isArray(n.expressions);
   };
 
   const getLastIdentifierFromMemberChain = (node: object | null): string | null => {
@@ -1565,75 +1584,112 @@ export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInf
     return limited.map(p => `${toPascalCase(p.key)}${p.value}`).join("");
   };
 
-  // :handler="myHandler" or :handler="obj.myHandler"
-  const direct = getLastIdentifierFromMemberChain(expr);
-  if (direct) {
-    return { semanticNameHint: toPascalCase(direct), mergeKey };
-  }
+  const tryFromCallExpression = (call: object | null) => {
+    const resolvedCall = isAwaitExpressionNode(call)
+      ? call.argument
+      : call;
+    if (!isCallExpressionNode(resolvedCall)) {
+      return null;
+    }
+    const name = getLastIdentifierFromMemberChain(resolvedCall.callee);
+    if (!name) {
+      return null;
+    }
+    const suffix = getStableSuffixFromCall(resolvedCall);
+    const semanticNameHint = suffix
+      ? `${toPascalCase(name)}${suffix}`
+      : toPascalCase(name);
+    return semanticNameHint;
+  };
 
-  // :handler="(x) => myHandler(x)" or :handler="() => obj.myHandler()"
-  if (isArrowFunctionExpressionNode(expr)) {
-    const body = expr.body;
+  const tryDeriveSemanticName = (candidate: object | null): string | null => {
+    if (!candidate) {
+      return null;
+    }
 
-    const tryFromCallExpression = (call: object | null) => {
-      const resolvedCall = isAwaitExpressionNode(call)
-        ? call.argument
-        : call;
-      if (!isCallExpressionNode(resolvedCall)) {
-        return null;
-      }
-      const name = getLastIdentifierFromMemberChain(resolvedCall.callee);
-      if (!name) {
-        return null;
-      }
-      const suffix = getStableSuffixFromCall(resolvedCall);
-      const semanticNameHint = suffix
-        ? `${toPascalCase(name)}${suffix}`
-        : toPascalCase(name);
-      return semanticNameHint;
-    };
-
-    // ArrowFunctionExpression with implicit return call: () => fn(...)
-    const directCall = tryFromCallExpression(body);
+    const directCall = tryFromCallExpression(candidate);
     if (directCall) {
-      return { semanticNameHint: directCall, mergeKey };
+      return directCall;
     }
 
-    // ArrowFunctionExpression with assignment body: () => someFlag = true
-    if (isAssignmentExpressionNode(body)) {
-      const lhs = getAssignmentTargetName(body.left);
+    if (isAssignmentExpressionNode(candidate)) {
+      const lhs = getAssignmentTargetName(candidate.left);
       if (lhs) {
-        const rhs = stableWordFromValue(body.right);
-        const semanticNameHint = `Set${toPascalCase(lhs)}${rhs ?? ""}`;
-        return { semanticNameHint, mergeKey };
+        const rhs = stableWordFromValue(candidate.right);
+        return `Set${toPascalCase(lhs)}${rhs ?? ""}`;
       }
+      return null;
     }
 
-    // ArrowFunctionExpression block: () => { return fn(...) } or () => { fn(...) }
-    if (isBlockStatementNode(body)) {
-      const stmts = body.body ?? [];
-      if (stmts.length > 0) {
-        const firstStmt = stmts[0] as object;
-        if (isReturnStatementNode(firstStmt)) {
-          const fromReturn = tryFromCallExpression(firstStmt.argument ?? null);
-          if (fromReturn) {
-            return { semanticNameHint: fromReturn, mergeKey };
-          }
-        }
-        if (isExpressionStatementNode(firstStmt)) {
-          const fromExpr = tryFromCallExpression(firstStmt.expression ?? null);
-          if (fromExpr) {
-            return { semanticNameHint: fromExpr, mergeKey };
-          }
-        }
-      }
+    if (isLogicalExpressionNode(candidate)) {
+      return tryDeriveSemanticName(candidate.right);
     }
 
-    // Fallback: () => myHandler
-    const bodyName = getLastIdentifierFromMemberChain(body);
+    if (isConditionalExpressionNode(candidate)) {
+      const consequent = tryDeriveSemanticName(candidate.consequent);
+      const alternate = tryDeriveSemanticName(candidate.alternate);
+      if (consequent && alternate && consequent === alternate) {
+        return consequent;
+      }
+      return consequent ?? alternate ?? null;
+    }
+
+    if (isSequenceExpressionNode(candidate)) {
+      const last = candidate.expressions.at(-1) ?? null;
+      return tryDeriveSemanticName(last);
+    }
+
+    const bodyName = getLastIdentifierFromMemberChain(candidate);
     if (bodyName) {
-      return { semanticNameHint: toPascalCase(bodyName), mergeKey };
+      return toPascalCase(bodyName);
     }
+
+    return null;
+  };
+
+  const resolveSemanticName = (candidateExpr: object | null): string | null => {
+    if (!candidateExpr) {
+      return null;
+    }
+
+    const direct = getLastIdentifierFromMemberChain(candidateExpr);
+    if (direct) {
+      return toPascalCase(direct);
+    }
+
+    if (isArrowFunctionExpressionNode(candidateExpr)) {
+      const body = candidateExpr.body;
+      const directSemanticName = tryDeriveSemanticName(body);
+      if (directSemanticName) {
+        return directSemanticName;
+      }
+
+      if (isBlockStatementNode(body)) {
+        const stmts = body.body ?? [];
+        if (stmts.length > 0) {
+          const firstStmt = stmts[0] as object;
+          if (isReturnStatementNode(firstStmt)) {
+            const fromReturn = tryDeriveSemanticName(firstStmt.argument ?? null);
+            if (fromReturn) {
+              return fromReturn;
+            }
+          }
+          if (isExpressionStatementNode(firstStmt)) {
+            const fromExpr = tryDeriveSemanticName(firstStmt.expression ?? null);
+            if (fromExpr) {
+              return fromExpr;
+            }
+          }
+        }
+      }
+    }
+
+    return null;
+  };
+
+  const semanticNameHint = resolveSemanticName(expr) ?? resolveSemanticName(fallbackExpr);
+  if (semanticNameHint) {
+    return { semanticNameHint, mergeKey };
   }
 
   return null;
@@ -2852,7 +2908,82 @@ export function applyResolvedDataTestId(args: {
   const selectorPattern = createPomStringPattern(formattedDataTestIdForPom, selectorPatternKind);
   const selectorIsParameterized = selectorPatternKind === "parameterized";
 
-  const deriveBaseMethodNameFromHint = (hint: string | undefined) => {
+  const getPrimaryActionTransportPrefix = () => {
+    if (targetPageObjectModelClass) {
+      return "GoTo";
+    }
+
+    switch (normalizedRole) {
+      case "input":
+        return "Type";
+      case "select":
+      case "vselect":
+      case "radio":
+        return "Select";
+      default:
+        return "Click";
+    }
+  };
+
+  const hasPascalWordPrefix = (value: string, prefix: string) => {
+    if (!value.startsWith(prefix)) {
+      return false;
+    }
+    if (value.length === prefix.length) {
+      return true;
+    }
+    const nextCode = value.charCodeAt(prefix.length);
+    return isAsciiUppercaseLetterCode(nextCode) || isAsciiDigitCode(nextCode);
+  };
+
+  const stripRedundantPrimaryActionPrefix = (value: string) => {
+    const prefix = getPrimaryActionTransportPrefix();
+    let remaining = value;
+    while (remaining && hasPascalWordPrefix(remaining, prefix)) {
+      remaining = remaining.slice(prefix.length);
+    }
+    return remaining;
+  };
+
+  const getRoleFallbackMethodName = () => {
+    const roleName = upperFirst(toPascalCase(normalizedRole));
+    return roleName || "Element";
+  };
+
+  const getComponentFallbackMethodName = () => {
+    if (args.dependencies.isView) {
+      return null;
+    }
+
+    const componentName = safeMethodNameFromParts([args.parentComponentName]);
+    if (componentName === "Element") {
+      return null;
+    }
+
+    const fallbackSuffixes = targetPageObjectModelClass
+      ? ["Link", "Button"]
+      : normalizedRole === "input"
+        ? ["Input", "Field", "Editor"]
+        : normalizedRole === "select" || normalizedRole === "vselect"
+          ? ["Select", "Dropdown", "Picker"]
+          : normalizedRole === "radio"
+            ? ["Radio", "RadioGroup"]
+            : normalizedRole === "checkbox"
+              ? ["Checkbox"]
+              : normalizedRole === "toggle"
+                ? ["Toggle", "Switch"]
+                : ["Button", "Link"];
+
+    return fallbackSuffixes.some(suffix => componentName.endsWith(suffix) && componentName.length > suffix.length)
+      ? componentName
+      : null;
+  };
+
+  const getPreferredFallbackMethodName = () => {
+    return getComponentFallbackMethodName() ?? getRoleFallbackMethodName();
+  };
+
+  const deriveBaseMethodNameFromHint = (hint: string | undefined, options?: { allowRoleFallback?: boolean }): string | null => {
     const hintRaw = (hint ?? "").trim();
     const trimEdgeSeparators = (value: string): string => {
       if (!value) {
@@ -2874,19 +3005,23 @@ export function applyResolvedDataTestId(args: {
 
     // If we have no hint, fall back to a role-based name.
     if (!hintClean) {
-      const roleName = upperFirst(toPascalCase(normalizedRole));
-      return roleName || "Element";
+      return options?.allowRoleFallback === false ? null : getPreferredFallbackMethodName();
     }
 
     // Convert to a safe identifier-ish PascalCase.
     // We intentionally do NOT split/interpret `data-testid` values here.
-    const name = toPascalCase(hintClean);
-    const safe = safeMethodNameFromParts([name]);
-    return safe || "Element";
+    const name = safeMethodNameFromParts([toPascalCase(hintClean)]);
+    const strippedName = stripRedundantPrimaryActionPrefix(name);
+    if (!strippedName) {
+      return options?.allowRoleFallback === false ? null : getPreferredFallbackMethodName();
+    }
+
+    const safe = safeMethodNameFromParts([strippedName]);
+    return safe || (options?.allowRoleFallback === false ? null : getPreferredFallbackMethodName());
   };
 
-  const deriveBaseMethodName = () => {
-    return deriveBaseMethodNameFromHint(args.semanticNameHint);
+  const deriveBaseMethodName = (): string => {
+    return deriveBaseMethodNameFromHint(args.semanticNameHint) ?? getPreferredFallbackMethodName();
   };
 
   // Ensure the primary method name is unique within the class.
@@ -3055,9 +3190,7 @@ export function applyResolvedDataTestId(args: {
   let collisionDetails: { getterName: string; actionName: string } | null = null;
   let collisionHint: string | null = null;
 
-  // Try each hint candidate. In error mode, we only try suffix=1 for each hint.
-  for (const hint of hintCandidates) {
-    const base = hint ? deriveBaseMethodNameFromHint(hint) : deriveBaseMethodName();
+  const tryClaimMethodNameForBase = (base: string, hint: string | undefined) => {
     let suffix = 1;
 
     while (true) {
@@ -3097,7 +3230,7 @@ export function applyResolvedDataTestId(args: {
       if (conflicts && nameCollisionBehavior === "error" && tryMergeWithExistingPrimary(actionName)) {
         methodName = candidate;
         mergedIntoExisting = true;
-        break;
+        return true;
       }
 
       // In strict mode (error), prefer trying role-suffixed candidates over hint alternates
@@ -3141,7 +3274,7 @@ export function applyResolvedDataTestId(args: {
             getterNameOverride = chosenGetterOverrideWithRoleSuffix;
             reservedMembers.add(chosenGetterNameWithRoleSuffix);
             reservedMembers.add(actionNameWithRoleSuffix);
-            break;
+            return true;
           }
         }
       }
@@ -3165,7 +3298,7 @@ export function applyResolvedDataTestId(args: {
 
         reservedMembers.add(chosenGetterName);
         reservedMembers.add(actionName);
-        break;
+        return true;
       }
 
       if (!collisionDetails) {
@@ -3175,15 +3308,37 @@ export function applyResolvedDataTestId(args: {
 
       // In error mode, do not suffix; instead, try the next hint candidate.
       if (nameCollisionBehavior === "error") {
-        break;
+        return false;
       }
 
       suffix += 1;
+    }
+  };
+
+  // Try each hint candidate. In error mode, we only try suffix=1 for each hint.
+  let attemptedUsableHint = false;
+  let skippedUnusableHint = false;
+  for (const hint of hintCandidates) {
+    const base = hint
+      ? deriveBaseMethodNameFromHint(hint, { allowRoleFallback: false })
+      : deriveBaseMethodName();
+    if (!base) {
+      skippedUnusableHint = true;
+      continue;
+    }
+
+    attemptedUsableHint = true;
+    if (tryClaimMethodNameForBase(base, hint)) {
+      break;
     }
 
     if (methodName) {
       break;
     }
+  }
+
+  if (!methodName && skippedUnusableHint && !attemptedUsableHint) {
+    tryClaimMethodNameForBase(deriveBaseMethodName(), undefined);
   }
 
   if (!methodName) {

@@ -1464,10 +1464,21 @@ export function createTestIdTransform(
 
     if (handlerInfo) {
       const testId = getHandlerAttributeValueDataTestId(handlerInfo.semanticNameHint);
+      const handlerHintCandidates = [
+        handlerInfo.semanticNameHint,
+        getStaticIdOrNameHint(element),
+        innerText,
+        conditionalHint,
+      ]
+        .map(value => (value ?? "").trim())
+        .filter(Boolean)
+        .filter((value, index, values) => values.indexOf(value) === index);
+      const [semanticNameHint, ...semanticNameHintAlternates] = handlerHintCandidates;
 
       applyResolvedDataTestIdForElement({
         preferredGeneratedValue: testId,
-        semanticNameHint: handlerInfo.semanticNameHint || conditionalHint || undefined,
+        semanticNameHint,
+        semanticNameHintAlternates: semanticNameHintAlternates.length ? semanticNameHintAlternates : undefined,
         pomMergeKey: handlerInfo.mergeKey,
       });
       return;

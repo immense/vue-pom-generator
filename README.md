@@ -16,7 +16,7 @@ If you already use Playwright with `getByTestId`, the point is simple: this pack
 - **Can generate Playwright fixtures** so tests can request `userListPage` instead of constructing `new UserListPage(page)` manually.
 - **Can fail fast on unnameable wrapper-button actions** so complex inline handlers do not silently degrade into low-signal generated APIs.
 - **Can emit a single C# POM file** for Playwright .NET consumers.
-- **Exposes `virtual:testids` and `virtual:pom-manifest`** so your app can inspect collected ids and generated POM metadata at runtime.
+- **Exposes `virtual:testids`, `virtual:pom-manifest`, `virtual:webmcp-manifest`, and `virtual:webmcp-bridge`** so your app can inspect collected ids, generated POM metadata, consume WebMCP-oriented tool metadata, or opt into a generated WebMCP runtime bridge.
 - **Ships ESLint rules** to remove legacy manually-authored test ids, ban raw `page` fixture usage in spec callbacks, and discourage raw locator actions on generated getters.
 
 ## What this does not do
@@ -26,6 +26,7 @@ If you already use Playwright with `getByTestId`, the point is simple: this pack
 - **It does not fully fill route params for you.** Generated `goTo()` / `goToSelf()` methods use the discovered route template literally. A route like `/users/:id` still needs a real `/users/123` when you actually navigate.
 - **It does not auto-attach every file in `pom/custom`.** Custom helpers are imported, but they only affect generated classes when you explicitly configure attachments, or when they match the built-in `Toggle` / `Checkbox` widget conventions.
 - **It does not make override classes globally replace generated classes.** `pom/overrides` only changes generated fixture instantiation. Direct imports from the generated barrel still give you the generated class unless you import your override yourself.
+- **It does not magically make your app WebMCP-controllable unless you opt into a runtime.** The manifest is metadata; actual tool registration still requires either `virtual:webmcp-bridge` or the browser-safe `@immense/vue-pom-generator/webmcp-runtime` helper plus a `navigator.modelContext` implementation.
 - **The C# emitter is not feature-parity with the TypeScript emitter.** It emits locator/action classes, but not Playwright fixtures, not helper attachments, and not the same route helper surface.
 
 ## A minimal Vue example
@@ -348,7 +349,7 @@ This is important if you are deciding whether the tool will fit into a real code
 
 - **Dev server:** on startup, it scans the configured Vue page/component/layout directories (or the directories resolved from Nuxt config in Nuxt mode), compiles each `.vue` file into a snapshot, writes the configured TypeScript outputs once, then batches add/change/delete events and regenerates incrementally.
 - **Build:** it generates from the richest build pass it sees, which matters because Vite can run multiple passes (for example SSR plus client). The generator avoids letting a thinner pass clobber a richer one.
-- **Always-on virtual modules:** `virtual:testids` and `virtual:pom-manifest` are registered whether generation is enabled or disabled.
+- **Always-on virtual modules:** `virtual:testids`, `virtual:pom-manifest`, `virtual:webmcp-manifest`, and `virtual:webmcp-bridge` are registered whether generation is enabled or disabled.
 - **Generation can be disabled:** `generation: false` still keeps compile-time test-id injection and the virtual modules, but skips emitted POM files.
 
 ## Router-aware navigation: the real semantics
@@ -681,10 +682,11 @@ This package registers a Vite virtual module named `virtual:testids`.
 Usage:
 
 ```ts
-import { pomManifest, testIdManifest } from "virtual:testids";
+import { pomManifest, testIdManifest, webMcpManifest } from "virtual:testids";
 
 console.log(testIdManifest.UserEditorPage);
 console.log(pomManifest.UserEditorPage.entries);
+console.log(webMcpManifest.UserEditorPage.tools);
 ```
 
 What it contains:
@@ -692,6 +694,7 @@ What it contains:
 - an object keyed by component name
 - `testIdManifest`: each value is a sorted array of collected test ids for that component
 - `pomManifest`: richer per-component metadata including source file, generated locator/property names, and generated action names
+- `webMcpManifest`: WebMCP-oriented tool metadata derived from the same semantic graph, including suggested tool names, parameter descriptions, and action names
 - each manifest entry also carries `locatorDescription`, which matches the human-readable label used by generated Playwright locators
 - each manifest entry may also carry `accessibility`, a compile-time review signal with static metadata, accessible-name hints, and `needsReview`
 
@@ -701,6 +704,7 @@ What it is good for:
 - analytics / logging helpers that need the current generated ids
 - debugging what the generator has collected and generated
 - keeping manifest-driven tools aligned with the same locator descriptions shown in Playwright traces
+- bootstrapping WebMCP integration without scraping emitted POM files or walking the DOM at runtime
 
 What it is not:
 
@@ -724,6 +728,82 @@ What it contains:
 - an object keyed by component/page object model class name
 - for each component: source file, whether it is a view or component, sorted test ids, and rich entry metadata
 - for each entry: test id, semantic name, inferred role, generated property name, generated action names, collected compiler metadata when available, and accessibility review metadata when available
+
+## `virtual:webmcp-manifest`
+
+This package also registers `virtual:webmcp-manifest` for consumers that want a tool-oriented manifest aligned with WebMCP's declarative model.
+
+Usage:
+
+```ts
+import { webMcpManifest } from "virtual:webmcp-manifest";
+
+console.log(webMcpManifest.UserEditorPage.tools[0].toolName);
+console.log(webMcpManifest.UserEditorPage.tools[0].params);
+```
+
+Example: bridge the manifest into a WebMCP runtime yourself with the browser-safe helper export:
+
+```ts
+import "@mcp-b/global";
+import { registerWebMcpManifestTools } from "@immense/vue-pom-generator/webmcp-runtime";
+import { webMcpManifest } from "virtual:webmcp-manifest";
+
+const registration = registerWebMcpManifestTools({ manifest: webMcpManifest });
+
+// later
+registration.unregister();
+```
+
+What it contains:
+
+- an object keyed by component/page object model class name
+- for each component/page: source metadata, `usedComponents` relationship data for route-aware scoping, and zero or more suggested tools
+- for each tool: `toolName`, `toolDescription`, `toolAutoSubmit`, parameter metadata with `toolParamDescription`, and any generated action names that can drive submission or follow-up behavior
+- parameterized selectors also carry `selectorTemplateVariables` so a runtime bridge can resolve test ids such as `foo-${key}-button`
+
+What it is not:
+
+- automatic DOM annotation with `toolname`, `tooldescription`, or `toolparamdescription`
+- a runtime crawler or a replacement for explicit WebMCP authoring when your UI semantics need manual curation
+
+## `virtual:webmcp-bridge`
+
+This package also registers `virtual:webmcp-bridge` for consumers that want the generated manifest pre-bound to the current test-id attribute and ready to register as live tools.
+
+Usage:
+
+```ts
+import "@mcp-b/global";
+import { registerGeneratedWebMcpTools } from "virtual:webmcp-bridge";
+
+const registration = registerGeneratedWebMcpTools();
+
+// optional: scope to a subtree or a custom modelContext
+// const registration = registerGeneratedWebMcpTools({ root: document.querySelector("#app")! });
+
+// optional: route-scope the tool surface in a Vue SPA
+// const registration = registerGeneratedWebMcpTools({ router });
+
+// later
+registration.unregister();
+```
+
+What it does:
+
+- imports the browser-safe `@immense/vue-pom-generator/webmcp-runtime` helper for you
+- binds the current generated `webMcpManifest`
+- binds the current configured test-id attribute
+- when given `{ router }`, derives the active route view tree from Vue Router and only registers tools for the matched components plus their generated component dependencies
+- unregisters the generated tools on Vite HMR disposal so dev reloads do not leak duplicate registrations
+
+Current bridge behavior:
+
+- promotes generated POM actions to top-level tools (for example click/goTo/select/type methods become WebMCP tool names)
+- falls back to component-scoped param tools (for example `dynamic_form_field`) only when a surface exposes writable params but no action
+- fills native text inputs / textareas, checkboxes, radios, and native selects generically
+- attempts a best-effort combobox/select interaction path for `vselect`-style controls
+- resolves DOM targets at call time so SPA rerenders do not leave stale element handles behind
 
 ## ESLint rules that actually ship
 

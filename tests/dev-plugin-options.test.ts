@@ -101,6 +101,10 @@ describe("dev processor option plumbing", () => {
       const basePageClassPath = path.join(projectRoot, "base-page.ts");
 
       const plugin = createDevProcessorPlugin({
+        elementMetadata: new Map(),
+        semanticNameMap: new Map(),
+        componentHierarchyMap: new Map(),
+        vueFilesPathMap: new Map(),
         nativeWrappers: {},
         excludedComponents: [],
         getPageDirs: () => ["src/views"],
@@ -188,6 +192,10 @@ describe("dev processor option plumbing", () => {
       );
 
       const plugin = createDevProcessorPlugin({
+        elementMetadata: new Map(),
+        semanticNameMap: new Map(),
+        componentHierarchyMap: new Map(),
+        vueFilesPathMap: new Map(),
         nativeWrappers: {},
         excludedComponents: [],
         getPageDirs: () => ["src/views"],
@@ -254,6 +262,10 @@ describe("dev processor option plumbing", () => {
       });
 
       const plugin = createDevProcessorPlugin({
+        elementMetadata: new Map(),
+        semanticNameMap: new Map(),
+        componentHierarchyMap: new Map(),
+        vueFilesPathMap: new Map(),
         nativeWrappers: {},
         excludedComponents: [],
         getPageDirs: () => ["src/views"],
