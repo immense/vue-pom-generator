@@ -502,7 +502,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
   ];
 
   if (!generationEnabled) {
-    const virtualModules = createTestIdsVirtualModulesPlugin(componentHierarchyMap, elementMetadata);
+    const virtualModules = createTestIdsVirtualModulesPlugin(componentHierarchyMap, elementMetadata, testIdAttribute);
     return [
       configPlugin,
       metadataCollectorPlugin,

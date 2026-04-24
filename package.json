@@ -24,6 +24,11 @@
       "import": "./dist/index.mjs",
       "require": "./dist/index.cjs"
     },
+    "./webmcp-runtime": {
+      "types": "./dist/webmcp-runtime.d.ts",
+      "import": "./dist/webmcp-runtime.mjs",
+      "require": "./dist/webmcp-runtime.cjs"
+    },
     "./eslint": {
       "types": "./dist/eslint/index.d.ts",
       "import": "./dist/eslint/index.mjs",

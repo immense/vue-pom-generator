@@ -129,7 +129,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     loggerRef,
   });
 
-  const virtualModules = createTestIdsVirtualModulesPlugin(componentHierarchyMap, elementMetadata);
+  const virtualModules = createTestIdsVirtualModulesPlugin(componentHierarchyMap, elementMetadata, testIdAttribute);
 
   return [tsProcessor, devProcessor, virtualModules];
 }

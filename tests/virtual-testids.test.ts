@@ -125,7 +125,7 @@ describe("virtual:testids", () => {
       ])],
     ]);
 
-    const plugin = createTestIdsVirtualModulesPlugin(componentHierarchyMap, elementMetadata);
+    const plugin = createTestIdsVirtualModulesPlugin(componentHierarchyMap, elementMetadata, "data-qa");
     expect(typeof plugin).toBe("object");
 
     const resolved = await (plugin as any).resolveId?.("virtual:testids");
@@ -159,11 +159,14 @@ describe("virtual:testids", () => {
     expect(code).toContain("\"semanticName\": \"foo item\"");
     expect(code).toContain("\"toolName\": \"foo\"");
     expect(code).toContain("\"toolDescription\": \"Interact with Foo.\"");
+    expect(code).toContain("\"toolAutoSubmit\": false");
     expect(code).toContain("\"toolParamDescription\": \"foo name\"");
     expect(code).toContain("\"toolParamDescription\": \"enabled\"");
     expect(code).toContain("\"name\": \"name\"");
     expect(code).toContain("\"name\": \"enabled\"");
     expect(code).toContain("\"name\": \"clickSaveFoo\"");
+    expect(code).toContain("\"selectorTemplateVariables\": [");
+    expect(code).toContain("\"key\"");
 
     const resolvedPomManifest = await (plugin as any).resolveId?.("virtual:pom-manifest");
     const resolvedPomManifestId = typeof resolvedPomManifest === "string" ? resolvedPomManifest : resolvedPomManifest?.id;
@@ -184,10 +187,24 @@ describe("virtual:testids", () => {
     expect(webMcpManifestCode).toContain("export const webMcpManifest");
     expect(webMcpManifestCode).not.toContain("export const testIdManifest");
     expect(webMcpManifestCode).not.toContain("export const pomManifest");
+    expect(webMcpManifestCode).toContain("\"Bar\"");
     expect(webMcpManifestCode).toContain("\"toolName\": \"foo\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"bar\"");
+    expect(webMcpManifestCode).toContain("\"toolAutoSubmit\": true");
     expect(webMcpManifestCode).toContain("\"toolParamDescription\": \"foo name\"");
     expect(webMcpManifestCode).toContain("\"name\": \"clickSaveFoo\"");
-    expect(webMcpManifestCode).not.toContain("\"Bar\"");
+
+    const resolvedWebMcpBridge = await (plugin as any).resolveId?.("virtual:webmcp-bridge");
+    const resolvedWebMcpBridgeId = typeof resolvedWebMcpBridge === "string" ? resolvedWebMcpBridge : resolvedWebMcpBridge?.id;
+    const loadedWebMcpBridge = await (plugin as any).load?.(resolvedWebMcpBridgeId);
+    const webMcpBridgeCode = extractCode(loadedWebMcpBridge);
+
+    expect(webMcpBridgeCode).toContain("registerWebMcpManifestTools");
+    expect(webMcpBridgeCode).toContain("registerGeneratedWebMcpTools");
+    expect(webMcpBridgeCode).toContain("webMcpTestIdAttribute");
+    expect(webMcpBridgeCode).toContain("\"data-qa\"");
+    expect(webMcpBridgeCode).toContain("@immense/vue-pom-generator/webmcp-runtime");
+    expect(webMcpBridgeCode).toContain("import.meta.hot");
 
     componentHierarchyMap.set("Baz", createDependencies(new Set([
       {

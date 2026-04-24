@@ -14,13 +14,21 @@ import {
   splitPomDiscoverabilityWords,
   stripPomActionPrefix,
 } from "./pom-discoverability";
+import type {
+  WebMcpManifest,
+  WebMcpManifestAction,
+  WebMcpManifestComponent,
+  WebMcpManifestParameter,
+  WebMcpManifestTool,
+} from "./webmcp-runtime";
 import type { IComponentDependencies, IDataTestId, PomExtraClickMethodSpec, PomPrimarySpec } from "./utils";
-import { renderSourceFile, VariableDeclarationKind, type WriterFunction } from "./typescript-codegen";
+import { addNamedImport, renderSourceFile, VariableDeclarationKind, type WriterFunction } from "./typescript-codegen";
 import { upperFirst } from "./utils";
 
 type PomManifestEntry = {
   testId: string;
   selectorPatternKind: "static" | "parameterized";
+  selectorTemplateVariables: string[];
   semanticName: string;
   locatorDescription: string;
   inferredRole: string | null;
@@ -50,39 +58,6 @@ type PomManifestComponent = {
 };
 
 type PomManifest = Record<string, PomManifestComponent>;
-
-type WebMcpManifestParameter = {
-  name: string;
-  role: string;
-  testId: string;
-  selectorPatternKind: "static" | "parameterized";
-  toolParamDescription: string;
-  generatedPropertyName: string | null;
-};
-
-type WebMcpManifestAction = {
-  name: string;
-  testId: string;
-  description: string;
-  targetPageObjectModelClass?: string;
-};
-
-type WebMcpManifestTool = {
-  toolName: string;
-  toolDescription: string;
-  params: WebMcpManifestParameter[];
-  actions: WebMcpManifestAction[];
-};
-
-type WebMcpManifestComponent = {
-  componentName: string;
-  className: string;
-  sourceFile: string;
-  kind: "component" | "view";
-  tools: WebMcpManifestTool[];
-};
-
-type WebMcpManifest = Record<string, WebMcpManifestComponent>;
 
 const WEB_MCP_PARAM_ROLES = new Set(["input", "select", "vselect", "checkbox", "radio"]);
 const WEB_MCP_ACTION_ROLES = new Set(["button", "toggle"]);
@@ -214,6 +189,8 @@ function buildWebMcpActions(entries: readonly PomManifestEntry[]): WebMcpManifes
         name: actionName,
         testId: entry.testId,
         description: upperFirst(humanizePomMethodName(stripPomActionPrefix(actionName))),
+        selectorPatternKind: entry.selectorPatternKind,
+        selectorTemplateVariables: entry.selectorTemplateVariables,
         ...(entry.targetPageObjectModelClass ? { targetPageObjectModelClass: entry.targetPageObjectModelClass } : {}),
       });
     }
@@ -226,6 +203,7 @@ export function buildWebMcpManifestFromPomManifest(pomManifest: PomManifest): We
   const webMcpEntries = Object.entries(pomManifest)
     .map(([componentName, component]) => {
       const componentWords = getComponentWords(componentName);
+      const actions = buildWebMcpActions(component.entries);
       const params = component.entries
         .filter(entry => entry.inferredRole && WEB_MCP_PARAM_ROLES.has(entry.inferredRole))
         .map(entry => ({
@@ -233,12 +211,13 @@ export function buildWebMcpManifestFromPomManifest(pomManifest: PomManifest): We
           role: entry.inferredRole!,
           testId: entry.testId,
           selectorPatternKind: entry.selectorPatternKind,
+          selectorTemplateVariables: entry.selectorTemplateVariables,
           toolParamDescription: entry.semanticName,
           generatedPropertyName: entry.generatedPropertyName,
         } satisfies WebMcpManifestParameter))
         .sort((a, b) => a.name.localeCompare(b.name) || a.testId.localeCompare(b.testId));
 
-      if (!params.length) {
+      if (!params.length && !actions.length) {
         return null;
       }
 
@@ -246,8 +225,9 @@ export function buildWebMcpManifestFromPomManifest(pomManifest: PomManifest): We
       const tools: WebMcpManifestTool[] = [{
         toolName: toSnakeCase(componentWords),
         toolDescription: `Interact with ${componentLabel}.`,
+        toolAutoSubmit: actions.length === 1 && params.length === 0,
         params,
-        actions: buildWebMcpActions(component.entries),
+        actions,
       }];
 
       return [componentName, {
@@ -305,6 +285,7 @@ function getManifestEntry(
   return {
     testId,
     selectorPatternKind: entry.selectorValue.patternKind,
+    selectorTemplateVariables: [...entry.selectorValue.templateVariables],
     semanticName: metadata?.semanticName ?? (pom ? humanizePomMethodName(pom.methodName) : testId),
     locatorDescription: pom
       ? buildPomLocatorDescription({
@@ -498,5 +479,82 @@ export function generateWebMcpManifestModule(
       name: "WebMcpManifestComponentName",
       type: "keyof WebMcpManifest",
     });
+  });
+}
+
+export function generateWebMcpBridgeModule(
+  componentHierarchyMap: Map<string, IComponentDependencies>,
+  elementMetadata: Map<string, Map<string, ElementMetadata>>,
+  testIdAttribute: string,
+): string {
+  const webMcpManifest = buildWebMcpManifest(componentHierarchyMap, elementMetadata);
+
+  return renderSourceFile("virtual-webmcp-bridge.ts", (sourceFile) => {
+    sourceFile.addStatements("// Virtual module: WebMCP runtime bridge");
+    addNamedImport(sourceFile, {
+      moduleSpecifier: "@immense/vue-pom-generator/webmcp-runtime",
+      namedImports: ["registerWebMcpManifestTools"],
+    });
+    addNamedImport(sourceFile, {
+      moduleSpecifier: "@immense/vue-pom-generator/webmcp-runtime",
+      isTypeOnly: true,
+      namedImports: ["RegisterWebMcpManifestToolsOptions", "RegisteredWebMcpToolsHandle"],
+    });
+    sourceFile.addVariableStatement({
+      declarationKind: VariableDeclarationKind.Const,
+      isExported: true,
+      declarations: [{
+        name: "webMcpManifest",
+        initializer: writeConstJson(webMcpManifest),
+      }],
+    });
+    sourceFile.addVariableStatement({
+      declarationKind: VariableDeclarationKind.Const,
+      isExported: true,
+      declarations: [{
+        name: "webMcpTestIdAttribute",
+        initializer: JSON.stringify(testIdAttribute),
+      }],
+    });
+    sourceFile.addTypeAlias({
+      isExported: true,
+      name: "WebMcpManifest",
+      type: "typeof webMcpManifest",
+    });
+    sourceFile.addTypeAlias({
+      isExported: true,
+      name: "WebMcpManifestComponentName",
+      type: "keyof WebMcpManifest",
+    });
+    sourceFile.addStatements(`
+let activeWebMcpRegistration: RegisteredWebMcpToolsHandle | null = null;
+
+export type GeneratedWebMcpToolRegistrationOptions = Omit<RegisterWebMcpManifestToolsOptions, "manifest" | "testIdAttribute">;
+
+export function registerGeneratedWebMcpTools(
+  options: GeneratedWebMcpToolRegistrationOptions = {},
+): RegisteredWebMcpToolsHandle {
+  if (activeWebMcpRegistration) {
+    activeWebMcpRegistration.unregister();
+  }
+
+  activeWebMcpRegistration = registerWebMcpManifestTools({
+    manifest: webMcpManifest,
+    testIdAttribute: webMcpTestIdAttribute,
+    ...options,
+  });
+
+  return activeWebMcpRegistration;
+}
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    if (activeWebMcpRegistration) {
+      activeWebMcpRegistration.unregister();
+      activeWebMcpRegistration = null;
+    }
+  });
+}
+`);
   });
 }
