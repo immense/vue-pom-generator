@@ -741,6 +741,37 @@ console.log(webMcpManifest.UserEditorPage.tools[0].toolName);
 console.log(webMcpManifest.UserEditorPage.tools[0].params);
 ```
 
+Example: bridge the manifest into a WebMCP runtime with `@mcp-b/global`:
+
+```ts
+import "@mcp-b/global";
+import { webMcpManifest } from "virtual:webmcp-manifest";
+
+for (const component of Object.values(webMcpManifest)) {
+  for (const tool of component.tools) {
+    navigator.modelContext.registerTool({
+      name: tool.toolName,
+      description: tool.toolDescription,
+      inputSchema: {
+        type: "object",
+        properties: Object.fromEntries(tool.params.map(param => [
+          param.name,
+          {
+            type: param.role === "checkbox" ? "boolean" : "string",
+            description: param.toolParamDescription,
+          },
+        ])),
+      },
+      async execute(args) {
+        return {
+          content: [{ type: "text", text: JSON.stringify(args) }],
+        };
+      },
+    });
+  }
+}
+```
+
 What it contains:
 
 - an object keyed by component/page object model class name
