@@ -294,16 +294,16 @@ describe("webMcp runtime bridge", () => {
       testIdAttribute: "data-qa",
     });
 
-    expect([...registration.toolNames].sort()).toEqual(["click_bar", "click_foo_by_key", "click_save_foo"]);
+    expect([...registration.toolNames].sort()).toEqual(["bar", "foo_by_key", "save_foo"]);
 
     const tools = modelContext.listTools();
-    const barTool = tools.find(tool => tool.name === "click_bar");
-    const fooByKeyTool = tools.find(tool => tool.name === "click_foo_by_key");
-    const saveFooTool = tools.find(tool => tool.name === "click_save_foo");
+    const barTool = tools.find(tool => tool.name === "bar");
+    const fooByKeyTool = tools.find(tool => tool.name === "foo_by_key");
+    const saveFooTool = tools.find(tool => tool.name === "save_foo");
 
     expect(tools).toHaveLength(3);
     expect(barTool).toMatchObject({
-      name: "click_bar",
+      name: "bar",
       description: "Click bar on Bar.",
       inputSchema: {
         type: "object",
@@ -311,7 +311,7 @@ describe("webMcp runtime bridge", () => {
       },
     });
     expect(fooByKeyTool).toMatchObject({
-      name: "click_foo_by_key",
+      name: "foo_by_key",
       description: "Click foo by key on Foo.",
       inputSchema: {
         type: "object",
@@ -336,7 +336,7 @@ describe("webMcp runtime bridge", () => {
       },
     });
     expect(saveFooTool).toMatchObject({
-      name: "click_save_foo",
+      name: "save_foo",
       description: "Click save foo on Foo.",
       inputSchema: {
         type: "object",
@@ -362,21 +362,21 @@ describe("webMcp runtime bridge", () => {
     });
 
     const barResult = await modelContext.callTool({
-      name: "click_bar",
+      name: "bar",
       arguments: {},
     });
     expect(barClicks).toBe(1);
     expect(barResult.content[0]?.type).toBe("text");
     expect(JSON.parse(barResult.content[0]?.text ?? "null")).toEqual({
       component: "Bar",
-      tool: "click_bar",
+      tool: "bar",
       appliedParameters: [],
       selectorVariablesUsed: [],
       action: "clickBar",
     });
 
     const fooByKeyResult = await modelContext.callTool({
-      name: "click_foo_by_key",
+      name: "foo_by_key",
       arguments: {
         name: "Ayla",
         enabled: true,
@@ -393,14 +393,14 @@ describe("webMcp runtime bridge", () => {
     expect(fooByKeyResult.content[0]?.type).toBe("text");
     expect(JSON.parse(fooByKeyResult.content[0]?.text ?? "null")).toEqual({
       component: "Foo",
-      tool: "click_foo_by_key",
+      tool: "foo_by_key",
       appliedParameters: ["enabled", "name", "notes"],
       selectorVariablesUsed: ["key"],
       action: "clickFooByKey",
     });
 
     const saveFooResult = await modelContext.callTool({
-      name: "click_save_foo",
+      name: "save_foo",
       arguments: {
         name: "Bea",
       },
@@ -412,7 +412,7 @@ describe("webMcp runtime bridge", () => {
     expect(saveFooResult.content[0]?.type).toBe("text");
     expect(JSON.parse(saveFooResult.content[0]?.text ?? "null")).toEqual({
       component: "Foo",
-      tool: "click_save_foo",
+      tool: "save_foo",
       appliedParameters: ["name"],
       selectorVariablesUsed: [],
       action: "clickSaveFoo",
@@ -451,13 +451,13 @@ describe("webMcp runtime bridge", () => {
       testIdAttribute: "data-qa",
     });
 
-    expect([...registration.toolNames].sort()).toEqual(["click_foo_by_key", "click_save_foo"]);
-    expect(modelContext.listTools().map(tool => tool.name).sort()).toEqual(["click_foo_by_key", "click_save_foo"]);
+    expect([...registration.toolNames].sort()).toEqual(["foo_by_key", "save_foo"]);
+    expect(modelContext.listTools().map(tool => tool.name).sort()).toEqual(["foo_by_key", "save_foo"]);
 
     navigate(createMatchedRoute("Bar"));
 
-    expect([...registration.toolNames].sort()).toEqual(["click_bar"]);
-    expect(modelContext.listTools().map(tool => tool.name).sort()).toEqual(["click_bar"]);
+    expect([...registration.toolNames].sort()).toEqual(["bar"]);
+    expect(modelContext.listTools().map(tool => tool.name).sort()).toEqual(["bar"]);
 
     navigate(createMatchedRoute("MissingRoute"));
 
@@ -500,8 +500,8 @@ describe("webMcp runtime bridge", () => {
     resolveReady();
     await Promise.resolve();
 
-    expect([...registration.toolNames].sort()).toEqual(["click_foo_by_key", "click_save_foo"]);
-    expect(modelContext.listTools().map(tool => tool.name).sort()).toEqual(["click_foo_by_key", "click_save_foo"]);
+    expect([...registration.toolNames].sort()).toEqual(["foo_by_key", "save_foo"]);
+    expect(modelContext.listTools().map(tool => tool.name).sort()).toEqual(["foo_by_key", "save_foo"]);
 
     registration.unregister();
     expect(modelContext.listTools()).toHaveLength(0);

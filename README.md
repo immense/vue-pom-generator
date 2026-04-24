@@ -800,7 +800,7 @@ What it does:
 Current bridge behavior:
 
 - promotes generated POM actions to top-level tools (for example click/goTo/select/type methods become WebMCP tool names)
-- falls back to `set_<component>` tools only for component surfaces that expose writable params but no action
+- falls back to component-scoped param tools (for example `dynamic_form_field`) only when a surface exposes writable params but no action
 - fills native text inputs / textareas, checkboxes, radios, and native selects generically
 - attempts a best-effort combobox/select interaction path for `vselect`-style controls
 - resolves DOM targets at call time so SPA rerenders do not leave stale element handles behind

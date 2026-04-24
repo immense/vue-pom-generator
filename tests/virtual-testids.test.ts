@@ -68,15 +68,26 @@ describe("virtual:testids", () => {
       ]), {
         filePath: "/repo/src/views/Foo.vue",
         isView: true,
-        pomExtraMethods: [{
-          kind: "click",
-          name: "clickFirstFoo",
-          selector: {
-            kind: "testId",
-            testId: createPomStringPattern("foo-${key}-button", "parameterized"),
+        pomExtraMethods: [
+          {
+            kind: "click",
+            name: "clickFirstFoo",
+            selector: {
+              kind: "testId",
+              testId: createPomStringPattern("foo-${key}-button", "parameterized"),
+            },
+            parameters: [createPomParameterSpec("key", "string")],
           },
-          parameters: [createPomParameterSpec("key", "string")],
-        }],
+          {
+            kind: "click",
+            name: "clickSetShowStickyActions",
+            selector: {
+              kind: "testId",
+              testId: createPomStringPattern("foo-save-button", "static"),
+            },
+            parameters: [],
+          },
+        ],
       })],
       ["Bar", createDependencies(new Set([
         {
@@ -104,6 +115,19 @@ describe("virtual:testids", () => {
       ]), {
         filePath: "/repo/src/views/BarPage.vue",
         isView: true,
+      })],
+      ["LoadButton", createDependencies(new Set([
+        {
+          selectorValue: createPomStringPattern("LoadButton-Click-button", "static"),
+          pom: {
+            nativeRole: "button",
+            methodName: "Click",
+            selector: createPomStringPattern("LoadButton-Click-button", "static"),
+            parameters: [],
+          },
+        },
+      ]), {
+        filePath: "/repo/src/components/LoadButton.vue",
       })],
       ["DynamicFormField", createDependencies(new Set([
         {
@@ -177,6 +201,16 @@ describe("virtual:testids", () => {
           staticTextContent: "Save",
         }],
       ])],
+      ["LoadButton", new Map([
+        ["LoadButton-Click-button", {
+          testId: "LoadButton-Click-button",
+          semanticName: "click",
+          tag: "button",
+          tagType: 0,
+          hasClickHandler: true,
+          staticTextContent: "Load",
+        }],
+      ])],
     ]);
 
     const plugin = createTestIdsVirtualModulesPlugin(componentHierarchyMap, elementMetadata, "data-qa");
@@ -211,7 +245,7 @@ describe("virtual:testids", () => {
     expect(code).toContain("\"sourceFile\": \"/repo/src/views/Foo.vue\"");
     expect(code).toContain("\"kind\": \"view\"");
     expect(code).toContain("\"semanticName\": \"foo item\"");
-    expect(code).toContain("\"toolName\": \"click_save_foo\"");
+    expect(code).toContain("\"toolName\": \"save_foo\"");
     expect(code).toContain("\"toolDescription\": \"Click save foo on Foo.\"");
     expect(code).toContain("\"toolAutoSubmit\": true");
     expect(code).toContain("\"toolParamDescription\": \"foo name\"");
@@ -243,12 +277,14 @@ describe("virtual:testids", () => {
     expect(webMcpManifestCode).not.toContain("export const pomManifest");
     expect(webMcpManifestCode).toContain("\"Bar\"");
     expect(webMcpManifestCode).toContain("\"BarPage\"");
-    expect(webMcpManifestCode).toContain("\"toolName\": \"click_foo_by_key\"");
-    expect(webMcpManifestCode).toContain("\"toolName\": \"click_first_foo\"");
-    expect(webMcpManifestCode).toContain("\"toolName\": \"click_save_foo\"");
-    expect(webMcpManifestCode).toContain("\"toolName\": \"click_bar\"");
-    expect(webMcpManifestCode).toContain("\"toolName\": \"click_refresh_bar_page\"");
-    expect(webMcpManifestCode).toContain("\"toolName\": \"set_dynamic_form_field\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"foo_by_key\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"first_foo\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"save_foo\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"load_button\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"show_sticky_actions\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"bar\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"refresh_bar_page\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"dynamic_form_field\"");
     expect(webMcpManifestCode).toContain("\"name\": \"fieldValueCheckbox\"");
     expect(webMcpManifestCode).toContain("\"name\": \"fieldValueInput\"");
     expect(webMcpManifestCode).toContain("\"name\": \"fieldValueRadio\"");

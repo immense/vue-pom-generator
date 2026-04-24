@@ -66,6 +66,13 @@ type PendingWebMcpTool = Omit<WebMcpManifestTool, "toolName"> & {
 
 const WEB_MCP_PARAM_ROLES = new Set(["input", "select", "vselect", "checkbox", "radio"]);
 const WEB_MCP_ACTION_ROLES = new Set(["button", "toggle"]);
+const WEB_MCP_TOOL_TRANSPORT_PREFIXES = [
+  ["click"],
+  ["go", "to"],
+  ["type"],
+  ["select"],
+  ["set"],
+] as const;
 
 function removeByKeySegment(value: string): string {
   const idx = value.indexOf("ByKey");
@@ -170,6 +177,34 @@ function splitWebMcpToolWords(value: string): string[] {
 
 function humanizeWebMcpToolName(value: string): string {
   return splitWebMcpToolWords(value).join(" ").replace(/\s+/g, " ").trim();
+}
+
+function stripLeadingWebMcpToolTransportWords(words: readonly string[]): string[] {
+  let remainingWords = [...words];
+
+  while (remainingWords.length) {
+    const matchingPrefix = WEB_MCP_TOOL_TRANSPORT_PREFIXES.find(prefixWords =>
+      remainingWords.length >= prefixWords.length
+      && prefixWords.every((word, index) => remainingWords[index] === word),
+    );
+    if (!matchingPrefix) {
+      break;
+    }
+
+    remainingWords = remainingWords.slice(matchingPrefix.length);
+  }
+
+  return remainingWords;
+}
+
+function getWebMcpToolWordsFromActionName(actionName: string, fallbackWords: readonly string[] = []): string[] {
+  const actionWords = splitWebMcpToolWords(actionName);
+  const strippedWords = stripLeadingWebMcpToolTransportWords(actionWords);
+  if (strippedWords.length) {
+    return strippedWords;
+  }
+
+  return fallbackWords.length ? [...fallbackWords] : actionWords;
 }
 
 function getComponentWords(componentName: string): string[] {
@@ -398,7 +433,10 @@ export function buildWebMcpManifestFromPomManifest(pomManifest: PomManifest): We
 
       if (actions.length) {
         return actions.map(action => {
-          const preferredActionToolName = toSnakeCase(splitWebMcpToolWords(action.name));
+          const preferredActionToolName = toSnakeCase(getWebMcpToolWordsFromActionName(
+            action.name,
+            rawComponentWords.length ? rawComponentWords : componentWords,
+          ));
           return {
             componentName,
             preferredToolName: preferredActionToolName,
@@ -413,8 +451,8 @@ export function buildWebMcpManifestFromPomManifest(pomManifest: PomManifest): We
 
       return [{
         componentName,
-        preferredToolName: `set_${resolvedComponentToolName}`,
-        fallbackToolNames: [`update_${resolvedComponentToolName}`, `set_${resolvedComponentToolName}_tool`],
+        preferredToolName: resolvedComponentToolName,
+        fallbackToolNames: [`${resolvedComponentToolName}_fields`, `${resolvedComponentToolName}_tool`],
         toolDescription: `Set values on ${componentLabel}.`,
         toolAutoSubmit: false,
         params,
