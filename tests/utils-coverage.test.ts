@@ -6,6 +6,7 @@ import type {
   ElementNode,
   ForNode,
   RootNode,
+  SimpleExpressionNode,
   TemplateChildNode,
   TransformContext,
 } from "@vue/compiler-core";
@@ -429,13 +430,13 @@ describe("utils.ts coverage", () => {
     expect(info?.semanticNameHint).toBe("SetShowModalTrue");
   });
 
-  it("does not derive a :handler semanticNameHint from logical-expression arrow bodies", () => {
+  it("derives :handler semanticNameHint from logical-expression arrow bodies", () => {
     const root = parseTemplate(`
       <LoadButton :handler="() => person && impersonateUser(person.userId!)">Impersonate</LoadButton>
     `);
     const el = firstElement(root);
 
-    expect(nodeHandlerAttributeInfo(el)).toBeNull();
+    expect(nodeHandlerAttributeInfo(el)?.semanticNameHint).toBe("ImpersonateUser");
   });
 
   it("handles :key extraction paths", () => {
@@ -495,6 +496,18 @@ describe("utils.ts coverage", () => {
     const direct = firstElement(parseTemplate("<LoadButton :handler=\"approveChangeRequest\" />"));
     expect(nodeHandlerAttributeValue(direct)).toBe("ApproveChangeRequest");
     expect(nodeHandlerAttributeInfo(direct)?.mergeKey).toBe("handler:expr:approveChangeRequest");
+
+    const rewritten = firstElement(parseTemplate("<LoadButton :handler=\"saveNotes\" />"));
+    const rewrittenDirective = rewritten.props.find((prop): prop is DirectiveNode => {
+      return prop.type === NodeTypes.DIRECTIVE
+        && prop.name === "bind"
+        && prop.arg?.type === NodeTypes.SIMPLE_EXPRESSION
+        && prop.arg.content === "handler";
+    });
+    expect(rewrittenDirective?.exp?.type).toBe(NodeTypes.SIMPLE_EXPRESSION);
+    (rewrittenDirective?.exp as SimpleExpressionNode).content = "_unref(saveNotes)";
+    expect(nodeHandlerAttributeValue(rewritten)).toBe("SaveNotes");
+    expect(nodeHandlerAttributeInfo(rewritten)?.mergeKey).toBe("handler:expr:saveNotes");
 
     const goBackFalse = firstElement(parseTemplate("<LoadButton :handler=\"() => onSubmit({goBack:false})\" />"));
     const goBackTrue = firstElement(parseTemplate("<LoadButton :handler=\"() => onSubmit({goBack:true})\" />"));

@@ -758,7 +758,7 @@ registration.unregister();
 What it contains:
 
 - an object keyed by component/page object model class name
-- for each component with supported form-like controls or button actions: one or more suggested tools
+- for each component/page: source metadata, `usedComponents` relationship data for route-aware scoping, and zero or more suggested tools
 - for each tool: `toolName`, `toolDescription`, `toolAutoSubmit`, parameter metadata with `toolParamDescription`, and any generated action names that can drive submission or follow-up behavior
 - parameterized selectors also carry `selectorTemplateVariables` so a runtime bridge can resolve test ids such as `foo-${key}-button`
 
@@ -782,6 +782,9 @@ const registration = registerGeneratedWebMcpTools();
 // optional: scope to a subtree or a custom modelContext
 // const registration = registerGeneratedWebMcpTools({ root: document.querySelector("#app")! });
 
+// optional: route-scope the tool surface in a Vue SPA
+// const registration = registerGeneratedWebMcpTools({ router });
+
 // later
 registration.unregister();
 ```
@@ -791,13 +794,16 @@ What it does:
 - imports the browser-safe `@immense/vue-pom-generator/webmcp-runtime` helper for you
 - binds the current generated `webMcpManifest`
 - binds the current configured test-id attribute
+- when given `{ router }`, derives the active route view tree from Vue Router and only registers tools for the matched components plus their generated component dependencies
 - unregisters the generated tools on Vite HMR disposal so dev reloads do not leak duplicate registrations
 
 Current bridge behavior:
 
+- promotes generated POM actions to top-level tools (for example click/goTo/select/type methods become WebMCP tool names)
+- falls back to `set_<component>` tools only for component surfaces that expose writable params but no action
 - fills native text inputs / textareas, checkboxes, radios, and native selects generically
 - attempts a best-effort combobox/select interaction path for `vselect`-style controls
-- auto-clicks a tool's sole action only when the tool has no parameters; otherwise use the generated `submitAction` input to choose an action explicitly
+- resolves DOM targets at call time so SPA rerenders do not leave stale element handles behind
 
 ## ESLint rules that actually ship
 

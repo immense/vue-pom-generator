@@ -33,6 +33,7 @@ export interface WebMcpManifestComponent {
   className: string;
   sourceFile: string;
   kind: "component" | "view";
+  usedComponents: string[];
   tools: WebMcpManifestTool[];
 }
 
@@ -80,6 +81,28 @@ export interface RegisterWebMcpManifestToolsOptions {
 export interface RegisteredWebMcpToolsHandle {
   toolNames: string[];
   unregister(): void;
+}
+
+export interface WebMcpRouteRecordLike {
+  components?: Record<string, unknown>;
+  instances?: Record<string, unknown>;
+  component?: unknown;
+}
+
+export interface WebMcpRouteLike {
+  matched?: WebMcpRouteRecordLike[];
+}
+
+export interface WebMcpRouterLike {
+  currentRoute?: { value?: WebMcpRouteLike } | WebMcpRouteLike;
+  afterEach?(guard: (to: WebMcpRouteLike) => void): (() => void) | void;
+  isReady?(): Promise<unknown>;
+}
+
+export interface RegisterRouteScopedWebMcpManifestToolsOptions extends RegisterWebMcpManifestToolsOptions {
+  router: WebMcpRouterLike;
+  includeComponentNames?: string[];
+  fallbackToGlobalWhenNoRouteMatch?: boolean;
 }
 
 const DEFAULT_TEST_ID_ATTRIBUTE = "data-testid";
@@ -466,7 +489,7 @@ function getToolDescription(tool: WebMcpManifestTool, actionParameterName: strin
   }
 
   if (tool.toolAutoSubmit && tool.actions.length === 1) {
-    return `${tool.toolDescription} Calling this tool clicks ${tool.actions[0].name}.`;
+    return tool.toolDescription;
   }
 
   const actionList = tool.actions.map(action => action.name).join(", ");
@@ -508,6 +531,193 @@ function getToolInputSchema(tool: WebMcpManifestTool, actionParameterName: strin
     required: [],
     additionalProperties: false,
   };
+}
+
+function getBasenameWithoutExtension(value: string): string {
+  const normalized = value.replace(/\\/g, "/");
+  const basename = normalized.split("/").pop() ?? normalized;
+  return basename.replace(/\.[^.]+$/u, "");
+}
+
+function normalizeManifestComponentIdentity(value: string): string {
+  return value.replace(/\\/g, "/").replace(/\.[^.]+$/u, "").trim().toLowerCase();
+}
+
+function addManifestComponentIdentity(index: Map<string, Set<string>>, identity: string, componentName: string): void {
+  const normalized = normalizeManifestComponentIdentity(identity);
+  if (!normalized) {
+    return;
+  }
+
+  const existing = index.get(normalized);
+  if (existing) {
+    existing.add(componentName);
+    return;
+  }
+
+  index.set(normalized, new Set([componentName]));
+}
+
+function buildManifestComponentIdentityIndex(manifest: WebMcpManifest): Map<string, Set<string>> {
+  const index = new Map<string, Set<string>>();
+
+  for (const component of Object.values(manifest)) {
+    addManifestComponentIdentity(index, component.componentName, component.componentName);
+    addManifestComponentIdentity(index, component.className, component.componentName);
+    addManifestComponentIdentity(index, component.sourceFile, component.componentName);
+    addManifestComponentIdentity(index, getBasenameWithoutExtension(component.sourceFile), component.componentName);
+  }
+
+  return index;
+}
+
+function collectRuntimeComponentIdentityCandidates(
+  value: unknown,
+  out: Set<string>,
+  seen: Set<unknown> = new Set(),
+): void {
+  if (value === null || value === undefined) {
+    return;
+  }
+
+  if (typeof value === "string") {
+    out.add(value);
+    out.add(getBasenameWithoutExtension(value));
+    return;
+  }
+
+  if (typeof value !== "object" && typeof value !== "function") {
+    return;
+  }
+
+  if (seen.has(value)) {
+    return;
+  }
+  seen.add(value);
+
+  const record = value as Record<string, unknown>;
+
+  if (typeof value === "function" && value.name) {
+    out.add(value.name);
+  }
+
+  for (const key of ["name", "__name", "displayName", "__file"] as const) {
+    const identity = record[key];
+    if (typeof identity === "string" && identity.trim()) {
+      out.add(identity);
+      out.add(getBasenameWithoutExtension(identity));
+    }
+  }
+
+  if ("default" in record) {
+    collectRuntimeComponentIdentityCandidates(record.default, out, seen);
+  }
+  if ("type" in record) {
+    collectRuntimeComponentIdentityCandidates(record.type, out, seen);
+  }
+  if ("__asyncResolved" in record) {
+    collectRuntimeComponentIdentityCandidates(record.__asyncResolved, out, seen);
+  }
+  if ("__vccOpts" in record) {
+    collectRuntimeComponentIdentityCandidates(record.__vccOpts, out, seen);
+  }
+  if ("$" in record && record.$ && typeof record.$ === "object" && "type" in (record.$ as Record<string, unknown>)) {
+    collectRuntimeComponentIdentityCandidates((record.$ as Record<string, unknown>).type, out, seen);
+  }
+}
+
+function getRouteRecordComponentValues(record: WebMcpRouteRecordLike): unknown[] {
+  const out: unknown[] = [];
+
+  if (record.component !== undefined) {
+    out.push(record.component);
+  }
+
+  if (record.components && typeof record.components === "object") {
+    out.push(...Object.values(record.components));
+  }
+
+  if (record.instances && typeof record.instances === "object") {
+    out.push(...Object.values(record.instances));
+  }
+
+  return out;
+}
+
+function getCurrentRoute(router: WebMcpRouterLike): WebMcpRouteLike | undefined {
+  const currentRoute = router.currentRoute;
+  if (currentRoute && typeof currentRoute === "object" && "value" in currentRoute) {
+    return currentRoute.value;
+  }
+
+  return currentRoute as WebMcpRouteLike | undefined;
+}
+
+function resolveRouteMatchedManifestComponentNames(manifest: WebMcpManifest, route: WebMcpRouteLike | undefined): string[] {
+  const index = buildManifestComponentIdentityIndex(manifest);
+  const resolved = new Set<string>();
+
+  for (const record of route?.matched ?? []) {
+    for (const componentValue of getRouteRecordComponentValues(record)) {
+      const candidates = new Set<string>();
+      collectRuntimeComponentIdentityCandidates(componentValue, candidates);
+      for (const candidate of candidates) {
+        for (const componentName of index.get(normalizeManifestComponentIdentity(candidate)) ?? []) {
+          resolved.add(componentName);
+        }
+      }
+    }
+  }
+
+  return [...resolved].sort((a, b) => a.localeCompare(b));
+}
+
+function expandManifestComponentNames(manifest: WebMcpManifest, seedNames: readonly string[]): string[] {
+  const resolved = new Set<string>();
+  const stack = [...seedNames];
+
+  while (stack.length > 0) {
+    const componentName = stack.pop();
+    if (!componentName || resolved.has(componentName)) {
+      continue;
+    }
+
+    const component = manifest[componentName];
+    if (!component) {
+      continue;
+    }
+
+    resolved.add(componentName);
+    for (const childComponentName of component.usedComponents) {
+      if (!resolved.has(childComponentName)) {
+        stack.push(childComponentName);
+      }
+    }
+  }
+
+  return [...resolved].sort((a, b) => a.localeCompare(b));
+}
+
+function getScopedManifest(
+  manifest: WebMcpManifest,
+  route: WebMcpRouteLike | undefined,
+  includeComponentNames: readonly string[],
+  fallbackToGlobalWhenNoRouteMatch: boolean,
+): WebMcpManifest {
+  const componentNames = expandManifestComponentNames(manifest, [
+    ...includeComponentNames,
+    ...resolveRouteMatchedManifestComponentNames(manifest, route),
+  ]);
+
+  if (!componentNames.length) {
+    return fallbackToGlobalWhenNoRouteMatch ? manifest : {};
+  }
+
+  const allowedNames = new Set(componentNames);
+  return Object.fromEntries(
+    Object.entries(manifest)
+      .filter(([componentName]) => allowedNames.has(componentName)),
+  );
 }
 
 function resolveModelContext(modelContext?: WebMcpModelContextLike): WebMcpModelContextLike {
@@ -777,6 +987,87 @@ export function registerWebMcpManifestTools(options: RegisterWebMcpManifestTools
       if (errors.length > 0) {
         throw errors[0];
       }
+    },
+  };
+}
+
+export function registerRouteScopedWebMcpManifestTools(
+  options: RegisterRouteScopedWebMcpManifestToolsOptions,
+): RegisteredWebMcpToolsHandle {
+  const toolNames: string[] = [];
+  const includeComponentNames = [...(options.includeComponentNames ?? [])];
+  const fallbackToGlobalWhenNoRouteMatch = options.fallbackToGlobalWhenNoRouteMatch === true;
+  const baseOptions: RegisterWebMcpManifestToolsOptions = {
+    manifest: options.manifest,
+    ...(options.modelContext ? { modelContext: options.modelContext } : {}),
+    ...(options.root ? { root: options.root } : {}),
+    ...(options.testIdAttribute ? { testIdAttribute: options.testIdAttribute } : {}),
+    ...(options.actionParameterName ? { actionParameterName: options.actionParameterName } : {}),
+  };
+
+  let disposed = false;
+  let activeRegistration: RegisteredWebMcpToolsHandle | null = null;
+  let removeAfterEach: (() => void) | null = null;
+  let activeScopeKey = "";
+
+  const syncToolNames = (nextToolNames: readonly string[]) => {
+    toolNames.splice(0, toolNames.length, ...nextToolNames);
+  };
+
+  const refreshRegistration = (route: WebMcpRouteLike | undefined) => {
+    if (disposed) {
+      return;
+    }
+
+    const scopedManifest = getScopedManifest(
+      options.manifest,
+      route,
+      includeComponentNames,
+      fallbackToGlobalWhenNoRouteMatch,
+    );
+    const scopeKey = Object.keys(scopedManifest).sort((a, b) => a.localeCompare(b)).join("|");
+    if (scopeKey === activeScopeKey && activeRegistration) {
+      return;
+    }
+
+    activeRegistration?.unregister();
+    activeRegistration = registerWebMcpManifestTools({
+      ...baseOptions,
+      manifest: scopedManifest,
+    });
+    activeScopeKey = scopeKey;
+    syncToolNames(activeRegistration.toolNames);
+  };
+
+  if (options.router.afterEach) {
+    const maybeRemoveAfterEach = options.router.afterEach((to) => {
+      refreshRegistration(to);
+    });
+    if (typeof maybeRemoveAfterEach === "function") {
+      removeAfterEach = maybeRemoveAfterEach;
+    }
+  }
+
+  refreshRegistration(getCurrentRoute(options.router));
+  if (options.router.isReady) {
+    void options.router.isReady().then(() => {
+      refreshRegistration(getCurrentRoute(options.router));
+    });
+  }
+
+  return {
+    toolNames,
+    unregister() {
+      if (disposed) {
+        return;
+      }
+
+      disposed = true;
+      removeAfterEach?.();
+      activeRegistration?.unregister();
+      activeRegistration = null;
+      activeScopeKey = "";
+      syncToolNames([]);
     },
   };
 }

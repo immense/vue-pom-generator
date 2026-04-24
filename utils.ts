@@ -1253,14 +1253,15 @@ export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInf
   }
 
   const exp = handlerDirective.exp as SimpleExpressionNode | CompoundExpressionNode;
-  const source = getVueExpressionSource(exp, "content", "compiled");
-  if (!source) {
+  const transformedSource = getVueExpressionSource(exp, "content", "compiled");
+  const authorSource = getVueExpressionSource(exp, "loc", "content", "compiled");
+  if (!authorSource) {
     return null;
   }
 
   // Use a source-based key so identical handler expressions can converge.
   // NOTE: We intentionally do not normalize via regex/string parsing helpers in this package.
-  const mergeKey = `handler:expr:${source}`;
+  const mergeKey = `handler:expr:${authorSource}`;
 
   const expr = tryGetDirectiveBabelAst(handlerDirective, {
     preferredViews: ["content", "compiled"],
@@ -1269,10 +1270,9 @@ export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInf
     // That is fine for Vue codegen, but our semantic-name extraction needs a normal Babel parse tree.
     preferExistingAst: false,
   });
-  if (!expr) {
-    // Even if parsing fails, still provide a merge identity.
-    return null;
-  }
+  const fallbackExpr = transformedSource !== authorSource
+    ? tryParseBabelExpressionFromSource(authorSource, ["typescript", "jsx"])
+    : null;
 
   const isNodeType = (node: object | null, type: string): node is { type: string } => {
     return node !== null && (node as { type?: string }).type === type;
@@ -1355,6 +1355,25 @@ export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInf
     return typeof n.computed === "boolean"
       && typeof n.key === "object" && n.key !== null
       && typeof n.value === "object" && n.value !== null;
+  };
+  const isLogicalExpressionNode = (node: object | null): node is { type: "LogicalExpression"; right: object } => {
+    if (!isNodeType(node, "LogicalExpression"))
+      return false;
+    const n = node as { right?: object };
+    return typeof n.right === "object" && n.right !== null;
+  };
+  const isConditionalExpressionNode = (node: object | null): node is { type: "ConditionalExpression"; consequent: object; alternate: object } => {
+    if (!isNodeType(node, "ConditionalExpression"))
+      return false;
+    const n = node as { consequent?: object; alternate?: object };
+    return typeof n.consequent === "object" && n.consequent !== null
+      && typeof n.alternate === "object" && n.alternate !== null;
+  };
+  const isSequenceExpressionNode = (node: object | null): node is { type: "SequenceExpression"; expressions: object[] } => {
+    if (!isNodeType(node, "SequenceExpression"))
+      return false;
+    const n = node as { expressions?: object[] };
+    return Array.isArray(n.expressions);
   };
 
   const getLastIdentifierFromMemberChain = (node: object | null): string | null => {
@@ -1565,75 +1584,112 @@ export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInf
     return limited.map(p => `${toPascalCase(p.key)}${p.value}`).join("");
   };
 
-  // :handler="myHandler" or :handler="obj.myHandler"
-  const direct = getLastIdentifierFromMemberChain(expr);
-  if (direct) {
-    return { semanticNameHint: toPascalCase(direct), mergeKey };
-  }
+  const tryFromCallExpression = (call: object | null) => {
+    const resolvedCall = isAwaitExpressionNode(call)
+      ? call.argument
+      : call;
+    if (!isCallExpressionNode(resolvedCall)) {
+      return null;
+    }
+    const name = getLastIdentifierFromMemberChain(resolvedCall.callee);
+    if (!name) {
+      return null;
+    }
+    const suffix = getStableSuffixFromCall(resolvedCall);
+    const semanticNameHint = suffix
+      ? `${toPascalCase(name)}${suffix}`
+      : toPascalCase(name);
+    return semanticNameHint;
+  };
 
-  // :handler="(x) => myHandler(x)" or :handler="() => obj.myHandler()"
-  if (isArrowFunctionExpressionNode(expr)) {
-    const body = expr.body;
+  const tryDeriveSemanticName = (candidate: object | null): string | null => {
+    if (!candidate) {
+      return null;
+    }
 
-    const tryFromCallExpression = (call: object | null) => {
-      const resolvedCall = isAwaitExpressionNode(call)
-        ? call.argument
-        : call;
-      if (!isCallExpressionNode(resolvedCall)) {
-        return null;
-      }
-      const name = getLastIdentifierFromMemberChain(resolvedCall.callee);
-      if (!name) {
-        return null;
-      }
-      const suffix = getStableSuffixFromCall(resolvedCall);
-      const semanticNameHint = suffix
-        ? `${toPascalCase(name)}${suffix}`
-        : toPascalCase(name);
-      return semanticNameHint;
-    };
-
-    // ArrowFunctionExpression with implicit return call: () => fn(...)
-    const directCall = tryFromCallExpression(body);
+    const directCall = tryFromCallExpression(candidate);
     if (directCall) {
-      return { semanticNameHint: directCall, mergeKey };
+      return directCall;
     }
 
-    // ArrowFunctionExpression with assignment body: () => someFlag = true
-    if (isAssignmentExpressionNode(body)) {
-      const lhs = getAssignmentTargetName(body.left);
+    if (isAssignmentExpressionNode(candidate)) {
+      const lhs = getAssignmentTargetName(candidate.left);
       if (lhs) {
-        const rhs = stableWordFromValue(body.right);
-        const semanticNameHint = `Set${toPascalCase(lhs)}${rhs ?? ""}`;
-        return { semanticNameHint, mergeKey };
+        const rhs = stableWordFromValue(candidate.right);
+        return `Set${toPascalCase(lhs)}${rhs ?? ""}`;
       }
+      return null;
     }
 
-    // ArrowFunctionExpression block: () => { return fn(...) } or () => { fn(...) }
-    if (isBlockStatementNode(body)) {
-      const stmts = body.body ?? [];
-      if (stmts.length > 0) {
-        const firstStmt = stmts[0] as object;
-        if (isReturnStatementNode(firstStmt)) {
-          const fromReturn = tryFromCallExpression(firstStmt.argument ?? null);
-          if (fromReturn) {
-            return { semanticNameHint: fromReturn, mergeKey };
-          }
-        }
-        if (isExpressionStatementNode(firstStmt)) {
-          const fromExpr = tryFromCallExpression(firstStmt.expression ?? null);
-          if (fromExpr) {
-            return { semanticNameHint: fromExpr, mergeKey };
-          }
-        }
-      }
+    if (isLogicalExpressionNode(candidate)) {
+      return tryDeriveSemanticName(candidate.right);
     }
 
-    // Fallback: () => myHandler
-    const bodyName = getLastIdentifierFromMemberChain(body);
+    if (isConditionalExpressionNode(candidate)) {
+      const consequent = tryDeriveSemanticName(candidate.consequent);
+      const alternate = tryDeriveSemanticName(candidate.alternate);
+      if (consequent && alternate && consequent === alternate) {
+        return consequent;
+      }
+      return consequent ?? alternate ?? null;
+    }
+
+    if (isSequenceExpressionNode(candidate)) {
+      const last = candidate.expressions.at(-1) ?? null;
+      return tryDeriveSemanticName(last);
+    }
+
+    const bodyName = getLastIdentifierFromMemberChain(candidate);
     if (bodyName) {
-      return { semanticNameHint: toPascalCase(bodyName), mergeKey };
+      return toPascalCase(bodyName);
     }
+
+    return null;
+  };
+
+  const resolveSemanticName = (candidateExpr: object | null): string | null => {
+    if (!candidateExpr) {
+      return null;
+    }
+
+    const direct = getLastIdentifierFromMemberChain(candidateExpr);
+    if (direct) {
+      return toPascalCase(direct);
+    }
+
+    if (isArrowFunctionExpressionNode(candidateExpr)) {
+      const body = candidateExpr.body;
+      const directSemanticName = tryDeriveSemanticName(body);
+      if (directSemanticName) {
+        return directSemanticName;
+      }
+
+      if (isBlockStatementNode(body)) {
+        const stmts = body.body ?? [];
+        if (stmts.length > 0) {
+          const firstStmt = stmts[0] as object;
+          if (isReturnStatementNode(firstStmt)) {
+            const fromReturn = tryDeriveSemanticName(firstStmt.argument ?? null);
+            if (fromReturn) {
+              return fromReturn;
+            }
+          }
+          if (isExpressionStatementNode(firstStmt)) {
+            const fromExpr = tryDeriveSemanticName(firstStmt.expression ?? null);
+            if (fromExpr) {
+              return fromExpr;
+            }
+          }
+        }
+      }
+    }
+
+    return null;
+  };
+
+  const semanticNameHint = resolveSemanticName(expr) ?? resolveSemanticName(fallbackExpr);
+  if (semanticNameHint) {
+    return { semanticNameHint, mergeKey };
   }
 
   return null;

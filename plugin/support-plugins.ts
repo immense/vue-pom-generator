@@ -13,6 +13,7 @@ import { createTestIdsVirtualModulesPlugin } from "./support/virtual-modules";
 interface SupportFactoryOptions {
   componentHierarchyMap: Map<string, IComponentDependencies>;
   elementMetadata: Map<string, Map<string, ElementMetadata>>;
+  semanticNameMap: Map<string, string>;
   vueFilesPathMap: Map<string, string>;
   nativeWrappers: NativeWrappersMap;
   excludedComponents: string[];
@@ -32,6 +33,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
   const {
     componentHierarchyMap,
     elementMetadata,
+    semanticNameMap,
     vueFilesPathMap,
     nativeWrappers,
     excludedComponents,
@@ -113,6 +115,10 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
   });
 
   const devProcessor = createDevProcessorPlugin({
+    elementMetadata,
+    semanticNameMap,
+    componentHierarchyMap,
+    vueFilesPathMap,
     nativeWrappers,
     excludedComponents,
     getPageDirs,

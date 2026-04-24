@@ -472,6 +472,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
   const supportPlugins = createSupportPlugins({
     componentHierarchyMap,
     elementMetadata,
+    semanticNameMap,
     vueFilesPathMap,
     nativeWrappers,
     excludedComponents,

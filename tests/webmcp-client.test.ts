@@ -6,8 +6,8 @@ import { buildWebMcpManifest } from "../manifest-generator";
 import { createPomParameterSpec } from "../pom-params";
 import { createPomStringPattern } from "../pom-patterns";
 import type { IComponentDependencies } from "../utils";
-import type { WebMcpModelContextLike } from "../webmcp-runtime";
-import { registerWebMcpManifestTools } from "../webmcp-runtime";
+import type { WebMcpModelContextLike, WebMcpRouteLike, WebMcpRouterLike } from "../webmcp-runtime";
+import { registerRouteScopedWebMcpManifestTools, registerWebMcpManifestTools } from "../webmcp-runtime";
 
 const TEST_INIT_OPTIONS = {
   transport: {
@@ -73,8 +73,65 @@ function requireModelContext(): TestingModelContext {
   return modelContext;
 }
 
+function createTestingRouter(initialRoute: WebMcpRouteLike, options: { withReady?: boolean } = {}) {
+  let afterEachHandler: ((to: WebMcpRouteLike) => void) | null = null;
+  const currentRoute = { value: initialRoute };
+  let resolveReady: (() => void) | null = null;
+  const readyPromise = new Promise<void>((resolve) => {
+    resolveReady = resolve;
+  });
+  const router: WebMcpRouterLike = {
+    currentRoute,
+    afterEach(guard) {
+      afterEachHandler = guard;
+      return () => {
+        if (afterEachHandler === guard) {
+          afterEachHandler = null;
+        }
+      };
+    },
+    ...(options.withReady
+      ? {
+          isReady() {
+            return readyPromise;
+          },
+        }
+      : {}),
+  };
+
+  return {
+    router,
+    navigate(nextRoute: WebMcpRouteLike, notify = true) {
+      currentRoute.value = nextRoute;
+      if (notify) {
+        afterEachHandler?.(nextRoute);
+      }
+    },
+    resolveReady() {
+      resolveReady?.();
+    },
+  };
+}
+
+function createMatchedRoute(componentName: string): WebMcpRouteLike {
+  return {
+    matched: [{
+      components: {
+        default: {
+          name: componentName,
+        },
+      },
+    }],
+  };
+}
+
 function buildFixtureManifest() {
   const componentHierarchyMap = new Map<string, IComponentDependencies>([
+    ["FooRoute", createDependencies(new Set(), {
+      filePath: "/repo/src/views/FooRoute.vue",
+      isView: true,
+      usedComponentSet: new Set(["Foo"]),
+    })],
     ["Bar", createDependencies(new Set([
       {
         selectorValue: createPomStringPattern("bar", "static"),
@@ -237,24 +294,25 @@ describe("webMcp runtime bridge", () => {
       testIdAttribute: "data-qa",
     });
 
-    expect([...registration.toolNames].sort()).toEqual(["bar", "foo"]);
+    expect([...registration.toolNames].sort()).toEqual(["click_bar", "click_foo_by_key", "click_save_foo"]);
 
     const tools = modelContext.listTools();
-    const barTool = tools.find(tool => tool.name === "bar");
-    const fooTool = tools.find(tool => tool.name === "foo");
+    const barTool = tools.find(tool => tool.name === "click_bar");
+    const fooByKeyTool = tools.find(tool => tool.name === "click_foo_by_key");
+    const saveFooTool = tools.find(tool => tool.name === "click_save_foo");
 
-    expect(tools).toHaveLength(2);
+    expect(tools).toHaveLength(3);
     expect(barTool).toMatchObject({
-      name: "bar",
-      description: "Interact with Bar. Calling this tool clicks clickBar.",
+      name: "click_bar",
+      description: "Click bar on Bar.",
       inputSchema: {
         type: "object",
         properties: {},
       },
     });
-    expect(fooTool).toMatchObject({
-      name: "foo",
-      description: "Interact with Foo. Use submitAction to choose one of: clickFooByKey, clickSaveFoo.",
+    expect(fooByKeyTool).toMatchObject({
+      name: "click_foo_by_key",
+      description: "Click foo by key on Foo.",
       inputSchema: {
         type: "object",
         properties: {
@@ -274,37 +332,56 @@ describe("webMcp runtime bridge", () => {
             type: "string",
             description: "foo notes",
           },
-          submitAction: {
+        },
+      },
+    });
+    expect(saveFooTool).toMatchObject({
+      name: "click_save_foo",
+      description: "Click save foo on Foo.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          enabled: {
+            type: "boolean",
+            description: "enabled",
+          },
+          key: {
             type: "string",
-            description: "Optional generated action to click after applying parameters.",
-            enum: ["clickFooByKey", "clickSaveFoo"],
+            description: "Variable used to resolve parameterized generated selectors.",
+          },
+          name: {
+            type: "string",
+            description: "foo name",
+          },
+          notes: {
+            type: "string",
+            description: "foo notes",
           },
         },
       },
     });
 
     const barResult = await modelContext.callTool({
-      name: "bar",
+      name: "click_bar",
       arguments: {},
     });
     expect(barClicks).toBe(1);
     expect(barResult.content[0]?.type).toBe("text");
     expect(JSON.parse(barResult.content[0]?.text ?? "null")).toEqual({
       component: "Bar",
-      tool: "bar",
+      tool: "click_bar",
       appliedParameters: [],
       selectorVariablesUsed: [],
       action: "clickBar",
     });
 
-    const fooResult = await modelContext.callTool({
-      name: "foo",
+    const fooByKeyResult = await modelContext.callTool({
+      name: "click_foo_by_key",
       arguments: {
         name: "Ayla",
         enabled: true,
         key: "alpha",
         notes: "hello",
-        submitAction: "clickFooByKey",
       },
     });
 
@@ -313,14 +390,118 @@ describe("webMcp runtime bridge", () => {
     expect(notesInput.value).toBe("hello");
     expect(saveClicks).toBe(0);
     expect(rowClicks).toBe(1);
-    expect(fooResult.content[0]?.type).toBe("text");
-    expect(JSON.parse(fooResult.content[0]?.text ?? "null")).toEqual({
+    expect(fooByKeyResult.content[0]?.type).toBe("text");
+    expect(JSON.parse(fooByKeyResult.content[0]?.text ?? "null")).toEqual({
       component: "Foo",
-      tool: "foo",
+      tool: "click_foo_by_key",
       appliedParameters: ["enabled", "name", "notes"],
       selectorVariablesUsed: ["key"],
       action: "clickFooByKey",
     });
+
+    const saveFooResult = await modelContext.callTool({
+      name: "click_save_foo",
+      arguments: {
+        name: "Bea",
+      },
+    });
+
+    expect(nameInput.value).toBe("Bea");
+    expect(saveClicks).toBe(1);
+    expect(rowClicks).toBe(1);
+    expect(saveFooResult.content[0]?.type).toBe("text");
+    expect(JSON.parse(saveFooResult.content[0]?.text ?? "null")).toEqual({
+      component: "Foo",
+      tool: "click_save_foo",
+      appliedParameters: ["name"],
+      selectorVariablesUsed: [],
+      action: "clickSaveFoo",
+    });
+
+    registration.unregister();
+    expect(modelContext.listTools()).toHaveLength(0);
+  });
+
+  it("can scope manifest-derived tools to the active route view tree", () => {
+    const webMcpManifest = buildFixtureManifest();
+
+    document.body.innerHTML = `
+      <div>
+        <button type="button" data-qa="bar">Bar</button>
+        <form>
+          <input data-qa="foo-name-input" />
+          <input type="checkbox" data-qa="foo-enabled-checkbox" />
+          <input data-qa="foo-alpha-notes-input" />
+          <button type="button" data-qa="foo-save-button">Save</button>
+          <button type="button" data-qa="foo-alpha-button">Row</button>
+        </form>
+      </div>
+    `;
+
+    cleanupWebModelContext();
+    initializeWebModelContext(TEST_INIT_OPTIONS);
+
+    const modelContext = requireModelContext();
+    const { router, navigate } = createTestingRouter(createMatchedRoute("FooRoute"));
+    const registration = registerRouteScopedWebMcpManifestTools({
+      manifest: webMcpManifest,
+      modelContext,
+      router,
+      root: document.body,
+      testIdAttribute: "data-qa",
+    });
+
+    expect([...registration.toolNames].sort()).toEqual(["click_foo_by_key", "click_save_foo"]);
+    expect(modelContext.listTools().map(tool => tool.name).sort()).toEqual(["click_foo_by_key", "click_save_foo"]);
+
+    navigate(createMatchedRoute("Bar"));
+
+    expect([...registration.toolNames].sort()).toEqual(["click_bar"]);
+    expect(modelContext.listTools().map(tool => tool.name).sort()).toEqual(["click_bar"]);
+
+    navigate(createMatchedRoute("MissingRoute"));
+
+    expect(registration.toolNames).toEqual([]);
+    expect(modelContext.listTools()).toEqual([]);
+
+    registration.unregister();
+    expect(modelContext.listTools()).toHaveLength(0);
+  });
+
+  it("refreshes route-scoped tools after router.isReady resolves initial navigation", async () => {
+    const webMcpManifest = buildFixtureManifest();
+
+    document.body.innerHTML = `
+      <div>
+        <form>
+          <input data-qa="foo-name-input" />
+          <button type="button" data-qa="foo-save-button">Save</button>
+          <button type="button" data-qa="foo-alpha-button">Row</button>
+        </form>
+      </div>
+    `;
+
+    cleanupWebModelContext();
+    initializeWebModelContext(TEST_INIT_OPTIONS);
+
+    const modelContext = requireModelContext();
+    const { router, navigate, resolveReady } = createTestingRouter({ matched: [] }, { withReady: true });
+    const registration = registerRouteScopedWebMcpManifestTools({
+      manifest: webMcpManifest,
+      modelContext,
+      router,
+      root: document.body,
+      testIdAttribute: "data-qa",
+    });
+
+    expect(registration.toolNames).toEqual([]);
+
+    navigate(createMatchedRoute("FooRoute"), false);
+    resolveReady();
+    await Promise.resolve();
+
+    expect([...registration.toolNames].sort()).toEqual(["click_foo_by_key", "click_save_foo"]);
+    expect(modelContext.listTools().map(tool => tool.name).sort()).toEqual(["click_foo_by_key", "click_save_foo"]);
 
     registration.unregister();
     expect(modelContext.listTools()).toHaveLength(0);

@@ -91,6 +91,60 @@ describe("virtual:testids", () => {
       ]), {
         filePath: "/repo/src/components/Bar.vue",
       })],
+      ["BarPage", createDependencies(new Set([
+        {
+          selectorValue: createPomStringPattern("bar-page-refresh-button", "static"),
+          pom: {
+            nativeRole: "button",
+            methodName: "RefreshBarPage",
+            selector: createPomStringPattern("bar-page-refresh-button", "static"),
+            parameters: [],
+          },
+        },
+      ]), {
+        filePath: "/repo/src/views/BarPage.vue",
+        isView: true,
+      })],
+      ["DynamicFormField", createDependencies(new Set([
+        {
+          selectorValue: createPomStringPattern("DynamicFormField-FieldValue-checkbox", "static"),
+          pom: {
+            nativeRole: "checkbox",
+            methodName: "FieldValueCheckbox",
+            selector: createPomStringPattern("DynamicFormField-FieldValue-checkbox", "static"),
+            parameters: [],
+          },
+        },
+        {
+          selectorValue: createPomStringPattern("DynamicFormField-FieldValue-input", "static"),
+          pom: {
+            nativeRole: "input",
+            methodName: "FieldValue",
+            selector: createPomStringPattern("DynamicFormField-FieldValue-input", "static"),
+            parameters: [],
+          },
+        },
+        {
+          selectorValue: createPomStringPattern("DynamicFormField-FieldValue-input", "static"),
+          pom: {
+            nativeRole: "input",
+            methodName: "FieldValue",
+            selector: createPomStringPattern("DynamicFormField-FieldValue-input", "static"),
+            parameters: [],
+          },
+        },
+        {
+          selectorValue: createPomStringPattern("DynamicFormField-FieldValue-radio", "static"),
+          pom: {
+            nativeRole: "radio",
+            methodName: "FieldValueRadio",
+            selector: createPomStringPattern("DynamicFormField-FieldValue-radio", "static"),
+            parameters: [],
+          },
+        },
+      ]), {
+        filePath: "/repo/src/components/DynamicFormField.vue",
+      })],
     ]);
     const elementMetadata = new Map([
       ["Foo", new Map([
@@ -157,9 +211,9 @@ describe("virtual:testids", () => {
     expect(code).toContain("\"sourceFile\": \"/repo/src/views/Foo.vue\"");
     expect(code).toContain("\"kind\": \"view\"");
     expect(code).toContain("\"semanticName\": \"foo item\"");
-    expect(code).toContain("\"toolName\": \"foo\"");
-    expect(code).toContain("\"toolDescription\": \"Interact with Foo.\"");
-    expect(code).toContain("\"toolAutoSubmit\": false");
+    expect(code).toContain("\"toolName\": \"click_save_foo\"");
+    expect(code).toContain("\"toolDescription\": \"Click save foo on Foo.\"");
+    expect(code).toContain("\"toolAutoSubmit\": true");
     expect(code).toContain("\"toolParamDescription\": \"foo name\"");
     expect(code).toContain("\"toolParamDescription\": \"enabled\"");
     expect(code).toContain("\"name\": \"name\"");
@@ -188,8 +242,16 @@ describe("virtual:testids", () => {
     expect(webMcpManifestCode).not.toContain("export const testIdManifest");
     expect(webMcpManifestCode).not.toContain("export const pomManifest");
     expect(webMcpManifestCode).toContain("\"Bar\"");
-    expect(webMcpManifestCode).toContain("\"toolName\": \"foo\"");
-    expect(webMcpManifestCode).toContain("\"toolName\": \"bar\"");
+    expect(webMcpManifestCode).toContain("\"BarPage\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"click_foo_by_key\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"click_first_foo\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"click_save_foo\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"click_bar\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"click_refresh_bar_page\"");
+    expect(webMcpManifestCode).toContain("\"toolName\": \"set_dynamic_form_field\"");
+    expect(webMcpManifestCode).toContain("\"name\": \"fieldValueCheckbox\"");
+    expect(webMcpManifestCode).toContain("\"name\": \"fieldValueInput\"");
+    expect(webMcpManifestCode).toContain("\"name\": \"fieldValueRadio\"");
     expect(webMcpManifestCode).toContain("\"toolAutoSubmit\": true");
     expect(webMcpManifestCode).toContain("\"toolParamDescription\": \"foo name\"");
     expect(webMcpManifestCode).toContain("\"name\": \"clickSaveFoo\"");
@@ -200,11 +262,15 @@ describe("virtual:testids", () => {
     const webMcpBridgeCode = extractCode(loadedWebMcpBridge);
 
     expect(webMcpBridgeCode).toContain("registerWebMcpManifestTools");
+    expect(webMcpBridgeCode).toContain("registerRouteScopedWebMcpManifestTools");
     expect(webMcpBridgeCode).toContain("registerGeneratedWebMcpTools");
+    expect(webMcpBridgeCode).toContain("options.router");
     expect(webMcpBridgeCode).toContain("webMcpTestIdAttribute");
     expect(webMcpBridgeCode).toContain("\"data-qa\"");
     expect(webMcpBridgeCode).toContain("@immense/vue-pom-generator/webmcp-runtime");
     expect(webMcpBridgeCode).toContain("import.meta.hot");
+    expect(webMcpBridgeCode).not.toContain("import type");
+    expect(webMcpBridgeCode).not.toContain("export type");
 
     componentHierarchyMap.set("Baz", createDependencies(new Set([
       {

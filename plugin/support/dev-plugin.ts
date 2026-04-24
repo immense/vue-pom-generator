@@ -4,11 +4,12 @@ import { performance } from "node:perf_hooks";
 import process from "node:process";
 
 import type { BindingMetadata } from "@vue/compiler-core";
-import * as compilerDom from "@vue/compiler-dom";
 import { compileScript, parse as parseSfc } from "@vue/compiler-sfc";
 import type { PluginOption, ViteDevServer } from "vite";
 
 import { generateFiles } from "../../class-generation";
+import { compileWithMetadataExtractionManual } from "../../compiler-wrapper";
+import type { ElementMetadata } from "../../metadata-collector";
 import { introspectNuxtPages, parseRouterFileFromCwd } from "../../router-introspection";
 import { createTestIdTransform } from "../../transform";
 import type { IComponentDependencies, NativeWrappersMap, RouterIntrospectionResult } from "../../utils";
@@ -18,6 +19,10 @@ import { isPathWithinDir, resolveComponentNameFromPath } from "../path-utils";
 import type { ResolvedGenerationSupportOptions } from "../resolved-generation-options";
 
 interface DevProcessorOptions {
+  elementMetadata: Map<string, Map<string, ElementMetadata>>;
+  semanticNameMap: Map<string, string>;
+  componentHierarchyMap: Map<string, IComponentDependencies>;
+  vueFilesPathMap: Map<string, string>;
   nativeWrappers: NativeWrappersMap;
   excludedComponents: string[];
   getPageDirs: () => string[];
@@ -36,8 +41,35 @@ interface DevProcessorOptions {
   loggerRef: { current: VuePomGeneratorLogger };
 }
 
+function replaceMapContents<K, V>(target: Map<K, V>, source: ReadonlyMap<K, V>) {
+  target.clear();
+  for (const [key, value] of source) {
+    target.set(key, value);
+  }
+}
+
+function removeComponentMetadata(
+  metadataMap: Map<string, Map<string, ElementMetadata>>,
+  semanticNameMap: Map<string, string>,
+  componentName: string,
+) {
+  const existingMetadata = metadataMap.get(componentName);
+  if (!existingMetadata) {
+    return;
+  }
+
+  for (const testId of existingMetadata.keys()) {
+    semanticNameMap.delete(testId);
+  }
+  metadataMap.delete(componentName);
+}
+
 export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOption {
   const {
+    elementMetadata: sharedElementMetadata,
+    semanticNameMap: sharedSemanticNameMap,
+    componentHierarchyMap: sharedComponentHierarchyMap,
+    vueFilesPathMap: sharedVueFilesPathMap,
     nativeWrappers,
     excludedComponents,
     getPageDirs,
@@ -221,7 +253,16 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
       // Build a complete snapshot once, then incrementally update on each changed .vue.
       let snapshotHierarchy = new Map<string, IComponentDependencies>();
       let snapshotVuePathMap = new Map<string, string>();
+      let snapshotElementMetadata = new Map<string, Map<string, ElementMetadata>>();
+      let snapshotSemanticNameMap = new Map<string, string>();
       const filePathToComponentName = new Map<string, string>();
+
+      const syncSharedStateFromSnapshot = () => {
+        replaceMapContents(sharedComponentHierarchyMap, snapshotHierarchy);
+        replaceMapContents(sharedVueFilesPathMap, snapshotVuePathMap);
+        replaceMapContents(sharedElementMetadata, snapshotElementMetadata);
+        replaceMapContents(sharedSemanticNameMap, snapshotSemanticNameMap);
+      };
 
       const createEmptyComponentDependencies = (absolutePath: string): IComponentDependencies => {
         const viewsDirAbs = path.resolve(getViewsDirAbs());
@@ -258,6 +299,8 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         filePath: string,
         targetHierarchy: Map<string, IComponentDependencies> = snapshotHierarchy,
         targetVuePathMap: Map<string, string> = snapshotVuePathMap,
+        targetElementMetadata: Map<string, Map<string, ElementMetadata>> = snapshotElementMetadata,
+        targetSemanticNameMap: Map<string, string> = snapshotSemanticNameMap,
       ) => {
         const started = performance.now();
         const absolutePath = path.resolve(filePath);
@@ -272,6 +315,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         }
 
         const template = extractTemplateFromSfc(sfc, absolutePath);
+        removeComponentMetadata(targetElementMetadata, targetSemanticNameMap, componentName);
         if (!template.trim()) {
           targetVuePathMap.set(componentName, absolutePath);
           targetHierarchy.set(componentName, createEmptyComponentDependencies(absolutePath));
@@ -290,7 +334,9 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         const provisionalVuePathMap = new Map(targetVuePathMap);
         provisionalVuePathMap.set(componentName, absolutePath);
 
-        compilerDom.compile(template, {
+        compileWithMetadataExtractionManual(
+          template,
+          {
           filename: absolutePath,
           prefixIdentifiers: true,
           inline: isScriptSetup,
@@ -312,7 +358,12 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
               },
             ),
           ],
-        });
+          },
+          componentName,
+          targetElementMetadata,
+          targetSemanticNameMap,
+          testIdAttribute,
+        );
 
         targetVuePathMap.set(componentName, absolutePath);
         targetHierarchy.set(
@@ -327,6 +378,8 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         const t0 = performance.now();
         const nextHierarchy = new Map<string, IComponentDependencies>();
         const nextVuePathMap = new Map<string, string>();
+        const nextElementMetadata = new Map<string, Map<string, ElementMetadata>>();
+        const nextSemanticNameMap = new Map<string, string>();
         filePathToComponentName.clear();
 
         let totalVueFiles = 0;
@@ -340,7 +393,13 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
           totalVueFiles += vueFiles.length;
 
           for (const file of vueFiles) {
-            const res = compileVueFileIntoSnapshot(file, nextHierarchy, nextVuePathMap);
+            const res = compileVueFileIntoSnapshot(
+              file,
+              nextHierarchy,
+              nextVuePathMap,
+              nextElementMetadata,
+              nextSemanticNameMap,
+            );
             if (res.compiled)
               compiledCount++;
           }
@@ -348,6 +407,9 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
 
         snapshotHierarchy = nextHierarchy;
         snapshotVuePathMap = nextVuePathMap;
+        snapshotElementMetadata = nextElementMetadata;
+        snapshotSemanticNameMap = nextSemanticNameMap;
+        syncSharedStateFromSnapshot();
 
         const t1 = performance.now();
         logInfo(`scan(${logLabel}): found ${totalVueFiles} .vue files in ${getSourceDirs().join(", ")}`);
@@ -405,10 +467,13 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
 
         const nextHierarchy = new Map(snapshotHierarchy);
         const nextVuePathMap = new Map(snapshotVuePathMap);
+        const nextElementMetadata = new Map(snapshotElementMetadata);
+        const nextSemanticNameMap = new Map(snapshotSemanticNameMap);
 
         for (const componentName of pendingDeletedComponents) {
           nextHierarchy.delete(componentName);
           nextVuePathMap.delete(componentName);
+          removeComponentMetadata(nextElementMetadata, nextSemanticNameMap, componentName);
         }
 
         const files = Array.from(pendingChangedVueFiles);
@@ -418,12 +483,21 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
 
         let compileMs = 0;
         for (const f of files) {
-          const res = compileVueFileIntoSnapshot(f, nextHierarchy, nextVuePathMap);
+          const res = compileVueFileIntoSnapshot(
+            f,
+            nextHierarchy,
+            nextVuePathMap,
+            nextElementMetadata,
+            nextSemanticNameMap,
+          );
           compileMs += res.ms;
         }
 
         snapshotHierarchy = nextHierarchy;
         snapshotVuePathMap = nextVuePathMap;
+        snapshotElementMetadata = nextElementMetadata;
+        snapshotSemanticNameMap = nextSemanticNameMap;
+        syncSharedStateFromSnapshot();
 
         const t1 = performance.now();
         await generateAggregatedFromSnapshot(reason);
