@@ -6,6 +6,7 @@ import type {
   ElementNode,
   ForNode,
   RootNode,
+  SimpleExpressionNode,
   TemplateChildNode,
   TransformContext,
 } from "@vue/compiler-core";
