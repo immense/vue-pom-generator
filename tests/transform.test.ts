@@ -886,6 +886,44 @@ describe('createTestIdTransform', () => {
     }).toThrow(/move complex inline logic into a named function/i)
   })
 
+  it('accepts direct wrapper handlers after Vue rewrites them in runtime compiler mode', () => {
+    const nativeWrappers: NativeWrappersMap = {
+      LoadButton: { role: 'button' },
+    }
+
+    const cases = [
+      {
+        bindingMetadata: { saveNotes: BindingTypes.SETUP_REF },
+        expectedHandlerFragment: 'handler: saveNotes.value',
+      },
+      {
+        bindingMetadata: { saveNotes: BindingTypes.SETUP_MAYBE_REF },
+        expectedHandlerFragment: 'handler: _unref(saveNotes)',
+      },
+      {
+        bindingMetadata: { saveNotes: BindingTypes.PROPS },
+        expectedHandlerFragment: 'handler: __props.saveNotes',
+      },
+    ]
+
+    for (const { bindingMetadata, expectedHandlerFragment } of cases) {
+      const code = compileWithRuntimeTemplateOptions(
+        `
+          <LoadButton class="mr-2" :handler="saveNotes">
+            Save
+          </LoadButton>
+        `,
+        {
+          nativeWrappers,
+          bindingMetadata,
+        },
+      )
+
+      expect(code).toContain(expectedHandlerFragment)
+      expect(code).toContain('"data-testid": "MyComp_SaveNotes-button"')
+    }
+  })
+
   it('emits per-key click methods when v-for iterates a static literal list', () => {
     const componentHierarchyMap = new Map()
 

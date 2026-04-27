@@ -496,6 +496,42 @@ describe("utils.ts coverage", () => {
     expect(nodeHandlerAttributeValue(direct)).toBe("ApproveChangeRequest");
     expect(nodeHandlerAttributeInfo(direct)?.mergeKey).toBe("handler:expr:approveChangeRequest");
 
+    const rewritten = firstElement(parseTemplate("<LoadButton :handler=\"saveNotes\" />"));
+    const rewrittenDirective = rewritten.props.find((prop): prop is DirectiveNode => {
+      return prop.type === NodeTypes.DIRECTIVE
+        && prop.name === "bind"
+        && prop.arg?.type === NodeTypes.SIMPLE_EXPRESSION
+        && prop.arg.content === "handler";
+    });
+    expect(rewrittenDirective?.exp?.type).toBe(NodeTypes.SIMPLE_EXPRESSION);
+    (rewrittenDirective?.exp as SimpleExpressionNode).content = "_unref(saveNotes)";
+    expect(nodeHandlerAttributeValue(rewritten)).toBe("SaveNotes");
+    expect(nodeHandlerAttributeInfo(rewritten)?.mergeKey).toBe("handler:expr:saveNotes");
+
+    const refValue = firstElement(parseTemplate("<LoadButton :handler=\"saveNotes\" />"));
+    const refValueDirective = refValue.props.find((prop): prop is DirectiveNode => {
+      return prop.type === NodeTypes.DIRECTIVE
+        && prop.name === "bind"
+        && prop.arg?.type === NodeTypes.SIMPLE_EXPRESSION
+        && prop.arg.content === "handler";
+    });
+    expect(refValueDirective?.exp?.type).toBe(NodeTypes.SIMPLE_EXPRESSION);
+    (refValueDirective?.exp as SimpleExpressionNode).content = "saveNotes.value";
+    expect(nodeHandlerAttributeValue(refValue)).toBe("SaveNotes");
+    expect(nodeHandlerAttributeInfo(refValue)?.mergeKey).toBe("handler:expr:saveNotes");
+
+    const propsAccess = firstElement(parseTemplate("<LoadButton :handler=\"saveNotes\" />"));
+    const propsAccessDirective = propsAccess.props.find((prop): prop is DirectiveNode => {
+      return prop.type === NodeTypes.DIRECTIVE
+        && prop.name === "bind"
+        && prop.arg?.type === NodeTypes.SIMPLE_EXPRESSION
+        && prop.arg.content === "handler";
+    });
+    expect(propsAccessDirective?.exp?.type).toBe(NodeTypes.SIMPLE_EXPRESSION);
+    (propsAccessDirective?.exp as SimpleExpressionNode).content = "__props.saveNotes";
+    expect(nodeHandlerAttributeValue(propsAccess)).toBe("SaveNotes");
+    expect(nodeHandlerAttributeInfo(propsAccess)?.mergeKey).toBe("handler:expr:saveNotes");
+
     const goBackFalse = firstElement(parseTemplate("<LoadButton :handler=\"() => onSubmit({goBack:false})\" />"));
     const goBackTrue = firstElement(parseTemplate("<LoadButton :handler=\"() => onSubmit({goBack:true})\" />"));
     expect(nodeHandlerAttributeValue(goBackFalse)).toBe("OnSubmitGoBackFalse");
