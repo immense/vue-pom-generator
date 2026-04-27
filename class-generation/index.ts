@@ -24,7 +24,6 @@ import {
   isParameterizedPomPattern,
   orderPomPatternParameters,
   toCSharpPomPatternExpression,
-  toTypeScriptPomPatternExpression,
   uniquePomStringPatterns,
   type PomStringPattern,
 } from "../pom-patterns";
@@ -1604,14 +1603,57 @@ function prepareViewObjectModelClass(
     testIdAttribute,
   } = options;
 
+  const normalizeTrackedComponentRef = (value: string): string => {
+    return value.endsWith(".vue") ? value.slice(0, -4) : value;
+  };
+
+  const resolveTrackedComponentRef = (value: string): string | null => {
+    const normalizedValue = normalizeTrackedComponentRef(value);
+    if (componentHierarchyMap.has(value)) {
+      return value;
+    }
+    if (componentHierarchyMap.has(normalizedValue)) {
+      return normalizedValue;
+    }
+
+    let match: string | null = null;
+    for (const [candidateName, candidateDeps] of componentHierarchyMap.entries()) {
+      const normalizedCandidate = normalizeTrackedComponentRef(candidateName);
+      const candidateBaseName = path.parse(candidateDeps.filePath).name;
+      if (normalizedCandidate !== normalizedValue && candidateBaseName !== normalizedValue) {
+        continue;
+      }
+      if (match && match !== candidateName) {
+        return null;
+      }
+      match = candidateName;
+    }
+    return match;
+  };
+
+  const rawComponentRefsForInstances = isView
+    ? (usedComponentSet?.size ? usedComponentSet : childrenComponentSet)
+    : childrenComponentSet;
+  const componentRefsForInstances = new Set<string>();
+  for (const ref of rawComponentRefsForInstances) {
+    componentRefsForInstances.add(resolveTrackedComponentRef(ref) ?? normalizeTrackedComponentRef(ref));
+  }
+
   const hasChildComponent = (needle: string) => {
-    const haystack = usedComponentSet?.size ? usedComponentSet : childrenComponentSet;
-    for (const child of haystack) {
-      if (child === needle)
+    const normalizedNeedle = normalizeTrackedComponentRef(needle);
+    for (const child of rawComponentRefsForInstances) {
+      const resolvedChild = resolveTrackedComponentRef(child);
+      if (normalizeTrackedComponentRef(child) === normalizedNeedle)
         return true;
+      if (resolvedChild && normalizeTrackedComponentRef(resolvedChild) === normalizedNeedle)
+        return true;
+      if (resolvedChild) {
+        const resolvedDeps = componentHierarchyMap.get(resolvedChild);
+        if (resolvedDeps && path.parse(resolvedDeps.filePath).name === normalizedNeedle) {
+          return true;
+        }
+      }
       if (child === `${needle}.vue`)
-        return true;
-      if (child.endsWith(".vue") && child.slice(0, -4) === needle)
         return true;
     }
     return false;
@@ -1647,10 +1689,6 @@ function prepareViewObjectModelClass(
   const widgetInstances = isView
     ? getWidgetInstancesForView(componentName, dependencies.dataTestIdSet, customPomAvailableClassIdentifiers)
     : [];
-
-  const componentRefsForInstances = isView
-    ? (usedComponentSet?.size ? usedComponentSet : childrenComponentSet)
-    : childrenComponentSet;
 
   const className = toPascalCaseLocal(componentName);
   const childInstancePropertyNames = Array.from(componentRefsForInstances)
@@ -1964,7 +2002,7 @@ function sliceNodeSource(source: string, node: { start?: number | null; end?: nu
 
 function getTypeAnnotationSource(
   source: string,
-  node: { typeAnnotation?: unknown },
+  node: { typeAnnotation?: object | null },
 ): string | undefined {
   const rawTypeAnnotation = node.typeAnnotation;
   if (!rawTypeAnnotation || typeof rawTypeAnnotation !== "object" || !("type" in rawTypeAnnotation) || rawTypeAnnotation.type !== "TSTypeAnnotation" || !("typeAnnotation" in rawTypeAnnotation)) {

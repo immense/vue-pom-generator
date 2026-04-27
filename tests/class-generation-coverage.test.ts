@@ -397,6 +397,60 @@ describe("class-generation coverage", () => {
     }
   });
 
+  it("attaches nested component POMs to views when the template tag omits the folder-prefixed class name", async () => {
+    const tempRoot = makeTempRoot("vue-pom-nested-attach-");
+
+    try {
+      const basePagePath = path.join(tempRoot, "base-page.ts");
+      writeMinimalBasePage(basePagePath);
+
+      const depsDeploymentDetailsPage = makeDeps({
+        filePath: path.join(tempRoot, "src", "views", "DeploymentDetailsPage.vue"),
+        isView: true,
+        usedComponentSet: new Set(["MaintenanceItemConfiguration"]),
+      });
+
+      const depsNestedComponent = makeDeps({
+        filePath: path.join(tempRoot, "src", "components", "MaintenanceItems", "MaintenanceItemConfiguration.vue"),
+        isView: false,
+        dataTestIdSet: new Set([{
+          selectorValue: createPomStringPattern("MaintenanceItemsMaintenanceItemConfiguration-Save-button", "static"),
+          pom: {
+            nativeRole: "button",
+            methodName: "Save",
+            selector: createPomStringPattern("MaintenanceItemsMaintenanceItemConfiguration-Save-button", "static"),
+            parameters: [],
+          },
+        }]),
+        generatedMethods: new Map([
+          ["clickSave", createPomMethodSignature(createPomParameters(["wait", "boolean = true"], ["annotationText", 'string = ""']))],
+        ]),
+      });
+
+      const componentHierarchyMap = new Map<string, IComponentDependencies>([
+        ["DeploymentDetailsPage", depsDeploymentDetailsPage],
+        ["MaintenanceItemsMaintenanceItemConfiguration", depsNestedComponent],
+      ]);
+
+      const outDir = path.join(tempRoot, "pom");
+      await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
+        outDir,
+        projectRoot: tempRoot,
+        typescriptOutputStructure: "split",
+      });
+
+      const pageContent = readFile(path.join(outDir, "DeploymentDetailsPage.g.ts"));
+      expect(pageContent).toContain('import { MaintenanceItemsMaintenanceItemConfiguration }');
+      expect(pageContent).toContain('MaintenanceItemsMaintenanceItemConfiguration: MaintenanceItemsMaintenanceItemConfiguration;');
+      expect(pageContent).toContain('this.MaintenanceItemsMaintenanceItemConfiguration = new MaintenanceItemsMaintenanceItemConfiguration(page);');
+      expect(pageContent).toContain('async clickSave(');
+      expect(pageContent).toContain('return await this.MaintenanceItemsMaintenanceItemConfiguration.clickSave(wait, annotationText)');
+    }
+    finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("supports vueRouterFluentChaining by emitting route metadata and goToSelf/goTo methods", async () => {
     const tempRoot = makeTempRoot("vue-pom-router-fluent-");
 
