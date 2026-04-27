@@ -430,13 +430,16 @@ describe("utils.ts coverage", () => {
     expect(info?.semanticNameHint).toBe("SetShowModalTrue");
   });
 
-  it("does not derive a :handler semanticNameHint from logical-expression arrow bodies", () => {
+  it("derives a :handler semanticNameHint from logical-expression arrow bodies", () => {
     const root = parseTemplate(`
       <LoadButton :handler="() => person && impersonateUser(person.userId!)">Impersonate</LoadButton>
     `);
     const el = firstElement(root);
 
-    expect(nodeHandlerAttributeInfo(el)).toBeNull();
+    expect(nodeHandlerAttributeInfo(el)).toEqual({
+      mergeKey: "handler:expr:() => person && impersonateUser(person.userId!)",
+      semanticNameHint: "ImpersonateUser",
+    });
   });
 
   it("handles :key extraction paths", () => {

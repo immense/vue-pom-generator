@@ -1356,6 +1356,14 @@ export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInf
       && typeof n.key === "object" && n.key !== null
       && typeof n.value === "object" && n.value !== null;
   };
+  const isLogicalExpressionNode = (node: object | null): node is { type: "LogicalExpression"; operator: string; left: object; right: object } => {
+    if (!isNodeType(node, "LogicalExpression"))
+      return false;
+    const n = node as { operator?: string; left?: object; right?: object };
+    return typeof n.operator === "string"
+      && typeof n.left === "object" && n.left !== null
+      && typeof n.right === "object" && n.right !== null;
+  };
 
   const getLastIdentifierFromMemberChain = (node: object | null): string | null => {
     if (!node)
@@ -1583,9 +1591,28 @@ export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInf
     return semanticNameHint;
   };
 
+  const unwrapSemanticHelperCall = (candidateExpr: object | null): object | null => {
+    if (!isCallExpressionNode(candidateExpr)) {
+      return null;
+    }
+    const calleeName = getLastIdentifierFromMemberChain(candidateExpr.callee);
+    if (calleeName !== "_unref" && calleeName !== "unref" && calleeName !== "_withModifiers" && calleeName !== "withModifiers") {
+      return null;
+    }
+    const firstArg = candidateExpr.arguments[0] as object | null | undefined;
+    return typeof firstArg === "object" && firstArg !== null
+      ? firstArg
+      : null;
+  };
+
   const resolveSemanticName = (candidateExpr: object | null): string | null => {
     if (!candidateExpr) {
       return null;
+    }
+
+    const unwrappedHelperCandidate = unwrapSemanticHelperCall(candidateExpr);
+    if (unwrappedHelperCandidate) {
+      return resolveSemanticName(unwrappedHelperCandidate);
     }
 
     const direct = getLastIdentifierFromMemberChain(candidateExpr);
@@ -1593,34 +1620,38 @@ export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInf
       return toPascalCase(direct);
     }
 
+    const directCall = tryFromCallExpression(candidateExpr);
+    if (directCall) {
+      return directCall;
+    }
+
+    if (isAssignmentExpressionNode(candidateExpr)) {
+      const lhs = getAssignmentTargetName(candidateExpr.left);
+      if (lhs) {
+        const rhs = stableWordFromValue(candidateExpr.right);
+        return `Set${toPascalCase(lhs)}${rhs ?? ""}`;
+      }
+    }
+
+    if (isLogicalExpressionNode(candidateExpr) && candidateExpr.operator === "&&") {
+      return resolveSemanticName(candidateExpr.right);
+    }
+
     if (isArrowFunctionExpressionNode(candidateExpr)) {
       const body = candidateExpr.body;
-
-      const directCall = tryFromCallExpression(body);
-      if (directCall) {
-        return directCall;
-      }
-
-      if (isAssignmentExpressionNode(body)) {
-        const lhs = getAssignmentTargetName(body.left);
-        if (lhs) {
-          const rhs = stableWordFromValue(body.right);
-          return `Set${toPascalCase(lhs)}${rhs ?? ""}`;
-        }
-      }
 
       if (isBlockStatementNode(body)) {
         const stmts = body.body ?? [];
         if (stmts.length > 0) {
           const firstStmt = stmts[0] as object;
           if (isReturnStatementNode(firstStmt)) {
-            const fromReturn = tryFromCallExpression(firstStmt.argument ?? null);
+            const fromReturn = resolveSemanticName(firstStmt.argument ?? null);
             if (fromReturn) {
               return fromReturn;
             }
           }
           if (isExpressionStatementNode(firstStmt)) {
-            const fromExpr = tryFromCallExpression(firstStmt.expression ?? null);
+            const fromExpr = resolveSemanticName(firstStmt.expression ?? null);
             if (fromExpr) {
               return fromExpr;
             }
@@ -1628,9 +1659,9 @@ export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInf
         }
       }
 
-      const bodyName = getLastIdentifierFromMemberChain(body);
+      const bodyName = resolveSemanticName(body);
       if (bodyName) {
-        return toPascalCase(bodyName);
+        return bodyName;
       }
     }
 

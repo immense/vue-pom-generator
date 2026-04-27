@@ -865,7 +865,7 @@ describe('createTestIdTransform', () => {
     expect(deps?.generatedMethods?.has('clickRefreshOauthAccessToken')).toBe(true)
   })
 
-  it('fails fast for button-like wrapper handlers that cannot produce a semantic name by default', () => {
+  it('derives semantic names for button-like wrapper handlers guarded by simple null checks', () => {
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
     const nativeWrappers: NativeWrappersMap = {
       LoadButton: { role: 'button' },
@@ -883,7 +883,11 @@ describe('createTestIdTransform', () => {
           nodeTransforms: [createTestIdTransform('RbacUserDetailsPage', componentHierarchyMap, nativeWrappers, [], '/src/views')],
         },
       )
-    }).toThrow(/move complex inline logic into a named function/i)
+    }).not.toThrow()
+
+    const deps = componentHierarchyMap.get('RbacUserDetailsPage') as IComponentDependencies | undefined
+    expect(deps).toBeTruthy()
+    expect(deps?.generatedMethods?.has('clickImpersonateUser')).toBe(true)
   })
 
   it('accepts direct wrapper handlers after Vue rewrites them in runtime compiler mode', () => {
