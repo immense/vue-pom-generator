@@ -16,12 +16,13 @@ import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 
 import type { VuePomGeneratorLogger } from "./logger";
 import { resolveComponentNameFromPath } from "./path-utils";
-import type { PomNameCollisionBehavior } from "./types";
+import type { MissingSemanticNameBehavior, PomNameCollisionBehavior } from "./types";
 
 interface InternalFactoryOptions {
   vueOptions?: VuePluginOptions;
   existingIdBehavior: "preserve" | "overwrite" | "error";
   nameCollisionBehavior: PomNameCollisionBehavior;
+  missingSemanticNameBehavior?: MissingSemanticNameBehavior;
   nativeWrappers: NativeWrappersMap;
   elementMetadata: Map<string, Map<string, ElementMetadata>>;
   semanticNameMap: Map<string, string>;
@@ -121,6 +122,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     vueOptions,
     existingIdBehavior,
     nameCollisionBehavior,
+    missingSemanticNameBehavior = "error",
     nativeWrappers,
     elementMetadata,
     semanticNameMap,
@@ -228,6 +230,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
                   existingIdBehavior,
                   testIdAttribute,
                   nameCollisionBehavior,
+                  missingSemanticNameBehavior,
                   warn: (message) => loggerRef.current.warn(message),
                   vueFilesPathMap,
                   wrapperSearchRoots: getWrapperSearchRoots(),
@@ -290,6 +293,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
                 existingIdBehavior,
                 testIdAttribute,
                 nameCollisionBehavior,
+                missingSemanticNameBehavior,
                 warn: (message) => loggerRef.current.warn(message),
                 vueFilesPathMap,
                 wrapperSearchRoots: getWrapperSearchRoots(),
@@ -352,9 +356,19 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
       if (descriptor.template) {
         // Run the template compiler with our transforms.
         // We don't care about the result, only the side effects on our shared maps.
+        // Merge TS into `expressionPlugins` so template expressions with TS
+        // type annotations (e.g. `(row: RowType) => ...`) parse. User-supplied
+        // plugins from `userCompilerOptions` are preserved and de-duped.
+        const mergedExpressionPlugins = Array.from(
+          new Set<string>([
+            "typescript",
+            ...(((userCompilerOptions as { expressionPlugins?: string[] }).expressionPlugins) ?? []),
+          ]),
+        );
         compile(descriptor.template.content, {
           ...userCompilerOptions,
           filename: cleanPath,
+          expressionPlugins: mergedExpressionPlugins,
           nodeTransforms: getNodeTransforms(cleanPath, componentName),
         });
         loggerRef.current.debug(`Metadata collected for ${cleanPath}`);

@@ -109,6 +109,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     customPomImportNameCollisionBehavior,
     testIdAttribute,
     nameCollisionBehavior,
+    missingSemanticNameBehavior,
     existingIdBehavior,
     routerAwarePoms,
     routerType,
@@ -233,6 +234,9 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
             prefixIdentifiers: true,
             inline: isScriptSetup,
             bindingMetadata,
+            // See dev-plugin.ts — same rationale: enable TS in template
+            // expressions so `(row: RowType) => ...` handlers parse.
+            expressionPlugins: ["typescript"],
             nodeTransforms: [
               createTestIdTransform(
                 componentName,
@@ -244,6 +248,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
                   existingIdBehavior: existingIdBehavior ?? "error",
                   testIdAttribute,
                   nameCollisionBehavior,
+                  missingSemanticNameBehavior,
                   warn: (message: string) => loggerRef.current.warn(message),
                   vueFilesPathMap,
                   wrapperSearchRoots: getWrapperSearchRoots(),

@@ -1,5 +1,6 @@
 import type {
   ExistingIdBehavior,
+  MissingSemanticNameBehavior,
   PlaywrightOutputStructure,
   PomNameCollisionBehavior,
   RouterModuleShimDefinition,
@@ -27,6 +28,7 @@ export interface ResolvedGenerationSupportOptions {
   customPomImportAliases?: Record<string, string>;
   customPomImportNameCollisionBehavior: "error" | "alias";
   nameCollisionBehavior: PomNameCollisionBehavior;
+  missingSemanticNameBehavior: MissingSemanticNameBehavior;
   existingIdBehavior: ExistingIdBehavior;
   testIdAttribute: string;
   accessibilityAudit: boolean;
@@ -51,6 +53,7 @@ export function resolveGenerationSupportOptions(
     customPomImportAliases: options.customPomImportAliases,
     customPomImportNameCollisionBehavior: options.customPomImportNameCollisionBehavior ?? "error",
     nameCollisionBehavior: options.nameCollisionBehavior ?? "error",
+    missingSemanticNameBehavior: options.missingSemanticNameBehavior ?? "error",
     existingIdBehavior: options.existingIdBehavior ?? "error",
     testIdAttribute: (options.testIdAttribute ?? "data-testid").trim() || "data-testid",
     accessibilityAudit: options.accessibilityAudit ?? false,

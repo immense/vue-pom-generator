@@ -4,6 +4,7 @@ import type { NativeWrappersMap } from "../utils";
 export type ExistingIdBehavior = "preserve" | "overwrite" | "error";
 export type VuePluginOwnership = "internal" | "external";
 export type PlaywrightOutputStructure = "aggregated" | "split";
+export type MissingSemanticNameBehavior = "error" | "ignore";
 
 /**
  * Controls what happens when the generator would emit duplicate POM member names within a single class.
@@ -193,8 +194,19 @@ export interface VuePomGeneratorPluginOptions {
       * - "error": throw and fail the compilation on the first collision encountered (default)
       * - "warn": log a warning and append a numeric suffix to disambiguate
       * - "suffix": append a numeric suffix silently
-      */
+     */
      nameCollisionBehavior?: PomNameCollisionBehavior;
+
+    /**
+     * What to do when an interactive element has no derivable semantic name.
+     *
+     * This primarily affects fallback naming for controls such as submit buttons whose label is
+     * dynamic at compile time.
+     *
+     * - `"error"` (default): throw so the template is made explicit
+     * - `"ignore"`: fall back to a generic semantic identifier (for example, `submit`)
+     */
+    missingSemanticNameBehavior?: MissingSemanticNameBehavior;
 
     /**
      * Absolute path to the BasePage template module to inline into generated output.

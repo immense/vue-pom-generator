@@ -12,6 +12,7 @@ import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 interface CreateTestIdTransformOptions {
   existingIdBehavior?: string;
   nameCollisionBehavior?: string;
+  missingSemanticNameBehavior?: string;
   testIdAttribute?: string;
   warn?: (message: string) => void;
   vueFilesPathMap?: Map<string, string>;
@@ -229,7 +230,7 @@ describe("dev processor option plumbing", () => {
         throw new Error("Expected createTestIdTransform to be called");
       }
 
-      expect(Object.prototype.hasOwnProperty.call(transformCall[5] ?? {}, "missingSemanticNameBehavior")).toBe(false);
+      expect(transformCall[5]?.missingSemanticNameBehavior).toBe("error");
     }
     finally {
       fs.rmSync(projectRoot, { recursive: true, force: true });
