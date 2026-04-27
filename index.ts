@@ -21,4 +21,4 @@ export function defineNuxtPomGeneratorConfig(options: NuxtPomGeneratorPluginOpti
   return markedOptions;
 }
 
-export type { ExistingIdBehavior, NuxtPomGeneratorPluginOptions, PomGeneratorPluginOptions, PomNameCollisionBehavior, VuePomGeneratorPluginOptions } from "./plugin/types";
+export type { ExistingIdBehavior, MissingSemanticNameBehavior, NuxtPomGeneratorPluginOptions, PomGeneratorPluginOptions, PomNameCollisionBehavior, VuePomGeneratorPluginOptions } from "./plugin/types";

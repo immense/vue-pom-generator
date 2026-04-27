@@ -860,6 +860,7 @@ export function createTestIdTransform(
     existingIdBehavior?: "preserve" | "overwrite" | "error";
     testIdAttribute?: string;
     nameCollisionBehavior?: "error" | "warn" | "suffix";
+    missingSemanticNameBehavior?: "error" | "ignore";
     warn?: (message: string) => void;
     vueFilesPathMap?: Map<string, string>;
     wrapperSearchRoots?: string[];
@@ -868,6 +869,7 @@ export function createTestIdTransform(
   const existingIdBehavior = options.existingIdBehavior ?? "error";
   const testIdAttribute = (options.testIdAttribute || "data-testid").trim() || "data-testid";
   const nameCollisionBehavior = options.nameCollisionBehavior ?? "error";
+  const missingSemanticNameBehavior = options.missingSemanticNameBehavior ?? "error";
   const warn = options.warn;
   const vueFilesPathMap = options.vueFilesPathMap;
   const wrapperSearchRoots = options.wrapperSearchRoots ?? [];

@@ -16,12 +16,13 @@ import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 
 import type { VuePomGeneratorLogger } from "./logger";
 import { resolveComponentNameFromPath } from "./path-utils";
-import type { PomNameCollisionBehavior } from "./types";
+import type { MissingSemanticNameBehavior, PomNameCollisionBehavior } from "./types";
 
 interface InternalFactoryOptions {
   vueOptions?: VuePluginOptions;
   existingIdBehavior: "preserve" | "overwrite" | "error";
   nameCollisionBehavior: PomNameCollisionBehavior;
+  missingSemanticNameBehavior?: MissingSemanticNameBehavior;
   nativeWrappers: NativeWrappersMap;
   elementMetadata: Map<string, Map<string, ElementMetadata>>;
   semanticNameMap: Map<string, string>;
@@ -121,6 +122,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     vueOptions,
     existingIdBehavior,
     nameCollisionBehavior,
+    missingSemanticNameBehavior = "error",
     nativeWrappers,
     elementMetadata,
     semanticNameMap,
@@ -228,6 +230,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
                   existingIdBehavior,
                   testIdAttribute,
                   nameCollisionBehavior,
+                  missingSemanticNameBehavior,
                   warn: (message) => loggerRef.current.warn(message),
                   vueFilesPathMap,
                   wrapperSearchRoots: getWrapperSearchRoots(),
@@ -290,6 +293,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
                 existingIdBehavior,
                 testIdAttribute,
                 nameCollisionBehavior,
+                missingSemanticNameBehavior,
                 warn: (message) => loggerRef.current.warn(message),
                 vueFilesPathMap,
                 wrapperSearchRoots: getWrapperSearchRoots(),

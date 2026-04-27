@@ -65,6 +65,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     customPomImportAliases,
     customPomImportNameCollisionBehavior,
     nameCollisionBehavior,
+    missingSemanticNameBehavior,
     existingIdBehavior,
     testIdAttribute,
     routerAwarePoms,
@@ -311,6 +312,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
               {
                 existingIdBehavior: existingIdBehavior ?? "error",
                 nameCollisionBehavior,
+                missingSemanticNameBehavior,
                 testIdAttribute,
                 warn: message => loggerRef.current.warn(message),
                 vueFilesPathMap: provisionalVuePathMap,
