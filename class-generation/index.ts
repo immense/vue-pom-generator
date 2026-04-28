@@ -1710,9 +1710,9 @@ function prepareViewObjectModelClass(
     members.push(...getComponentInstances(componentRefsForInstances, componentHierarchyMap, attachmentsForThisClass, widgetInstances));
     members.push(getConstructor(componentRefsForInstances, componentHierarchyMap, attachmentsForThisClass, widgetInstances, { testIdAttribute }));
   }
-  if (!isView && attachmentsForThisClass.length > 0) {
-    members.push(...getComponentInstances(new Set(), componentHierarchyMap, attachmentsForThisClass));
-    members.push(getConstructor(new Set(), componentHierarchyMap, attachmentsForThisClass, [], { testIdAttribute }));
+  if (!isView && (componentRefsForInstances.size > 0 || attachmentsForThisClass.length > 0)) {
+    members.push(...getComponentInstances(componentRefsForInstances, componentHierarchyMap, attachmentsForThisClass));
+    members.push(getConstructor(componentRefsForInstances, componentHierarchyMap, attachmentsForThisClass, [], { testIdAttribute }));
   }
 
   members.push(
@@ -1771,7 +1771,10 @@ function generateViewObjectModelContent(
   const basePageImport = path.relative(fromAbs, toAbs).replace(/\\/g, "/");
   const basePageImportNoExt = stripExtension(basePageImport).replace(/\\/g, "/");
   const basePageImportSpecifier = basePageImportNoExt.startsWith(".") ? basePageImportNoExt : `./${basePageImportNoExt}`;
-  const needsPlaywrightPageImport = prepared.isView || prepared.attachmentsForThisClass.length > 0;
+  const needsPlaywrightPageImport = prepared.isView
+    || prepared.attachmentsForThisClass.length > 0
+    || prepared.componentRefsForInstances.size > 0
+    || prepared.widgetInstances.length > 0;
   const customPomImportSpecifiersByClass = options.customPomImportSpecifiersByClass ?? {};
 
   const customImports = Array.from(

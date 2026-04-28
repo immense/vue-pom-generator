@@ -451,6 +451,59 @@ describe("class-generation coverage", () => {
     }
   });
 
+  it("attaches nested component POMs to component POMs in split output", async () => {
+    const tempRoot = makeTempRoot("vue-pom-component-child-attach-");
+
+    try {
+      const basePagePath = path.join(tempRoot, "base-page.ts");
+      writeMinimalBasePage(basePagePath);
+
+      const depsParentComponent = makeDeps({
+        filePath: path.join(tempRoot, "src", "components", "MaintenanceItems", "MaintenanceItemConfiguration.vue"),
+        isView: false,
+        childrenComponentSet: new Set(["MaintenanceItemsMaintenanceItemSelector"]),
+      });
+
+      const depsChildComponent = makeDeps({
+        filePath: path.join(tempRoot, "src", "components", "MaintenanceItems", "MaintenanceItemSelector.vue"),
+        isView: false,
+        dataTestIdSet: new Set([{
+          selectorValue: createPomStringPattern("MaintenanceItemsMaintenanceItemSelector-Search-input", "static"),
+          pom: {
+            nativeRole: "input",
+            methodName: "Search",
+            selector: createPomStringPattern("MaintenanceItemsMaintenanceItemSelector-Search-input", "static"),
+            parameters: createPomParameters(["text", "string"], ["annotationText", 'string = ""']),
+          },
+        }]),
+        generatedMethods: new Map([
+          ["typeSearch", createPomMethodSignature(createPomParameters(["text", "string"], ["annotationText", 'string = ""']))],
+        ]),
+      });
+
+      const componentHierarchyMap = new Map<string, IComponentDependencies>([
+        ["MaintenanceItemsMaintenanceItemConfiguration", depsParentComponent],
+        ["MaintenanceItemsMaintenanceItemSelector", depsChildComponent],
+      ]);
+
+      const outDir = path.join(tempRoot, "pom");
+      await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
+        outDir,
+        projectRoot: tempRoot,
+        typescriptOutputStructure: "split",
+      });
+
+      const componentContent = readFile(path.join(outDir, "MaintenanceItemsMaintenanceItemConfiguration.g.ts"));
+      expect(componentContent).toContain('import type { Page as PwPage } from "@playwright/test";');
+      expect(componentContent).toContain('import { MaintenanceItemsMaintenanceItemSelector }');
+      expect(componentContent).toContain('MaintenanceItemsMaintenanceItemSelector: MaintenanceItemsMaintenanceItemSelector;');
+      expect(componentContent).toContain('this.MaintenanceItemsMaintenanceItemSelector = new MaintenanceItemsMaintenanceItemSelector(page);');
+    }
+    finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("supports vueRouterFluentChaining by emitting route metadata and goToSelf/goTo methods", async () => {
     const tempRoot = makeTempRoot("vue-pom-router-fluent-");
 
