@@ -2485,6 +2485,7 @@ export interface ResolvedDataTestIdValues {
   selectorValue: AttributeValue;
   runtimeValue: AttributeValue;
   fromExisting: boolean;
+  entry: IDataTestId;
 }
 
 /**
@@ -2740,6 +2741,12 @@ export function applyResolvedDataTestId(args: {
 
   /** Optional warning sink (typically the shared generator logger). */
   warn?: (message: string) => void;
+
+  /** Optional runtime annotator metadata attribute configuration. */
+  annotatorMetadata?: {
+    sourceAttribute: string;
+    metadataAttributePrefix: string;
+  } | null;
 }): ResolvedDataTestIdValues {
   const addHtmlAttribute = args.addHtmlAttribute ?? true;
   const entryOverrides = args.entryOverrides ?? {};
@@ -3318,6 +3325,27 @@ export function applyResolvedDataTestId(args: {
     dataTestIdEntry.pom.emitPrimary = false;
   }
 
+  if (addHtmlAttribute && args.annotatorMetadata && dataTestIdEntry.pom) {
+    const filename = args.contextFilename?.trim();
+    if (!filename) {
+      throw new Error(`[vue-pom-generator] runtime.annotator.enabled requires contextFilename for ${args.componentName}.`);
+    }
+
+    const sourceLocation = args.element.loc?.start;
+    if (!sourceLocation) {
+      throw new Error(`[vue-pom-generator] runtime.annotator.enabled requires element source locations for ${args.componentName}.`);
+    }
+
+    const metadataAttributePrefix = args.annotatorMetadata.metadataAttributePrefix;
+    upsertAttribute(args.element, args.annotatorMetadata.sourceAttribute, staticAttributeValue(`${filename}:${sourceLocation.line}:${sourceLocation.column}`));
+    upsertAttribute(args.element, `${metadataAttributePrefix}-component`, staticAttributeValue(args.componentName));
+    upsertAttribute(args.element, `${metadataAttributePrefix}-tag`, staticAttributeValue(args.element.tag));
+    upsertAttribute(args.element, `${metadataAttributePrefix}-testid`, runtimeDataTestId);
+    upsertAttribute(args.element, `${metadataAttributePrefix}-action`, staticAttributeValue(buildPomGeneratedActionName(dataTestIdEntry, dataTestIdEntry.pom)));
+    upsertAttribute(args.element, `${metadataAttributePrefix}-property`, staticAttributeValue(buildPomGeneratedPropertyName(dataTestIdEntry.pom)));
+    upsertAttribute(args.element, `${metadataAttributePrefix}-role`, staticAttributeValue(normalizedRole));
+  }
+
   args.dependencies.childrenComponentSet.add(childComponentName);
   args.dependencies.usedComponentSet.add(childComponentName);
   args.dependencies.dataTestIdSet.add(dataTestIdEntry);
@@ -3573,7 +3601,7 @@ export function applyResolvedDataTestId(args: {
       }
 
       // For statically-known options, we intentionally do NOT generate the generic parameterized method.
-      return { selectorValue: dataTestId, runtimeValue: runtimeDataTestId, fromExisting };
+      return { selectorValue: dataTestId, runtimeValue: runtimeDataTestId, fromExisting, entry: dataTestIdEntry };
     }
 
     // Dynamic options expression: generate a single method that accepts an option label string.
@@ -3606,7 +3634,7 @@ export function applyResolvedDataTestId(args: {
         createPomParameterSpec("annotationText", `string = ""`),
       ]));
     }
-    return { selectorValue: dataTestId, runtimeValue: runtimeDataTestId, fromExisting };
+    return { selectorValue: dataTestId, runtimeValue: runtimeDataTestId, fromExisting, entry: dataTestIdEntry };
   }
 
   // Special handling for v-for driven by a static literal list.
@@ -3665,7 +3693,7 @@ export function applyResolvedDataTestId(args: {
     }
 
     // For statically-known keys, we intentionally do NOT emit the generic keyed method.
-    return { selectorValue: dataTestId, runtimeValue: runtimeDataTestId, fromExisting };
+    return { selectorValue: dataTestId, runtimeValue: runtimeDataTestId, fromExisting, entry: dataTestIdEntry };
   }
 
   // Default/legacy behavior: emit the primary method+locator for this element.
@@ -3684,7 +3712,7 @@ export function applyResolvedDataTestId(args: {
     registerGeneratedMethodSignature(generatedName, signature);
   }
 
-  return { selectorValue: dataTestId, runtimeValue: runtimeDataTestId, fromExisting };
+  return { selectorValue: dataTestId, runtimeValue: runtimeDataTestId, fromExisting, entry: dataTestIdEntry };
 }
 
 export interface IDataTestId {
@@ -3737,6 +3765,56 @@ export interface PomPrimarySpec {
 
   /** When false, emitters should NOT emit the primary method/locator for this entry. */
   emitPrimary?: boolean;
+}
+
+function removeByKeySegment(value: string): string {
+  const idx = value.indexOf("ByKey");
+  if (idx < 0) {
+    return value;
+  }
+  return value.slice(0, idx) + value.slice(idx + "ByKey".length);
+}
+
+function hasRoleSuffix(baseName: string, roleSuffix: string): boolean {
+  if (baseName.endsWith(roleSuffix)) {
+    return true;
+  }
+
+  const re = new RegExp(`^${roleSuffix}\\d+$`);
+  return re.test(baseName);
+}
+
+export function buildPomGeneratedPropertyName(pom: PomPrimarySpec): string {
+  if (pom.getterNameOverride) {
+    return pom.getterNameOverride;
+  }
+
+  const roleSuffix = upperFirst(pom.nativeRole || "Element");
+  const baseName = upperFirst(pom.methodName);
+  const propertyName = hasRoleSuffix(baseName, roleSuffix) ? baseName : `${baseName}${roleSuffix}`;
+  return pom.selector.patternKind === "parameterized" ? removeByKeySegment(propertyName) : propertyName;
+}
+
+export function buildPomGeneratedActionName(entry: IDataTestId, pom: PomPrimarySpec): string {
+  const methodNameUpper = upperFirst(pom.methodName);
+  const radioMethodNameUpper = upperFirst(pom.methodName || "Radio");
+  const isNavigation = !!entry.targetPageObjectModelClass;
+
+  if (isNavigation) {
+    return `goTo${methodNameUpper}`;
+  }
+
+  switch (pom.nativeRole) {
+    case "input":
+      return `type${methodNameUpper}`;
+    case "select":
+    case "vselect":
+      return `select${methodNameUpper}`;
+    case "radio":
+      return `select${radioMethodNameUpper}`;
+    default:
+      return `click${methodNameUpper}`;
+  }
 }
 
 export type PomSelectorSpec =
@@ -3819,4 +3897,70 @@ export interface IComponentDependencies {
 
   /** Internal: lookup of already-emitted primaries by their generated getter name. */
   __pomPrimaryByGetterName?: Map<string, IDataTestId>;
+}
+
+const STANDALONE_WRAPPER_FALLBACK_ROLES = new Set<NativeRole>([
+  "button",
+  "input",
+  "select",
+  "vselect",
+  "checkbox",
+  "toggle",
+  "radio",
+]);
+
+function stripTrailingAsciiDigits(value: string): string {
+  let end = value.length;
+  while (end > 0 && isAsciiDigitCode(value.charCodeAt(end - 1))) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
+function matchesStandaloneWrapperFallbackMethodName(methodName: string, componentClassName: string): boolean {
+  let normalizedMethodName = methodName;
+  if (normalizedMethodName.endsWith("ByKey")) {
+    normalizedMethodName = normalizedMethodName.slice(0, -("ByKey".length));
+  }
+  normalizedMethodName = stripTrailingAsciiDigits(normalizedMethodName);
+  return normalizedMethodName === componentClassName;
+}
+
+/**
+ * Generic native-wrapper components like `LoadButton` can only infer meaningful names at their usage sites.
+ * When the standalone component class falls back to its own wrapper name (`LoadButton`, `LoadButtonByKey`,
+ * `LoadButton2`, etc.), surfacing that component as a first-class generated POM/fixture/manifest entry adds
+ * noise without adding useful semantics. Parent views/components already expose the handler-derived API.
+ */
+export function shouldSuppressStandaloneWrapperFallbackSurface(
+  componentName: string,
+  dependencies: IComponentDependencies,
+): boolean {
+  if (dependencies.isView || (dependencies.pomExtraMethods?.length ?? 0) > 0) {
+    return false;
+  }
+
+  const entries = Array.from(dependencies.dataTestIdSet ?? []);
+  if (!entries.length) {
+    return false;
+  }
+
+  const primaryEntries = entries.filter((entry): entry is IDataTestId & { pom: PomPrimarySpec } => {
+    return !!entry.pom && entry.pom.emitPrimary !== false;
+  });
+
+  // Be conservative: only suppress when every emitted entry is a primary wrapper fallback.
+  if (!primaryEntries.length || primaryEntries.length !== entries.length) {
+    return false;
+  }
+
+  const componentClassName = toPascalCase(componentName.endsWith(".vue") ? componentName.slice(0, -4) : componentName);
+  if (!componentClassName) {
+    return false;
+  }
+
+  return primaryEntries.every(({ pom }) => {
+    return STANDALONE_WRAPPER_FALLBACK_ROLES.has(pom.nativeRole)
+      && matchesStandaloneWrapperFallbackMethodName(pom.methodName, componentClassName);
+  });
 }

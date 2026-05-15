@@ -18,6 +18,45 @@ type RouterModuleShimPrimitive = string | number | boolean | null | undefined;
 export type RouterModuleShimFunction = (...args: Array<object | RouterModuleShimPrimitive>) => object | RouterModuleShimPrimitive;
 export type RouterModuleShimDefinition = string[] | Record<string, RouterModuleShimFunction>;
 
+export interface VuePomGeneratorRuntimeAnnotatorOptions {
+  /**
+   * Enables annotator-oriented runtime metadata attributes on generated interactive elements.
+   *
+   * When enabled, the template transform injects:
+   * - source location metadata via `sourceAttribute`
+   * - generated POM metadata via `${metadataAttributePrefix}-*` attributes
+   */
+  enabled?: boolean;
+
+  /**
+   * Attribute name used for source-location metadata.
+   *
+   * Defaults to `data-v-inspector`.
+   *
+   * Value format: `<absolute-file-path>:<line>:<column>`.
+   */
+  sourceAttribute?: string;
+
+  /**
+   * Attribute prefix used for generated POM metadata.
+   *
+   * Defaults to `data-v-pom`.
+   *
+   * The transform emits:
+   * - `<prefix>-component`
+   * - `<prefix>-tag`
+   * - `<prefix>-testid`
+   * - `<prefix>-action`
+   * - `<prefix>-property`
+   * - `<prefix>-role`
+   */
+  metadataAttributePrefix?: string;
+}
+
+export interface VuePomGeneratorRuntimeOptions {
+  annotator?: VuePomGeneratorRuntimeAnnotatorOptions;
+}
+
 export interface VuePomGeneratorPluginOptions {
   /** Options forwarded to @vitejs/plugin-vue */
   vueOptions?: VuePluginOptions;
@@ -33,6 +72,11 @@ export interface VuePomGeneratorPluginOptions {
    * Nuxt projects always use the resolved app-owned Vue plugin.
    */
   vuePluginOwnership?: VuePluginOwnership;
+
+  /**
+   * Optional runtime metadata features.
+   */
+  runtime?: VuePomGeneratorRuntimeOptions;
 
   /**
    * Logging configuration for the generator plugins.

@@ -28,6 +28,27 @@ Stop and ask for guidance instead of implementing a fallback. Explain:
 - which consumers/call sites are affected,
 - and what the clean breaking change would look like.
 
+## Local source wiring into a consumer app
+
+When testing `vue-pom-generator` from a local checkout, do **not** import `../vue-pom-generator/index.ts` directly from the consumer's Vite config.
+That pulls in this repo's source-level TypeScript types and its own `vite` dependency tree, which causes avoidable type/runtime mismatches.
+
+Use this flow instead:
+
+1. Build this repo first:
+   - `cd /path/to/vue-pom-generator`
+   - `npm run build`
+2. In the consumer app's `package.json`, point the dependency at the local checkout:
+   - `"@immense/vue-pom-generator": "file:../../../vue-pom-generator"`
+   - adjust the relative path for that consumer repo
+3. Keep imports by package name:
+   - `import { defineVuePomGeneratorConfig, vuePomGenerator } from "@immense/vue-pom-generator";`
+4. Reinstall in the consumer:
+   - `npm install`
+5. If the consumer has type friction around `PluginOption[]`, prefer a local cast in the consumer helper rather than importing this repo's TS source directly.
+
+Short version: **build here, use a `file:` dependency there, keep package-name imports.**
+
 ## Scope
 
 These rules apply to:

@@ -36,6 +36,10 @@ interface InternalFactoryOptions {
   getSourceDirs: () => string[];
   getWrapperSearchRoots: () => string[];
   getProjectRoot: () => string;
+  annotatorMetadata?: {
+    sourceAttribute: string;
+    metadataAttributePrefix: string;
+  } | null;
 }
 
 type VueCompilerSfcNamespace = Awaited<typeof import("@vue/compiler-sfc")>;
@@ -136,6 +140,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     getSourceDirs,
     getWrapperSearchRoots,
     getProjectRoot,
+    annotatorMetadata,
   } = options;
   const lastAccessibilityWarningSignatureByComponent = new Map<string, string>();
 
@@ -234,6 +239,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
                   warn: (message) => loggerRef.current.warn(message),
                   vueFilesPathMap,
                   wrapperSearchRoots: getWrapperSearchRoots(),
+                  annotatorMetadata,
                 },
               ),
             );
@@ -297,6 +303,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
                 warn: (message) => loggerRef.current.warn(message),
                 vueFilesPathMap,
                 wrapperSearchRoots: getWrapperSearchRoots(),
+                annotatorMetadata,
               },
             );
           perFileTransform.set(componentName, transform);
