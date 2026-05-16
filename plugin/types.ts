@@ -222,9 +222,8 @@ export interface VuePomGeneratorPluginOptions {
       *      (we do not use innerText-based disambiguation).
       *
       * 3) **Wrapper components collapse distinct elements into the same role/name**
-      *    - Example: multiple wrapper components that all behave like buttons (e.g. `<MyButton>`,
-      *      `<LoadButton>`) can generate very similar naming when neither element has a distinct id/name
-      *      or handler-derived hint.
+      *    - Example: multiple wrapper components that all behave like buttons can generate very
+      *      similar naming when neither element has a distinct id/name nor a handler-derived hint.
       *
       * 4) **Keyed/templated test ids intentionally share a base name**
       *    - Example: a list of row actions might yield `ClickDeleteByKey(key)` and a non-keyed
