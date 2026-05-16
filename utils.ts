@@ -3318,6 +3318,8 @@ export function applyResolvedDataTestId(args: {
     mergeKey: args.pomMergeKey,
     parameters: normalizedParameters,
     keyValuesOverride: args.keyValuesOverride ?? null,
+    generatedActionName: getPrimaryActionMethodName(methodName),
+    generatedPropertyName: getterNameOverride ?? getPrimaryGetterName(methodName),
     // emitPrimary defaults to true; special cases (including merge) may set it to false below.
   };
 
@@ -3341,7 +3343,7 @@ export function applyResolvedDataTestId(args: {
     upsertAttribute(args.element, `${metadataAttributePrefix}-component`, staticAttributeValue(args.componentName));
     upsertAttribute(args.element, `${metadataAttributePrefix}-tag`, staticAttributeValue(args.element.tag));
     upsertAttribute(args.element, `${metadataAttributePrefix}-testid`, runtimeDataTestId);
-    upsertAttribute(args.element, `${metadataAttributePrefix}-action`, staticAttributeValue(buildPomGeneratedActionName(dataTestIdEntry, dataTestIdEntry.pom)));
+    upsertAttribute(args.element, `${metadataAttributePrefix}-action`, staticAttributeValue(buildPomGeneratedActionName(dataTestIdEntry.pom)));
     upsertAttribute(args.element, `${metadataAttributePrefix}-property`, staticAttributeValue(buildPomGeneratedPropertyName(dataTestIdEntry.pom)));
     upsertAttribute(args.element, `${metadataAttributePrefix}-role`, staticAttributeValue(normalizedRole));
   }
@@ -3763,58 +3765,34 @@ export interface PomPrimarySpec {
   /** Optional enum values for key when derived from a static v-for list. */
   keyValuesOverride?: string[] | null;
 
+  /** Structured action method name chosen during transform (for runtime metadata / manifests). */
+  generatedActionName?: string;
+  /** Structured locator property name chosen during transform (for runtime metadata / manifests). */
+  generatedPropertyName?: string;
+
   /** When false, emitters should NOT emit the primary method/locator for this entry. */
   emitPrimary?: boolean;
 }
 
-function removeByKeySegment(value: string): string {
-  const idx = value.indexOf("ByKey");
-  if (idx < 0) {
-    return value;
-  }
-  return value.slice(0, idx) + value.slice(idx + "ByKey".length);
-}
-
-function hasRoleSuffix(baseName: string, roleSuffix: string): boolean {
-  if (baseName.endsWith(roleSuffix)) {
-    return true;
+function requireStructuredPomName(
+  value: string | undefined,
+  fieldName: "generatedActionName" | "generatedPropertyName",
+  pom: PomPrimarySpec,
+): string {
+  const normalized = value?.trim();
+  if (normalized) {
+    return normalized;
   }
 
-  const re = new RegExp(`^${roleSuffix}\\d+$`);
-  return re.test(baseName);
+  throw new Error(`[vue-pom-generator] Missing ${fieldName} for POM spec ${pom.methodName}.`);
 }
 
 export function buildPomGeneratedPropertyName(pom: PomPrimarySpec): string {
-  if (pom.getterNameOverride) {
-    return pom.getterNameOverride;
-  }
-
-  const roleSuffix = upperFirst(pom.nativeRole || "Element");
-  const baseName = upperFirst(pom.methodName);
-  const propertyName = hasRoleSuffix(baseName, roleSuffix) ? baseName : `${baseName}${roleSuffix}`;
-  return pom.selector.patternKind === "parameterized" ? removeByKeySegment(propertyName) : propertyName;
+  return requireStructuredPomName(pom.generatedPropertyName, "generatedPropertyName", pom);
 }
 
-export function buildPomGeneratedActionName(entry: IDataTestId, pom: PomPrimarySpec): string {
-  const methodNameUpper = upperFirst(pom.methodName);
-  const radioMethodNameUpper = upperFirst(pom.methodName || "Radio");
-  const isNavigation = !!entry.targetPageObjectModelClass;
-
-  if (isNavigation) {
-    return `goTo${methodNameUpper}`;
-  }
-
-  switch (pom.nativeRole) {
-    case "input":
-      return `type${methodNameUpper}`;
-    case "select":
-    case "vselect":
-      return `select${methodNameUpper}`;
-    case "radio":
-      return `select${radioMethodNameUpper}`;
-    default:
-      return `click${methodNameUpper}`;
-  }
+export function buildPomGeneratedActionName(pom: PomPrimarySpec): string {
+  return requireStructuredPomName(pom.generatedActionName, "generatedActionName", pom);
 }
 
 export type PomSelectorSpec =
@@ -3927,10 +3905,10 @@ function matchesStandaloneWrapperFallbackMethodName(methodName: string, componen
 }
 
 /**
- * Generic native-wrapper components like `LoadButton` can only infer meaningful names at their usage sites.
- * When the standalone component class falls back to its own wrapper name (`LoadButton`, `LoadButtonByKey`,
- * `LoadButton2`, etc.), surfacing that component as a first-class generated POM/fixture/manifest entry adds
- * noise without adding useful semantics. Parent views/components already expose the handler-derived API.
+ * Suppress standalone wrapper surfaces when every emitted primary is just a generic native-control fallback:
+ * the wrapper only exposes button/input/select/etc. semantics, and the generated member names collapse to the
+ * wrapper's own class name (optionally with keyed or numeric collision suffixes). Those wrappers only become
+ * meaningfully named at their usage sites, where parent views/components contribute handler-derived semantics.
  */
 export function shouldSuppressStandaloneWrapperFallbackSurface(
   componentName: string,
