@@ -272,6 +272,18 @@ export const ANNOTATOR_STYLES = `
   margin-top: 12px;
 }
 
+.vpg-annotator-shortcuts {
+  display: grid;
+  gap: 8px;
+}
+
+.vpg-annotator-shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .vpg-annotator-label {
   font-size: 12px;
   font-weight: 600;
@@ -285,6 +297,20 @@ export const ANNOTATOR_STYLES = `
 
 .vpg-annotator-select {
   padding: 8px 10px;
+}
+
+.vpg-annotator-kbd {
+  min-width: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--vpg-annotator-border);
+  border-radius: var(--vpg-annotator-radius);
+  background: rgba(15, 23, 42, 0.72);
+  color: var(--vpg-annotator-text);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
 }
 
 .vpg-annotator-highlight {
