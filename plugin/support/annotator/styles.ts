@@ -10,44 +10,97 @@ export const ANNOTATOR_STYLES = `
   --vpg-annotator-text: #e2e8f0;
   --vpg-annotator-text-soft: #94a3b8;
   --vpg-annotator-shadow: 0 16px 40px rgba(15, 23, 42, 0.26);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --vpg-annotator-radius: 0px;
+  --vpg-annotator-edge-offset: 20px;
   color: var(--vpg-annotator-text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-[${ANNOTATOR_ROOT_ATTR}] * {
+[${ANNOTATOR_ROOT_ATTR}],
+[${ANNOTATOR_ROOT_ATTR}] *,
+[${ANNOTATOR_ROOT_ATTR}] *::before,
+[${ANNOTATOR_ROOT_ATTR}] *::after {
   box-sizing: border-box;
 }
 
-.vpg-annotator-toolbar {
+.vpg-annotator-layer {
   position: fixed;
-  right: 20px;
-  bottom: 20px;
+  inset: 0;
+  pointer-events: none;
+}
+
+.vpg-annotator-layer--markers {
+  z-index: 2147483646;
+}
+
+.vpg-annotator-layer--panels {
   z-index: 2147483647;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 8px;
-  border-radius: 14px;
+}
+
+.vpg-annotator-toolbar,
+.vpg-annotator-panel,
+.vpg-annotator-input,
+.vpg-annotator-settings,
+.vpg-annotator-toast {
   background: var(--vpg-annotator-bg);
   border: 1px solid var(--vpg-annotator-border);
   box-shadow: var(--vpg-annotator-shadow);
   backdrop-filter: blur(18px);
 }
 
+.vpg-annotator-toolbar {
+  position: fixed;
+  right: var(--vpg-annotator-edge-offset);
+  bottom: var(--vpg-annotator-edge-offset);
+  z-index: 2147483647;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border-radius: var(--vpg-annotator-radius);
+  user-select: none;
+}
+
+.vpg-annotator-toolbar-handle,
 .vpg-annotator-btn {
   appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 7px 10px;
   border: 1px solid var(--vpg-annotator-border);
+  border-radius: var(--vpg-annotator-radius);
   background: var(--vpg-annotator-bg-soft);
   color: var(--vpg-annotator-text);
-  border-radius: 10px;
-  padding: 7px 10px;
   font-size: 12px;
   font-weight: 600;
   line-height: 1;
+}
+
+.vpg-annotator-toolbar-handle {
+  padding: 0;
+  cursor: grab;
+  touch-action: none;
+}
+
+.vpg-annotator-toolbar--dragging,
+.vpg-annotator-toolbar--dragging * {
+  cursor: grabbing !important;
+}
+
+.vpg-annotator-btn {
   cursor: pointer;
 }
 
-.vpg-annotator-btn:hover {
+.vpg-annotator-btn--icon {
+  width: 32px;
+  padding: 0;
+}
+
+.vpg-annotator-btn:hover,
+.vpg-annotator-toolbar-handle:hover {
   border-color: rgba(99, 102, 241, 0.45);
 }
 
@@ -63,6 +116,30 @@ export const ANNOTATOR_STYLES = `
   color: white;
 }
 
+.vpg-annotator-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vpg-annotator-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.vpg-annotator-count {
+  padding-left: 4px;
+  white-space: nowrap;
+}
+
 .vpg-annotator-panel,
 .vpg-annotator-input,
 .vpg-annotator-settings {
@@ -70,12 +147,10 @@ export const ANNOTATOR_STYLES = `
   z-index: 2147483647;
   min-width: 300px;
   max-width: min(560px, calc(100vw - 24px));
-  background: var(--vpg-annotator-bg);
-  border: 1px solid var(--vpg-annotator-border);
-  border-radius: 14px;
-  box-shadow: var(--vpg-annotator-shadow);
-  backdrop-filter: blur(18px);
-  overflow: hidden;
+  border-radius: var(--vpg-annotator-radius);
+  overflow: visible;
+  pointer-events: auto;
+  visibility: hidden;
 }
 
 .vpg-annotator-settings {
@@ -85,8 +160,9 @@ export const ANNOTATOR_STYLES = `
 
 .vpg-annotator-arrow {
   position: absolute;
-  width: 12px;
-  height: 12px;
+  z-index: 0;
+  width: 14px;
+  height: 14px;
   background: var(--vpg-annotator-bg);
   border: 1px solid var(--vpg-annotator-border);
   transform: rotate(45deg);
@@ -141,22 +217,27 @@ export const ANNOTATOR_STYLES = `
 }
 
 .vpg-annotator-textarea,
-.vpg-annotator-comment {
+.vpg-annotator-comment,
+.vpg-annotator-select {
   width: 100%;
   border: 1px solid var(--vpg-annotator-border);
-  border-radius: 10px;
+  border-radius: var(--vpg-annotator-radius);
   background: rgba(15, 23, 42, 0.72);
   color: var(--vpg-annotator-text);
+}
+
+.vpg-annotator-textarea,
+.vpg-annotator-comment {
   padding: 10px 12px;
   font-size: 12px;
   line-height: 1.55;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 .vpg-annotator-textarea {
   min-height: 220px;
-  resize: vertical;
   margin-top: 12px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 .vpg-annotator-comment {
@@ -166,7 +247,6 @@ export const ANNOTATOR_STYLES = `
 }
 
 .vpg-annotator-input-meta {
-  width: 100%;
   min-height: 160px;
   margin-bottom: 10px;
 }
@@ -204,11 +284,6 @@ export const ANNOTATOR_STYLES = `
 }
 
 .vpg-annotator-select {
-  width: 100%;
-  border: 1px solid var(--vpg-annotator-border);
-  border-radius: 10px;
-  background: rgba(15, 23, 42, 0.72);
-  color: var(--vpg-annotator-text);
   padding: 8px 10px;
 }
 
@@ -217,7 +292,7 @@ export const ANNOTATOR_STYLES = `
   z-index: 2147483646;
   pointer-events: none;
   border: 2px solid var(--vpg-annotator-accent);
-  border-radius: 8px;
+  border-radius: var(--vpg-annotator-radius);
   background: rgba(79, 70, 229, 0.08);
   box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
 }
@@ -230,7 +305,7 @@ export const ANNOTATOR_STYLES = `
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  border-radius: 999px;
+  border-radius: var(--vpg-annotator-radius);
   background: var(--vpg-annotator-accent);
   color: white;
   padding: 5px 10px;
@@ -248,13 +323,14 @@ export const ANNOTATOR_STYLES = `
 .vpg-annotator-marker {
   position: absolute;
   z-index: 2147483646;
-  width: 24px;
-  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 999px;
+  width: 24px;
+  height: 24px;
+  pointer-events: auto;
   border: none;
+  border-radius: var(--vpg-annotator-radius);
   background: var(--vpg-annotator-accent);
   color: white;
   font-size: 12px;
@@ -268,13 +344,10 @@ export const ANNOTATOR_STYLES = `
   right: 24px;
   bottom: 86px;
   z-index: 2147483647;
-  border-radius: 999px;
-  background: var(--vpg-annotator-bg);
-  border: 1px solid var(--vpg-annotator-border);
-  color: var(--vpg-annotator-text);
   padding: 8px 12px;
+  border-radius: var(--vpg-annotator-radius);
+  color: var(--vpg-annotator-text);
   font-size: 12px;
   font-weight: 600;
-  box-shadow: var(--vpg-annotator-shadow);
 }
 `;

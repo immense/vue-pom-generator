@@ -24,10 +24,27 @@ interface AnnotationRecord extends FormattedAnnotation {
 
 const SETTINGS_STORAGE_KEY = "vpg-annotator-settings";
 const ANNOTATIONS_STORAGE_KEY = "vpg-annotator-annotations";
+const TOOLBAR_POSITION_STORAGE_KEY = "vpg-annotator-toolbar-position";
 const RUNTIME_GUARD = "__VUE_POM_GENERATOR_ANNOTATOR_RUNTIME__";
 
 type RuntimeWindow = Window & {
   [RUNTIME_GUARD]?: AnnotatorRuntime;
+};
+
+interface ToolbarPosition {
+  left: number;
+  top: number;
+}
+
+type ToolbarIconName = "drag" | "inspect" | "preview" | "copy" | "clear" | "settings";
+
+const TOOLBAR_ICON_MARKUP: Record<ToolbarIconName, string> = {
+  drag: '<svg viewBox="0 0 16 16"><path d="M5 3h1v1H5zM10 3h1v1h-1zM5 7h1v1H5zM10 7h1v1h-1zM5 11h1v1H5zM10 11h1v1h-1z" fill="currentColor" stroke="none" /></svg>',
+  inspect: '<svg viewBox="0 0 16 16"><path d="M8 2v3M8 11v3M2 8h3M11 8h3M4 4l2 2M10 10l2 2M12 4l-2 2M6 10l-2 2"/><circle cx="8" cy="8" r="2.5"/></svg>',
+  preview: '<svg viewBox="0 0 16 16"><path d="M1.5 8s2.4-4 6.5-4 6.5 4 6.5 4-2.4 4-6.5 4-6.5-4-6.5-4Z"/><circle cx="8" cy="8" r="1.8"/></svg>',
+  copy: '<svg viewBox="0 0 16 16"><path d="M6 2.5h6.5v9H6z"/><path d="M3.5 5.5H5v6.5h5.5v1.5h-7z"/></svg>',
+  clear: '<svg viewBox="0 0 16 16"><path d="M2.5 4.5h11"/><path d="M6 2.5h4"/><path d="M5 4.5v8"/><path d="M8 4.5v8"/><path d="M11 4.5v8"/><path d="M4 4.5h8l-.6 9H4.6z"/></svg>',
+  settings: '<svg viewBox="0 0 16 16"><path d="M8 2.2l1 .6 1.2-.2.8 1 .9.7-.3 1.2.5 1-.5 1 .3 1.2-.9.7-.8 1-1.2-.2-1 .6-1-.6-1.2.2-.8-1-.9-.7.3-1.2-.5-1 .5-1-.3-1.2.9-.7.8-1 1.2.2z"/><circle cx="8" cy="8" r="2.2"/></svg>',
 };
 
 function normalizeText(value: string | undefined): string | undefined {
@@ -108,12 +125,17 @@ function toCssPixels(value: number): string {
   return `${Math.round(value)}px`;
 }
 
-function createButton(label: string, onClick: () => void, options: { primary?: boolean; pressed?: boolean; disabled?: boolean } = {}): HTMLButtonElement {
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function createButtonBase(label: string, onClick: () => void, options: { primary?: boolean; pressed?: boolean; disabled?: boolean } = {}): HTMLButtonElement {
   const button = document.createElement("button");
   button.type = "button";
   button.className = `vpg-annotator-btn${options.primary ? " vpg-annotator-btn--primary" : ""}`;
-  button.textContent = label;
   button.setAttribute(ANNOTATOR_ROOT_ATTR, "");
+  button.setAttribute("aria-label", label);
+  button.title = label;
   if (options.pressed) {
     button.setAttribute("aria-pressed", "true");
   }
@@ -126,6 +148,43 @@ function createButton(label: string, onClick: () => void, options: { primary?: b
     onClick();
   });
   return button;
+}
+
+function createIcon(iconName: ToolbarIconName): HTMLSpanElement {
+  const icon = document.createElement("span");
+  icon.className = "vpg-annotator-icon";
+  icon.setAttribute(ANNOTATOR_ROOT_ATTR, "");
+  icon.setAttribute("aria-hidden", "true");
+  icon.innerHTML = TOOLBAR_ICON_MARKUP[iconName];
+  return icon;
+}
+
+function createButton(label: string, onClick: () => void, options: { primary?: boolean; pressed?: boolean; disabled?: boolean } = {}): HTMLButtonElement {
+  const button = createButtonBase(label, onClick, options);
+  button.textContent = label;
+  return button;
+}
+
+function createIconButton(
+  label: string,
+  iconName: ToolbarIconName,
+  onClick: () => void,
+  options: { primary?: boolean; pressed?: boolean; disabled?: boolean } = {},
+): HTMLButtonElement {
+  const button = createButtonBase(label, onClick, options);
+  button.classList.add("vpg-annotator-btn--icon");
+  button.appendChild(createIcon(iconName));
+  return button;
+}
+
+function createToolbarHandle(): HTMLDivElement {
+  const handle = document.createElement("div");
+  handle.className = "vpg-annotator-toolbar-handle";
+  handle.setAttribute(ANNOTATOR_ROOT_ATTR, "");
+  handle.setAttribute("title", "Drag annotator toolbar");
+  handle.setAttribute("aria-hidden", "true");
+  handle.appendChild(createIcon("drag"));
+  return handle;
 }
 
 class AnnotatorRuntime {
@@ -148,11 +207,13 @@ class AnnotatorRuntime {
   private currentPanelCleanup: (() => void) | null = null;
   private currentPanelEl: HTMLElement | null = null;
   private toastTimer: number | null = null;
+  private toolbarPosition: ToolbarPosition | null = null;
 
   constructor(options: AnnotatorClientOptions) {
     this.options = options;
     this.settings = this.loadSettings();
     this.annotations = this.loadAnnotations();
+    this.toolbarPosition = this.loadToolbarPosition();
   }
 
   mount() {
@@ -179,22 +240,12 @@ class AnnotatorRuntime {
     this.toolbarEl.setAttribute(ANNOTATOR_ROOT_ATTR, "");
 
     this.markerLayerEl = document.createElement("div");
+    this.markerLayerEl.className = "vpg-annotator-layer vpg-annotator-layer--markers";
     this.markerLayerEl.setAttribute(ANNOTATOR_ROOT_ATTR, "");
-    Object.assign(this.markerLayerEl.style, {
-      position: "fixed",
-      inset: "0",
-      pointerEvents: "none",
-      zIndex: "2147483646",
-    });
 
     this.panelLayerEl = document.createElement("div");
+    this.panelLayerEl.className = "vpg-annotator-layer vpg-annotator-layer--panels";
     this.panelLayerEl.setAttribute(ANNOTATOR_ROOT_ATTR, "");
-    Object.assign(this.panelLayerEl.style, {
-      position: "fixed",
-      inset: "0",
-      pointerEvents: "none",
-      zIndex: "2147483647",
-    });
 
     this.highlightEl = document.createElement("div");
     this.highlightEl.className = "vpg-annotator-highlight";
@@ -217,32 +268,37 @@ class AnnotatorRuntime {
 
   private renderToolbar() {
     this.toolbarEl.replaceChildren();
+
+    const handle = createToolbarHandle();
+    this.attachToolbarDrag(handle);
+
     const count = document.createElement("span");
-    count.className = "vpg-annotator-subtle";
+    count.className = "vpg-annotator-count vpg-annotator-subtle";
     count.setAttribute(ANNOTATOR_ROOT_ATTR, "");
     count.textContent = `${this.annotations.length} annotation${this.annotations.length === 1 ? "" : "s"}`;
 
-    const selectButton = createButton(this.inspectMode ? "Inspecting" : "Select", () => {
+    const selectButton = createIconButton(this.inspectMode ? "Stop selecting" : "Select element", "inspect", () => {
       this.setInspectMode(!this.inspectMode);
     }, { primary: this.inspectMode, pressed: this.inspectMode });
 
-    const previewButton = createButton("Preview", () => this.openPreview(), {
+    const previewButton = createIconButton("Preview annotations", "preview", () => this.openPreview(), {
       disabled: this.annotations.length === 0,
     });
     this.previewButton = previewButton;
 
-    const copyButton = createButton("Copy", () => this.copyAnnotations(), {
+    const copyButton = createIconButton("Copy annotations", "copy", () => this.copyAnnotations(), {
       disabled: this.annotations.length === 0 || !this.settings.copyToClipboard,
     });
 
-    const clearButton = createButton("Clear", () => this.clearAnnotations(), {
+    const clearButton = createIconButton("Clear annotations", "clear", () => this.clearAnnotations(), {
       disabled: this.annotations.length === 0,
     });
 
-    const settingsButton = createButton("Settings", () => this.openSettings());
+    const settingsButton = createIconButton("Annotator settings", "settings", () => this.openSettings());
     this.settingsButton = settingsButton;
 
-    this.toolbarEl.append(selectButton, previewButton, copyButton, clearButton, settingsButton, count);
+    this.toolbarEl.append(handle, selectButton, previewButton, copyButton, clearButton, settingsButton, count);
+    this.applyToolbarPosition();
   }
 
   private renderMarkers() {
@@ -253,7 +309,6 @@ class AnnotatorRuntime {
       marker.className = "vpg-annotator-marker";
       marker.setAttribute(ANNOTATOR_ROOT_ATTR, "");
       marker.textContent = String(index + 1);
-      marker.style.pointerEvents = "auto";
       marker.style.left = toCssPixels(annotation.pageX);
       marker.style.top = toCssPixels(annotation.pageY - window.scrollY);
       marker.addEventListener("click", (event) => {
@@ -269,7 +324,10 @@ class AnnotatorRuntime {
     this.shieldEl.addEventListener("mousemove", (event) => this.onShieldMouseMove(event));
     this.shieldEl.addEventListener("click", (event) => this.onShieldClick(event));
     window.addEventListener("scroll", () => this.renderMarkers(), true);
-    window.addEventListener("resize", () => this.renderMarkers());
+    window.addEventListener("resize", () => {
+      this.renderMarkers();
+      this.applyToolbarPosition();
+    });
   }
 
   private loadSettings(): AnnotatorSettings {
@@ -318,6 +376,104 @@ class AnnotatorRuntime {
     sessionStorage.setItem(ANNOTATIONS_STORAGE_KEY, JSON.stringify(store));
     this.renderToolbar();
     this.renderMarkers();
+  }
+
+  private loadToolbarPosition(): ToolbarPosition | null {
+    try {
+      const raw = localStorage.getItem(TOOLBAR_POSITION_STORAGE_KEY);
+      if (!raw) {
+        return null;
+      }
+      const parsed = JSON.parse(raw) as Partial<ToolbarPosition>;
+      if (typeof parsed.left !== "number" || typeof parsed.top !== "number") {
+        return null;
+      }
+      return { left: parsed.left, top: parsed.top };
+    }
+    catch {
+      return null;
+    }
+  }
+
+  private saveToolbarPosition() {
+    try {
+      if (!this.toolbarPosition) {
+        localStorage.removeItem(TOOLBAR_POSITION_STORAGE_KEY);
+        return;
+      }
+      localStorage.setItem(TOOLBAR_POSITION_STORAGE_KEY, JSON.stringify(this.toolbarPosition));
+    }
+    catch {
+      // Ignore storage failures and keep the current in-memory position.
+    }
+  }
+
+  private clampToolbarPosition(position: ToolbarPosition): ToolbarPosition {
+    const margin = 12;
+    const width = this.toolbarEl.offsetWidth || 0;
+    const height = this.toolbarEl.offsetHeight || 0;
+    const maxLeft = Math.max(margin, window.innerWidth - width - margin);
+    const maxTop = Math.max(margin, window.innerHeight - height - margin);
+
+    return {
+      left: clamp(position.left, margin, maxLeft),
+      top: clamp(position.top, margin, maxTop),
+    };
+  }
+
+  private applyToolbarPosition() {
+    if (!this.toolbarPosition) {
+      this.toolbarEl.style.left = "";
+      this.toolbarEl.style.top = "";
+      this.toolbarEl.style.right = "";
+      this.toolbarEl.style.bottom = "";
+      return;
+    }
+
+    const position = this.clampToolbarPosition(this.toolbarPosition);
+    this.toolbarPosition = position;
+    this.toolbarEl.style.left = toCssPixels(position.left);
+    this.toolbarEl.style.top = toCssPixels(position.top);
+    this.toolbarEl.style.right = "auto";
+    this.toolbarEl.style.bottom = "auto";
+  }
+
+  private attachToolbarDrag(handle: HTMLElement) {
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const rect = this.toolbarEl.getBoundingClientRect();
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startLeft = rect.left;
+      const startTop = rect.top;
+      this.toolbarEl.classList.add("vpg-annotator-toolbar--dragging");
+
+      const onPointerMove = (moveEvent: PointerEvent) => {
+        this.toolbarPosition = {
+          left: startLeft + moveEvent.clientX - startX,
+          top: startTop + moveEvent.clientY - startY,
+        };
+        this.applyToolbarPosition();
+      };
+
+      const onPointerUp = () => {
+        this.toolbarEl.classList.remove("vpg-annotator-toolbar--dragging");
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", onPointerUp);
+        window.removeEventListener("pointercancel", onPointerUp);
+        this.saveToolbarPosition();
+      };
+
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("pointercancel", onPointerUp);
+    });
   }
 
   private setInspectMode(next: boolean) {
@@ -413,7 +569,6 @@ class AnnotatorRuntime {
     const panel = document.createElement("div");
     panel.className = className;
     panel.setAttribute(ANNOTATOR_ROOT_ATTR, "");
-    panel.style.pointerEvents = "auto";
     const arrowEl = createFloatingArrow();
     const body = document.createElement("div");
     body.className = className === "vpg-annotator-settings" ? "vpg-annotator-settings-body" : className === "vpg-annotator-input" ? "vpg-annotator-input-body" : "vpg-annotator-panel-body";
@@ -429,7 +584,7 @@ class AnnotatorRuntime {
         strategy: "fixed",
         placement,
         middleware: [
-          offset(12),
+          offset(14),
           autoPlacement({ allowedPlacements: [...allowedPlacements], padding: 12 }),
           shift({ padding: 12 }),
           arrow({ element: arrowEl, padding: 10 }),
@@ -444,12 +599,17 @@ class AnnotatorRuntime {
       const arrowData = result.middlewareData.arrow;
       const side = result.placement.split("-")[0];
       const staticSide = side === "top" ? "bottom" : side === "bottom" ? "top" : side === "left" ? "right" : "left";
-      arrowEl.style.left = typeof arrowData?.x === "number" ? toCssPixels(arrowData.x) : "";
-      arrowEl.style.top = typeof arrowData?.y === "number" ? toCssPixels(arrowData.y) : "";
-      arrowEl.style.right = "";
-      arrowEl.style.bottom = "";
-      arrowEl.style.setProperty(staticSide, "-6px");
-      if (staticSide !== "left") arrowEl.style.left = arrowEl.style.left || "";
+      arrowEl.style.removeProperty("top");
+      arrowEl.style.removeProperty("right");
+      arrowEl.style.removeProperty("bottom");
+      arrowEl.style.removeProperty("left");
+      if (typeof arrowData?.x === "number") {
+        arrowEl.style.left = toCssPixels(arrowData.x);
+      }
+      if (typeof arrowData?.y === "number") {
+        arrowEl.style.top = toCssPixels(arrowData.y);
+      }
+      arrowEl.style.setProperty(staticSide, "-7px");
     });
 
     return cleanup;
