@@ -18,6 +18,25 @@ type RouterModuleShimPrimitive = string | number | boolean | null | undefined;
 export type RouterModuleShimFunction = (...args: Array<object | RouterModuleShimPrimitive>) => object | RouterModuleShimPrimitive;
 export type RouterModuleShimDefinition = string[] | Record<string, RouterModuleShimFunction>;
 
+export interface VuePomGeneratorRuntimeAnnotatorUiOptions {
+  /**
+   * Enables the dev-only floating annotator overlay that consumes the generated runtime metadata.
+   *
+   * When enabled during `vite serve`, this package injects a browser-side overlay with element
+   * selection, floating popovers, preview/copy tooling, and source-aware Vue component detection.
+   */
+  enabled?: boolean;
+
+  /** Controls the default annotation payload detail level shown in preview/copy output. */
+  outputDetail?: "standard" | "forensic";
+
+  /** Controls whether the toolbar Copy action writes directly to `navigator.clipboard`. */
+  copyToClipboard?: boolean;
+
+  /** Controls whether Vue component labels are shown in hover labels and annotation output. */
+  showComponentTree?: boolean;
+}
+
 export interface VuePomGeneratorRuntimeAnnotatorOptions {
   /**
    * Enables annotator-oriented runtime metadata attributes on generated interactive elements.
@@ -51,6 +70,9 @@ export interface VuePomGeneratorRuntimeAnnotatorOptions {
    * - `<prefix>-role`
    */
   metadataAttributePrefix?: string;
+
+  /** Optional dev-only annotator UI configuration. */
+  ui?: VuePomGeneratorRuntimeAnnotatorUiOptions;
 }
 
 export interface VuePomGeneratorRuntimeOptions {

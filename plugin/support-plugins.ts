@@ -6,6 +6,7 @@ import type { ElementMetadata } from "../metadata-collector";
 import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 import type { VuePomGeneratorLogger } from "./logger";
 import type { ResolvedGenerationSupportOptions } from "./resolved-generation-options";
+import { createAnnotatorUiPlugin } from "./support/annotator-plugin";
 import { createBuildProcessorPlugin } from "./support/build-plugin";
 import { createDevProcessorPlugin } from "./support/dev-plugin";
 import { createTestIdsVirtualModulesPlugin } from "./support/virtual-modules";
@@ -26,6 +27,17 @@ interface SupportFactoryOptions {
   projectRootRef: { current: string };
   basePageClassPath?: string;
   loggerRef: { current: VuePomGeneratorLogger };
+  annotatorRuntime: {
+    enabled: boolean;
+    sourceAttribute: string;
+    metadataAttributePrefix: string;
+    ui: {
+      enabled: boolean;
+      outputDetail: "standard" | "forensic";
+      copyToClipboard: boolean;
+      showComponentTree: boolean;
+    };
+  };
 }
 
 export function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
@@ -45,6 +57,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     projectRootRef,
     basePageClassPath: basePageClassPathOverride,
     loggerRef,
+    annotatorRuntime,
   } = options;
   const {
     outDir,
@@ -130,6 +143,12 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
   });
 
   const virtualModules = createTestIdsVirtualModulesPlugin(componentHierarchyMap, elementMetadata);
+  const annotatorUiPlugin = createAnnotatorUiPlugin({
+    ...annotatorRuntime.ui,
+    enabled: annotatorRuntime.enabled && annotatorRuntime.ui.enabled,
+    sourceAttribute: annotatorRuntime.sourceAttribute,
+    metadataAttributePrefix: annotatorRuntime.metadataAttributePrefix,
+  });
 
-  return [tsProcessor, devProcessor, virtualModules];
+  return [tsProcessor, devProcessor, virtualModules, annotatorUiPlugin];
 }

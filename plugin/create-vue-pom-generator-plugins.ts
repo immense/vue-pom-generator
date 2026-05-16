@@ -199,10 +199,18 @@ interface ViteVuePluginLike {
   api?: ViteVuePluginApi;
 }
 
+interface ResolvedAnnotatorUiRuntimeOptions {
+  enabled: boolean;
+  outputDetail: "standard" | "forensic";
+  copyToClipboard: boolean;
+  showComponentTree: boolean;
+}
+
 interface ResolvedAnnotatorRuntimeOptions {
   enabled: boolean;
   sourceAttribute: string;
   metadataAttributePrefix: string;
+  ui: ResolvedAnnotatorUiRuntimeOptions;
 }
 
 interface SharedGeneratorState {
@@ -318,10 +326,17 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
   const verbosity: VuePomGeneratorVerbosity = options.logging?.verbosity ?? "warn";
 
   const annotatorRuntimeOptions = options.runtime?.annotator;
+  const annotatorUiRuntimeOptions = annotatorRuntimeOptions?.ui;
   const resolvedAnnotatorRuntimeOptions: ResolvedAnnotatorRuntimeOptions = {
     enabled: annotatorRuntimeOptions?.enabled === true,
     sourceAttribute: annotatorRuntimeOptions?.sourceAttribute ?? "data-v-inspector",
     metadataAttributePrefix: annotatorRuntimeOptions?.metadataAttributePrefix ?? "data-v-pom",
+    ui: {
+      enabled: annotatorUiRuntimeOptions?.enabled === true,
+      outputDetail: annotatorUiRuntimeOptions?.outputDetail ?? "forensic",
+      copyToClipboard: annotatorUiRuntimeOptions?.copyToClipboard ?? false,
+      showComponentTree: annotatorUiRuntimeOptions?.showComponentTree ?? true,
+    },
   };
 
   const vueOptions = options.vueOptions;
@@ -515,6 +530,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
     projectRootRef,
     basePageClassPath: basePageClassPathOverride,
     loggerRef,
+    annotatorRuntime: resolvedAnnotatorRuntimeOptions,
   });
 
   if (isNuxt) {

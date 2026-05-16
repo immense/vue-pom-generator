@@ -30,4 +30,5 @@ export type {
   VuePomGeneratorPluginOptions,
   VuePomGeneratorRuntimeOptions,
   VuePomGeneratorRuntimeAnnotatorOptions,
+  VuePomGeneratorRuntimeAnnotatorUiOptions,
 } from "./plugin/types";

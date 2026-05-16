@@ -34,6 +34,7 @@
     "dist",
     "class-generation",
     "click-instrumentation.ts",
+    "plugin/support/annotator",
     "*.md"
   ],
   "sideEffects": false,
@@ -70,6 +71,7 @@
     }
   },
   "dependencies": {
+    "@floating-ui/dom": "^1.7.4",
     "ts-morph": "^27.0.2"
   },
   "devDependencies": {
