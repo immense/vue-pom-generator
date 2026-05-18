@@ -15,7 +15,7 @@ import { createTestIdTransform } from "../transform";
 import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 
 import type { VuePomGeneratorLogger } from "./logger";
-import { resolveComponentNameFromPath } from "./path-utils";
+import { isFileInConfiguredSourceScope, resolveComponentNameFromPath } from "./path-utils";
 import type { MissingSemanticNameBehavior, PomNameCollisionBehavior } from "./types";
 
 interface InternalFactoryOptions {
@@ -161,37 +161,16 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     // Strip any Vite/Nuxt query parameters (e.g. ?vue&type=template)
     const cleanPath = filename.includes("?") ? filename.substring(0, filename.indexOf("?")) : filename;
     const projectRoot = getProjectRoot();
-    const absFilename = path.isAbsolute(cleanPath) ? cleanPath : path.resolve(projectRoot, cleanPath);
-
-    // Never touch node_modules
-    if (absFilename.includes(`${path.sep}node_modules${path.sep}`) || absFilename.includes("/node_modules/"))
-      return false;
-
-    // Must be in one of the configured page/component/layout dirs.
-    const viewsDirAbs = getViewsDirAbs();
-    if (absFilename.startsWith(viewsDirAbs + path.sep) || absFilename === viewsDirAbs)
-      return true;
-
-    // Root paths to check against.
-    const rootsToTry = [projectRoot, process.cwd()];
-
-    const matched = getSourceDirs().some((dir) => {
-      return rootsToTry.some((root) => {
-        const absDir = path.resolve(root, dir);
-        if (absFilename.startsWith(absDir + path.sep) || absFilename === absDir)
-          return true;
-
-        if (dir.startsWith("app/") && root.endsWith("/app")) {
-          const relativeDir = dir.substring(4);
-          const absDirAlt = path.resolve(root, relativeDir);
-          return absFilename.startsWith(absDirAlt + path.sep) || absFilename === absDirAlt;
-        }
-
-        return false;
-      });
+    const matched = isFileInConfiguredSourceScope({
+      filename,
+      projectRoot,
+      viewsDirAbs: getViewsDirAbs(),
+      sourceDirs: getSourceDirs(),
+      extraRoots: [process.cwd()],
     });
 
     if (cleanPath.endsWith(".vue") && !matched) {
+      const absFilename = path.normalize(path.isAbsolute(cleanPath) ? cleanPath : path.resolve(projectRoot, cleanPath));
       loggerRef.current.debug(`[isFileInScope] REJECTED: ${absFilename} (Clean: ${cleanPath})`);
     }
 
