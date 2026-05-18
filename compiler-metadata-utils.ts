@@ -176,6 +176,8 @@ export function tryCreateElementMetadata(args: {
     staticRole: findStaticAttributeValue(element, "role"),
     staticTitle: findStaticAttributeValue(element, "title"),
     staticTextContent: collectStaticTextContent(element.children),
+    sourceLine: element.loc?.start.line,
+    sourceColumn: element.loc?.start.column,
   };
 
   if (debug) {

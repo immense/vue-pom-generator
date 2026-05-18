@@ -6,11 +6,12 @@ import type { ElementMetadata } from "../metadata-collector";
 import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 import type { VuePomGeneratorLogger } from "./logger";
 import type { ResolvedGenerationSupportOptions } from "./resolved-generation-options";
-import { createBuildProcessorPlugin } from "./support/build-plugin";
-import { createDevProcessorPlugin } from "./support/dev-plugin";
-import { createTestIdsVirtualModulesPlugin } from "./support/virtual-modules";
+import { createBuildProcessorPlugin } from "./internal/build-plugin";
+import { createDevProcessorPlugin } from "./internal/dev-plugin";
+import { createTestIdsVirtualModulesPlugin } from "./internal/virtual-modules";
+import { createAnnotatorUiPlugin } from "./runtime/annotator/plugin";
 
-interface SupportFactoryOptions {
+interface InternalPluginFactoryOptions {
   componentHierarchyMap: Map<string, IComponentDependencies>;
   elementMetadata: Map<string, Map<string, ElementMetadata>>;
   vueFilesPathMap: Map<string, string>;
@@ -26,9 +27,20 @@ interface SupportFactoryOptions {
   projectRootRef: { current: string };
   basePageClassPath?: string;
   loggerRef: { current: VuePomGeneratorLogger };
+  annotatorRuntime: {
+    enabled: boolean;
+    sourceAttribute: string;
+    metadataAttributePrefix: string;
+    ui: {
+      enabled: boolean;
+      outputDetail: "standard" | "forensic";
+      copyToClipboard: boolean;
+      showComponentTree: boolean;
+    };
+  };
 }
 
-export function createSupportPlugins(options: SupportFactoryOptions): PluginOption[] {
+export function createInternalPlugins(options: InternalPluginFactoryOptions): PluginOption[] {
   const {
     componentHierarchyMap,
     elementMetadata,
@@ -45,6 +57,7 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
     projectRootRef,
     basePageClassPath: basePageClassPathOverride,
     loggerRef,
+    annotatorRuntime,
   } = options;
   const {
     outDir,
@@ -130,6 +143,12 @@ export function createSupportPlugins(options: SupportFactoryOptions): PluginOpti
   });
 
   const virtualModules = createTestIdsVirtualModulesPlugin(componentHierarchyMap, elementMetadata);
+  const annotatorUiPlugin = createAnnotatorUiPlugin({
+    ...annotatorRuntime.ui,
+    enabled: annotatorRuntime.enabled && annotatorRuntime.ui.enabled,
+    sourceAttribute: annotatorRuntime.sourceAttribute,
+    metadataAttributePrefix: annotatorRuntime.metadataAttributePrefix,
+  });
 
-  return [tsProcessor, devProcessor, virtualModules];
+  return [tsProcessor, devProcessor, virtualModules, annotatorUiPlugin];
 }

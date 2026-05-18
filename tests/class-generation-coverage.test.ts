@@ -97,6 +97,24 @@ describe("class-generation coverage", () => {
             isView: false,
           }),
         ],
+        [
+          "WrapperButton",
+          makeDeps({
+            filePath: path.join(tempRoot, "src", "components", "WrapperButton.vue"),
+            isView: false,
+            dataTestIdSet: new Set<IDataTestId>([{
+              selectorValue: createPomStringPattern("WrapperButton-Click-button", "static"),
+              pom: {
+                nativeRole: "button",
+                methodName: "WrapperButton",
+                selector: createPomStringPattern("WrapperButton-Click-button", "static"),
+                parameters: [],
+                generatedActionName: "clickWrapperButton",
+                generatedPropertyName: "WrapperButton",
+              },
+            }]),
+          }),
+        ],
         // Should be filtered out because fixture name would be "page" (reserved by Playwright)
         [
           "Page",
@@ -141,6 +159,7 @@ describe("class-generation coverage", () => {
       expect(defaultFixtureContent).toContain("import { UsersPage as UsersPageOverride } from \"../tests/playwright/pom/overrides/UsersPage\";");
       expect(defaultFixtureContent).toContain("usersPage: UsersPageOverride");
       expect(defaultFixtureContent).toContain("thingWidget: Pom.ThingWidget");
+      expect(defaultFixtureContent).not.toContain("wrapperButton: Pom.WrapperButton");
       // Reserved fixture name should not appear as a generated component fixture.
       expect(defaultFixtureContent).not.toContain("page: Pom.Page");
 

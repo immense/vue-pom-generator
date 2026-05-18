@@ -8,8 +8,8 @@ import { buildAccessibilityAudit } from "./accessibility-audit";
 import type { ElementMetadata } from "./metadata-collector";
 import { buildPomLocatorDescription, humanizePomMethodName } from "./pom-discoverability";
 import type { IComponentDependencies, IDataTestId, PomExtraClickMethodSpec, PomPrimarySpec } from "./utils";
+import { buildPomGeneratedActionName, buildPomGeneratedPropertyName, shouldSuppressStandaloneWrapperFallbackSurface } from "./utils";
 import { renderSourceFile, VariableDeclarationKind, type WriterFunction } from "./typescript-codegen";
-import { upperFirst } from "./utils";
 
 type PomManifestEntry = {
   testId: string;
@@ -25,6 +25,8 @@ type PomManifestEntry = {
   targetPageObjectModelClass?: string;
   sourceTag?: string;
   sourceTagType?: number;
+  sourceLine?: number;
+  sourceColumn?: number;
   patchFlag?: number;
   dynamicProps?: string[];
   hasClickHandler?: boolean;
@@ -44,56 +46,6 @@ type PomManifestComponent = {
 
 type PomManifest = Record<string, PomManifestComponent>;
 
-function removeByKeySegment(value: string): string {
-  const idx = value.indexOf("ByKey");
-  if (idx < 0) {
-    return value;
-  }
-  return value.slice(0, idx) + value.slice(idx + "ByKey".length);
-}
-
-function hasRoleSuffix(baseName: string, roleSuffix: string): boolean {
-  if (baseName.endsWith(roleSuffix)) {
-    return true;
-  }
-
-  const re = new RegExp(`^${roleSuffix}\\d+$`);
-  return re.test(baseName);
-}
-
-function getGeneratedPropertyName(pom: PomPrimarySpec): string {
-  if (pom.getterNameOverride) {
-    return pom.getterNameOverride;
-  }
-
-  const roleSuffix = upperFirst(pom.nativeRole || "Element");
-  const baseName = upperFirst(pom.methodName);
-  const propertyName = hasRoleSuffix(baseName, roleSuffix) ? baseName : `${baseName}${roleSuffix}`;
-  return pom.selector.patternKind === "parameterized" ? removeByKeySegment(propertyName) : propertyName;
-}
-
-function getGeneratedActionName(entry: IDataTestId, pom: PomPrimarySpec): string {
-  const methodNameUpper = upperFirst(pom.methodName);
-  const radioMethodNameUpper = upperFirst(pom.methodName || "Radio");
-  const isNavigation = !!entry.targetPageObjectModelClass;
-
-  if (isNavigation) {
-    return `goTo${methodNameUpper}`;
-  }
-
-  switch (pom.nativeRole) {
-    case "input":
-      return `type${methodNameUpper}`;
-    case "select":
-    case "vselect":
-      return `select${methodNameUpper}`;
-    case "radio":
-      return `select${radioMethodNameUpper}`;
-    default:
-      return `click${methodNameUpper}`;
-  }
-}
-
 function matchesPrimarySelector(extraMethod: PomExtraClickMethodSpec, pom: PomPrimarySpec): boolean {
   if (extraMethod.selector.kind !== "testId") {
     return false;
@@ -112,7 +64,7 @@ function getManifestEntry(
   const testId = entry.selectorValue.formatted;
   const metadata = componentMetadata?.get(testId);
   const pom = entry.pom;
-  const generatedActionName = pom ? getGeneratedActionName(entry, pom) : null;
+  const generatedActionName = pom ? buildPomGeneratedActionName(pom) : null;
   const extraActionNames = pom
     ? extraMethods
       .filter(extraMethod => matchesPrimarySelector(extraMethod, pom))
@@ -139,13 +91,15 @@ function getManifestEntry(
       : componentName,
     inferredRole: pom?.nativeRole ?? null,
     ...(accessibility ? { accessibility } : {}),
-    generatedPropertyName: pom ? getGeneratedPropertyName(pom) : null,
+    generatedPropertyName: pom ? buildPomGeneratedPropertyName(pom) : null,
     generatedActionName,
     generatedActionNames,
     emitPrimary: pom?.emitPrimary !== false,
     ...(entry.targetPageObjectModelClass ? { targetPageObjectModelClass: entry.targetPageObjectModelClass } : {}),
     ...(metadata?.tag ? { sourceTag: metadata.tag } : {}),
     ...(metadata ? { sourceTagType: metadata.tagType } : {}),
+    ...(metadata?.sourceLine !== undefined ? { sourceLine: metadata.sourceLine } : {}),
+    ...(metadata?.sourceColumn !== undefined ? { sourceColumn: metadata.sourceColumn } : {}),
     ...(metadata?.patchFlag !== undefined ? { patchFlag: metadata.patchFlag } : {}),
     ...(metadata?.dynamicProps?.length ? { dynamicProps: metadata.dynamicProps } : {}),
     ...(metadata?.hasClickHandler !== undefined ? { hasClickHandler: metadata.hasClickHandler } : {}),
@@ -160,6 +114,7 @@ export function buildPomManifest(
   elementMetadata: Map<string, Map<string, ElementMetadata>>,
 ): PomManifest {
   const manifestEntries = Array.from(componentHierarchyMap.entries())
+    .filter(([componentName, dependencies]) => !shouldSuppressStandaloneWrapperFallbackSurface(componentName, dependencies))
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([componentName, dependencies]) => {
       const entries = Array.from(dependencies.dataTestIdSet)
@@ -184,10 +139,20 @@ export function buildPomManifest(
   return Object.fromEntries(manifestEntries);
 }
 
-function buildTestIdManifest(pomManifest: PomManifest): Record<string, string[]> {
+function buildTestIdManifest(componentHierarchyMap: Map<string, IComponentDependencies>): Record<string, string[]> {
   return Object.fromEntries(
-    Object.entries(pomManifest)
-      .map(([componentName, component]) => [componentName, Array.from(new Set(component.testIds)).sort((a, b) => a.localeCompare(b))] as const),
+    Array.from(componentHierarchyMap.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([componentName, dependencies]) => {
+        const testIds = Array.from(dependencies.dataTestIdSet)
+          .map(entry => entry.selectorValue.formatted)
+          .filter(Boolean);
+        if (!testIds.length) {
+          return null;
+        }
+        return [componentName, Array.from(new Set(testIds)).sort((a, b) => a.localeCompare(b))] as const;
+      })
+      .filter((entry): entry is readonly [string, string[]] => entry !== null),
   );
 }
 
@@ -205,7 +170,7 @@ export function generateTestIdsModule(
   elementMetadata: Map<string, Map<string, ElementMetadata>>,
 ): string {
   const pomManifest = buildPomManifest(componentHierarchyMap, elementMetadata);
-  const testIdManifest = buildTestIdManifest(pomManifest);
+  const testIdManifest = buildTestIdManifest(componentHierarchyMap);
 
   return renderSourceFile("virtual-testids.ts", (sourceFile) => {
     sourceFile.addStatements("// Virtual module: test id manifest");

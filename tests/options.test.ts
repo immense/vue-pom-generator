@@ -177,6 +177,34 @@ describe("createVuePomGeneratorPlugins options", () => {
     await expect(runConfigResolved(plugins)).rejects.toThrow("vuePluginOwnership=\"external\"");
   });
 
+  it("fails fast when runtime annotator sourceAttribute is not a data-* attribute", async () => {
+    const plugins = createVuePomGeneratorPlugins({
+      generation: false,
+      runtime: {
+        annotator: {
+          enabled: true,
+          sourceAttribute: "aria-label",
+        },
+      },
+    });
+
+    await expect(runConfigResolved(plugins)).rejects.toThrow("runtime.annotator.sourceAttribute");
+  });
+
+  it("fails fast when runtime annotator metadataAttributePrefix is not a data-* attribute", async () => {
+    const plugins = createVuePomGeneratorPlugins({
+      generation: false,
+      runtime: {
+        annotator: {
+          enabled: true,
+          metadataAttributePrefix: "pom-metadata",
+        },
+      },
+    });
+
+    await expect(runConfigResolved(plugins)).rejects.toThrow("runtime.annotator.metadataAttributePrefix");
+  });
+
   it("includes build/serve support plugins when generation is enabled", () => {
     const plugins = createVuePomGeneratorPlugins({
       generation: {

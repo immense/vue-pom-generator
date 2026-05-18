@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveGenerationSupportOptions } from "../plugin/resolved-generation-options";
-import { createDevProcessorPlugin } from "../plugin/support/dev-plugin";
+import { createDevProcessorPlugin } from "../plugin/internal/dev-plugin";
 import type { PlaywrightOutputStructure } from "../plugin/types";
 import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 

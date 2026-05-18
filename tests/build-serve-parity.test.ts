@@ -15,7 +15,7 @@ import * as compilerDom from "@vue/compiler-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateFiles } from "../class-generation";
 import { resolveGenerationSupportOptions, type ResolvedGenerationSupportOptions } from "../plugin/resolved-generation-options";
-import { createDevProcessorPlugin } from "../plugin/support/dev-plugin";
+import { createDevProcessorPlugin } from "../plugin/internal/dev-plugin";
 
 // Mock generateFiles so the dev plugin doesn't try to write real files
 // (which would fail because base-page.ts doesn't exist in the temp dir).

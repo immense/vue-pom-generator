@@ -864,6 +864,10 @@ export function createTestIdTransform(
     warn?: (message: string) => void;
     vueFilesPathMap?: Map<string, string>;
     wrapperSearchRoots?: string[];
+    annotatorMetadata?: {
+      sourceAttribute: string;
+      metadataAttributePrefix: string;
+    } | null;
   } = {},
 ): NodeTransform {
   const existingIdBehavior = options.existingIdBehavior ?? "error";
@@ -873,6 +877,7 @@ export function createTestIdTransform(
   const warn = options.warn;
   const vueFilesPathMap = options.vueFilesPathMap;
   const wrapperSearchRoots = options.wrapperSearchRoots ?? [];
+  const annotatorMetadata = options.annotatorMetadata ?? null;
 
   // Some projects (and dev environments) use symlinks. We want viewsDir containment checks
   // to behave like the filesystem does (real paths), but we must not crash for virtual
@@ -1272,6 +1277,7 @@ export function createTestIdTransform(
         existingIdBehavior,
         nameCollisionBehavior,
         warn,
+        annotatorMetadata,
       });
     };
 

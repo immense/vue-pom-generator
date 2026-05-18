@@ -18,6 +18,67 @@ type RouterModuleShimPrimitive = string | number | boolean | null | undefined;
 export type RouterModuleShimFunction = (...args: Array<object | RouterModuleShimPrimitive>) => object | RouterModuleShimPrimitive;
 export type RouterModuleShimDefinition = string[] | Record<string, RouterModuleShimFunction>;
 
+export interface VuePomGeneratorRuntimeAnnotatorUiOptions {
+  /**
+   * Enables the dev-only floating annotator overlay that consumes the generated runtime metadata.
+   *
+   * When enabled during `vite serve`, this package injects a browser-side overlay with element
+   * selection, floating popovers, preview/copy tooling, and source-aware Vue component detection.
+   */
+  enabled?: boolean;
+
+  /** Controls the default annotation payload detail level shown in preview/copy output. */
+  outputDetail?: "standard" | "forensic";
+
+  /** Controls whether the toolbar Copy action writes directly to `navigator.clipboard`. */
+  copyToClipboard?: boolean;
+
+  /** Controls whether Vue component labels are shown in hover labels and annotation output. */
+  showComponentTree?: boolean;
+}
+
+export interface VuePomGeneratorRuntimeAnnotatorOptions {
+  /**
+   * Enables annotator-oriented runtime metadata attributes on generated interactive elements.
+   *
+   * When enabled, the template transform injects:
+   * - source location metadata via `sourceAttribute`
+   * - generated POM metadata via `${metadataAttributePrefix}-*` attributes
+   */
+  enabled?: boolean;
+
+  /**
+   * Attribute name used for source-location metadata.
+   *
+   * Defaults to `data-v-inspector`.
+   *
+   * Value format: `<absolute-file-path>:<line>:<column>`.
+   */
+  sourceAttribute?: string;
+
+  /**
+   * Attribute prefix used for generated POM metadata.
+   *
+   * Defaults to `data-v-pom`.
+   *
+   * The transform emits:
+   * - `<prefix>-component`
+   * - `<prefix>-tag`
+   * - `<prefix>-testid`
+   * - `<prefix>-action`
+   * - `<prefix>-property`
+   * - `<prefix>-role`
+   */
+  metadataAttributePrefix?: string;
+
+  /** Optional dev-only annotator UI configuration. */
+  ui?: VuePomGeneratorRuntimeAnnotatorUiOptions;
+}
+
+export interface VuePomGeneratorRuntimeOptions {
+  annotator?: VuePomGeneratorRuntimeAnnotatorOptions;
+}
+
 export interface VuePomGeneratorPluginOptions {
   /** Options forwarded to @vitejs/plugin-vue */
   vueOptions?: VuePluginOptions;
@@ -33,6 +94,11 @@ export interface VuePomGeneratorPluginOptions {
    * Nuxt projects always use the resolved app-owned Vue plugin.
    */
   vuePluginOwnership?: VuePluginOwnership;
+
+  /**
+   * Optional runtime metadata features.
+   */
+  runtime?: VuePomGeneratorRuntimeOptions;
 
   /**
    * Logging configuration for the generator plugins.
@@ -178,9 +244,8 @@ export interface VuePomGeneratorPluginOptions {
       *      (we do not use innerText-based disambiguation).
       *
       * 3) **Wrapper components collapse distinct elements into the same role/name**
-      *    - Example: multiple wrapper components that all behave like buttons (e.g. `<MyButton>`,
-      *      `<LoadButton>`) can generate very similar naming when neither element has a distinct id/name
-      *      or handler-derived hint.
+      *    - Example: multiple wrapper components that all behave like buttons can generate very
+      *      similar naming when neither element has a distinct id/name nor a handler-derived hint.
       *
       * 4) **Keyed/templated test ids intentionally share a base name**
       *    - Example: a list of row actions might yield `ClickDeleteByKey(key)` and a non-keyed

@@ -29,6 +29,8 @@ export interface ElementMetadata {
   staticRole?: string;
   staticTitle?: string;
   staticTextContent?: string;
+  sourceLine?: number;
+  sourceColumn?: number;
 }
 
 /**

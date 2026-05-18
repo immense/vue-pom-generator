@@ -83,6 +83,10 @@ function compileWithRuntimeTemplateOptions(
   options: {
     nativeWrappers?: NativeWrappersMap
     bindingMetadata?: BindingMetadata
+    annotatorMetadata?: {
+      sourceAttribute: string
+      metadataAttributePrefix: string
+    } | null
   } = {},
 ): string {
   const componentHierarchyMap = new Map<string, IComponentDependencies>()
@@ -108,6 +112,7 @@ function compileWithRuntimeTemplateOptions(
     getSourceDirs: () => ['/src/views', '/src/components'],
     getWrapperSearchRoots: () => [],
     getProjectRoot: () => '/',
+    annotatorMetadata: options.annotatorMetadata ?? null,
   })
 
   return compileDom(source, {
@@ -498,6 +503,29 @@ describe('createTestIdTransform', () => {
     expect(code).toContain('"data-click-instrumented": "1"')
     expect(code).toContain('"data-testid": `MyComp-${item.key ?? item.data?.id ?? item.id ?? item.value ?? item}-Remove-button`')
     expect(code).not.toContain('__testid_click_event_strict__')
+  })
+
+  it('injects annotator metadata attributes when annotator mode is enabled', () => {
+    const code = compileWithRuntimeTemplateOptions(
+      '<button @click="save">Save</button>',
+      {
+        bindingMetadata: {
+          save: BindingTypes.SETUP_CONST,
+        },
+        annotatorMetadata: {
+          sourceAttribute: 'data-v-inspector',
+          metadataAttributePrefix: 'data-v-pom',
+        },
+      },
+    )
+
+    expect(code).toContain('"data-v-inspector": "/src/views/MyComp.vue:1:1"')
+    expect(code).toContain('"data-v-pom-component": "MyComp"')
+    expect(code).toContain('"data-v-pom-tag": "button"')
+    expect(code).toContain('"data-v-pom-testid": "MyComp-Save-button"')
+    expect(code).toContain('"data-v-pom-action": "clickSave"')
+    expect(code).toContain('"data-v-pom-property": "SaveButton"')
+    expect(code).toContain('"data-v-pom-role": "button"')
   })
 
   it('prefixes component-scope identifiers inside keyed router-link test ids', () => {

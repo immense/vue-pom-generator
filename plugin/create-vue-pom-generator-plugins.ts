@@ -9,8 +9,8 @@ import { createLogger } from "./logger";
 import { loadNuxtProjectDiscovery } from "./nuxt-discovery";
 import { resolveGenerationSupportOptions } from "./resolved-generation-options";
 import { applyNuxtDiscoveryToInjectionOptions, resolveInjectionSupportOptions } from "./resolved-injection-options";
-import { createSupportPlugins } from "./support-plugins";
-import { createTestIdsVirtualModulesPlugin } from "./support/virtual-modules";
+import { createInternalPlugins } from "./internal-plugins";
+import { createTestIdsVirtualModulesPlugin } from "./internal/virtual-modules";
 import type { PomGeneratorPluginOptions, RouterModuleShimDefinition, VuePluginOwnership, VuePomGeneratorPluginOptions } from "./types";
 import { createVuePluginWithTestIds } from "./vue-plugin";
 
@@ -63,6 +63,13 @@ function assertOneOf<T extends string>(value: T | undefined, allowed: readonly T
     return;
   }
   throw new TypeError(`${name} must be one of: ${allowed.join(", ")}.`);
+}
+
+function assertDataAttributeName(value: string | undefined, name: string): asserts value is string {
+  assertNonEmptyString(value, name);
+  if (!value.startsWith("data-")) {
+    throw new TypeError(`${name} must start with \"data-\".`);
+  }
 }
 
 function readPackageJson(projectRoot: string): Record<string, unknown> | null {
@@ -192,6 +199,20 @@ interface ViteVuePluginLike {
   api?: ViteVuePluginApi;
 }
 
+interface ResolvedAnnotatorUiRuntimeOptions {
+  enabled: boolean;
+  outputDetail: "standard" | "forensic";
+  copyToClipboard: boolean;
+  showComponentTree: boolean;
+}
+
+interface ResolvedAnnotatorRuntimeOptions {
+  enabled: boolean;
+  sourceAttribute: string;
+  metadataAttributePrefix: string;
+  ui: ResolvedAnnotatorUiRuntimeOptions;
+}
+
 interface SharedGeneratorState {
   elementMetadata: Map<string, Map<string, ElementMetadata>>;
   semanticNameMap: Map<string, string>;
@@ -303,6 +324,20 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
   const vueGenerationOptions = generationOptions as NonNullable<Exclude<VuePomGeneratorPluginOptions["generation"], false>> | null;
 
   const verbosity: VuePomGeneratorVerbosity = options.logging?.verbosity ?? "warn";
+
+  const annotatorRuntimeOptions = options.runtime?.annotator;
+  const annotatorUiRuntimeOptions = annotatorRuntimeOptions?.ui;
+  const resolvedAnnotatorRuntimeOptions: ResolvedAnnotatorRuntimeOptions = {
+    enabled: annotatorRuntimeOptions?.enabled === true,
+    sourceAttribute: annotatorRuntimeOptions?.sourceAttribute ?? "data-v-inspector",
+    metadataAttributePrefix: annotatorRuntimeOptions?.metadataAttributePrefix ?? "data-v-pom",
+    ui: {
+      enabled: annotatorUiRuntimeOptions?.enabled === true,
+      outputDetail: annotatorUiRuntimeOptions?.outputDetail ?? "forensic",
+      copyToClipboard: annotatorUiRuntimeOptions?.copyToClipboard ?? false,
+      showComponentTree: annotatorUiRuntimeOptions?.showComponentTree ?? true,
+    },
+  };
 
   const vueOptions = options.vueOptions;
   const resolvedInjectionOptionsRef = {
@@ -418,6 +453,10 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
       assertNonEmptyStringArray(getComponentDirs(), "[vue-pom-generator] injection.componentDirs");
       assertNonEmptyStringArray(getLayoutDirs(), "[vue-pom-generator] injection.layoutDirs");
       assertNonEmptyStringArray(getWrapperSearchRoots(), "[vue-pom-generator] injection.wrapperSearchRoots");
+      if (resolvedAnnotatorRuntimeOptions.enabled) {
+        assertDataAttributeName(resolvedAnnotatorRuntimeOptions.sourceAttribute, "[vue-pom-generator] runtime.annotator.sourceAttribute");
+        assertDataAttributeName(resolvedAnnotatorRuntimeOptions.metadataAttributePrefix, "[vue-pom-generator] runtime.annotator.metadataAttributePrefix");
+      }
       if (generationEnabled) {
         assertNonEmptyString(resolvedGenerationOptions.outDir, "[vue-pom-generator] generation.outDir");
         assertOneOf(resolvedGenerationOptions.typescriptOutputStructure, ["aggregated", "split"], "[vue-pom-generator] generation.playwright.outputStructure");
@@ -468,10 +507,14 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
     getSourceDirs,
     getWrapperSearchRoots: getWrapperSearchRootsAbs,
     getProjectRoot: () => projectRootRef.current,
+    annotatorMetadata: resolvedAnnotatorRuntimeOptions.enabled ? {
+      sourceAttribute: resolvedAnnotatorRuntimeOptions.sourceAttribute,
+      metadataAttributePrefix: resolvedAnnotatorRuntimeOptions.metadataAttributePrefix,
+    } : null,
   });
   templateCompilerOptionsForResolvedPlugin = templateCompilerOptions;
 
-  const supportPlugins = createSupportPlugins({
+  const internalPlugins = createInternalPlugins({
     componentHierarchyMap,
     elementMetadata,
     vueFilesPathMap,
@@ -487,6 +530,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
     projectRootRef,
     basePageClassPath: basePageClassPathOverride,
     loggerRef,
+    annotatorRuntime: resolvedAnnotatorRuntimeOptions,
   });
 
   if (isNuxt) {
@@ -500,7 +544,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
     configPlugin,
     metadataCollectorPlugin,
     ...(usesExternalVuePlugin ? [] : [internalVuePlugin]),
-    ...supportPlugins,
+    ...internalPlugins,
   ];
 
   if (!generationEnabled) {
