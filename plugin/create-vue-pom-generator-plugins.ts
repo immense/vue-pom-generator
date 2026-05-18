@@ -9,8 +9,8 @@ import { createLogger } from "./logger";
 import { loadNuxtProjectDiscovery } from "./nuxt-discovery";
 import { resolveGenerationSupportOptions } from "./resolved-generation-options";
 import { applyNuxtDiscoveryToInjectionOptions, resolveInjectionSupportOptions } from "./resolved-injection-options";
-import { createSupportPlugins } from "./support-plugins";
-import { createTestIdsVirtualModulesPlugin } from "./support/virtual-modules";
+import { createInternalPlugins } from "./internal-plugins";
+import { createTestIdsVirtualModulesPlugin } from "./internal/virtual-modules";
 import type { PomGeneratorPluginOptions, RouterModuleShimDefinition, VuePluginOwnership, VuePomGeneratorPluginOptions } from "./types";
 import { createVuePluginWithTestIds } from "./vue-plugin";
 
@@ -514,7 +514,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
   });
   templateCompilerOptionsForResolvedPlugin = templateCompilerOptions;
 
-  const supportPlugins = createSupportPlugins({
+  const internalPlugins = createInternalPlugins({
     componentHierarchyMap,
     elementMetadata,
     vueFilesPathMap,
@@ -544,7 +544,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
     configPlugin,
     metadataCollectorPlugin,
     ...(usesExternalVuePlugin ? [] : [internalVuePlugin]),
-    ...supportPlugins,
+    ...internalPlugins,
   ];
 
   if (!generationEnabled) {

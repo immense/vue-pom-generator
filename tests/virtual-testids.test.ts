@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 
-import { createTestIdsVirtualModulesPlugin } from "../plugin/support/virtual-modules";
+import { createTestIdsVirtualModulesPlugin } from "../plugin/internal/virtual-modules";
 import { createPomParameterSpec } from "../pom-params";
 import { createPomStringPattern } from "../pom-patterns";
 import type { IComponentDependencies } from "../utils";

@@ -34,7 +34,7 @@
     "dist",
     "class-generation",
     "click-instrumentation.ts",
-    "plugin/support/annotator",
+    "plugin/runtime/annotator",
     "*.md"
   ],
   "sideEffects": false,

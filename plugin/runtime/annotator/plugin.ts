@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import type { HtmlTagDescriptor, Plugin } from "vite";
 
-import type { OutputDetail } from "./annotator/format";
+import type { OutputDetail } from "./format";
 
 export interface ResolvedAnnotatorUiOptions {
   enabled: boolean;
@@ -31,8 +31,8 @@ function toFsImportPath(filePath: string): string {
 
 function resolveAnnotatorClientPath(): string {
   const candidates = [
-    fileURLToPath(new URL("../plugin/support/annotator/client.ts", import.meta.url)),
-    fileURLToPath(new URL("./annotator/client.ts", import.meta.url)),
+    fileURLToPath(new URL("./client.ts", import.meta.url)),
+    fileURLToPath(new URL("../plugin/runtime/annotator/client.ts", import.meta.url)),
   ];
 
   const resolved = candidates.find(candidate => fs.existsSync(candidate));
