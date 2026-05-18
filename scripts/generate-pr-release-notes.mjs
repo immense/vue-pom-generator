@@ -85,7 +85,7 @@ if (!Number.isFinite(prNumber) || prNumber <= 0) {
 }
 
 const ghToken = requireEnv("GH_TOKEN");
-const copilotToken = requireEnv("COPILOT_TOKEN");
+const copilotToken = requireEnv("COPILOT_GITHUB_TOKEN");
 
 function getOutputTarget(envVarName) {
   const raw = process.env[envVarName];
