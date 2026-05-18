@@ -25,6 +25,7 @@ const packageDir = path.resolve(scriptDir, "..");
 const peerVite = "7.3.1";
 const peerVue = "3.5.22";
 const peerPluginVue = "6.0.1";
+const consumerPlaywrightTest = "1.60.0";
 
 function lastNonEmptyLine(value) {
   // Avoid regex and split/replace/match-style parsing (repo lint rule).
@@ -79,6 +80,8 @@ try {
   );
 
   // Install peers + the packed tarball as a consumer would.
+  // Intentionally use a newer Playwright test version than our minimum supported peer so
+  // exact pinning would create a nested duplicate playwright install.
   run(
     "npm",
     [
@@ -87,12 +90,28 @@ try {
       "--no-audit",
       "--no-fund",
       `${tarballPath}`,
+      `@playwright/test@${consumerPlaywrightTest}`,
       `vite@${peerVite}`,
       `vue@${peerVue}`,
       `@vitejs/plugin-vue@${peerPluginVue}`,
     ],
     { cwd: tempRoot },
   );
+
+  const nestedPlaywrightPath = path.join(
+    tempRoot,
+    "node_modules",
+    "@immense",
+    "vue-pom-generator",
+    "node_modules",
+    "playwright",
+  );
+  if (fs.existsSync(nestedPlaywrightPath)) {
+    throw new Error(
+      `Packed consumer install created a nested playwright copy at ${nestedPlaywrightPath}. `
+      + "Relax the package peer range so downstream Playwright upgrades can dedupe cleanly.",
+    );
+  }
 
   // Verify we can import and create plugins.
   run(
