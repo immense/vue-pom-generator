@@ -3,6 +3,8 @@ import path from "node:path";
 
 import { toPascalCase } from "../utils";
 
+type ScopePathApi = Pick<typeof path, "basename" | "isAbsolute" | "normalize" | "resolve" | "sep">;
+
 function toPosixSlashes(value: string): string {
   let out = "";
   for (let i = 0; i < value.length; i++) {
@@ -31,6 +33,16 @@ function safeRealpath(value: string): string {
   return resolvedParent === parent
     ? value
     : path.join(resolvedParent, path.basename(value));
+}
+
+function normalizeScopePath(value: string, pathImpl: ScopePathApi = path): string {
+  return pathImpl.normalize(value);
+}
+
+function isNormalizedPathWithinDir(filePathAbs: string, dirPathAbs: string, pathImpl: ScopePathApi = path): boolean {
+  const normalizedFileAbs = normalizeScopePath(filePathAbs, pathImpl);
+  const normalizedDirAbs = normalizeScopePath(dirPathAbs, pathImpl);
+  return normalizedFileAbs === normalizedDirAbs || normalizedFileAbs.startsWith(`${normalizedDirAbs}${pathImpl.sep}`);
 }
 
 export function isPathWithinDir(filePathAbs: string, dirPathAbs: string): boolean {
@@ -62,6 +74,15 @@ export interface ResolveComponentNameOptions {
    * config.root to the app/ subdirectory rather than the web project root.
    */
   extraRoots?: string[];
+}
+
+export interface FileInConfiguredSourceScopeOptions {
+  filename: string | undefined;
+  projectRoot: string;
+  viewsDirAbs: string;
+  sourceDirs: string[];
+  extraRoots?: string[];
+  pathImpl?: ScopePathApi;
 }
 
 /**
@@ -110,6 +131,53 @@ export function resolveComponentNameFromPath(options: ResolveComponentNameOption
 
   // Fallback: use just the filename without extension.
   return toPascalCase(path.parse(normalizedAbsFilename).name);
+}
+
+export function isFileInConfiguredSourceScope(options: FileInConfiguredSourceScopeOptions): boolean {
+  const { filename, projectRoot, viewsDirAbs, sourceDirs, extraRoots = [], pathImpl = path } = options;
+  if (!filename) {
+    return false;
+  }
+
+  const cleanFilename = filename.includes("?")
+    ? filename.substring(0, filename.indexOf("?"))
+    : filename;
+  const normalizedProjectRoot = normalizeScopePath(projectRoot, pathImpl);
+  const normalizedAbsFilename = normalizeScopePath(
+    pathImpl.isAbsolute(cleanFilename) ? cleanFilename : pathImpl.resolve(normalizedProjectRoot, cleanFilename),
+    pathImpl,
+  );
+
+  if (normalizedAbsFilename.includes(`${pathImpl.sep}node_modules${pathImpl.sep}`) || normalizedAbsFilename.includes("/node_modules/")) {
+    return false;
+  }
+
+  const normalizedViewsDirAbs = normalizeScopePath(viewsDirAbs, pathImpl);
+  if (isNormalizedPathWithinDir(normalizedAbsFilename, normalizedViewsDirAbs, pathImpl)) {
+    return true;
+  }
+
+  const rootsToTry = Array.from(new Set([
+    normalizedProjectRoot,
+    ...extraRoots.map(root => normalizeScopePath(root, pathImpl)),
+  ]));
+
+  return sourceDirs.some((dir) => {
+    return rootsToTry.some((root) => {
+      const normalizedAbsDir = normalizeScopePath(pathImpl.resolve(root, dir), pathImpl);
+      if (isNormalizedPathWithinDir(normalizedAbsFilename, normalizedAbsDir, pathImpl)) {
+        return true;
+      }
+
+      if (dir.startsWith("app/") && pathImpl.basename(root) === "app") {
+        const relativeDir = dir.substring(4);
+        const normalizedAbsDirAlt = normalizeScopePath(pathImpl.resolve(root, relativeDir), pathImpl);
+        return isNormalizedPathWithinDir(normalizedAbsFilename, normalizedAbsDirAlt, pathImpl);
+      }
+
+      return false;
+    });
+  });
 }
 
 export function toPosixRelativeImport(fromDirAbs: string, toPathAbs: string): string {
