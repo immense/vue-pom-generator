@@ -36,6 +36,8 @@ describe("virtual:testids", () => {
             methodName: "FooByKey",
             selector: createPomStringPattern("foo-${key}-button", "parameterized"),
             parameters: [createPomParameterSpec("key", "string")],
+            generatedActionName: "clickFooByKey",
+            generatedPropertyName: "FooButton",
           },
         },
         {
@@ -46,6 +48,8 @@ describe("virtual:testids", () => {
             getterNameOverride: "FooRootButton",
             selector: createPomStringPattern("foo-root", "static"),
             parameters: [],
+            generatedActionName: "clickFooRoot",
+            generatedPropertyName: "FooRootButton",
           },
         },
       ]), {
@@ -69,10 +73,27 @@ describe("virtual:testids", () => {
             methodName: "Bar",
             selector: createPomStringPattern("bar", "static"),
             parameters: [],
+            generatedActionName: "clickBar",
+            generatedPropertyName: "BarButton",
           },
         },
       ]), {
         filePath: "/repo/src/components/Bar.vue",
+      })],
+      ["WrapperButton", createDependencies(new Set([
+        {
+          selectorValue: createPomStringPattern("WrapperButton-Click-button", "static"),
+          pom: {
+            nativeRole: "button",
+            methodName: "WrapperButton",
+            selector: createPomStringPattern("WrapperButton-Click-button", "static"),
+            parameters: [],
+            generatedActionName: "clickWrapperButton",
+            generatedPropertyName: "WrapperButton",
+          },
+        },
+      ]), {
+        filePath: "/repo/src/components/WrapperButton.vue",
       })],
     ]);
     const elementMetadata = new Map([
@@ -84,6 +105,8 @@ describe("virtual:testids", () => {
           tagType: 0,
           hasClickHandler: true,
           staticTextContent: "Save",
+          sourceLine: 12,
+          sourceColumn: 9,
         }],
       ])],
     ]);
@@ -117,6 +140,17 @@ describe("virtual:testids", () => {
     expect(code).toContain("\"sourceFile\": \"/repo/src/views/Foo.vue\"");
     expect(code).toContain("\"kind\": \"view\"");
     expect(code).toContain("\"semanticName\": \"foo item\"");
+    expect(code).toContain("\"sourceLine\": 12");
+    expect(code).toContain("\"sourceColumn\": 9");
+
+    const testIdSection = code.slice(
+      code.indexOf("export const testIdManifest"),
+      code.indexOf("export const pomManifest"),
+    );
+    const pomSection = code.slice(code.indexOf("export const pomManifest"));
+    expect(testIdSection).toContain("\"WrapperButton\"");
+    expect(testIdSection).toContain("\"WrapperButton-Click-button\"");
+    expect(pomSection).not.toContain("\"WrapperButton\":");
 
     const resolvedPomManifest = await (plugin as any).resolveId?.("virtual:pom-manifest");
     const resolvedPomManifestId = typeof resolvedPomManifest === "string" ? resolvedPomManifest : resolvedPomManifest?.id;
@@ -128,6 +162,7 @@ describe("virtual:testids", () => {
     expect(pomManifestCode).toContain("\"generatedPropertyName\": \"FooButton\"");
     expect(pomManifestCode).toContain("\"locatorDescription\": \"Foo button\"");
     expect(pomManifestCode).toContain("\"accessibleNameSource\": \"text\"");
+    expect(pomManifestCode).not.toContain("\"WrapperButton\":");
 
     componentHierarchyMap.set("Baz", createDependencies(new Set([
       {

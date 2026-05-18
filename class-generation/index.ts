@@ -54,6 +54,7 @@ import {
   PomExtraClickMethodSpec,
   PomPrimarySpec,
   PomSelectorSpec,
+  shouldSuppressStandaloneWrapperFallbackSurface,
   toPascalCase,
   upperFirst,
 } from "../utils";
@@ -663,6 +664,11 @@ export async function generateFiles(
         layoutDirs,
       })
       : undefined);
+  const emittableComponentHierarchyMap = new Map(
+    Array.from(componentHierarchyMap.entries()).filter(([componentName, dependencies]) => {
+      return !shouldSuppressStandaloneWrapperFallbackSurface(componentName, dependencies);
+    }),
+  );
   const generatedFilePaths: string[] = [];
   const writeGeneratedFile = (file: GeneratedFileOutput) => {
     const resolvedFilePath = path.resolve(file.filePath);
@@ -672,7 +678,7 @@ export async function generateFiles(
 
   if (emitLanguages.includes("ts")) {
     const files = typescriptOutputStructure === "split"
-      ? await generateSplitTypeScriptFiles(componentHierarchyMap, vueFilesPathMap, basePageClassPath, outDir, {
+      ? await generateSplitTypeScriptFiles(emittableComponentHierarchyMap, vueFilesPathMap, basePageClassPath, outDir, {
         customPomAttachments,
         projectRoot,
         customPomDir,
@@ -683,7 +689,7 @@ export async function generateFiles(
         routeMetaByComponent,
         vueRouterFluentChaining,
       })
-      : await generateAggregatedFiles(componentHierarchyMap, vueFilesPathMap, basePageClassPath, outDir, {
+      : await generateAggregatedFiles(emittableComponentHierarchyMap, vueFilesPathMap, basePageClassPath, outDir, {
         customPomAttachments,
         projectRoot,
         customPomDir,
@@ -699,7 +705,7 @@ export async function generateFiles(
       writeGeneratedFile(file);
     }
 
-    const fixtureRegistryFile = maybeGenerateFixtureRegistry(componentHierarchyMap, {
+    const fixtureRegistryFile = maybeGenerateFixtureRegistry(emittableComponentHierarchyMap, {
       generateFixtures,
       pomOutDir: outDir,
       projectRoot,
@@ -711,7 +717,7 @@ export async function generateFiles(
   }
 
   if (emitLanguages.includes("csharp")) {
-    const csFiles = generateAggregatedCSharpFiles(componentHierarchyMap, outDir, {
+    const csFiles = generateAggregatedCSharpFiles(emittableComponentHierarchyMap, outDir, {
       projectRoot,
       testIdAttribute,
       csharp,
@@ -1636,7 +1642,12 @@ function prepareViewObjectModelClass(
     : childrenComponentSet;
   const componentRefsForInstances = new Set<string>();
   for (const ref of rawComponentRefsForInstances) {
-    componentRefsForInstances.add(resolveTrackedComponentRef(ref) ?? normalizeTrackedComponentRef(ref));
+    const resolvedRef = resolveTrackedComponentRef(ref) ?? normalizeTrackedComponentRef(ref);
+    const resolvedDependencies = componentHierarchyMap.get(resolvedRef);
+    if (!resolvedDependencies?.dataTestIdSet.size) {
+      continue;
+    }
+    componentRefsForInstances.add(resolvedRef);
   }
 
   const hasChildComponent = (needle: string) => {

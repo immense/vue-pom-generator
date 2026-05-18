@@ -222,6 +222,30 @@ function createToolbarHandle(): HTMLDivElement {
   return handle;
 }
 
+async function copyTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.top = "0";
+  textarea.style.left = "0";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  const copied = document.execCommand("copy");
+  textarea.remove();
+
+  if (!copied) {
+    throw new Error("Clipboard copy failed.");
+  }
+}
+
 class AnnotatorRuntime {
   private readonly options: AnnotatorClientOptions;
   private readonly settings: AnnotatorSettings;
@@ -323,7 +347,7 @@ class AnnotatorRuntime {
     this.previewButton = previewButton;
 
     const copyButton = createIconButton("Copy annotations", "copy", () => this.copyAnnotations(), {
-      disabled: this.annotations.length === 0 || !this.settings.copyToClipboard,
+      disabled: this.annotations.length === 0,
       shortcut: SHORTCUT_LABELS.copy,
     });
 
@@ -557,7 +581,7 @@ class AnnotatorRuntime {
     }
 
     if (key === SHORTCUT_LABELS.copy.toLowerCase()) {
-      if (!this.annotations.length || !this.settings.copyToClipboard) {
+      if (!this.annotations.length) {
         return;
       }
       event.preventDefault();
@@ -852,21 +876,6 @@ class AnnotatorRuntime {
     });
     showComponentField.append(showComponentCopy, showComponentCheckbox);
 
-    const copyField = document.createElement("label");
-    copyField.className = "vpg-annotator-row";
-    const copyLabel = document.createElement("span");
-    copyLabel.className = "vpg-annotator-label";
-    copyLabel.textContent = "Enable clipboard copy";
-    const copyCheckbox = document.createElement("input");
-    copyCheckbox.type = "checkbox";
-    copyCheckbox.className = "vpg-annotator-checkbox";
-    copyCheckbox.checked = this.settings.copyToClipboard;
-    copyCheckbox.addEventListener("change", () => {
-      this.settings.copyToClipboard = copyCheckbox.checked;
-      this.saveSettings();
-    });
-    copyField.append(copyLabel, copyCheckbox);
-
     const shortcutsField = document.createElement("div");
     shortcutsField.className = "vpg-annotator-field";
     const shortcutsLabel = document.createElement("div");
@@ -898,7 +907,7 @@ class AnnotatorRuntime {
 
     shortcutsField.append(shortcutsLabel, shortcutsList);
 
-    body.append(title, detailField, showComponentField, copyField, shortcutsField);
+    body.append(title, detailField, showComponentField, shortcutsField);
     this.showPanel(panel, () => this.attachFloating(this.settingsButton!, panel, arrowEl, "top-start", ["top-start", "left-start", "top-end", "left-end"]));
   }
 
@@ -947,12 +956,19 @@ class AnnotatorRuntime {
   }
 
   private async copyAnnotations() {
-    if (!this.annotations.length || !this.settings.copyToClipboard) {
+    if (!this.annotations.length) {
       return;
     }
+
     const text = formatAnnotations(this.annotations, this.settings.outputDetail, window.location.href);
-    await navigator.clipboard.writeText(text);
-    this.showToast("Copied");
+
+    try {
+      await copyTextToClipboard(text);
+      this.showToast("Copied");
+    }
+    catch {
+      this.showToast("Copy failed");
+    }
   }
 
   private showToast(message: string) {

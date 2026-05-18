@@ -625,6 +625,7 @@ Current caveats:
 - there are no generated `openXPage` helpers; tests call `goTo()` explicitly when available
 - override preference only affects fixture construction
 - component fixtures are skipped when their lower-camel-case name would collide with reserved Playwright fixture names such as `page`, `context`, `browser`, or `request`
+- generic wrapper-only component fallbacks whose best standalone name is just their wrapper class are skipped so parent views/components keep the more meaningful handler-derived API
 - an override class still needs a `new (page)`-compatible constructor because that is what fixtures call
 
 By default the runtime uses a simple red fallback bubble. The example below uses the optional floating-ui renderer so the callout can auto-place around nearby UI and point back to the target with an arrow.
