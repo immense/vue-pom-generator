@@ -105,7 +105,7 @@ jobs:
 
       - name: Generate release notes (agentic Copilot CLI)
         env:
-          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          COPILOT_TOKEN: ${{ secrets.COPILOT_TOKEN }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_REPOSITORY: ${{ github.repository }}
           RELEASE_VERSION: ${{ steps.next.outputs.version }}
@@ -114,8 +114,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "${COPILOT_GITHUB_TOKEN}" ]; then
-            echo "::error::Missing required secret COPILOT_GITHUB_TOKEN (needed for Copilot CLI release note generation)."
+          if [ -z "${COPILOT_TOKEN}" ]; then
+            echo "::error::Missing required secret COPILOT_TOKEN (needed for Copilot CLI release note generation)."
             exit 1
           fi
           if [ -z "${GH_TOKEN}" ]; then

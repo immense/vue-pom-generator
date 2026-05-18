@@ -157,7 +157,7 @@ const mergedPullRequests = fetchMergedPullRequests({
   untilISO: untilISO || undefined,
 });
 
-const copilotToken = requireEnv("COPILOT_GITHUB_TOKEN");
+const copilotToken = requireEnv("COPILOT_TOKEN");
 
 const client = new CopilotClient({
   githubToken: copilotToken,
