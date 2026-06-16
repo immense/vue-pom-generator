@@ -1,4 +1,5 @@
 import createVuePomGeneratorPlugins from "./plugin/create-vue-pom-generator-plugins";
+import { mountAnnotatorClient } from "./plugin/runtime/annotator/client";
 
 import type { NuxtPomGeneratorPluginOptions, VuePomGeneratorPluginOptions } from "./plugin/types";
 
@@ -7,6 +8,8 @@ const nuxtConfigMarker = Symbol.for("@immense/vue-pom-generator.nuxt");
 export { createVuePomGeneratorPlugins };
 export { createVuePomGeneratorPlugins as vuePomGenerator };
 export default createVuePomGeneratorPlugins;
+
+export { mountAnnotatorClient };
 
 export function defineVuePomGeneratorConfig(options: VuePomGeneratorPluginOptions): VuePomGeneratorPluginOptions {
   return options;
