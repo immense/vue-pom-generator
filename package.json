@@ -62,7 +62,7 @@
     "@vue/compiler-dom": ">=3.5",
     "@vue/compiler-sfc": ">=3.5",
     "eslint": ">=9",
-    "playwright": ">=1.59.1 <2",
+    "playwright": ">=1.61.0 <2",
     "vite": "^5 || ^6 || ^7"
   },
   "peerDependenciesMeta": {
@@ -79,7 +79,7 @@
     "@babel/types": "^7.28.5",
     "@floating-ui/core": "^1.7.5",
     "@github/copilot-sdk": "^0.1.8",
-    "@playwright/test": "1.59.1",
+    "@playwright/test": "1.61.0",
     "@types/jsdom": "^27.0.0",
     "@types/node": "^24.1.0",
     "@vitest/coverage-v8": "^4.0.16",
@@ -87,7 +87,7 @@
     "eslint": "^9.27.0",
     "jsdom": "^27.4.0",
     "knip": "^5.82.1",
-    "playwright": "1.59.1",
+    "playwright": "1.61.0",
     "simple-git-hooks": "^2.13.1",
     "typescript": "^5.9.2",
     "vite": "^7.3.1",
