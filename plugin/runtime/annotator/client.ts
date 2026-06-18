@@ -4,7 +4,7 @@ import { formatAnnotations, formatSingleAnnotationPreview, type FormattedAnnotat
 import { ANNOTATOR_ROOT_ATTR, ANNOTATOR_STYLES } from "./styles";
 import { resolveVueComponentInfo, type VueDetectorOptions } from "./vue-detector";
 
-interface AnnotatorClientOptions extends VueDetectorOptions {
+export interface AnnotatorClientOptions extends VueDetectorOptions {
   outputDetail: OutputDetail;
   copyToClipboard: boolean;
   showComponentTree: boolean;
