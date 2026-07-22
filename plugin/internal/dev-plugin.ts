@@ -455,12 +455,14 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         return currentRun;
       };
 
-      const watchedVueGlobs = getSourceDirRoots().map(scanDirAbs => path.resolve(scanDirAbs, "**", "*.vue"));
-      const watchedPluginGlob = path.resolve(projectRootRef.current, "vite-plugins", "vue-pom-generator", "**", "*.ts");
+      // Never pass globs to watcher.add(): Vite creates chokidar with disableGlobbing,
+      // and on Windows the resulting ENOENT fallback poisons the glob's parent directory,
+      // permanently disabling watching/HMR for that subtree. Source dirs are already
+      // covered by Vite's recursive root watch, so only real paths are added here.
       const runtimeDir = path.dirname(basePageClassPath);
+      const localPluginDir = path.resolve(projectRootRef.current, "vite-plugins", "vue-pom-generator");
       server.watcher.add([
-        ...watchedVueGlobs,
-        watchedPluginGlob,
+        ...(fs.existsSync(localPluginDir) ? [localPluginDir] : []),
         basePageClassPath,
         path.resolve(runtimeDir, "pointer.ts"),
         path.resolve(runtimeDir, "callout.ts"),
