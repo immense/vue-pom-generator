@@ -1637,8 +1637,8 @@ function prepareViewObjectModelClass(
     return match;
   };
 
-  const rawComponentRefsForInstances = isView
-    ? (usedComponentSet?.size ? usedComponentSet : childrenComponentSet)
+  const rawComponentRefsForInstances = usedComponentSet?.size
+    ? usedComponentSet
     : childrenComponentSet;
   const componentRefsForInstances = new Set<string>();
   for (const ref of rawComponentRefsForInstances) {

@@ -2518,11 +2518,34 @@ export function tryGetExistingElementDataTestId(node: ElementNode, attributeName
   // :data-testid="..." / v-bind:data-testid="..."
   const directive = existing as DirectiveNode;
   const exp = directive.exp;
-  if (!exp || exp.type !== NodeTypes.SIMPLE_EXPRESSION) {
+  if (!exp) {
     return null;
   }
 
-  const simpleExp = exp as SimpleExpressionNode;
+  // When `prefixIdentifiers` is enabled (runtime Vue plugin pass), the Vue compiler
+  // converts SimpleExpressionNode into CompoundExpressionNode. The original source
+  // is still available via `loc.source`, so we reconstruct a SimpleExpressionNode
+  // from it to reuse the existing parsing logic.
+  let simpleExp: SimpleExpressionNode;
+  if (exp.type === NodeTypes.SIMPLE_EXPRESSION) {
+    simpleExp = exp as SimpleExpressionNode;
+  } else if (exp.type === NodeTypes.COMPOUND_EXPRESSION) {
+    const compoundExp = exp as CompoundExpressionNode;
+    const source = compoundExp.loc?.source;
+    if (!source) {
+      return null;
+    }
+    simpleExp = {
+      type: NodeTypes.SIMPLE_EXPRESSION,
+      content: source,
+      isStatic: false,
+      constType: 0,
+      loc: compoundExp.loc,
+    } as SimpleExpressionNode;
+  } else {
+    return null;
+  }
+
   const ast = tryGetVueExpressionAst(simpleExp, {
     preferredViews: ["content", "loc", "compiled"],
     plugins: ["typescript"],

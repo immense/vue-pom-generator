@@ -892,7 +892,16 @@ export function createTestIdTransform(
 
   const normalizedViewsDirAbs = path.normalize(safeRealpath(path.resolve(viewsDirAbs)));
 
-  // When generating methods incrementally, it’s possible for the same logical test id to be
+  // When `prefixIdentifiers` is enabled (e.g. the runtime Vue plugin pass), the Vue
+  // compiler transforms directive expressions (e.g. :data-testid="`foo-${bar}`") into
+  // compiled/compound forms BEFORE our exit function runs. This makes
+  // `tryGetExistingElementDataTestId` unable to detect the raw template literal.
+  //
+  // We save the raw directive `exp` node in the entry function (before Vue's transforms)
+  // and restore it in the exit function so the preservation logic can still see it.
+  const rawTestIdExpByElement = new WeakMap<ElementNode, SimpleExpressionNode | CompoundExpressionNode | null>();
+
+  // When generating methods incrementally, it's possible for the same logical test id to be
   // encountered multiple times (e.g. due to wrapper behaviors, template shape, or repeated nodes).
   // Deduplicate by method *content* to avoid duplicate declarations in generated POM classes.
   const generatedMethodContentByComponent = new Map<string, Set<string>>();
@@ -1007,6 +1016,22 @@ export function createTestIdTransform(
 
     const element = node as ElementNode;
     const parentIsRoot = context?.parent?.type === NodeTypes.ROOT;
+
+    // Save the raw :data-testid directive expression before Vue's prefixIdentifiers
+    // transform compiles it into a compound/hoisted form.
+    {
+      const testIdDirective = element.props.find(
+        (p): p is DirectiveNode =>
+          p.type === NodeTypes.DIRECTIVE
+          && p.name === "bind"
+          && p.arg?.type === NodeTypes.SIMPLE_EXPRESSION
+          && p.arg.content === testIdAttribute
+          && !!p.exp,
+      );
+      if (testIdDirective?.exp) {
+        rawTestIdExpByElement.set(element, testIdDirective.exp as SimpleExpressionNode | CompoundExpressionNode);
+      }
+    }
     const parentElement = (!parentIsRoot && context?.parent?.type === NodeTypes.ELEMENT)
       ? (context.parent as ElementNode)
       : null;
