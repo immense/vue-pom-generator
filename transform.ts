@@ -899,8 +899,6 @@ export function createTestIdTransform(
   //
   // We save the raw directive `exp` node in the entry function (before Vue's transforms)
   // and restore it in the exit function so the preservation logic can still see it.
-  const rawTestIdExpByElement = new WeakMap<ElementNode, SimpleExpressionNode | CompoundExpressionNode | null>();
-
   // When generating methods incrementally, it's possible for the same logical test id to be
   // encountered multiple times (e.g. due to wrapper behaviors, template shape, or repeated nodes).
   // Deduplicate by method *content* to avoid duplicate declarations in generated POM classes.
@@ -1028,9 +1026,6 @@ export function createTestIdTransform(
           && p.arg.content === testIdAttribute
           && !!p.exp,
       );
-      if (testIdDirective?.exp) {
-        rawTestIdExpByElement.set(element, testIdDirective.exp as SimpleExpressionNode | CompoundExpressionNode);
-      }
     }
     const parentElement = (!parentIsRoot && context?.parent?.type === NodeTypes.ELEMENT)
       ? (context.parent as ElementNode)
