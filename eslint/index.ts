@@ -2,6 +2,7 @@ import type { Rule } from "eslint";
 import type { CallExpression, Expression, MemberExpression } from "estree";
 
 import { noPageFixtureInSpecsRule } from "./no-page-fixture-in-specs";
+import { noRawPlaywrightApisRule } from "./no-raw-playwright-apis";
 import { removeExistingTestIdAttributesRule } from "./remove-existing-test-id-attributes";
 
 /**
@@ -106,9 +107,11 @@ export const plugin = {
 	rules: {
 		"no-page-fixture-in-specs": noPageFixtureInSpecsRule,
 		"no-raw-locator-action": noRawLocatorActionRule,
+		"no-raw-playwright-apis": noRawPlaywrightApisRule,
 		"remove-existing-test-id-attributes": removeExistingTestIdAttributesRule,
 	},
 } satisfies { rules: Record<string, Rule.RuleModule> };
 
 export { noPageFixtureInSpecsRule };
+export { noRawPlaywrightApisRule };
 export { removeExistingTestIdAttributesRule };

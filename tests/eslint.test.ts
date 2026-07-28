@@ -2,7 +2,7 @@
 import { RuleTester } from "eslint";
 import { describe, it } from "vitest";
 
-import { noPageFixtureInSpecsRule, noRawLocatorActionRule } from "../eslint/index";
+import { noPageFixtureInSpecsRule, noRawLocatorActionRule, noRawPlaywrightApisRule } from "../eslint/index";
 
 const tester = new RuleTester({
 	languageOptions: { ecmaVersion: 2022, sourceType: "module" },
@@ -122,6 +122,80 @@ describe("no-page-fixture-in-specs", () => {
 					code: "it('aliases page', async ({ page: currentPage }) => { await currentPage.goto('/'); });",
 					filename: "/tmp/dashboard.spec.ts",
 					errors: [{ messageId: "noPageFixture" }],
+				},
+			],
+		});
+	});
+});
+ 
+describe("no-raw-playwright-apis", () => {
+	it("allows generated fixture/POM usage in spec files", () => {
+		tester.run("no-raw-playwright-apis", noRawPlaywrightApisRule, {
+			valid: [
+				{
+					code: "test('example', async ({ tagsListPage }) => { await tagsListPage.clickRemove(); });",
+					filename: "/tmp/example.spec.ts",
+				},
+			],
+			invalid: [],
+		});
+	});
+
+	it("ignores non-spec files", () => {
+		tester.run("no-raw-playwright-apis", noRawPlaywrightApisRule, {
+			valid: [
+				{
+					code: "export function useHelper(page) { return page.getByText('ok'); }",
+					filename: "/tmp/helpers.ts",
+				},
+			],
+			invalid: [],
+		});
+	});
+
+	it("flags animateCursor helper calls", () => {
+		tester.run("no-raw-playwright-apis", noRawPlaywrightApisRule, {
+			valid: [],
+			invalid: [
+				{
+					code: "animateCursorToElementAndClick(page, '#btn');",
+					filename: "/tmp/example.spec.ts",
+					errors: [{ messageId: "legacyCursorHelper" }],
+				},
+			],
+		});
+	});
+
+	it("flags raw locator query APIs", () => {
+		tester.run("no-raw-playwright-apis", noRawPlaywrightApisRule, {
+			valid: [],
+			invalid: [
+				{
+					code: "page.locator('button'); page.getByRole('button'); page.getByText('Save'); page.getByLabel('Name');",
+					filename: "/tmp/example.spec.ts",
+					errors: [
+						{ messageId: "rawPlaywrightApi" },
+						{ messageId: "rawPlaywrightApi" },
+						{ messageId: "rawPlaywrightApi" },
+						{ messageId: "rawPlaywrightApi" },
+					],
+				},
+			],
+		});
+	});
+
+	it("flags direct page selector APIs", () => {
+		tester.run("no-raw-playwright-apis", noRawPlaywrightApisRule, {
+			valid: [],
+			invalid: [
+				{
+					code: "await page.click('#save'); await page.evaluate(() => 1); await page.waitForSelector('#save');",
+					filename: "/tmp/example.spec.ts",
+					errors: [
+						{ messageId: "rawPlaywrightPageApi" },
+						{ messageId: "rawPlaywrightPageApi" },
+						{ messageId: "rawPlaywrightPageApi" },
+					],
 				},
 			],
 		});
