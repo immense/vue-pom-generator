@@ -110,7 +110,11 @@ jobs:
           RELEASE_REPOSITORY: ${{ github.repository }}
           RELEASE_VERSION: ${{ steps.next.outputs.version }}
           RELEASE_PREVIOUS_TAG: ${{ steps.next.outputs.previous_tag }}
-          COPILOT_MODEL: gpt-5
+          COPILOT_MODEL: reasoning
+          COPILOT_PROVIDER_BASE_URL: ${{ secrets.COPILOT_PROVIDER_BASE_URL }}
+          COPILOT_PROVIDER_API_KEY: ${{ secrets.COPILOT_PROVIDER_API_KEY }}
+          COPILOT_PROVIDER_MAX_PROMPT_TOKENS: "380000"
+          COPILOT_PROVIDER_MAX_OUTPUT_TOKENS: "16000"
         run: |
           set -euo pipefail
 
