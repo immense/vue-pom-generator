@@ -346,6 +346,24 @@ describe('createTestIdTransform', () => {
     expect(testId).toBe('already')
   })
 
+  it('preserves existing dynamic data-testid on @click element when existingIdBehavior is preserve', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+
+    const ast = compileAndCaptureAst(
+      `<button :data-testid="\`select-all-\${subject.id}\`" @click="selectAll">Select All</button>`,
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views', { existingIdBehavior: 'preserve' })],
+      },
+    )
+
+    // The author's dynamic testid must be preserved, NOT overwritten with
+    // a generated one like "MyComp-SelectAll-button".
+    const testId = findFirstDataTestId(ast)
+    expect(testId).toContain('select-all-')
+    expect(testId).not.toBe('MyComp-SelectAll-button')
+  })
+
   it('preserves simple member-expression data-testid when existingIdBehavior is preserve', () => {
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
 
