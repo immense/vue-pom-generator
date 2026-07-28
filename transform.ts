@@ -1505,8 +1505,16 @@ export function createTestIdTransform(
     // - @click nodes
     // - submit buttons with an id/name
     // - nodes that require option-data-testid-prefix (even if they don't have click/submit)
+    // Check for an existing data-testid BEFORE the @click path so that
+    // existingIdBehavior="preserve" is honored for clickable elements too.
+    // Without this, a <button @click="selectAll" :data-testid="`select-all-${id}`">
+    // would be silently overwritten with a generated testid.
+    // When existingIdBehavior is "overwrite", we still want the @click path to run
+    // so the generated testid reflects the click handler semantics.
+    const existingElementDataTestId = tryGetExistingElementDataTestId(element, testIdAttribute);
+    const shouldPreserveExisting = existingElementDataTestId && existingIdBehavior === "preserve";
     const clickDirective = tryGetClickDirective(element);
-    if (clickDirective) {
+    if (clickDirective && !shouldPreserveExisting) {
       const clickSuffix = getComposedClickHandlerContent(element, context, innerText, clickDirective, {
         componentName,
         contextFilename: context.filename,
@@ -1547,7 +1555,6 @@ export function createTestIdTransform(
       return;
     }
 
-    const existingElementDataTestId = tryGetExistingElementDataTestId(element, testIdAttribute);
     if (existingElementDataTestId) {
       // Only generate POM members for existing test ids when the element is something we
       // consider interactive (based on role inferred from tag suffix).
