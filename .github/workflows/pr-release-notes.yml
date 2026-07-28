@@ -1,0 +1,152 @@
+name: PR Release Notes
+
+on:
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: pr-release-notes-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  generate:
+    name: Generate Release Notes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install
+        run: npm ci
+
+      - name: Generate AI Release Notes with Copilot
+        id: ai_release_notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          COPILOT_PROVIDER_BASE_URL: ${{ secrets.COPILOT_PROVIDER_BASE_URL }}
+          COPILOT_PROVIDER_API_KEY: ${{ secrets.COPILOT_PROVIDER_API_KEY }}
+          COPILOT_PROVIDER_MAX_PROMPT_TOKENS: "380000"
+          COPILOT_PROVIDER_MAX_OUTPUT_TOKENS: "16000"
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          COMMITS="$(git log --pretty=format:'- %s (%an) [%h]' $BASE_SHA..$HEAD_SHA | head -n 200)"
+          DIFFSTAT="$(git diff --stat $BASE_SHA..$HEAD_SHA)"
+          NAME_STATUS="$(git diff --name-status $BASE_SHA..$HEAD_SHA)"
+
+          prompt="$(cat <<EOF
+          Generate suggested GitHub release notes in Markdown for this pull request.
+
+          PR Title: ${PR_TITLE}
+          PR Number: #${PR_NUMBER}
+          PR URL: ${PR_URL}
+
+          Commits:
+          ${COMMITS:-<no commits>}
+
+          Diffstat:
+          ${DIFFSTAT:-<no stats>}
+
+          Files (name-status):
+          ${NAME_STATUS:-<no files>}
+
+          Requirements:
+          - Summarize only what is in this PR. Do not include unrelated changes from main. Do not invent changes.
+          - Output ONLY the release notes markdown. Do not include any preamble, thinking, or conversational text before or after the notes.
+          - Write release notes in this exact structure:
+            ## Highlights (3-6 bullets)
+            ## Changes (bulleted; grouped by theme if possible)
+            ## Breaking Changes (only if any)
+            ## Pull Requests Included (bulleted, with PR links)
+            ## Testing (short; mention what signals you have)
+          - Do not include any H1 (#) headers.
+          - Do not wrap the response in code fences.
+          - Start your output with ## Highlights as the first line.
+          EOF
+          )"
+
+          ./node_modules/.bin/copilot --version
+          ./node_modules/.bin/copilot \
+            --prompt "$prompt" \
+            --model "reasoning" \
+            --silent \
+            --no-color \
+            --no-ask-user \
+            --allow-all-tools \
+            --allow-all-paths \
+            > RELEASE_NOTES.md
+
+          if [[ ! -s RELEASE_NOTES.md ]]; then
+            echo "::error::Copilot did not produce release notes."
+            exit 1
+          fi
+
+      - name: Post PR comment
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            let body = fs.readFileSync('RELEASE_NOTES.md', 'utf8').trim();
+
+            // Strip any preamble before the first ## heading
+            const firstHeading = body.indexOf('\n## ');
+            if (firstHeading > 0) {
+              body = body.slice(firstHeading + 1).trim();
+            } else if (body.startsWith('## ')) {
+              // already starts with heading
+            } else if (firstHeading === -1) {
+              // no heading found, use as-is
+            }
+
+            const marker = '<!-- vue-pom-generator:agentic-release-notes-preview -->';
+            const commentBody = `${marker}\n${body}`;
+
+            // Find and update existing comment, or create a new one
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+
+            const existing = comments.find(c =>
+              c.user.login === 'github-actions[bot]' &&
+              c.body.startsWith(marker)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: commentBody,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: commentBody,
+              });
+            }
+
+      - name: Add to step summary
+        run: cat RELEASE_NOTES.md >> $GITHUB_STEP_SUMMARY
