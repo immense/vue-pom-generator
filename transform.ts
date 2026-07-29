@@ -53,6 +53,11 @@ import {
   NativeRole,
   applyResolvedDataTestId,
   tryGetExistingElementDataTestId,
+  buildSlotScopeFallbackKeyExpression,
+  toResolvedKeyInfo,
+  findTemplateSlotScopeExpression,
+  tryExtractSlotScopeVariableNames,
+  getContainedInSlotTemplateNode,
 } from "./utils";
 
 const CLICK_EVENT_NAME = TESTID_CLICK_EVENT_NAME;
@@ -847,6 +852,17 @@ function tryWrapClickDirectiveForTestEvents(
 
 let previousFileName = "";
 const hierarchyMap: HierarchyMap = new Map(); // key is child, value is parent
+
+/**
+ * Cross-file key context: when a child component is rendered inside a keyed slot scope,
+ * the parent records which prop receives the slot data. The child then uses that prop
+ * to key its internal testids.
+ *
+ * Key: child component name (PascalCase, as seen in the parent's template)
+ * Value: the prop name on the child that receives the slot-scope data object
+ */
+export type CrossFileKeyRegistry = Map<string, string>;
+
 /**
  * Creates a NodeTransform that adds data-testid attributes to elements
  */
@@ -868,6 +884,8 @@ export function createTestIdTransform(
       sourceAttribute: string;
       metadataAttributePrefix: string;
     } | null;
+    /** Shared registry for cross-file keyed slot context. */
+    crossFileKeyRegistry?: CrossFileKeyRegistry;
   } = {},
 ): NodeTransform {
   const existingIdBehavior = options.existingIdBehavior ?? "error";
@@ -878,6 +896,7 @@ export function createTestIdTransform(
   const vueFilesPathMap = options.vueFilesPathMap;
   const wrapperSearchRoots = options.wrapperSearchRoots ?? [];
   const annotatorMetadata = options.annotatorMetadata ?? null;
+  const crossFileKeyRegistry = options.crossFileKeyRegistry;
 
   // Some projects (and dev environments) use symlinks. We want viewsDir containment checks
   // to behave like the filesystem does (real paths), but we must not crash for virtual
@@ -1087,6 +1106,43 @@ export function createTestIdTransform(
     // This supports per-view helper attachment (e.g. Grid) based on component usage.
     if (isComponentLikeTag(element.tag)) {
       dependencies.usedComponentSet.add(element.tag);
+
+      // Cross-file key registry: if this component is inside a keyed slot scope,
+      // record which prop receives the slot data so the child can key its testids.
+      if (crossFileKeyRegistry && context.scopes.vSlot > 0) {
+        const findSlotTemplate = (): ElementNode | null => {
+          const gp = (context as { grandParent?: { type?: number; tag?: string } }).grandParent;
+          if (gp?.type === NodeTypes.ELEMENT && gp.tag === "template") {
+            return gp as ElementNode;
+          }
+          return getContainedInSlotTemplateNode(element, hierarchyMap);
+        };
+
+        const slotTemplate = findSlotTemplate();
+        if (slotTemplate) {
+          const slotScopeExpression = findTemplateSlotScopeExpression(slotTemplate);
+          if (slotScopeExpression) {
+            // Parse the slot scope to extract variable names (e.g. { data, key } → ["data", "key"])
+            const slotVarNames = tryExtractSlotScopeVariableNames(slotScopeExpression);
+            if (slotVarNames.length > 0) {
+              // Find a :prop="slotVar" binding where slotVar is one of the slot scope variables.
+              for (const prop of element.props) {
+                if (
+                  prop.type === NodeTypes.DIRECTIVE
+                  && prop.name === "bind"
+                  && prop.arg?.type === NodeTypes.SIMPLE_EXPRESSION
+                  && prop.exp?.type === NodeTypes.SIMPLE_EXPRESSION
+                  && slotVarNames.includes(prop.exp.content)
+                ) {
+                  const propName = (prop.arg as SimpleExpressionNode).content;
+                  crossFileKeyRegistry.set(element.tag, propName);
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
     }
 
     // Opportunistically infer wrapper semantics for simple "single native input" components
@@ -1116,7 +1172,22 @@ export function createTestIdTransform(
           return vForKeyInfo;
         }
 
-        return getContainedInSlotDataKeyInfo(element, hierarchyMap);
+        const slotKeyInfo = getContainedInSlotDataKeyInfo(element, hierarchyMap);
+        if (slotKeyInfo) {
+          return slotKeyInfo;
+        }
+
+        // Cross-file key registry: if this component was recorded by a parent as being
+        // rendered inside a keyed slot, use the registered prop to build a keyed expression.
+        if (crossFileKeyRegistry) {
+          const propName = crossFileKeyRegistry.get(componentName);
+          if (propName) {
+            const fallbackExpr = buildSlotScopeFallbackKeyExpression(propName);
+            return toResolvedKeyInfo(fallbackExpr, fallbackExpr);
+          }
+        }
+
+        return null;
       };
 
       // `bestKeyInfo` carries the keyed selector shape end-to-end:

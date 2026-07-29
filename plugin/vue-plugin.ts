@@ -12,6 +12,7 @@ import { findDataTestIdProp, tryCreateElementMetadata } from "../compiler-metada
 import { buildPomManifest } from "../manifest-generator";
 import type { ElementMetadata } from "../metadata-collector";
 import { createTestIdTransform } from "../transform";
+import type { CrossFileKeyRegistry } from "../transform";
 import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 
 import type { VuePomGeneratorLogger } from "./logger";
@@ -27,6 +28,7 @@ interface InternalFactoryOptions {
   elementMetadata: Map<string, Map<string, ElementMetadata>>;
   semanticNameMap: Map<string, string>;
   componentHierarchyMap: Map<string, IComponentDependencies>;
+  crossFileKeyRegistry: CrossFileKeyRegistry;
   vueFilesPathMap: Map<string, string>;
   excludedComponents: string[];
   getViewsDirAbs: () => string;
@@ -131,6 +133,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     elementMetadata,
     semanticNameMap,
     componentHierarchyMap,
+    crossFileKeyRegistry,
     vueFilesPathMap,
     excludedComponents,
     getViewsDirAbs,
@@ -219,6 +222,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
                   vueFilesPathMap,
                   wrapperSearchRoots: getWrapperSearchRoots(),
                   annotatorMetadata,
+                  crossFileKeyRegistry,
                 },
               ),
             );
@@ -283,6 +287,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
                 vueFilesPathMap,
                 wrapperSearchRoots: getWrapperSearchRoots(),
                 annotatorMetadata,
+                crossFileKeyRegistry,
               },
             );
           perFileTransform.set(componentName, transform);
