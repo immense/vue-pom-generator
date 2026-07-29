@@ -18,6 +18,7 @@ import type { ResolvedGenerationSupportOptions } from "../resolved-generation-op
 
 interface BuildProcessorOptions {
   componentHierarchyMap: Map<string, IComponentDependencies>;
+  crossFileKeyRegistry: Map<string, string>;
   vueFilesPathMap: Map<string, string>;
   getPageDirs: () => string[];
   getComponentDirs: () => string[];
@@ -80,6 +81,7 @@ function isLessRich(candidate: HierarchyGenerationMetrics, previous: HierarchyGe
 export function createBuildProcessorPlugin(options: BuildProcessorOptions): PluginOption {
   const {
     componentHierarchyMap,
+    crossFileKeyRegistry,
     vueFilesPathMap,
     getPageDirs,
     getComponentDirs,
@@ -252,6 +254,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
                   warn: (message: string) => loggerRef.current.warn(message),
                   vueFilesPathMap,
                   wrapperSearchRoots: getWrapperSearchRoots(),
+                  crossFileKeyRegistry,
                 },
               ),
             ],

@@ -379,7 +379,7 @@ export function nodeHasClickDirective(node: ElementNode): boolean {
   return tryGetClickDirective(node) !== undefined;
 }
 
-function findTemplateSlotScopeExpression(node: ElementNode): VueExpressionNode | null {
+export function findTemplateSlotScopeExpression(node: ElementNode): VueExpressionNode | null {
   if (node.tag !== "template") {
     return null;
   }
@@ -427,7 +427,7 @@ function isSimpleScopeIdentifier(value: string): boolean {
   }
 }
 
-function buildSlotScopeFallbackKeyExpression(identifier: string): string {
+export function buildSlotScopeFallbackKeyExpression(identifier: string): string {
   return `${identifier}.key ?? ${identifier}.data?.id ?? ${identifier}.id ?? ${identifier}.value ?? ${identifier}`;
 }
 
@@ -617,7 +617,7 @@ function toResolvedTemplateFragment(source: string): InterpolatedTemplateFragmen
   return toInterpolatedTemplateFragment(source);
 }
 
-function toResolvedKeyInfo(selectorSource: string | null, runtimeSource: string | null = selectorSource): ResolvedKeyInfo | null {
+export function toResolvedKeyInfo(selectorSource: string | null, runtimeSource: string | null = selectorSource): ResolvedKeyInfo | null {
   const selectorFragment = selectorSource ? toResolvedTemplateFragment(selectorSource) : null;
   const runtimeFragment = runtimeSource ? toResolvedTemplateFragment(runtimeSource) : null;
   const selectorTemplate = selectorFragment?.template ?? runtimeFragment?.template ?? null;
@@ -633,10 +633,49 @@ function toResolvedKeyInfo(selectorSource: string | null, runtimeSource: string 
   };
 }
 
-function tryGetTemplateSlotScopeKeyInfo(expression: VueExpressionNode): ResolvedKeyInfo | null {
+export function tryGetTemplateSlotScopeKeyInfo(expression: VueExpressionNode): ResolvedKeyInfo | null {
   const bindingNode = tryGetTemplateSlotScopeBindingNode(expression);
   const candidateExpression = bindingNode ? tryGetSlotScopeKeyCandidate(bindingNode)?.expression ?? null : null;
   return candidateExpression ? toResolvedKeyInfo(candidateExpression) : null;
+}
+
+/**
+ * Extracts the variable names from a slot scope expression.
+ * e.g. `{ data, key }` → `["data", "key"]`
+ *      `{ data: maintenanceItem }` → `["maintenanceItem"]`
+ *      `item` → `["item"]`
+ */
+export function tryExtractSlotScopeVariableNames(expression: VueExpressionNode): string[] {
+  const bindingNode = tryGetTemplateSlotScopeBindingNode(expression);
+  if (!bindingNode) {
+    return [];
+  }
+
+  // Simple identifier: v-slot="item" → ["item"]
+  if (isIdentifier(bindingNode)) {
+    return [bindingNode.name];
+  }
+
+  // Object destructuring: { data, key } or { data: maintenanceItem }
+  if (!isObjectPattern(bindingNode)) {
+    return [];
+  }
+
+  const names: string[] = [];
+  for (const property of bindingNode.properties) {
+    if (isRestElement(property)) {
+      const argName = tryGetBindingIdentifierName(property.argument as BabelNode);
+      if (argName) names.push(argName);
+    }
+    else if (isObjectProperty(property)) {
+      const bindingName = tryGetBindingIdentifierName(property.value as BabelNode)
+        ?? tryGetBindingIdentifierName(property.key as BabelNode);
+      if (bindingName) {
+        names.push(bindingName);
+      }
+    }
+  }
+  return names;
 }
 
 /**
@@ -1082,12 +1121,26 @@ export function isNodeContainedInTemplateWithData(node: ElementNode, hierarchyMa
 }
 
 export function getContainedInSlotDataKeyInfo(node: ElementNode, hierarchyMap: HierarchyMap): ResolvedKeyInfo | null {
+  const templateNode = getContainedInSlotTemplateNode(node, hierarchyMap);
+  if (templateNode) {
+    const slotScopeExpression = findTemplateSlotScopeExpression(templateNode);
+    if (slotScopeExpression) {
+      return tryGetTemplateSlotScopeKeyInfo(slotScopeExpression);
+    }
+  }
+  return null;
+}
+
+/**
+ * Walks the hierarchy map upward to find the nearest enclosing <template> element
+ * that has a v-slot directive (i.e., a scoped slot template).
+ */
+export function getContainedInSlotTemplateNode(node: ElementNode, hierarchyMap: HierarchyMap): ElementNode | null {
   let parent = getParent(hierarchyMap, node);
   while (parent) {
     if (parent.type === NodeTypes.ELEMENT && parent.tag === "template") {
-      const slotScopeExpression = findTemplateSlotScopeExpression(parent);
-      if (slotScopeExpression) {
-        return tryGetTemplateSlotScopeKeyInfo(slotScopeExpression);
+      if (findTemplateSlotScopeExpression(parent)) {
+        return parent;
       }
     }
     parent = getParent(hierarchyMap, parent);

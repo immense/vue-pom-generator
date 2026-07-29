@@ -288,6 +288,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
         const { bindings: bindingMetadata, isScriptSetup } = getScriptInfo(sfc, absolutePath);
 
         const provisionalHierarchy = new Map<string, IComponentDependencies>();
+        const provisionalKeyRegistry = new Map<string, string>();
         const provisionalVuePathMap = new Map(targetVuePathMap);
         provisionalVuePathMap.set(componentName, absolutePath);
 
@@ -317,6 +318,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
                 warn: message => loggerRef.current.warn(message),
                 vueFilesPathMap: provisionalVuePathMap,
                 wrapperSearchRoots: getWrapperSearchRoots(),
+                crossFileKeyRegistry: provisionalKeyRegistry,
               },
             ),
           ],

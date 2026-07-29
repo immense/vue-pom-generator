@@ -97,6 +97,7 @@ function compileWithRuntimeTemplateOptions(
     elementMetadata: new Map(),
     semanticNameMap: new Map(),
     componentHierarchyMap,
+    crossFileKeyRegistry: new Map(),
     vueFilesPathMap: new Map(),
     excludedComponents: [],
     getViewsDirAbs: () => '/src/views',
@@ -665,6 +666,67 @@ describe('createTestIdTransform', () => {
 
     const testId = findFirstDataTestId(ast)
     expect(testId).toBe('`MyComp-${key}-Remove-button`')
+  })
+
+  it('keys child component testids via cross-file key registry', () => {
+    // Simulate two-pass compilation: parent records key context, child consumes it.
+    const componentHierarchyMap = new Map()
+    const crossFileKeyRegistry = new Map<string, string>()
+
+    // Pass 1: PARENT — RolePermissions.vue renders RolePermissionSubject in a keyed slot
+    compileAndCaptureAst(
+      `
+        <ImmyList :items="subjects">
+          <template #item="{ data, key }">
+            <div>
+              <RolePermissionSubject :subject="data" :disabled="isDisabled" />
+            </div>
+          </template>
+        </ImmyList>
+      `,
+      {
+        filename: '/src/components/RolePermissions.vue',
+        nodeTransforms: [createTestIdTransform('RolePermissions', componentHierarchyMap, {}, [], '/src/views', { crossFileKeyRegistry })],
+      },
+    )
+
+    // The parent should have recorded that RolePermissionSubject receives slot data via "subject" prop
+    expect(crossFileKeyRegistry.get('RolePermissionSubject')).toBe('subject')
+
+    // Pass 2: CHILD — RolePermissionSubject.vue has @click buttons
+    const childAst = compileAndCaptureAst(
+      `
+        <button v-if="!disabled" @click="selectAll">Select All</button>
+      `,
+      {
+        filename: '/src/components/RolePermissionSubject.vue',
+        nodeTransforms: [createTestIdTransform('RolePermissionSubject', componentHierarchyMap, {}, [], '/src/views', { crossFileKeyRegistry })],
+      },
+    )
+
+    const testId = findFirstDataTestId(childAst)
+    expect(testId).toBe('`RolePermissionSubject-${subject.key ?? subject.data?.id ?? subject.id ?? subject.value ?? subject}-SelectAll-button`')
+  })
+
+  it('does not key child component testids when not in a keyed slot', () => {
+    const componentHierarchyMap = new Map()
+    const crossFileKeyRegistry = new Map<string, string>()
+
+    // Parent does NOT use a keyed slot — just renders the child directly
+    compileAndCaptureAst(
+      `
+        <div>
+          <RolePermissionSubject :subject="someData" :disabled="false" />
+        </div>
+      `,
+      {
+        filename: '/src/components/RolePermissions.vue',
+        nodeTransforms: [createTestIdTransform('RolePermissions', componentHierarchyMap, {}, [], '/src/views', { crossFileKeyRegistry })],
+      },
+    )
+
+    // Registry should NOT have an entry for RolePermissionSubject
+    expect(crossFileKeyRegistry.has('RolePermissionSubject')).toBe(false)
   })
 
   it('injects native input test ids from static ids before falling back to v-model', () => {

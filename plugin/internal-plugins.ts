@@ -13,6 +13,7 @@ import { createAnnotatorUiPlugin } from "./runtime/annotator/plugin";
 
 interface InternalPluginFactoryOptions {
   componentHierarchyMap: Map<string, IComponentDependencies>;
+  crossFileKeyRegistry: Map<string, string>;
   elementMetadata: Map<string, Map<string, ElementMetadata>>;
   vueFilesPathMap: Map<string, string>;
   nativeWrappers: NativeWrappersMap;
@@ -43,6 +44,7 @@ interface InternalPluginFactoryOptions {
 export function createInternalPlugins(options: InternalPluginFactoryOptions): PluginOption[] {
   const {
     componentHierarchyMap,
+    crossFileKeyRegistry,
     elementMetadata,
     vueFilesPathMap,
     nativeWrappers,
@@ -108,6 +110,7 @@ export function createInternalPlugins(options: InternalPluginFactoryOptions): Pl
 
   const tsProcessor = createBuildProcessorPlugin({
     componentHierarchyMap,
+    crossFileKeyRegistry,
     vueFilesPathMap,
     getPageDirs,
     getComponentDirs,

@@ -217,6 +217,7 @@ interface SharedGeneratorState {
   elementMetadata: Map<string, Map<string, ElementMetadata>>;
   semanticNameMap: Map<string, string>;
   componentHierarchyMap: Map<string, IComponentDependencies>;
+  crossFileKeyRegistry: Map<string, string>;
   vueFilesPathMap: Map<string, string>;
 }
 
@@ -233,6 +234,7 @@ function getSharedGeneratorState(key: string): SharedGeneratorState {
       elementMetadata: new Map<string, Map<string, ElementMetadata>>(),
       semanticNameMap: new Map<string, string>(),
       componentHierarchyMap: new Map<string, IComponentDependencies>(),
+      crossFileKeyRegistry: new Map<string, string>(),
       vueFilesPathMap: new Map<string, string>(),
     };
     sharedGeneratorStateRegistry.set(key, state);
@@ -487,7 +489,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
   const getViewsDirAbs = () => resolveFromProjectRoot(projectRootRef.current, getViewsDir());
   const getWrapperSearchRootsAbs = () => getWrapperSearchRoots().map(root => resolveFromProjectRoot(projectRootRef.current, root));
 
-  const { elementMetadata, semanticNameMap, componentHierarchyMap, vueFilesPathMap } = sharedState;
+  const { elementMetadata, semanticNameMap, componentHierarchyMap, crossFileKeyRegistry, vueFilesPathMap } = sharedState;
 
   const { metadataCollectorPlugin, internalVuePlugin, templateCompilerOptions } = createVuePluginWithTestIds({
     vueOptions,
@@ -498,6 +500,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
     elementMetadata,
     semanticNameMap,
     componentHierarchyMap,
+    crossFileKeyRegistry,
     vueFilesPathMap,
     excludedComponents,
     getViewsDirAbs,
@@ -516,6 +519,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
 
   const internalPlugins = createInternalPlugins({
     componentHierarchyMap,
+    crossFileKeyRegistry,
     elementMetadata,
     vueFilesPathMap,
     nativeWrappers,
