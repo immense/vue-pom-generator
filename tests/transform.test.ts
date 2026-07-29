@@ -619,6 +619,54 @@ describe('createTestIdTransform', () => {
     expect(testId).toBe('`MyComp-${data.key ?? data.data?.id ?? data.id ?? data.value ?? data}-OpenProject-button`')
   })
 
+  it('injects a stable keyed test id for scoped slot data objects through v-if wrappers', () => {
+    const componentHierarchyMap = new Map()
+
+    const ast = compileAndCaptureAst(
+      `
+        <ImmyList :items="items">
+          <template #item="{ data: maintenanceItem }">
+            <ImmyRow>
+              <ImmyCol>
+                <div v-if="!readonly">
+                  <ImmyButton @click="moveToTop(maintenanceItem)">Top</ImmyButton>
+                </div>
+              </ImmyCol>
+            </ImmyRow>
+          </template>
+        </ImmyList>
+      `,
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+      },
+    )
+
+    const testId = findFirstDataTestId(ast)
+    expect(testId).toBe('`MyComp-${maintenanceItem.key ?? maintenanceItem.data?.id ?? maintenanceItem.id ?? maintenanceItem.value ?? maintenanceItem}-MoveToTop-button`')
+  })
+
+  it('injects a stable keyed test id for scoped slot data objects with key prop', () => {
+    const componentHierarchyMap = new Map()
+
+    const ast = compileAndCaptureAst(
+      `
+        <ImmyList :items="items">
+          <template #item="{ data, key }">
+            <button @click="remove(data)">Remove</button>
+          </template>
+        </ImmyList>
+      `,
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+      },
+    )
+
+    const testId = findFirstDataTestId(ast)
+    expect(testId).toBe('`MyComp-${key}-Remove-button`')
+  })
+
   it('injects native input test ids from static ids before falling back to v-model', () => {
     const componentHierarchyMap = new Map()
 

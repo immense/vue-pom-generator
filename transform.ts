@@ -1027,9 +1027,16 @@ export function createTestIdTransform(
           && !!p.exp,
       );
     }
+    // When the immediate parent is a non-element wrapper (IF_BRANCH, FOR, IF),
+    // fall back to context.grandParent to maintain the element-to-element chain
+    // in the hierarchy map. This ensures slot-scope and v-for key detection can
+    // walk past v-if/v-for wrappers to find the enclosing <template> or v-for element.
+    const grandParent = (context as { grandParent?: { type?: number } }).grandParent;
     const parentElement = (!parentIsRoot && context?.parent?.type === NodeTypes.ELEMENT)
       ? (context.parent as ElementNode)
-      : null;
+      : (!parentIsRoot && grandParent?.type === NodeTypes.ELEMENT)
+        ? (grandParent as ElementNode)
+        : null;
     hierarchyMap.set(element, parentElement);
 
     // Convert any path (including Windows "C:\\..." and Vite /@fs/ paths) into a
