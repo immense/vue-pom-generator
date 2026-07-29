@@ -1640,9 +1640,21 @@ function prepareViewObjectModelClass(
   const rawComponentRefsForInstances = usedComponentSet?.size
     ? usedComponentSet
     : childrenComponentSet;
+  // A component may render itself recursively (e.g. a tree/list that nests same-named
+  // children). Without this guard the generator emits `this.<SelfName> = new <SelfName>(page)`
+  // in the constructor, which infinitely recurses the moment any POM transitively
+  // instantiates this class. A self-reference is never a useful child instance (it would
+  // just re-wrap the same page), so drop it before it becomes a property + ctor assignment.
+  const ownClassName = toPascalCaseLocal(componentName);
+  const isSelfReference = (ref: string): boolean => {
+    return toPascalCaseLocal(normalizeTrackedComponentRef(ref)) === ownClassName && ownClassName.length > 0;
+  };
   const componentRefsForInstances = new Set<string>();
   for (const ref of rawComponentRefsForInstances) {
     const resolvedRef = resolveTrackedComponentRef(ref) ?? normalizeTrackedComponentRef(ref);
+    if (isSelfReference(resolvedRef)) {
+      continue;
+    }
     const resolvedDependencies = componentHierarchyMap.get(resolvedRef);
     if (!resolvedDependencies?.dataTestIdSet.size) {
       continue;
