@@ -18,6 +18,7 @@ function createMetadataCollector(nativeWrappers: NativeWrappersMap = {}, options
     elementMetadata: new Map(),
     semanticNameMap: new Map(),
     componentHierarchyMap,
+    crossFileKeyRegistry: new Map(),
     vueFilesPathMap: new Map(),
     excludedComponents: [],
     getViewsDirAbs: () => path.resolve(process.cwd(), 'src/views'),
