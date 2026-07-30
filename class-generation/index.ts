@@ -1417,17 +1417,24 @@ function maybeGenerateFixtureRegistry(
   const fixturesContent = renderSourceFile(fixtureFileName, (sourceFile) => {
     sourceFile.addStatements("/** Generated Playwright fixtures (typed page objects). */");
 
+    // NOTE: this file intentionally does NOT create or export a `test` runner.
+    // Owning the `test` object is a project concern, not a code-generation concern:
+    // projects need to attach their own global fixtures (console-error capture,
+    // error-overlay detection, auth, ...) and there must be exactly one `test` that
+    // specs import. Instead we export `withPomFixtures`, which attaches the generated
+    // POM fixtures to whatever base `test` the project owns.
     addNamedImport(sourceFile, {
       moduleSpecifier: "@playwright/test",
-      namedImports: [
-        "expect",
-        { name: "test", alias: "base" },
-      ],
+      namedImports: ["expect"],
     });
     addNamedImport(sourceFile, {
       moduleSpecifier: "@playwright/test",
       isTypeOnly: true,
-      namedImports: [{ name: "Page", alias: "PwPage" }],
+      namedImports: [
+        { name: "Page", alias: "PwPage" },
+        "PlaywrightTestArgs",
+        "TestType",
+      ],
     });
     sourceFile.addImportDeclaration({
       namespaceImport: "Pom",
@@ -1514,6 +1521,15 @@ function maybeGenerateFixtureRegistry(
       name: "GeneratedComponentFixtures",
       type: "{ [K in keyof typeof componentCtors]: InstanceType<(typeof componentCtors)[K]> }",
     });
+    sourceFile.addTypeAlias({
+      isExported: true,
+      name: "PomFixtures",
+      docs: [{
+        description: "Every fixture contributed by the generator: the `animation` option, the internal\n"
+          + "`pomSetup`/`pomFactory` fixtures, and one fixture per generated page/component POM.",
+      }],
+      type: "PlaywrightOptions & PomSetupFixture & PomFactoryFixture & GeneratedPageFixtures & GeneratedComponentFixtures",
+    });
 
     sourceFile.addFunction({
       name: "makePomFixture",
@@ -1538,44 +1554,66 @@ function maybeGenerateFixtureRegistry(
       ],
     });
 
-    sourceFile.addVariableStatement({
-      declarationKind: VariableDeclarationKind.Const,
-      declarations: [{
-        name: "test",
-        initializer: (writer) => {
-          writer.write("base.extend<PlaywrightOptions & PomSetupFixture & PomFactoryFixture & GeneratedPageFixtures & GeneratedComponentFixtures>(");
-          writer.block(() => {
-            writer.writeLine("animation: [{");
-            writer.indent(() => {
-              writer.writeLine('pointer: { durationMilliseconds: 250, transitionStyle: "ease-in-out", clickDelayMilliseconds: 0 },');
-              writer.writeLine("keyboard: { typeDelayMilliseconds: 100 },");
-            });
-            writer.writeLine("}, { option: true }],");
-            writer.writeLine("pomSetup: [async ({ animation }, use) => {");
-            writer.indent(() => {
-              writer.writeLine("Pom.setPlaywrightAnimationOptions(animation);");
-              writer.writeLine("await use();");
-            });
-            writer.writeLine("}, { auto: true }],");
-            writer.writeLine("pomFactory: async ({ page }, use) => {");
-            writer.indent(() => {
-              writer.writeLine("await use({");
-              writer.indent(() => {
-                writer.writeLine("create: <T>(ctor: PomConstructor<T>) => new ctor(page),");
-              });
-              writer.writeLine("});");
-            });
-            writer.writeLine("},");
-            writer.writeLine("...createPomFixtures(pageCtors),");
-            writer.writeLine("...createPomFixtures(componentCtors),");
+    sourceFile.addStatements([
+      "/**",
+      " * Attach the generated POM fixtures to a project-owned Playwright `test`.",
+      " *",
+      " * This generator deliberately does not export a `test` of its own. Projects should own",
+      " * exactly one `test` object so project-wide fixtures (console-error capture, error-overlay",
+      " * detection, auth, ...) are inherited by every spec. Compose it once in a project module:",
+      " *",
+      " *   const base = playwrightTest.extend({ ...project-wide fixtures... });",
+      " *   export const test = withPomFixtures(base);",
+      " *",
+      " * Then have every spec import `test` from that module.",
+      " */",
+    ].join("\n"));
+    sourceFile.addFunction({
+      isExported: true,
+      name: "withPomFixtures",
+      typeParameters: [
+        { name: "TTestArgs", constraint: "PlaywrightTestArgs" },
+        { name: "TWorkerArgs", constraint: "object" },
+      ],
+      parameters: [{ name: "base", type: "TestType<TTestArgs, TWorkerArgs>" }],
+      returnType: "TestType<TTestArgs & PomFixtures, TWorkerArgs>",
+      statements: (writer) => {
+        writer.write("return base.extend<PomFixtures>(");
+        writer.block(() => {
+          writer.writeLine("animation: [{");
+          writer.indent(() => {
+            writer.writeLine('pointer: { durationMilliseconds: 250, transitionStyle: "ease-in-out", clickDelayMilliseconds: 0 },');
+            writer.writeLine("keyboard: { typeDelayMilliseconds: 100 },");
           });
-          writer.write(")");
-        },
-      }],
+          writer.writeLine("}, { option: true }],");
+          // The fixture callbacks are annotated explicitly rather than relying on
+          // contextual typing: `base` is generic here, so TypeScript cannot resolve
+          // Playwright's `Fixtures<...>` parameter types and the callbacks would
+          // otherwise be implicitly `any` (an error under `noImplicitAny`).
+          writer.writeLine("pomSetup: [async ({ animation }: PomFixtures, use: (r: void) => Promise<void>) => {");
+          writer.indent(() => {
+            writer.writeLine("Pom.setPlaywrightAnimationOptions(animation);");
+            writer.writeLine("await use();");
+          });
+          writer.writeLine("}, { auto: true }],");
+          writer.writeLine("pomFactory: async ({ page }: { page: PwPage }, use: (r: PomFactory) => Promise<void>) => {");
+          writer.indent(() => {
+            writer.writeLine("await use({");
+            writer.indent(() => {
+              writer.writeLine("create: <T>(ctor: PomConstructor<T>) => new ctor(page),");
+            });
+            writer.writeLine("});");
+          });
+          writer.writeLine("},");
+          writer.writeLine("...createPomFixtures(pageCtors),");
+          writer.writeLine("...createPomFixtures(componentCtors),");
+        });
+        writer.write(") as TestType<TTestArgs & PomFixtures, TWorkerArgs>;");
+      },
     });
 
     sourceFile.addExportDeclaration({
-      namedExports: ["test", "expect"],
+      namedExports: ["expect"],
     });
   }, {
     prefixText: buildFilePrefix({
