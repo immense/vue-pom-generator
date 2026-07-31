@@ -136,8 +136,26 @@ test("shows the list", async ({ page }) => {
 
 **After**
 
+First compose your project's `test` once. The generator does **not** export a `test` — it
+exports `withPomFixtures`, which attaches the generated POM fixtures to a base you own:
+
 ```ts
-import { test, expect } from "../tests/playwright/__generated__/fixtures.g";
+// tests/playwright/test-base.ts
+import { test as playwrightTest, expect } from "@playwright/test";
+import { withPomFixtures } from "./__generated__/fixtures.g";
+
+// Anything added here is inherited by every spec: console-error capture,
+// error-overlay detection, auth, API cleanup, ...
+const base = playwrightTest.extend({ /* project-wide fixtures */ });
+
+export const test = withPomFixtures(base);
+export { expect };
+```
+
+Then specs import `test` from that module:
+
+```ts
+import { test, expect } from "../tests/playwright/test-base";
 
 test("shows the list", async ({ userListPage }) => {
   await userListPage.goTo();
@@ -150,6 +168,8 @@ Why this is better:
 - less setup noise in tests
 - fixture types stay aligned with generated classes
 - if `tests/playwright/pom/overrides/UserListPage.ts` exists, the fixture will instantiate that override class automatically
+- there is exactly one `test` object in the project, so project-wide fixtures cannot silently
+  miss some specs
 
 Without fixtures, you still use the generated POMs, but every test has to construct them manually.
 
@@ -612,6 +632,27 @@ Without `flatten`, helper composition still works; you just call through the hel
 
 When `generation.playwright.fixtures` is enabled, the generator emits a strongly typed Playwright fixture module.
 
+### The generated module does not own `test`
+
+`fixtures.g.ts` exports `withPomFixtures`, not a ready-made `test`. Owning the `test` object
+is a project concern: a project needs exactly one `test` so that project-wide fixtures
+(console-error capture, error-overlay detection, auth) are inherited by *every* spec. If the
+generator exported its own `test`, a project would end up with two runners and specs would
+silently miss whichever fixtures were attached to the other one.
+
+```ts
+// tests/playwright/test-base.ts — the single `test` your specs import
+import { test as playwrightTest, expect } from "@playwright/test";
+import { withPomFixtures } from "./__generated__/fixtures.g";
+
+export const test = withPomFixtures(playwrightTest.extend({ /* project-wide fixtures */ }));
+export { expect };
+```
+
+The module also exports the fixture types (`PomFixtures`, `GeneratedPageFixtures`,
+`GeneratedComponentFixtures`, `PlaywrightOptions`, `PomFactory`) and re-exports `expect`
+for convenience.
+
 What it gives you:
 
 - lower-camel-case fixtures for views (`UserListPage` → `userListPage`)
@@ -622,6 +663,7 @@ What it gives you:
 
 Current caveats:
 
+- `withPomFixtures` requires a base whose test args include Playwright's `page` (i.e. anything derived from `@playwright/test`'s `test`)
 - there are no generated `openXPage` helpers; tests call `goTo()` explicitly when available
 - override preference only affects fixture construction
 - component fixtures are skipped when their lower-camel-case name would collide with reserved Playwright fixture names such as `page`, `context`, `browser`, or `request`
@@ -808,8 +850,9 @@ Why it exists:
 Recommended usage:
 
 1. enable generated fixtures in the generator
-2. migrate specs from `({ page })` to generated fixtures like `({ dashboardPage })`
-3. turn this rule on for `tests/playwright/**/*.spec.ts`
+2. compose a single project `test` with `withPomFixtures` (see the fixtures section) and have specs import it
+3. migrate specs from `({ page })` to generated fixtures like `({ dashboardPage })`
+4. turn this rule on for `tests/playwright/**/*.spec.ts`
 
 Example flat config:
 

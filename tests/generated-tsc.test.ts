@@ -53,6 +53,12 @@ function runTscNoEmit(files: string[], options?: { cwd?: string }) {
     "false",
     // Keep this focused on syntactic/structural validity of generated output.
     // We provide a small stub BasePage so the generated file can typecheck.
+    //
+    // NOTE: deliberately no `--noImplicitAny` here. The Playwright stubs in
+    // tests/fixtures/generated-tsc type `Page`/`Locator` as `any`, so callbacks that
+    // real Playwright types would infer (e.g. `locator.evaluate((element) => ...)`)
+    // report false implicit-any errors. Generated code that depends on contextual
+    // typing must therefore be validated against real @playwright/test types, not here.
     "--target",
     "ES2022",
     "--module",
@@ -415,6 +421,14 @@ describe("generated output", () => {
     const fixtureContent = fs.readFileSync(fixtureFile, "utf8");
     expect(fixtureContent).toContain("import { PersonListPage as PersonListPageOverride }");
     expect(fixtureContent).toContain("personListPage: PersonListPageOverride");
+
+    // The generated file must NOT own a `test` runner: projects compose their own via
+    // `withPomFixtures` so project-wide fixtures are inherited by every spec.
+    expect(fixtureContent).toContain("export function withPomFixtures");
+    expect(fixtureContent).toContain("export type PomFixtures =");
+    expect(fixtureContent).not.toMatch(/^\s*const test = /m);
+    expect(fixtureContent).not.toMatch(/export\s*\{[^}]*\btest\b[^}]*\}/);
+    expect(fixtureContent).not.toMatch(/import\s*\{[^}]*test as base[^}]*\}/);
 
     const result = runTscNoEmit([fixtureFile, basePagePath], { cwd: tempRoot });
 
