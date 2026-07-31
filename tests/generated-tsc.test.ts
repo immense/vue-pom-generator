@@ -473,8 +473,8 @@ describe("generated output", () => {
 
     const deps: IComponentDependencies = {
       filePath: path.join(tempRoot, "src", "components", "UsersTable.vue"),
-      childrenComponentSet: new Set(["ImmyDxDataGrid"]),
-      usedComponentSet: new Set(["ImmyDxDataGrid"]),
+      childrenComponentSet: new Set(["MyDataGrid"]),
+      usedComponentSet: new Set(["MyDataGrid"]),
       dataTestIdSet: new Set([
         {
           selectorValue: createPomStringPattern("UsersTable-Refresh-button", "static"),
@@ -495,7 +495,7 @@ describe("generated output", () => {
       customPomAttachments: [{
         className: "Grid",
         propertyName: "grid",
-        attachWhenUsesComponents: ["ImmyDxDataGrid"],
+        attachWhenUsesComponents: ["MyDataGrid"],
         attachTo: "pagesAndComponents",
         flatten: true,
       }],
@@ -545,7 +545,7 @@ describe("generated output", () => {
     const deps: IComponentDependencies = {
       filePath: path.join(tempRoot, "src", "views", "UsersView.vue"),
       childrenComponentSet: new Set(),
-      usedComponentSet: new Set(["Page", "ImmyDxDataGrid"]),
+      usedComponentSet: new Set(["Page", "MyDataGrid"]),
       dataTestIdSet: new Set([
         {
           selectorValue: createPomStringPattern("UsersView-EnableSessionEmails-toggle", "static"),
@@ -568,7 +568,7 @@ describe("generated output", () => {
         {
           className: "Grid",
           propertyName: "grid",
-          attachWhenUsesComponents: ["ImmyDxDataGrid"],
+          attachWhenUsesComponents: ["MyDataGrid"],
           attachTo: "both",
           flatten: true,
         },

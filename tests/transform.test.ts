@@ -504,14 +504,14 @@ describe('createTestIdTransform', () => {
   it('injects click instrumentation by default', () => {
     const code = compileWithRuntimeTemplateOptions(
       `
-        <ImmyTable>
+        <MyTable>
           <template #actions="{ item }">
-            <ImmyButton @click="remove(item)">Remove</ImmyButton>
+            <MyButton @click="remove(item)">Remove</MyButton>
           </template>
-        </ImmyTable>
+        </MyTable>
       `,
       {
-        nativeWrappers: { ImmyButton: { role: 'button' } },
+        nativeWrappers: { MyButton: { role: 'button' } },
         bindingMetadata: {
           remove: BindingTypes.SETUP_CONST,
         },
@@ -606,7 +606,7 @@ describe('createTestIdTransform', () => {
         <DxDataGrid :data-source="items" key-expr="id">
           <DxColumn cell-template="selectCell" />
           <template #selectCell="{ data }">
-            <AylaButton @click="openProject(data.data)">Select</AylaButton>
+            <CustomButton @click="openProject(data.data)">Select</CustomButton>
           </template>
         </DxDataGrid>
       `,
@@ -625,17 +625,17 @@ describe('createTestIdTransform', () => {
 
     const ast = compileAndCaptureAst(
       `
-        <ImmyList :items="items">
+        <MyList :items="items">
           <template #item="{ data: maintenanceItem }">
-            <ImmyRow>
-              <ImmyCol>
+            <MyRow>
+              <MyCol>
                 <div v-if="!readonly">
-                  <ImmyButton @click="moveToTop(maintenanceItem)">Top</ImmyButton>
+                  <MyButton @click="moveToTop(maintenanceItem)">Top</MyButton>
                 </div>
-              </ImmyCol>
-            </ImmyRow>
+              </MyCol>
+            </MyRow>
           </template>
-        </ImmyList>
+        </MyList>
       `,
       {
         filename: '/src/components/MyComp.vue',
@@ -652,11 +652,11 @@ describe('createTestIdTransform', () => {
 
     const ast = compileAndCaptureAst(
       `
-        <ImmyList :items="items">
+        <MyList :items="items">
           <template #item="{ data, key }">
             <button @click="remove(data)">Remove</button>
           </template>
-        </ImmyList>
+        </MyList>
       `,
       {
         filename: '/src/components/MyComp.vue',
@@ -676,13 +676,13 @@ describe('createTestIdTransform', () => {
     // Pass 1: PARENT — RolePermissions.vue renders RolePermissionSubject in a keyed slot
     compileAndCaptureAst(
       `
-        <ImmyList :items="subjects">
+        <MyList :items="subjects">
           <template #item="{ data, key }">
             <div>
               <RolePermissionSubject :subject="data" :disabled="isDisabled" />
             </div>
           </template>
-        </ImmyList>
+        </MyList>
       `,
       {
         filename: '/src/components/RolePermissions.vue',
@@ -1270,23 +1270,23 @@ describe('createTestIdTransform', () => {
 
   it('infers radio wrappers through nested local SFCs without nativeWrappers config', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-transform-'))
-    const radioPath = path.join(tempRoot, 'src', 'components', 'ImmyRadio.vue')
-    const radioGroupPath = path.join(tempRoot, 'src', 'components', 'ImmyRadioGroup.vue')
+    const radioPath = path.join(tempRoot, 'src', 'components', 'MyRadio.vue')
+    const radioGroupPath = path.join(tempRoot, 'src', 'components', 'MyRadioGroup.vue')
     fs.mkdirSync(path.dirname(radioPath), { recursive: true })
     fs.writeFileSync(radioPath, '<template><div><input type="radio" /></div></template>')
     fs.writeFileSync(
       radioGroupPath,
-      '<template><div><ImmyRadio v-for="option in props.options" :key="option.value" :text="option.text" :modelValue="option.value" /></div></template>',
+      '<template><div><MyRadio v-for="option in props.options" :key="option.value" :text="option.text" :modelValue="option.value" /></div></template>',
     )
 
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
     const vueFilesPathMap = new Map<string, string>([
-      ['ImmyRadio', radioPath],
-      ['ImmyRadioGroup', radioGroupPath],
+      ['MyRadio', radioPath],
+      ['MyRadioGroup', radioGroupPath],
     ])
 
     const ast = compileAndCaptureAst(
-      '<ImmyRadioGroup :options="[\'Cloud\', \'Local\']" v-model="databaseType" />',
+      '<MyRadioGroup :options="[\'Cloud\', \'Local\']" v-model="databaseType" />',
       {
         filename: path.join(tempRoot, 'src', 'views', 'MyPage.vue'),
         nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, {}, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],

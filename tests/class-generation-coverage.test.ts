@@ -933,11 +933,11 @@ describe("class-generation coverage", () => {
 
     try {
       const keyedNav: IDataTestId = {
-        selectorValue: createPomStringPattern("NavHost-${value}-immynavitem", "parameterized"),
+        selectorValue: createPomStringPattern("NavHost-${value}-mynavitem", "parameterized"),
         pom: {
           nativeRole: "button",
           methodName: "ValueByKey",
-          selector: createPomStringPattern("NavHost-${key}-immynavitem", "parameterized"),
+          selector: createPomStringPattern("NavHost-${key}-mynavitem", "parameterized"),
           parameters: createPomParameters(["key", "string"]),
         },
         targetPageObjectModelClass: "UsersPage",
