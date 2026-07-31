@@ -40,7 +40,7 @@ describe("existingIdBehavior: 'preserve'", () => {
         existingIdBehavior: "preserve",
         componentDirs: ["."],
         nativeWrappers: {
-          ImmyRadioGroup: {
+          MyRadioGroup: {
             role: "radio",
             requiresOptionDataTestIdPrefix: true,
           },
@@ -57,7 +57,7 @@ describe("existingIdBehavior: 'preserve'", () => {
       throw new Error("Could not find metadata collector plugin");
     }
 
-    const code = `<template><ImmyRadioGroup data-testid="database-type" v-model="selectedGroup" /></template>`;
+    const code = `<template><MyRadioGroup data-testid="database-type" v-model="selectedGroup" /></template>`;
     const id = path.resolve(process.cwd(), "TestComponent.vue");
 
     const expectedError = "existingIdBehavior=\"preserve\" cannot safely preserve nested option ids";
