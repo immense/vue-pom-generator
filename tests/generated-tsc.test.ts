@@ -289,6 +289,91 @@ describe("generated output", () => {
     }
   });
 
+  it("does not emit a self-referential constructor for recursively-nested components", async () => {
+    // A component that renders itself (e.g. a tree/list that nests same-named children)
+    // must not get a `this.<SelfName> = new <SelfName>(page)` line in its constructor —
+    // that would infinitely recurse the moment any POM transitively instantiates it.
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-recursive-"));
+
+    writePlaywrightTypeStub(tempRoot);
+
+    const basePagePath = path.join(tempRoot, "base-page.ts");
+    copyRepoFixture(tempRoot, "base-page.full.ts", "base-page.ts");
+    copyRepoFixture(tempRoot, "pointer.ts", "pointer.ts");
+
+    const componentName = "TreeViewItem";
+
+    // The component renders both a real child (TreeViewItemValue) and itself recursively.
+    const toggleEntry: IDataTestId = {
+      selectorValue: createPomStringPattern("TreeViewItem-ToggleOpen-div", "static"),
+      pom: {
+        nativeRole: "button",
+        methodName: "ToggleOpen",
+        selector: createPomStringPattern("TreeViewItem-ToggleOpen-div", "static"),
+        parameters: createPomParameters(["annotationText", 'string = ""']),
+      },
+    };
+
+    const valueEntry: IDataTestId = {
+      selectorValue: createPomStringPattern("TreeViewItemValue-Label-input", "static"),
+      pom: {
+        nativeRole: "input",
+        methodName: "Label",
+        selector: createPomStringPattern("TreeViewItemValue-Label-input", "static"),
+        parameters: createPomParameters(["text", "string"], ["annotationText", 'string = ""']),
+      },
+    };
+
+    const treeItemDeps: IComponentDependencies = {
+      filePath: path.join(tempRoot, "src", "components", `${componentName}.vue`),
+      childrenComponentSet: new Set([componentName, "TreeViewItemValue"]),
+      usedComponentSet: new Set([componentName, "TreeViewItemValue"]),
+      dataTestIdSet: new Set([toggleEntry]),
+      generatedMethods: new Map(),
+      isView: false,
+    };
+
+    const valueDeps: IComponentDependencies = {
+      filePath: path.join(tempRoot, "src", "components", "TreeViewItemValue.vue"),
+      childrenComponentSet: new Set(),
+      usedComponentSet: new Set(),
+      dataTestIdSet: new Set([valueEntry]),
+      generatedMethods: new Map(),
+      isView: false,
+    };
+
+    const componentHierarchyMap = new Map<string, IComponentDependencies>([
+      [componentName, treeItemDeps],
+      ["TreeViewItemValue", valueDeps],
+    ]);
+
+    const outDir = path.join(tempRoot, "out");
+    await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
+      outDir,
+      projectRoot: tempRoot,
+      typescriptOutputStructure: "split",
+    });
+
+    const generatedFilePath = path.join(outDir, `${componentName}.g.ts`);
+    const generatedContent = fs.readFileSync(generatedFilePath, "utf8");
+
+    // The self-instantiation line must be absent...
+    expect(generatedContent).not.toContain(`this.${componentName} = new ${componentName}(page)`);
+    // ...and so must the matching property declaration.
+    expect(generatedContent).not.toMatch(new RegExp(`^\\s*${componentName}:\\s*${componentName};`, "m"));
+    // The genuine child instance is still emitted.
+    expect(generatedContent).toContain("this.TreeViewItemValue = new TreeViewItemValue(page)");
+
+    // The generated barrel must typecheck — proving the class is constructible (no recursion).
+    const result = runTscNoEmit([path.join(outDir, "index.ts")], { cwd: tempRoot });
+
+    if (result.status !== 0) {
+      const stdout = (result.stdout || "").toString();
+      const stderr = (result.stderr || "").toString();
+      throw new Error(`tsc failed (exit ${result.status})\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`);
+    }
+  });
+
   it("typechecks generated fixtures that prefer matching override classes", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-"));
 
