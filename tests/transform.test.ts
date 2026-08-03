@@ -1522,7 +1522,31 @@ describe('createTestIdTransform', () => {
     expect(dataTestIdAttr?.value?.content).toBe('MyPage-Computers missing critical-link')
   })
 
-  it('defaults an omitted role to button when the rendered element is not a recognized native control', () => {
+  it('does not infer a link role from a bare <a> without an href (and throws for the omitted role)', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-link-nohref-'))
+    const anchorPath = path.join(tempRoot, 'src', 'components', 'BareAnchor.vue')
+    fs.mkdirSync(path.dirname(anchorPath), { recursive: true })
+    // A bare <a> without href is not a link (no implicit ARIA role "link") — it may be an
+    // anchor target/placeholder or an anchor-styled button. It must NOT be classified as link.
+    fs.writeFileSync(anchorPath, '<template><a><slot /></a></template>')
+
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const vueFilesPathMap = new Map<string, string>([['BareAnchor', anchorPath]])
+
+    const nativeWrappers: NativeWrappersMap = { BareAnchor: { valueAttribute: 'label' } }
+
+    expect(() => {
+      compileAndCaptureAst(
+        '<BareAnchor label="Save" />',
+        {
+          filename: path.join(tempRoot, 'src', 'views', 'MyPage.vue'),
+          nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, nativeWrappers, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],
+        },
+      )
+    }).toThrow(/Could not infer a native role for declared wrapper <BareAnchor>/)
+  })
+
+  it('throws when an omitted role cannot be inferred from a non-native rendered element', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-link-default-'))
     const divPath = path.join(tempRoot, 'src', 'components', 'MyDiv.vue')
     fs.mkdirSync(path.dirname(divPath), { recursive: true })
@@ -1531,24 +1555,20 @@ describe('createTestIdTransform', () => {
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
     const vueFilesPathMap = new Map<string, string>([['MyDiv', divPath]])
 
-    // No role, and the component renders a <div> (no inferable native role): fall back to
-    // the generic "button" role so behavior matches the pre-optional-role default.
+    // No role, and the component renders a <div> (no inferable native role): the generator
+    // fails fast and loud rather than silently defaulting to a generic role. The author must
+    // declare `role` explicitly for wrappers that don't render a recognized native control.
     const nativeWrappers: NativeWrappersMap = { MyDiv: { valueAttribute: 'label' } }
 
-    const ast = compileAndCaptureAst(
-      '<MyDiv label="Save" />',
-      {
-        filename: path.join(tempRoot, 'src', 'views', 'MyPage.vue'),
-        nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, nativeWrappers, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],
-      },
-    )
-
-    expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
-    const divEl = ast.children[0] as ElementNode
-    const dataTestIdAttr = divEl.props.find(
-      (p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === 'data-testid',
-    )
-    expect(dataTestIdAttr?.value?.content).toBe('MyPage-Save-button')
+    expect(() => {
+      compileAndCaptureAst(
+        '<MyDiv label="Save" />',
+        {
+          filename: path.join(tempRoot, 'src', 'views', 'MyPage.vue'),
+          nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, nativeWrappers, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],
+        },
+      )
+    }).toThrow(/Could not infer a native role for declared wrapper <MyDiv>/)
   })
 
   it('parses template expressions containing TypeScript type annotations when expressionPlugins: ["typescript"] is set', () => {
