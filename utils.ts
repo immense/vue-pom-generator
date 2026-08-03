@@ -114,14 +114,17 @@ export function isAsciiAlphaNumericCode(code: number): boolean {
   return isAsciiLetterCode(code) || isAsciiDigitCode(code);
 }
 
-export type NativeRole = 'button' | 'input' | 'select' | 'vselect' | 'checkbox' | 'toggle' | 'radio' | 'grid'
+export type NativeRole = 'button' | 'input' | 'select' | 'vselect' | 'checkbox' | 'toggle' | 'radio' | 'grid' | 'link'
 // In this plugin, the hierarchy map stores: key = child element, value = parent element (or null for root).
 export type Child = ElementNode;
 export type Parent = ElementNode | null;
 export type HierarchyMap = Map<Child, Parent>
 export interface NativeWrappersMap {
   [component: string]: {
-    role: NativeRole
+    // `role` is optional: when omitted, the generator infers it from the component's
+    // rendered template (e.g. a component rendering an <a>/RouterLink infers `link`).
+    // If no native role can be inferred, it defaults to `button` (the generic clickable role).
+    role?: NativeRole
     valueAttribute?: string
     requiresOptionDataTestIdPrefix?: boolean
     inferred?: boolean
@@ -1903,7 +1906,7 @@ export function getNativeWrapperTransformInfo(
 
   // 1) The traditional native wrapper path (valueAttribute or v-model)
   if (valueAttribute) {
-    const value = getDataTestIdValueFromValueAttribute(node, componentName, valueAttribute, role);
+    const value = getDataTestIdValueFromValueAttribute(node, componentName, valueAttribute, role ?? "button");
 
     // Derive a semantic name hint from the wrapper's value attribute.
     // This is intentionally based on the source expression/value, NOT by parsing the generated test id.
@@ -1930,7 +1933,7 @@ export function getNativeWrapperTransformInfo(
   const shouldUseModelBinding = !!vModel || (!inferred && !!modelValue);
   if (shouldUseModelBinding) {
     const vmodelvalue = getDataTestIdFromGroupOption(vModel);
-    const nativeWrappersValue = staticAttributeValue(`${componentName}-${modelValue || vmodelvalue}-${role}`);
+    const nativeWrappersValue = staticAttributeValue(`${componentName}-${modelValue || vmodelvalue}-${role ?? "button"}`);
 
     const semanticNameHint = modelValue || vModel || null;
 
@@ -2018,7 +2021,7 @@ export function generateToDirectiveDataTestId(componentName: string, node: Eleme
 
 export function formatTagName(node: ElementNode, nativeWrappers: NativeWrappersMap): string {
   if (Object.keys(nativeWrappers).includes(node.tag)) {
-    return `-${nativeWrappers[node.tag].role}`;
+    return `-${nativeWrappers[node.tag].role ?? "button"}`;
   }
 
   // eslint-disable-next-line no-restricted-syntax
@@ -3081,6 +3084,7 @@ export function applyResolvedDataTestId(args: {
       case "toggle":
       case "radio":
       case "grid":
+      case "link":
         return role;
       default:
         return undefined;
@@ -4075,6 +4079,7 @@ const STANDALONE_WRAPPER_FALLBACK_ROLES = new Set<NativeRole>([
   "checkbox",
   "toggle",
   "radio",
+  "link",
 ]);
 
 function stripTrailingAsciiDigits(value: string): string {

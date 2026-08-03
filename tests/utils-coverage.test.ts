@@ -672,6 +672,20 @@ describe("utils.ts coverage", () => {
     expect(info.optionDataTestIdPrefixValue).toBeNull();
   });
 
+  it("defaults an omitted role to button for valueAttribute and v-model paths", () => {
+    // `role` is optional on NativeWrappersMap. When omitted, the valueAttribute and
+    // v-model paths must fall back to the generic "button" suffix (role inference runs
+    // earlier in the transform; this guards the helper when called directly).
+    const wrappers: NativeWrappersMap = { "stat-link": { valueAttribute: "label" } };
+
+    const staticNode = firstElement(parseTemplate("<stat-link label=\"Save\" />"));
+    expect(getAttributeValueText(getNativeWrapperTransformInfo(staticNode, "Comp", wrappers).nativeWrappersValue!)).toBe("Comp-Save-button");
+
+    const modelWrappers: NativeWrappersMap = { "v-select": {} };
+    const modelNode = firstElement(parseTemplate("<v-select v-model=\"selectedGroup\" />"));
+    expect(getAttributeValueText(getNativeWrapperTransformInfo(modelNode, "Comp", modelWrappers).nativeWrappersValue!)).toBe("Comp-SelectedGroup-button");
+  });
+
   it("covers :modelValue AST parsing via getNativeWrapperTransformInfo", () => {
     const wrappers: NativeWrappersMap = { "v-select": { role: "vselect" } };
 

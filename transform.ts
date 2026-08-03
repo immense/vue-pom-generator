@@ -606,6 +606,11 @@ function tryInferNativeWrapperRoleFromSfc(
         return { role: "vselect" };
       if (elementTag === "button" || elementTag === "ubutton")
         return { role: "button" };
+      // Anchors and Vue's RouterLink render <a> (implicit ARIA role "link"). Recognizing
+      // them lets a wrapper's role be inferred as `link` instead of forcing consumers to
+      // declare a mismatched role (e.g. "button") for anchor-rendering components.
+      if (elementTag === "a" || elementTag === "ua" || elementTag === "router-link" || elementTag === "routerlink")
+        return { role: "link" };
 
       if (isComponentLikeTag(element.tag) && element.tag !== tag) {
         const nested = tryInferNativeWrapperRoleFromSfc(element.tag, vueFilesPathMap, normalizedSearchRoots, nextSeen);
@@ -1149,7 +1154,8 @@ export function createTestIdTransform(
     // Opportunistically infer wrapper semantics for simple "single native input" components
     // (e.g. CustomInput/CustomTextArea) so they behave like real inputs without requiring
     // explicit configuration in vite.config.ts.
-    if (!nativeWrappers[element.tag]) {
+    const existingWrapperConfig = nativeWrappers[element.tag];
+    if (!existingWrapperConfig) {
       const inferred = tryInferNativeWrapperRoleFromSfc(element.tag, vueFilesPathMap, wrapperSearchRoots);
       if (inferred?.role) {
         // Cache onto the nativeWrappers map so downstream utilities (formatTagName, wrapper transform)
@@ -1161,6 +1167,17 @@ export function createTestIdTransform(
       } else if (element.tag === "DxDataGrid") {
         (nativeWrappers as NativeWrappersMap)[element.tag] = { role: "grid" };
       }
+    } else if (!existingWrapperConfig.role) {
+      // The wrapper is configured (e.g. with a `valueAttribute`) but `role` was omitted.
+      // Infer the role from the component's rendered template so consumers don't have to
+      // declare a role the rendered element already implies (and can't get wrong). Falls
+      // back to the generic "button" role when no native role is recognizable.
+      const inferred = tryInferNativeWrapperRoleFromSfc(element.tag, vueFilesPathMap, wrapperSearchRoots);
+      (nativeWrappers as NativeWrappersMap)[element.tag] = {
+        ...existingWrapperConfig,
+        role: inferred?.role ?? "button",
+        inferred: true,
+      };
     }
 
       const getBestAvailableKeyInfo = (): ResolvedKeyInfo | null => {
@@ -1659,6 +1676,7 @@ export function createTestIdTransform(
         || inferredRole === "toggle"
         || inferredRole === "radio"
         || inferredRole === "grid"
+        || inferredRole === "link"
         || isComponentLikeTag(element.tag);
 
       if (!isRecognizedInteractiveRole) {

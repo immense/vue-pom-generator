@@ -1453,6 +1453,104 @@ describe('createTestIdTransform', () => {
     })
   })
 
+  it('infers a link role from a rendered <a> when nativeWrappers omits role', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-link-'))
+    const linkPath = path.join(tempRoot, 'src', 'components', 'MyAnchor.vue')
+    fs.mkdirSync(path.dirname(linkPath), { recursive: true })
+    // Renders a native anchor — implicit ARIA role "link".
+    fs.writeFileSync(linkPath, '<template><a :href="href"><slot /></a></template>')
+
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const vueFilesPathMap = new Map<string, string>([['MyAnchor', linkPath]])
+
+    // valueAttribute is configured, but `role` is deliberately omitted: the generator
+    // should infer it from the rendered <a> so consumers can't declare a mismatched role.
+    const nativeWrappers: NativeWrappersMap = { MyAnchor: { valueAttribute: 'label' } }
+
+    const ast = compileAndCaptureAst(
+      '<MyAnchor label="Click me" :href="url" />',
+      {
+        filename: path.join(tempRoot, 'src', 'views', 'MyPage.vue'),
+        nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, nativeWrappers, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],
+      },
+    )
+
+    expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
+    const linkEl = ast.children[0] as ElementNode
+    const dataTestIdAttr = linkEl.props.find(
+      (p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === 'data-testid',
+    )
+    // Inferred role "link" drives the testid suffix, aligning with the rendered element.
+    expect(dataTestIdAttr?.value?.content).toBe('MyPage-Click me-link')
+
+    const deps = componentHierarchyMap.get('MyPage')
+    const pom = Array.from(deps?.dataTestIdSet ?? []).find(entry => entry.pom?.methodName === 'ClickMe')?.pom
+    expect(pom?.nativeRole).toBe('link')
+  })
+
+  it('infers a link role through a nested link-wrapper component (RouterLink)', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-link-nested-'))
+    const immyLinkPath = path.join(tempRoot, 'src', 'components', 'ImmyLink.vue')
+    const statLinkPath = path.join(tempRoot, 'src', 'components', 'DashboardStatLink.vue')
+    fs.mkdirSync(path.dirname(immyLinkPath), { recursive: true })
+    // ImmyLink forwards to a RouterLink (which renders an <a>).
+    fs.writeFileSync(immyLinkPath, '<template><RouterLink :to="to"><slot /></RouterLink></template>')
+    // DashboardStatLink wraps ImmyLink — inference must recurse through both.
+    fs.writeFileSync(statLinkPath, '<template><ImmyLink :to="to"><slot /></ImmyLink></template>')
+
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const vueFilesPathMap = new Map<string, string>([
+      ['ImmyLink', immyLinkPath],
+      ['DashboardStatLink', statLinkPath],
+    ])
+
+    const nativeWrappers: NativeWrappersMap = { DashboardStatLink: { valueAttribute: 'label' } }
+
+    const ast = compileAndCaptureAst(
+      '<DashboardStatLink label="Computers missing critical" :to="route" />',
+      {
+        filename: path.join(tempRoot, 'src', 'views', 'MyPage.vue'),
+        nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, nativeWrappers, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],
+      },
+    )
+
+    expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
+    const statEl = ast.children[0] as ElementNode
+    const dataTestIdAttr = statEl.props.find(
+      (p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === 'data-testid',
+    )
+    expect(dataTestIdAttr?.value?.content).toBe('MyPage-Computers missing critical-link')
+  })
+
+  it('defaults an omitted role to button when the rendered element is not a recognized native control', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-link-default-'))
+    const divPath = path.join(tempRoot, 'src', 'components', 'MyDiv.vue')
+    fs.mkdirSync(path.dirname(divPath), { recursive: true })
+    fs.writeFileSync(divPath, '<template><div><slot /></div></template>')
+
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const vueFilesPathMap = new Map<string, string>([['MyDiv', divPath]])
+
+    // No role, and the component renders a <div> (no inferable native role): fall back to
+    // the generic "button" role so behavior matches the pre-optional-role default.
+    const nativeWrappers: NativeWrappersMap = { MyDiv: { valueAttribute: 'label' } }
+
+    const ast = compileAndCaptureAst(
+      '<MyDiv label="Save" />',
+      {
+        filename: path.join(tempRoot, 'src', 'views', 'MyPage.vue'),
+        nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, nativeWrappers, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],
+      },
+    )
+
+    expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
+    const divEl = ast.children[0] as ElementNode
+    const dataTestIdAttr = divEl.props.find(
+      (p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === 'data-testid',
+    )
+    expect(dataTestIdAttr?.value?.content).toBe('MyPage-Save-button')
+  })
+
   it('parses template expressions containing TypeScript type annotations when expressionPlugins: ["typescript"] is set', () => {
     // Regression for a real-world Nuxt + Vue 3 pattern: inline arrow
     // handlers that annotate their parameter with a TS type. Without the
