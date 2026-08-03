@@ -92,7 +92,7 @@ function findStaticAttributeValue(element: ElementNode, attributeName: string): 
     prop.type === NodeTypes.ATTRIBUTE && prop.name === attributeName,
   );
   const value = attribute?.value?.content?.trim();
-  return value ? value : undefined;
+  return value || undefined;
 }
 
 function collectStaticTextContent(children: readonly TemplateChildNode[]): string | undefined {
@@ -101,7 +101,9 @@ function collectStaticTextContent(children: readonly TemplateChildNode[]): strin
   const visit = (nodes: readonly TemplateChildNode[]) => {
     for (const node of nodes) {
       if (node.type === NodeTypes.TEXT) {
+        /* eslint-disable no-restricted-syntax -- collapsing whitespace in rendered UI text content, not parsing source code */
         const text = node.content.replace(/\s+/g, " ").trim();
+        /* eslint-enable no-restricted-syntax */
         if (text) {
           parts.push(text);
         }
@@ -115,7 +117,9 @@ function collectStaticTextContent(children: readonly TemplateChildNode[]): strin
   };
 
   visit(children);
+  /* eslint-disable no-restricted-syntax -- collapsing whitespace in joined UI text, not parsing source code */
   const text = parts.join(" ").replace(/\s+/g, " ").trim();
+  /* eslint-enable no-restricted-syntax */
   return text || undefined;
 }
 

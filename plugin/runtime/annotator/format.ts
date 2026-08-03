@@ -11,7 +11,9 @@ export interface FormattedAnnotation {
 }
 
 function normalizeInlineText(value: string | undefined): string | undefined {
+  /* eslint-disable no-restricted-syntax -- collapsing whitespace in UI display text, not parsing source code */
   const normalized = value?.replace(/\s+/g, " ").trim();
+  /* eslint-enable no-restricted-syntax */
   return normalized || undefined;
 }
 
@@ -20,7 +22,9 @@ export function formatAnnotations(
   detail: OutputDetail,
   pageUrl: string,
 ): string {
+  /* eslint-disable no-restricted-syntax -- stripping a URL scheme prefix from a display string, not parsing source code */
   const shortUrl = pageUrl.replace(/^https?:\/\//, "");
+  /* eslint-enable no-restricted-syntax */
   const lines: string[] = [];
 
   lines.push(`## Feedback — ${shortUrl}`);
