@@ -668,6 +668,53 @@ describe('createTestIdTransform', () => {
     expect(testId).toBe('`MyComp-${key}-Remove-button`')
   })
 
+  it('emits a singleton (non-keyed) test id for a slot-scope callback click handler', () => {
+    // A scoped slot that hands the consumer an event callback (here `toggle` from
+    // a popover `#trigger`) is a singleton control, not an iterated row. The click
+    // handler is a bare slot-scope identifier — a callback reference, not row data —
+    // so the generated selector must be a plain singleton, not keyed by a fallback
+    // expression interpolated off the callback.
+    const componentHierarchyMap = new Map()
+
+    const ast = compileAndCaptureAst(
+      `
+        <MyPopover>
+          <template #trigger="{ toggle, isOpen }">
+            <button @click="toggle">Open</button>
+          </template>
+        </MyPopover>
+      `,
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+      },
+    )
+
+    const testId = findFirstDataTestId(ast)
+    expect(testId).toBe('MyComp-Toggle-button')
+  })
+
+  it('emits a singleton test id for a slot-scope callback wrapped in withModifiers', () => {
+    const componentHierarchyMap = new Map()
+
+    const ast = compileAndCaptureAst(
+      `
+        <MyPopover>
+          <template #trigger="{ toggle }">
+            <button @click="withModifiers(toggle, ['prevent'])">Open</button>
+          </template>
+        </MyPopover>
+      `,
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+      },
+    )
+
+    const testId = findFirstDataTestId(ast)
+    expect(testId).toBe('MyComp-Toggle-button')
+  })
+
   it('keys child component testids via cross-file key registry', () => {
     // Simulate two-pass compilation: parent records key context, child consumes it.
     const componentHierarchyMap = new Map()

@@ -679,6 +679,120 @@ export function tryExtractSlotScopeVariableNames(expression: VueExpressionNode):
 }
 
 /**
+ * Unwraps a parsed click-handler AST down to a bare identifier name, but only
+ * when the handler is a callback *reference* — i.e. the expression is (or
+ * unwraps to) a plain identifier. Method calls (`remove(item)`), member access
+ * (`data.action()`), assignments, and conditionals are NOT bare callbacks, so
+ * they return `null` and keep their existing (keyed) handling.
+ *
+ * Recognized wrappers that still denote "invoke this callback reference":
+ * - `withModifiers(fn, [...])` / `_withModifiers(fn, [...])` (Vue modifier wrapper)
+ * - `() => fn` (arrow with an expression body)
+ * - statement/expression-statement envelopes
+ *
+ * @internal
+ */
+function unwrapToBareCallbackIdentifier(node: BabelNode | null | undefined): string | null {
+  if (!node) {
+    return null;
+  }
+
+  if (isFile(node)) {
+    const stmt = node.program.body[0];
+    return isExpressionStatement(stmt) ? unwrapToBareCallbackIdentifier(stmt.expression) : null;
+  }
+
+  if (isProgram(node)) {
+    const stmt = node.body[0];
+    return isExpressionStatement(stmt) ? unwrapToBareCallbackIdentifier(stmt.expression) : null;
+  }
+
+  if (isExpressionStatement(node)) {
+    return unwrapToBareCallbackIdentifier(node.expression);
+  }
+
+  if (isIdentifier(node)) {
+    return node.name;
+  }
+
+  // withModifiers(fn, [...]) / _withModifiers(...) — the underlying handler is arg 0.
+  if (isCallExpression(node) || isOptionalCallExpression(node)) {
+    const callee = node.callee;
+    if (isIdentifier(callee) && (callee.name === "withModifiers" || callee.name === "_withModifiers")) {
+      return unwrapToBareCallbackIdentifier(node.arguments[0] as BabelNode);
+    }
+    return null;
+  }
+
+  // () => callback
+  if (isArrowFunctionExpression(node)) {
+    return isBlockStatement(node.body) ? null : unwrapToBareCallbackIdentifier(node.body);
+  }
+
+  return null;
+}
+
+/**
+ * Returns the name of an element's `@click` handler when that handler is a bare
+ * identifier callback reference (optionally wrapped in `withModifiers(...)`, an
+ * arrow expression body, or an expression statement), and `null` otherwise.
+ *
+ * @internal
+ */
+export function tryGetBareCallbackClickHandlerName(node: ElementNode): string | null {
+  const click = tryGetClickDirective(node);
+  if (!click?.exp) {
+    return null;
+  }
+
+  const source = getVueExpressionSource(click.exp as SimpleExpressionNode | CompoundExpressionNode, "content", "compiled");
+  if (!source) {
+    return null;
+  }
+
+  const parsed = tryParseBabelAstFromHandlerSource(source);
+  if (!parsed) {
+    return null;
+  }
+
+  return unwrapToBareCallbackIdentifier(parsed as BabelNode);
+}
+
+/**
+ * Determines whether an element is a singleton trigger rendered inside a scoped
+ * slot: its `@click` handler is a bare identifier that is one of the enclosing
+ * slot's scope variables.
+ *
+ * A scoped slot that hands the consumer an event callback (e.g. `toggle` from
+ * `<template #trigger="{ toggle }">`) renders a single control, not one row per
+ * iteration. The bare-identifier click handler is a callback reference — not
+ * per-iteration row data — so the element must not inherit the slot's keyed
+ * selector; otherwise the generator emits an unusable keyed accessor for what is
+ * always a single element. Method-call handlers (`remove(item)`) and member
+ * access (`data.action()`) pass row data and remain keyed.
+ *
+ * @internal
+ */
+export function isSlotScopeCallbackClickHandler(node: ElementNode, hierarchyMap: HierarchyMap): boolean {
+  const handlerName = tryGetBareCallbackClickHandlerName(node);
+  if (!handlerName) {
+    return false;
+  }
+
+  const templateNode = getContainedInSlotTemplateNode(node, hierarchyMap);
+  if (!templateNode) {
+    return false;
+  }
+
+  const scopeExpression = findTemplateSlotScopeExpression(templateNode);
+  if (!scopeExpression) {
+    return false;
+  }
+
+  return tryExtractSlotScopeVariableNames(scopeExpression).includes(handlerName);
+}
+
+/**
  * Checks if node has a :to directive (for router links)
  *
  * Returns the directive if found, undefined otherwise
