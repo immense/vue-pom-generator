@@ -58,6 +58,7 @@ import {
   findTemplateSlotScopeExpression,
   tryExtractSlotScopeVariableNames,
   getContainedInSlotTemplateNode,
+  isSlotScopeCallbackClickHandler,
 } from "./utils";
 
 const CLICK_EVENT_NAME = TESTID_CLICK_EVENT_NAME;
@@ -1174,6 +1175,16 @@ export function createTestIdTransform(
 
         const slotKeyInfo = getContainedInSlotDataKeyInfo(element, hierarchyMap);
         if (slotKeyInfo) {
+          // A click handler that is a bare slot-scope variable (e.g. @click="toggle"
+          // inside <template #trigger="{ toggle }">) is an event callback, not
+          // per-iteration row data. The enclosing scoped slot renders a single
+          // trigger control, so it must not inherit the slot's keyed selector —
+          // otherwise the generator emits an unusable keyed accessor for what is
+          // always one element. Method-call handlers (`remove(item)`) and member
+          // access (`data.action()`) pass row data and stay keyed.
+          if (isSlotScopeCallbackClickHandler(element, hierarchyMap)) {
+            return null;
+          }
           return slotKeyInfo;
         }
 
