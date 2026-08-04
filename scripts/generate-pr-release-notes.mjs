@@ -85,7 +85,23 @@ if (!Number.isFinite(prNumber) || prNumber <= 0) {
 }
 
 const ghToken = requireEnv("GH_TOKEN");
-const copilotToken = requireEnv("COPILOT_GITHUB_TOKEN");
+// Copilot session auth: COPILOT_GITHUB_TOKEN (e.g. the workflow's ephemeral
+// github.token) bootstraps the CLI session via GitHub. When a custom provider
+// is configured (COPILOT_PROVIDER_BASE_URL + COPILOT_PROVIDER_API_KEY, e.g.
+// wopr) the token is *optional* — the CLI may fall back to the provider for
+// session auth — but that fallback is still being verified (see the
+// copilot-auth-probe workflow), so prefer COPILOT_GITHUB_TOKEN when available.
+// GH_TOKEN above is only for `gh` REST calls, not Copilot session auth.
+const providerConfigured =
+  Boolean(process.env.COPILOT_PROVIDER_BASE_URL) &&
+  Boolean(process.env.COPILOT_PROVIDER_API_KEY);
+const copilotToken = process.env.COPILOT_GITHUB_TOKEN || undefined;
+
+if (!copilotToken && !providerConfigured) {
+  throw new Error(
+    "Copilot auth not configured: set COPILOT_GITHUB_TOKEN, or configure a custom provider (COPILOT_PROVIDER_BASE_URL + COPILOT_PROVIDER_API_KEY).",
+  );
+}
 
 function getOutputTarget(envVarName) {
   const raw = process.env[envVarName];
@@ -118,8 +134,8 @@ const commitSubjects = commits
   .join("\n");
 
 const client = new CopilotClient({
-  githubToken: copilotToken,
   useLoggedInUser: false,
+  ...(copilotToken ? { githubToken: copilotToken } : {}),
   cliPath: "./node_modules/.bin/copilot",
 });
 
