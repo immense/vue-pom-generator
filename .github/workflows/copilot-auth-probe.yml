@@ -51,11 +51,21 @@ jobs:
           COPILOT_PROVIDER_API_KEY: ${{ secrets.COPILOT_PROVIDER_API_KEY }}
           COPILOT_PROVIDER_MAX_PROMPT_TOKENS: "380000"
           COPILOT_PROVIDER_MAX_OUTPUT_TOKENS: "16000"
-          # Only set for the "with token" leg. Unset => CLI must rely on the provider.
+          # Only set for the "with token" leg. The provider-only leg unsets them
+          # in the run script below (a defined-but-empty value can be treated as
+          # "token present but invalid", giving a false failure).
           COPILOT_GITHUB_TOKEN: ${{ matrix.set_github_token == 'true' && github.token || '' }}
           GH_TOKEN: ${{ matrix.set_github_token == 'true' && github.token || '' }}
+          SET_GITHUB_TOKEN: ${{ matrix.set_github_token }}
         run: |
           set +e
+
+          # Truly unset GitHub-token env vars for the provider-only leg BEFORE any
+          # copilot invocation (including --version) so the experiment is unambiguous.
+          if [ "${SET_GITHUB_TOKEN}" != "true" ]; then
+            unset COPILOT_GITHUB_TOKEN GH_TOKEN
+          fi
+
           echo "::group::copilot --version"
           ./node_modules/.bin/copilot --version
           echo "::endgroup::"

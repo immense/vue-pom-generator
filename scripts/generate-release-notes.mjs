@@ -157,11 +157,23 @@ const mergedPullRequests = fetchMergedPullRequests({
   untilISO: untilISO || undefined,
 });
 
-// Copilot session auth is optional when a custom COPILOT_PROVIDER_* is configured:
-// the CLI can authenticate through the provider alone, so no GitHub token is needed.
-// When COPILOT_GITHUB_TOKEN is set (e.g. to the workflow's ephemeral github.token)
-// it bootstraps the session via GitHub. GH_TOKEN above is only for `gh` REST calls.
+// Copilot session auth: COPILOT_GITHUB_TOKEN (e.g. the workflow's ephemeral
+// github.token) bootstraps the CLI session via GitHub. When a custom provider
+// is configured (COPILOT_PROVIDER_BASE_URL + COPILOT_PROVIDER_API_KEY, e.g.
+// wopr) the token is *optional* — the CLI may fall back to the provider for
+// session auth — but that fallback is still being verified (see the
+// copilot-auth-probe workflow), so prefer COPILOT_GITHUB_TOKEN when available.
+// GH_TOKEN above is only for `gh` REST calls, not Copilot session auth.
+const providerConfigured =
+  Boolean(process.env.COPILOT_PROVIDER_BASE_URL) &&
+  Boolean(process.env.COPILOT_PROVIDER_API_KEY);
 const copilotToken = process.env.COPILOT_GITHUB_TOKEN || undefined;
+
+if (!copilotToken && !providerConfigured) {
+  throw new Error(
+    "Copilot auth not configured: set COPILOT_GITHUB_TOKEN, or configure a custom provider (COPILOT_PROVIDER_BASE_URL + COPILOT_PROVIDER_API_KEY).",
+  );
+}
 
 const client = new CopilotClient({
   useLoggedInUser: false,
