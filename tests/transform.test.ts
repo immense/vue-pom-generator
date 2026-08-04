@@ -927,7 +927,7 @@ describe('createTestIdTransform', () => {
 
     const primary = fieldValuePoms.find(p => p.emitPrimary !== false)
     const mergedSecondary = fieldValuePoms.find(p => p.emitPrimary === false)
-    expect(primary?.selector).toEqual(createPomStringPattern('DynamicFormField-FieldValue-input', 'static'))
+    expect(primary?.selector).toEqual(createPomStringPattern('DynamicFormField-FieldValue-input', 'static', []))
     expect(primary?.mergeKey).toContain('wrapper:ifgroup:')
     expect(primary?.mergeKey).toContain(':model:FieldValue')
     expect(primary?.alternateSelectors).toBeUndefined()
@@ -1158,7 +1158,7 @@ describe('createTestIdTransform', () => {
     expect(one?.keyLiteral).toBe('One')
     expect(one?.selector).toEqual({
       kind: 'testId',
-      testId: createPomStringPattern('MyComp-${key}-Select-button', 'parameterized'),
+      testId: createPomStringPattern('MyComp-${key}-Select-button', 'parameterized', ["key"]),
     })
     expect(one?.parameters).toEqual(createPomParameters(['wait', 'boolean = true'], ['annotationText', 'string = ""']))
 
@@ -1167,7 +1167,7 @@ describe('createTestIdTransform', () => {
     expect(two?.keyLiteral).toBe('Two')
     expect(two?.selector).toEqual({
       kind: 'testId',
-      testId: createPomStringPattern('MyComp-${key}-Select-button', 'parameterized'),
+      testId: createPomStringPattern('MyComp-${key}-Select-button', 'parameterized', ["key"]),
     })
     expect(two?.parameters).toEqual(createPomParameters(['wait', 'boolean = true'], ['annotationText', 'string = ""']))
   })
@@ -1193,7 +1193,12 @@ describe('createTestIdTransform', () => {
     //
     // We still assert dynamic-ness via Vue's const analysis by ensuring the compound contains
     // at least one SimpleExpressionNode with constType NOT_CONSTANT.
-    const collectSimpleExpressions = (node: any): Array<{ constType?: number }> => {
+    interface AstNode {
+      type?: NodeTypes
+      constType?: number
+      children?: unknown[]
+    }
+    const collectSimpleExpressions = (node: AstNode | null | undefined): Array<{ constType?: number }> => {
       if (!node || typeof node !== 'object' || !('type' in node)) {
         return []
       }
@@ -1204,7 +1209,7 @@ describe('createTestIdTransform', () => {
 
       if (node.type === NodeTypes.COMPOUND_EXPRESSION) {
         const out: Array<{ constType?: number }> = []
-        for (const child of node.children || []) {
+        for (const child of node.children ?? []) {
           if (child && typeof child === 'object') {
             out.push(...collectSimpleExpressions(child))
           }
@@ -1363,8 +1368,8 @@ describe('createTestIdTransform', () => {
       name: 'selectDatabaseTypeCloud',
       selector: {
         kind: 'withinTestIdByLabel',
-        rootTestId: createPomStringPattern('MyPage-DatabaseType-radio', 'static'),
-        label: createPomStringPattern('Cloud', 'static'),
+        rootTestId: createPomStringPattern('MyPage-DatabaseType-radio', 'static', []),
+        label: createPomStringPattern('Cloud', 'static', []),
         exact: true,
       },
       parameters: createPomParameters(['annotationText', 'string = ""']),
@@ -1445,8 +1450,8 @@ describe('createTestIdTransform', () => {
       name: 'selectDatabaseTypeCloud',
       selector: {
         kind: 'withinTestIdByLabel',
-        rootTestId: createPomStringPattern('MyPage-DatabaseType-radio', 'static'),
-        label: createPomStringPattern('Cloud', 'static'),
+        rootTestId: createPomStringPattern('MyPage-DatabaseType-radio', 'static', []),
+        label: createPomStringPattern('Cloud', 'static', []),
         exact: true,
       },
       parameters: createPomParameters(['annotationText', 'string = ""']),

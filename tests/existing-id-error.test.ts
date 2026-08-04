@@ -3,6 +3,7 @@ import { createVuePomGeneratorPlugins } from "../index";
 import path from "node:path";
 import process from "node:process";
 import type { Plugin } from "vite";
+import { hookFn } from "./helpers/typed-mocks";
 
 describe("existingIdBehavior: 'error'", () => {
   it("halts compilation (throws) when an existing data-testid is found", async () => {
@@ -29,7 +30,7 @@ describe("existingIdBehavior: 'error'", () => {
     // Using string matching instead of RegExp literal to satisfy linting rules.
     const expectedError = "remove-existing-test-id-attributes rule and --fix";
 
-    await expect((metadataPlugin.transform as any).call({}, code, id)).rejects.toThrow(expectedError);
+    await expect(hookFn(metadataPlugin.transform)!(code, id)).rejects.toThrow(expectedError);
   });
 });
 
@@ -62,6 +63,6 @@ describe("existingIdBehavior: 'preserve'", () => {
 
     const expectedError = "existingIdBehavior=\"preserve\" cannot safely preserve nested option ids";
 
-    await expect((metadataPlugin.transform as any).call({}, code, id)).rejects.toThrow(expectedError);
+    await expect(hookFn(metadataPlugin.transform)!(code, id)).rejects.toThrow(expectedError);
   });
 });

@@ -9,7 +9,13 @@ export function isParameterizedPomPattern(kind: PomPatternKind): boolean {
 export interface PomStringPattern {
   formatted: string;
   patternKind: PomPatternKind;
-  /** Unique `${...}` variable names referenced by `formatted`, in first-occurrence order. */
+  /**
+   * Unique `${...}` variable names referenced by `formatted`, in first-occurrence order.
+   *
+   * Supplied explicitly at construction — never re-derived from `formatted`. The
+   * construction site knows which variables it inserted; `formatted` keeps the
+   * `${...}` text only for emission.
+   */
   templateVariables: string[];
 }
 
@@ -18,37 +24,24 @@ export interface PomPatternBinding {
   setupStatements: string[];
 }
 
-export function inferPomPatternKindFromFormattedString(value: string): PomPatternKind {
-  return value.includes("${") ? "parameterized" : "static";
-}
-
-function getTemplateVariables(formatted: string): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  /* eslint-disable no-restricted-syntax -- extracting ${var} placeholders from a generated pattern string, not parsing source code */
-  const matches = formatted.matchAll(/\$\{(\w+)\}/g);
-  /* eslint-enable no-restricted-syntax */
-  for (const match of matches) {
-    const variableName = match[1];
-    if (seen.has(variableName)) {
-      continue;
-    }
-    seen.add(variableName);
-    out.push(variableName);
-  }
-  return out;
-}
-
-export function createPomStringPattern(formatted: string, patternKind: PomPatternKind): PomStringPattern {
+/**
+ * Construct a `PomStringPattern` from explicit metadata.
+ *
+ * `templateVariables` is required and is the sole source of truth for which
+   * method-parameter slots the pattern exposes. It is never inferred from
+   * `formatted` — pass `[]` for static patterns, or the variable names (e.g.
+   * `["key"]`, `["value"]`) for parameterized ones.
+ */
+export function createPomStringPattern(
+  formatted: string,
+  patternKind: PomPatternKind,
+  templateVariables: readonly string[],
+): PomStringPattern {
   return {
     formatted,
     patternKind,
-    templateVariables: getTemplateVariables(formatted),
+    templateVariables: [...templateVariables],
   };
-}
-
-export function inferPomStringPattern(formatted: string): PomStringPattern {
-  return createPomStringPattern(formatted, inferPomPatternKindFromFormattedString(formatted));
 }
 
 export function getPomPatternVariables(
@@ -140,6 +133,18 @@ export function toTypeScriptPomPatternExpression(pattern: PomStringPattern): str
     : JSON.stringify(pattern.formatted);
 }
 
+/**
+ * Render a pattern as a C# interpolated-string expression.
+ *
+ * For static patterns this is a JSON-quoted literal. For parameterized patterns
+ * it converts our `${var}` placeholder format into C# interpolation braces
+ * (`{var}`) and wraps the result as a C# interpolated string. This converts
+ * placeholder syntax in a generated pattern string, not source code.
+ *
+ * @example
+ * toCSharpPomPatternExpression(createPomStringPattern("submit", "static", [])) // "\"submit\""
+ * toCSharpPomPatternExpression(createPomStringPattern("item-${key}", "parameterized", ["key"])) // "$\"item-{key}\""
+ */
 export function toCSharpPomPatternExpression(pattern: PomStringPattern): string {
   if (!isParameterizedPomPattern(pattern.patternKind)) {
     return JSON.stringify(pattern.formatted);

@@ -256,7 +256,7 @@ function clearBindAst(node: ElementNode, argName: string) {
     throw new Error(`Missing :${argName} directive with SIMPLE_EXPRESSION`);
   }
   else
-    (directiveNode.exp as { ast?: unknown }).ast = null;
+    (directiveNode.exp as SimpleExpressionNode).ast = null;
 }
 
 describe("utils.ts coverage", () => {
@@ -885,7 +885,7 @@ describe("utils.ts coverage", () => {
 
     const entries = Array.from(deps.dataTestIdSet);
     expect(entries.length).toBe(1);
-    expect(entries[0]?.pom?.selector).toEqual(createPomStringPattern("abc-${key}", "parameterized"));
+    expect(entries[0]?.pom?.selector).toEqual(createPomStringPattern("abc-${key}", "parameterized", ["key"]));
   });
 
   it("allows preserving an existing template when the required key fragment carries literal context", () => {
@@ -923,7 +923,7 @@ describe("utils.ts coverage", () => {
 
     const entries = Array.from(deps.dataTestIdSet);
     expect(entries.length).toBe(1);
-    expect(entries[0]?.pom?.selector).toEqual(createPomStringPattern("abc-line-${key}", "parameterized"));
+    expect(entries[0]?.pom?.selector).toEqual(createPomStringPattern("abc-line-${key}", "parameterized", ["key"]));
   });
 
   it("allows preserving an existing key-based template literal that uses a fallback branch access", () => {
@@ -961,7 +961,7 @@ describe("utils.ts coverage", () => {
 
     const entries = Array.from(deps.dataTestIdSet);
     expect(entries.length).toBe(1);
-    expect(entries[0]?.pom?.selector).toEqual(createPomStringPattern("abc-${key}", "parameterized"));
+    expect(entries[0]?.pom?.selector).toEqual(createPomStringPattern("abc-${key}", "parameterized", ["key"]));
   });
 
   it("allows preserving an existing simple member-expression data-testid", () => {
@@ -999,8 +999,8 @@ describe("utils.ts coverage", () => {
 
     const entries = Array.from(deps.dataTestIdSet);
     expect(entries.length).toBe(1);
-    expect(entries[0]?.selectorValue).toEqual(createPomStringPattern("${p.parameter.name}", "parameterized"));
-    expect(entries[0]?.pom?.selector).toEqual(createPomStringPattern("${key}", "parameterized"));
+    expect(entries[0]?.selectorValue).toEqual(createPomStringPattern("${p.parameter.name}", "parameterized", ["key"]));
+    expect(entries[0]?.pom?.selector).toEqual(createPomStringPattern("${key}", "parameterized", ["key"]));
   });
 
   it("drives applyResolvedDataTestId through option-driven radio handling and de-duping", () => {
@@ -1033,7 +1033,7 @@ describe("utils.ts coverage", () => {
       existingIdBehavior: "overwrite",
       nameCollisionBehavior: "suffix",
       addHtmlAttribute: false,
-      entryOverrides: { selectorValue: createPomStringPattern("MyComp-Foo-radio", "static") },
+      entryOverrides: { selectorValue: createPomStringPattern("MyComp-Foo-radio", "static", []) },
     });
 
     // Should have generated per-option extra click methods (IR), not raw emitted method strings.
@@ -1061,7 +1061,7 @@ describe("utils.ts coverage", () => {
       existingIdBehavior: "overwrite",
       nameCollisionBehavior: "suffix",
       addHtmlAttribute: false,
-      entryOverrides: { selectorValue: createPomStringPattern("MyComp-Foo-radio", "static") },
+      entryOverrides: { selectorValue: createPomStringPattern("MyComp-Foo-radio", "static", []) },
     });
 
     // De-dupe: calling again should not add more extra methods.
@@ -1137,8 +1137,8 @@ describe("utils.ts coverage", () => {
     expect(method1).toBeTruthy();
     expect(method1?.selector).toEqual({
       kind: "withinTestIdByLabel",
-      rootTestId: createPomStringPattern("MyComp-radio", "static"),
-      label: createPomStringPattern("${value}", "parameterized"),
+      rootTestId: createPomStringPattern("MyComp-radio", "static", []),
+      label: createPomStringPattern("${value}", "parameterized", ["value"]),
       exact: true,
     });
 
@@ -1146,8 +1146,8 @@ describe("utils.ts coverage", () => {
     expect(method2).toBeTruthy();
     expect(method2?.selector).toEqual({
       kind: "withinTestIdByLabel",
-      rootTestId: createPomStringPattern("MyComp2-radio", "static"),
-      label: createPomStringPattern("${value}", "parameterized"),
+      rootTestId: createPomStringPattern("MyComp2-radio", "static", []),
+      label: createPomStringPattern("${value}", "parameterized", ["value"]),
       exact: true,
     });
   });

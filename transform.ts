@@ -218,11 +218,6 @@ function getAssociatedLabelText(element: ElementNode, hierarchyMap: HierarchyMap
   return null;
 }
 
-// Internal exports for unit testing (not part of the public plugin API).
-export const __internal = {
-  normalizeControlLabelText,
-};
-
 function normalizeSearchRoots(wrapperSearchRoots: string[]): string[] {
   const normalized = new Set<string>();
   for (const root of wrapperSearchRoots) {
@@ -1763,3 +1758,25 @@ export function createTestIdTransform(
     }
   };
 }
+
+// Internal exports for unit testing (not part of the public plugin API).
+export const __internal = {
+  normalizeControlLabelText,
+  toKebabCaseTag,
+  trimLeadingSeparators,
+  tryExtractStableHintFromConditionalExpressionSource,
+  normalizeSearchRoots,
+  buildVueSfcPathIndex,
+  tryResolveSfcPathForTag,
+  tryInferNativeWrapperRoleFromSfc,
+  getConditionalDirectiveInfo,
+  getNativeHtmlControlRole,
+  getLabelNodeText,
+  getAssociatedLabelText,
+  tryWrapClickDirectiveForTestEvents,
+  resetCaches: () => {
+    inferredNativeWrapperConfigByLookup.clear();
+    inferredSfcPathByLookup.clear();
+    indexedVueSfcPathsByRoots.clear();
+  },
+};

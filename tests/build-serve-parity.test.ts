@@ -12,10 +12,13 @@ import path from "node:path";
 
 import type { CompilerOptions } from "@vue/compiler-dom";
 import * as compilerDom from "@vue/compiler-dom";
+import type { HmrContext, ViteDevServer } from "vite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateFiles } from "../class-generation";
 import { resolveGenerationSupportOptions, type ResolvedGenerationSupportOptions } from "../plugin/resolved-generation-options";
 import { createDevProcessorPlugin } from "../plugin/internal/dev-plugin";
+import type { IComponentDependencies } from "../utils";
+import { asSinglePlugin, hookFn } from "./helpers/typed-mocks";
 
 // Mock generateFiles so the dev plugin doesn't try to write real files
 // (which would fail because base-page.ts doesn't exist in the temp dir).
@@ -83,16 +86,29 @@ function createTmpProjectWithSfc(
   };
 }
 
+/**
+ * Per-test overrides for {@link makeDevPlugin}. Mirrors the shape of the dev
+ * plugin's options (`Parameters<typeof createDevProcessorPlugin>[0]`) but with
+ * `generation` relaxed to a partial (merged on top of defaults) and a
+ * convenience `existingIdBehavior` that forwards into `generation`.
+ */
+type DevProcessorOptions = Parameters<typeof createDevProcessorPlugin>[0];
+
+interface DevPluginOverrides extends Partial<Omit<DevProcessorOptions, "generation">> {
+  generation?: Partial<ResolvedGenerationSupportOptions>;
+  existingIdBehavior?: ResolvedGenerationSupportOptions["existingIdBehavior"];
+}
+
 function makeDevPlugin(
   projectRoot: string,
-  overrides?: Record<string, unknown>,
+  overrides?: DevPluginOverrides,
 ) {
   const basePageClassPath = path.join(projectRoot, "base-page.ts");
-  const generationOverrides = (overrides?.generation as Partial<ResolvedGenerationSupportOptions> | undefined) ?? {};
-  const overrideEntries = { ...(overrides ?? {}) };
-  delete overrideEntries.generation;
-  const existingIdBehaviorOverride = overrideEntries.existingIdBehavior as ResolvedGenerationSupportOptions["existingIdBehavior"] | undefined;
-  delete overrideEntries.existingIdBehavior;
+  const {
+    generation: generationOverrides,
+    existingIdBehavior: existingIdBehaviorOverride,
+    ...overrideEntries
+  } = overrides ?? {};
   return createDevProcessorPlugin({
     nativeWrappers: {},
     excludedComponents: [],
@@ -122,7 +138,17 @@ function makeDevPlugin(
       },
     },
     ...overrideEntries,
-  } as any);
+  } as DevProcessorOptions);
+}
+
+/**
+ * The dev plugin's hooks type `server` as `ViteDevServer`. Our stub only mocks
+ * the handful of fields the plugin actually touches, so it cannot be assigned
+ * directly; narrow through a single typed boundary instead of sprinkling
+ * `as any` at every call site.
+ */
+function asDevServer(stub: DevServerStub): ViteDevServer {
+  return stub as object as ViteDevServer;
 }
 
 // ---------------------------------------------------------------------------
@@ -160,16 +186,16 @@ function openDialog() {}
     );
 
     try {
-      const plugin = makeDevPlugin(projectRoot);
+      const plugin = asSinglePlugin(makeDevPlugin(projectRoot));
       const server = createDevServerStub();
-      await (plugin as any).configureServer!(server);
+      await hookFn(plugin.configureServer)?.(asDevServer(server));
 
       // Find the compile call for our fixture.
       const calls = compileSpy.mock.calls;
       expect(calls.length).toBeGreaterThan(0);
 
       const dialogCall = calls.find(
-        (c: unknown[]) => (c[1] as any)?.filename?.includes("MyDialog.vue"),
+        (c: unknown[]) => (c[1] as CompilerOptions | undefined)?.filename?.includes("MyDialog.vue"),
       );
       expect(dialogCall).toBeTruthy();
 
@@ -208,13 +234,13 @@ export default defineComponent({
     );
 
     try {
-      const plugin = makeDevPlugin(projectRoot);
+      const plugin = asSinglePlugin(makeDevPlugin(projectRoot));
       const server = createDevServerStub();
-      await (plugin as any).configureServer!(server);
+      await hookFn(plugin.configureServer)?.(asDevServer(server));
 
       const calls = compileSpy.mock.calls;
       const counterCall = calls.find(
-        (c: unknown[]) => (c[1] as any)?.filename?.includes("Counter.vue"),
+        (c: unknown[]) => (c[1] as CompilerOptions | undefined)?.filename?.includes("Counter.vue"),
       );
       expect(counterCall).toBeTruthy();
 
@@ -241,13 +267,13 @@ export default defineComponent({
     );
 
     try {
-      const plugin = makeDevPlugin(projectRoot);
+      const plugin = asSinglePlugin(makeDevPlugin(projectRoot));
       const server = createDevServerStub();
-      await (plugin as any).configureServer!(server);
+      await hookFn(plugin.configureServer)?.(asDevServer(server));
 
       const calls = compileSpy.mock.calls;
       const simpleCall = calls.find(
-        (c: unknown[]) => (c[1] as any)?.filename?.includes("SimpleButton.vue"),
+        (c: unknown[]) => (c[1] as CompilerOptions | undefined)?.filename?.includes("SimpleButton.vue"),
       );
       expect(simpleCall).toBeTruthy();
 
@@ -273,15 +299,15 @@ export default defineComponent({
     );
 
     try {
-      const plugin = makeDevPlugin(projectRoot, {
+      const plugin = asSinglePlugin(makeDevPlugin(projectRoot, {
         existingIdBehavior: "error",
-      });
+      }));
       const server = createDevServerStub();
 
       // With existingIdBehavior: "error", the dev plugin should reject
       // because the fixture already has a data-testid attribute.
       await expect(
-        (plugin as any).configureServer!(server),
+        hookFn(plugin.configureServer)?.(asDevServer(server)),
       ).rejects.toThrow();
     } finally {
       cleanup();
@@ -295,13 +321,13 @@ export default defineComponent({
     );
 
     try {
-      const plugin = makeDevPlugin(projectRoot, {
+      const plugin = asSinglePlugin(makeDevPlugin(projectRoot, {
         existingIdBehavior: "preserve",
-      });
+      }));
       const server = createDevServerStub();
 
       // Should NOT throw.
-      await (plugin as any).configureServer!(server);
+      await hookFn(plugin.configureServer)?.(asDevServer(server));
     } finally {
       cleanup();
     }
@@ -318,9 +344,9 @@ export default defineComponent({
     fs.writeFileSync(betaPath, '<template><button @click="save()">Beta</button></template>');
 
     try {
-      const plugin = makeDevPlugin(projectRoot);
+      const plugin = asSinglePlugin(makeDevPlugin(projectRoot));
       const server = createDevServerStub();
-      await (plugin as any).configureServer!(server);
+      await hookFn(plugin.configureServer)?.(asDevServer(server));
 
       const initialSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, unknown>;
       expect(initialSnapshot.size).toBe(2);
@@ -347,28 +373,28 @@ export default defineComponent({
     );
 
     try {
-      const plugin = makeDevPlugin(projectRoot);
+      const plugin = asSinglePlugin(makeDevPlugin(projectRoot));
       const server = createDevServerStub();
-      await (plugin as any).configureServer!(server);
+      await hookFn(plugin.configureServer)?.(asDevServer(server));
 
-      const initialSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, any>;
+      const initialSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, IComponentDependencies>;
       expect(initialSnapshot.size).toBe(1);
       expect(initialSnapshot.has("Recoverable")).toBe(true);
 
       let intercepted = false;
       compileSpy.mockImplementation((template: string, options?: CompilerOptions) => {
-        if (!intercepted && (options as any)?.filename?.includes("Recoverable.vue")) {
+        if (!intercepted && options?.filename?.includes("Recoverable.vue")) {
           intercepted = true;
           throw new Error("transient compile failure");
         }
 
-        return realCompile(template, options as any);
+        return realCompile(template, options);
       });
 
-      await (plugin as any).handleHotUpdate({ file: path.join(projectRoot, "src", "components", "Recoverable.vue") });
+      await hookFn(plugin.handleHotUpdate)?.({ file: path.join(projectRoot, "src", "components", "Recoverable.vue") } as HmrContext);
       await new Promise(resolve => setTimeout(resolve, 900));
 
-      const finalSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, any>;
+      const finalSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, IComponentDependencies>;
       expect(finalSnapshot.size).toBe(1);
       expect(finalSnapshot.has("Recoverable")).toBe(true);
       expect(finalSnapshot.get("Recoverable")?.dataTestIdSet?.size ?? 0).toBeGreaterThan(0);
@@ -386,11 +412,11 @@ export default defineComponent({
     const componentPath = path.join(projectRoot, "src", "components", "TemplateLess.vue");
 
     try {
-      const plugin = makeDevPlugin(projectRoot);
+      const plugin = asSinglePlugin(makeDevPlugin(projectRoot));
       const server = createDevServerStub();
-      await (plugin as any).configureServer!(server);
+      await hookFn(plugin.configureServer)?.(asDevServer(server));
 
-      const initialSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, any>;
+      const initialSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, IComponentDependencies>;
       expect(initialSnapshot.size).toBe(1);
       expect(initialSnapshot.has("TemplateLess")).toBe(true);
 
@@ -401,10 +427,10 @@ const count = 1
 </script>`,
       );
 
-      await (plugin as any).handleHotUpdate({ file: componentPath });
+      await hookFn(plugin.handleHotUpdate)?.({ file: componentPath } as HmrContext);
       await new Promise(resolve => setTimeout(resolve, 900));
 
-      const finalSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, any>;
+      const finalSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, IComponentDependencies>;
       expect(finalSnapshot.size).toBe(1);
       expect(finalSnapshot.has("TemplateLess")).toBe(true);
       expect(finalSnapshot.get("TemplateLess")?.dataTestIdSet?.size ?? 0).toBe(0);
@@ -433,15 +459,15 @@ const count = 1
         inFlight -= 1;
       });
 
-      const plugin = makeDevPlugin(projectRoot);
+      const plugin = asSinglePlugin(makeDevPlugin(projectRoot));
       const server = createDevServerStub();
-      const configurePromise = (plugin as any).configureServer!(server);
+      const configurePromise = hookFn(plugin.configureServer)?.(asDevServer(server));
 
       await new Promise(resolve => setTimeout(resolve, 100));
       expect(vi.mocked(generateFiles).mock.calls.length).toBe(1);
       expect(inFlight).toBe(1);
 
-      await (plugin as any).handleHotUpdate({ file: componentPath });
+      await hookFn(plugin.handleHotUpdate)?.({ file: componentPath } as HmrContext);
       await new Promise(resolve => setTimeout(resolve, 900));
 
       expect(maxInFlight).toBe(1);
@@ -475,7 +501,7 @@ const count = 1
 
       const appRoot = path.join(projectRoot, "app");
       const basePageClassPath = path.join(appRoot, "base-page.ts");
-      const plugin = makeDevPlugin(appRoot, {
+      const plugin = asSinglePlugin(makeDevPlugin(appRoot, {
         getPageDirs: () => ["app/pages"],
         getComponentDirs: () => ["app/components"],
         getLayoutDirs: () => ["app/layouts"],
@@ -484,12 +510,12 @@ const count = 1
         projectRootRef: { current: appRoot },
         normalizedBasePagePath: path.posix.normalize(basePageClassPath),
         basePageClassPath,
-      });
+      }));
 
       const server = createDevServerStub();
-      await (plugin as any).configureServer!(server);
+      await hookFn(plugin.configureServer)?.(asDevServer(server));
 
-      const snapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, any>;
+      const snapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, IComponentDependencies>;
       expect(snapshot.size).toBe(1);
       expect(snapshot.has("NuxtRooted")).toBe(true);
     } finally {

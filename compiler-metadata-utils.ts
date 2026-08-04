@@ -9,6 +9,7 @@ import type {
 import { NodeTypes } from "@vue/compiler-core";
 import { isSimpleExpressionNode } from "./compiler/ast-guards";
 import type { ElementMetadata } from "./metadata-collector";
+import { collapseWhitespace } from "./utils";
 
 export type DataTestIdProp = AttributeNode | DirectiveNode | undefined;
 
@@ -101,9 +102,7 @@ function collectStaticTextContent(children: readonly TemplateChildNode[]): strin
   const visit = (nodes: readonly TemplateChildNode[]) => {
     for (const node of nodes) {
       if (node.type === NodeTypes.TEXT) {
-        /* eslint-disable no-restricted-syntax -- collapsing whitespace in rendered UI text content, not parsing source code */
-        const text = node.content.replace(/\s+/g, " ").trim();
-        /* eslint-enable no-restricted-syntax */
+        const text = collapseWhitespace(node.content);
         if (text) {
           parts.push(text);
         }
@@ -117,9 +116,7 @@ function collectStaticTextContent(children: readonly TemplateChildNode[]): strin
   };
 
   visit(children);
-  /* eslint-disable no-restricted-syntax -- collapsing whitespace in joined UI text, not parsing source code */
-  const text = parts.join(" ").replace(/\s+/g, " ").trim();
-  /* eslint-enable no-restricted-syntax */
+  const text = collapseWhitespace(parts.join(" "));
   return text || undefined;
 }
 
@@ -159,9 +156,17 @@ export function tryCreateElementMetadata(args: {
     && typeof codegenNode.dynamicProps !== "string"
     && isSimpleExpressionNode(codegenNode.dynamicProps)) {
     const content = codegenNode.dynamicProps.content;
+    // reason: This block is only entered when `parseDynamicProps` returned a falsy
+    // result for a SimpleExpressionNode. The only way that happens is a failed
+    // `JSON.parse` of array-looking content (starts with "[" and ends with "]").
+    // For any non-array simple expression, `parseDynamicProps` returns `[content]`
+    // (truthy) and this block is skipped entirely. So the false branches of the
+    // `startsWith`/`endsWith` conditions are unreachable.
+    /* c8 ignore start */
     if (content.startsWith("[") && content.endsWith("]")) {
       dynamicPropsList = preferJsonParseFailureAsContentArray ? [content] : [];
     }
+    /* c8 ignore end */
   }
 
   const metadata: ElementMetadata = {

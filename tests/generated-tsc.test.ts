@@ -90,11 +90,11 @@ describe("generated output", () => {
 
     const formattedDataTestId = "TestComponent-${key}-Save-button";
     const dataTestIdEntry: IDataTestId = {
-      selectorValue: createPomStringPattern(formattedDataTestId, "parameterized"),
+      selectorValue: createPomStringPattern(formattedDataTestId, "parameterized", ["key"]),
       pom: {
         nativeRole: "button",
         methodName: "SaveButton",
-        selector: createPomStringPattern(formattedDataTestId, "parameterized"),
+        selector: createPomStringPattern(formattedDataTestId, "parameterized", ["key"]),
         parameters: createPomParameters(["key", "string"]),
       },
     };
@@ -110,8 +110,8 @@ describe("generated output", () => {
           name: "selectDatabaseTypeCloud",
           selector: {
             kind: "withinTestIdByLabel",
-            rootTestId: createPomStringPattern("TestComponent-databaseType-radio", "static"),
-            label: createPomStringPattern("Cloud", "static"),
+            rootTestId: createPomStringPattern("TestComponent-databaseType-radio", "static", []),
+            label: createPomStringPattern("Cloud", "static", []),
             exact: true,
           },
           parameters: createPomParameters(["annotationText", "string = \"\""]),
@@ -158,12 +158,12 @@ describe("generated output", () => {
 
     const componentName = "ItemsPage";
     const dataTestIdEntry: IDataTestId = {
-      selectorValue: createPomStringPattern("items-check-${key}", "parameterized"),
+      selectorValue: createPomStringPattern("items-check-${key}", "parameterized", ["key"]),
       pom: {
         nativeRole: "input",
         methodName: "ItemsCheckByKey",
-        selector: createPomStringPattern("items-check-${key}", "parameterized"),
-        // Simulate stale/manual IR that forgot to carry the selector parameter.
+        selector: createPomStringPattern("items-check-${key}", "parameterized", ["key"]),
+        // IR carries the `key` selector variable, but the method params omit it.
         parameters: createPomParameters(["text", "string"], ["annotationText", 'string = ""']),
       },
     };
@@ -195,12 +195,12 @@ describe("generated output", () => {
 
     const componentName = "ItemsPage";
     const dataTestIdEntry: IDataTestId = {
-      selectorValue: createPomStringPattern("items-check-${itemId}", "parameterized"),
+      selectorValue: createPomStringPattern("items-check-${itemId}", "parameterized", ["itemId"]),
       pom: {
         nativeRole: "input",
         methodName: "ItemsCheckByKey",
-        selector: createPomStringPattern("items-check-${itemId}", "parameterized"),
-        // Simulate stale/manual IR that forgot to carry the selector variable name.
+        selector: createPomStringPattern("items-check-${itemId}", "parameterized", ["itemId"]),
+        // IR carries the `itemId` selector variable, but the method params omit it.
         parameters: createPomParameters(["text", "string"], ["annotationText", 'string = ""']),
       },
     };
@@ -236,12 +236,12 @@ describe("generated output", () => {
     );
 
     const navigationEntry: IDataTestId = {
-      selectorValue: createPomStringPattern("TenantListPage-NewTenant-routerlink", "static"),
+      selectorValue: createPomStringPattern("TenantListPage-NewTenant-routerlink", "static", []),
       targetPageObjectModelClass: "NewTenantPage",
       pom: {
         nativeRole: "button",
         methodName: "NewTenant",
-        selector: createPomStringPattern("TenantListPage-NewTenant-routerlink", "static"),
+        selector: createPomStringPattern("TenantListPage-NewTenant-routerlink", "static", []),
         parameters: [],
       },
     };
@@ -260,11 +260,11 @@ describe("generated output", () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set(),
       dataTestIdSet: new Set([{
-        selectorValue: createPomStringPattern("TenantDetailsEditForm-Name-input", "static"),
+        selectorValue: createPomStringPattern("TenantDetailsEditForm-Name-input", "static", []),
         pom: {
           nativeRole: "input",
           methodName: "TenantName",
-          selector: createPomStringPattern("TenantDetailsEditForm-Name-input", "static"),
+          selector: createPomStringPattern("TenantDetailsEditForm-Name-input", "static", []),
           parameters: createPomParameters(["text", "string"], ["annotationText", 'string = ""']),
         },
       }]),
@@ -311,21 +311,21 @@ describe("generated output", () => {
 
     // The component renders both a real child (TreeViewItemValue) and itself recursively.
     const toggleEntry: IDataTestId = {
-      selectorValue: createPomStringPattern("TreeViewItem-ToggleOpen-div", "static"),
+      selectorValue: createPomStringPattern("TreeViewItem-ToggleOpen-div", "static", []),
       pom: {
         nativeRole: "button",
         methodName: "ToggleOpen",
-        selector: createPomStringPattern("TreeViewItem-ToggleOpen-div", "static"),
+        selector: createPomStringPattern("TreeViewItem-ToggleOpen-div", "static", []),
         parameters: createPomParameters(["annotationText", 'string = ""']),
       },
     };
 
     const valueEntry: IDataTestId = {
-      selectorValue: createPomStringPattern("TreeViewItemValue-Label-input", "static"),
+      selectorValue: createPomStringPattern("TreeViewItemValue-Label-input", "static", []),
       pom: {
         nativeRole: "input",
         methodName: "Label",
-        selector: createPomStringPattern("TreeViewItemValue-Label-input", "static"),
+        selector: createPomStringPattern("TreeViewItemValue-Label-input", "static", []),
         parameters: createPomParameters(["text", "string"], ["annotationText", 'string = ""']),
       },
     };
@@ -576,7 +576,7 @@ describe("generated output", () => {
       usedComponentSet: new Set(["MyDataGrid"]),
       dataTestIdSet: new Set([
         {
-          selectorValue: createPomStringPattern("UsersTable-Refresh-button", "static"),
+          selectorValue: createPomStringPattern("UsersTable-Refresh-button", "static", []),
         },
       ]),
       generatedMethods: new Map(),
@@ -647,7 +647,7 @@ describe("generated output", () => {
       usedComponentSet: new Set(["Page", "MyDataGrid"]),
       dataTestIdSet: new Set([
         {
-          selectorValue: createPomStringPattern("UsersView-EnableSessionEmails-toggle", "static"),
+          selectorValue: createPomStringPattern("UsersView-EnableSessionEmails-toggle", "static", []),
         },
       ]),
       generatedMethods: new Map(),
@@ -740,21 +740,21 @@ describe("generated output", () => {
     const childB = "ChildB";
 
     const childAEntry: IDataTestId = {
-      selectorValue: createPomStringPattern("ChildA-OnlyInA-button", "static"),
+      selectorValue: createPomStringPattern("ChildA-OnlyInA-button", "static", []),
       pom: {
         nativeRole: "button",
         methodName: "OnlyInAButton",
-        selector: createPomStringPattern("ChildA-OnlyInA-button", "static"),
+        selector: createPomStringPattern("ChildA-OnlyInA-button", "static", []),
         parameters: [],
       },
     };
 
     const childBEntry: IDataTestId = {
-      selectorValue: createPomStringPattern("ChildB-SomethingElse-button", "static"),
+      selectorValue: createPomStringPattern("ChildB-SomethingElse-button", "static", []),
       pom: {
         nativeRole: "button",
         methodName: "SomethingElseButton",
-        selector: createPomStringPattern("ChildB-SomethingElse-button", "static"),
+        selector: createPomStringPattern("ChildB-SomethingElse-button", "static", []),
         parameters: [],
       },
     };
@@ -842,11 +842,11 @@ describe("generated output", () => {
     const wrapperChild = "WrapperButton";
 
     const semanticEntry: IDataTestId = {
-      selectorValue: createPomStringPattern("AccessRequest-RequestAccess-button", "static"),
+      selectorValue: createPomStringPattern("AccessRequest-RequestAccess-button", "static", []),
       pom: {
         nativeRole: "button",
         methodName: "RequestAccess",
-        selector: createPomStringPattern("AccessRequest-RequestAccess-button", "static"),
+        selector: createPomStringPattern("AccessRequest-RequestAccess-button", "static", []),
         parameters: [],
         generatedActionName: "clickRequestAccess",
         generatedPropertyName: "RequestAccessButton",
@@ -854,11 +854,11 @@ describe("generated output", () => {
     };
 
     const wrapperEntry: IDataTestId = {
-      selectorValue: createPomStringPattern("WrapperButton-Click-button", "static"),
+      selectorValue: createPomStringPattern("WrapperButton-Click-button", "static", []),
       pom: {
         nativeRole: "button",
         methodName: "WrapperButton",
-        selector: createPomStringPattern("WrapperButton-Click-button", "static"),
+        selector: createPomStringPattern("WrapperButton-Click-button", "static", []),
         parameters: [],
         generatedActionName: "clickWrapperButton",
         generatedPropertyName: "WrapperButton",

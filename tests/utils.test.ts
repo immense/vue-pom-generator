@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 
-import { __internal, toPascalCase } from "../utils";
+import { __internal, collapseWhitespace, toPascalCase } from "../utils";
 
 describe("utils", () => {
   it("toPascalCase converts separators into PascalCase", () => {
@@ -9,6 +9,13 @@ describe("utils", () => {
     expect(toPascalCase("hello-world")).toBe("HelloWorld");
     expect(toPascalCase("hello_world")).toBe("HelloWorld");
     expect(toPascalCase("user.profile.name")).toBe("UserProfileName");
+  });
+
+  it("collapseWhitespace collapses whitespace runs and trims ends", () => {
+    expect(collapseWhitespace("  foo   bar\n\tbaz  ")).toBe("foo bar baz");
+    expect(collapseWhitespace("\n\n")).toBe("");
+    expect(collapseWhitespace("already clean")).toBe("already clean");
+    expect(collapseWhitespace(" leading")).toBe("leading");
   });
 
   it("toPascalCase strips interpolation remnants", () => {
