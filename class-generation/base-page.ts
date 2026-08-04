@@ -139,7 +139,7 @@ export class BasePage {
     // In that scenario, the click already did its job; don't fail the test infra.
     try {
       await this.page.evaluate(
-        ({ eventName, expectedTestId, timeoutMs, requireEvent, debug }) => {
+        ({ eventName, expectedTestId, timeoutMs, debug }) => {
           return new Promise<void>((resolve, reject) => {
             const g = globalThis;
             if (!g || typeof g.addEventListener !== "function") {
@@ -212,7 +212,6 @@ export class BasePage {
           eventName: TESTID_CLICK_EVENT_NAME,
           expectedTestId: testId,
           timeoutMs,
-          requireEvent,
           debug: CLICK_EVENT_DEBUG,
         },
       );

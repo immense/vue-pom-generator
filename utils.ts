@@ -114,14 +114,17 @@ export function isAsciiAlphaNumericCode(code: number): boolean {
   return isAsciiLetterCode(code) || isAsciiDigitCode(code);
 }
 
-export type NativeRole = 'button' | 'input' | 'select' | 'vselect' | 'checkbox' | 'toggle' | 'radio' | 'grid'
+export type NativeRole = 'button' | 'input' | 'select' | 'vselect' | 'checkbox' | 'toggle' | 'radio' | 'grid' | 'link'
 // In this plugin, the hierarchy map stores: key = child element, value = parent element (or null for root).
 export type Child = ElementNode;
 export type Parent = ElementNode | null;
 export type HierarchyMap = Map<Child, Parent>
 export interface NativeWrappersMap {
   [component: string]: {
-    role: NativeRole
+    // `role` is optional: when omitted, the generator infers it from the component's
+    // rendered template (e.g. a component rendering an <a>/RouterLink infers `link`).
+    // If no native role can be inferred, it defaults to `button` (the generic clickable role).
+    role?: NativeRole
     valueAttribute?: string
     requiresOptionDataTestIdPrefix?: boolean
     inferred?: boolean
@@ -1891,6 +1894,18 @@ export function getNativeWrapperTransformInfo(
 
   const { role, valueAttribute, requiresOptionDataTestIdPrefix, inferred } = wrapperConfig;
 
+  // `role` is optional on NativeWrappersMap so the transform can omit it and infer later.
+  // By the time this helper runs (from the transform), role is always resolved — either
+  // declared or inferred, and the transform throws when it can't infer. A missing role here
+  // means a direct caller passed an unresolved config: fail fast and loud rather than
+  // silently fabricating a generic role.
+  if (!role) {
+    throw new Error(
+      `[vue-pom-generator] Native wrapper <${node.tag}> has no resolved role in getNativeWrapperTransformInfo. `
+      + `The transform infers or declares a role before reaching this point; if calling this helper directly, pass a config with \`role\` set.`,
+    );
+  }
+
   // Some wrappers (notably checkbox/toggle/radio/select) can end up with synthetic click
   // listeners in the compiler output (via v-model expansion). Treat those as implementation
   // details and still prefer wrapper-derived ids.
@@ -2018,7 +2033,17 @@ export function generateToDirectiveDataTestId(componentName: string, node: Eleme
 
 export function formatTagName(node: ElementNode, nativeWrappers: NativeWrappersMap): string {
   if (Object.keys(nativeWrappers).includes(node.tag)) {
-    return `-${nativeWrappers[node.tag].role}`;
+    const role = nativeWrappers[node.tag].role;
+    // The transform resolves role (declared or inferred, throwing when it can't infer)
+    // before a wrapper reaches this point. A missing role means a direct caller passed an
+    // unresolved config — fail fast rather than fabricating a generic suffix.
+    if (!role) {
+      throw new Error(
+        `[vue-pom-generator] Native wrapper <${node.tag}> has no resolved role in formatTagName. `
+        + `The transform infers or declares a role before reaching this point; if calling this helper directly, pass a config with \`role\` set.`,
+      );
+    }
+    return `-${role}`;
   }
 
   // eslint-disable-next-line no-restricted-syntax
@@ -3007,7 +3032,7 @@ export function applyResolvedDataTestId(args: {
             ? templateFragmentContainsSingleExpression(existingTemplateValue.parsedTemplate, requiredKeyTemplateValue.parsedTemplate)
             : false;
           const hasVarAccess = getBestKeyAccessCandidates(bestKeyVariable)
-            .some(candidate => existingTemplateFragment.expressionSource === candidate);
+            .includes(existingTemplateFragment.expressionSource);
 
           if (!hasExact && !hasVarAccess && bestKeyPreservePlaceholder) {
             throw new Error(
@@ -3081,6 +3106,7 @@ export function applyResolvedDataTestId(args: {
       case "toggle":
       case "radio":
       case "grid":
+      case "link":
         return role;
       default:
         return undefined;
@@ -4075,6 +4101,7 @@ const STANDALONE_WRAPPER_FALLBACK_ROLES = new Set<NativeRole>([
   "checkbox",
   "toggle",
   "radio",
+  "link",
 ]);
 
 function stripTrailingAsciiDigits(value: string): string {

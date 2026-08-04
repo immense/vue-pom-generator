@@ -47,7 +47,6 @@ import {
   templateAttributeValue,
   toPascalCase,
   tryResolveToDirectiveTargetComponentName,
-  IDataTestId,
   IComponentDependencies,
   NativeWrappersMap,
   NativeRole,
@@ -583,6 +582,24 @@ function tryInferNativeWrapperRoleFromSfc(
       return (typeAttr?.value?.content ?? "").toLowerCase();
     };
 
+    // `<a>` only carries the implicit ARIA role "link" when it has an `href` (static or
+    // bound). A bare `<a>` is not a link — it may be an anchor target/placeholder or an
+    // anchor-styled button — so it must not be classified as `link`.
+    const hasHrefAttribute = (element: ElementNode): boolean => {
+      return element.props.some((prop) => {
+        if (prop.type === NodeTypes.ATTRIBUTE) {
+          return (prop as AttributeNode).name === "href";
+        }
+        if (prop.type === NodeTypes.DIRECTIVE) {
+          const directive = prop as DirectiveNode;
+          return directive.name === "bind"
+            && directive.arg?.type === NodeTypes.SIMPLE_EXPRESSION
+            && (directive.arg as SimpleExpressionNode).content === "href";
+        }
+        return false;
+      });
+    };
+
     type InferableNode = RootNode | TemplateChildNode | IfBranchNode;
 
     let inferRoleFromNode: (node: InferableNode) => { role: NativeRole } | null;
@@ -606,6 +623,16 @@ function tryInferNativeWrapperRoleFromSfc(
         return { role: "vselect" };
       if (elementTag === "button" || elementTag === "ubutton")
         return { role: "button" };
+      // Anchors and Vue's RouterLink render <a>, which carries the implicit ARIA role
+      // "link". RouterLink always renders a navigable <a>, so it is always treated as
+      // `link`. A plain <a>/<ua> is only a link when it has an `href` (see hasHrefAttribute)
+      // — a bare anchor may be a placeholder or an anchor-styled button. Recognizing these
+      // lets a wrapper's role be inferred as `link` instead of forcing consumers to declare
+      // a mismatched role (e.g. "button") for anchor-rendering components.
+      if (elementTag === "router-link" || elementTag === "routerlink")
+        return { role: "link" };
+      if ((elementTag === "a" || elementTag === "ua") && hasHrefAttribute(element))
+        return { role: "link" };
 
       if (isComponentLikeTag(element.tag) && element.tag !== tag) {
         const nested = tryInferNativeWrapperRoleFromSfc(element.tag, vueFilesPathMap, normalizedSearchRoots, nextSeen);
@@ -1035,18 +1062,6 @@ export function createTestIdTransform(
     const element = node as ElementNode;
     const parentIsRoot = context?.parent?.type === NodeTypes.ROOT;
 
-    // Save the raw :data-testid directive expression before Vue's prefixIdentifiers
-    // transform compiles it into a compound/hoisted form.
-    {
-      const testIdDirective = element.props.find(
-        (p): p is DirectiveNode =>
-          p.type === NodeTypes.DIRECTIVE
-          && p.name === "bind"
-          && p.arg?.type === NodeTypes.SIMPLE_EXPRESSION
-          && p.arg.content === testIdAttribute
-          && !!p.exp,
-      );
-    }
     // When the immediate parent is a non-element wrapper (IF_BRANCH, FOR, IF),
     // fall back to context.grandParent to maintain the element-to-element chain
     // in the hierarchy map. This ensures slot-scope and v-for key detection can
@@ -1149,7 +1164,8 @@ export function createTestIdTransform(
     // Opportunistically infer wrapper semantics for simple "single native input" components
     // (e.g. CustomInput/CustomTextArea) so they behave like real inputs without requiring
     // explicit configuration in vite.config.ts.
-    if (!nativeWrappers[element.tag]) {
+    const existingWrapperConfig = nativeWrappers[element.tag];
+    if (!existingWrapperConfig) {
       const inferred = tryInferNativeWrapperRoleFromSfc(element.tag, vueFilesPathMap, wrapperSearchRoots);
       if (inferred?.role) {
         // Cache onto the nativeWrappers map so downstream utilities (formatTagName, wrapper transform)
@@ -1161,6 +1177,33 @@ export function createTestIdTransform(
       } else if (element.tag === "DxDataGrid") {
         (nativeWrappers as NativeWrappersMap)[element.tag] = { role: "grid" };
       }
+    } else if (!existingWrapperConfig.role) {
+      // The wrapper is configured (e.g. with a `valueAttribute`) but `role` was omitted.
+      // Infer the role from the component's rendered template so consumers don't have to
+      // declare a role the rendered element already implies (and can't get wrong).
+      //
+      // Only the `role` is filled in — the existing config is preserved as-is, including
+      // its `inferred` flag (which stays falsy for a user-declared wrapper). Flipping
+      // `inferred` to true here would suppress `:modelValue`-based id generation in
+      // getNativeWrapperTransformInfo, changing behavior beyond just inferring the role.
+      //
+      // Fail fast: if no native role can be inferred, throw rather than silently defaulting
+      // to a generic role. A declared wrapper whose role can't be determined is a
+      // misconfiguration the author must fix by declaring `role` explicitly.
+      const inferred = tryInferNativeWrapperRoleFromSfc(element.tag, vueFilesPathMap, wrapperSearchRoots);
+      if (!inferred?.role) {
+        const loc = element.loc?.start;
+        const locationHint = loc ? `${loc.line}:${loc.column}` : "unknown";
+        throw new Error(
+          `[vue-pom-generator] Could not infer a native role for declared wrapper <${element.tag}> in ${componentName} (${context.filename ?? "unknown"}:${locationHint}).\n`
+          + `The component's template does not render a recognized native control (input, textarea, select, button, vselect, a[href]/RouterLink, radio, checkbox).\n\n`
+          + `Fix: set \`role\` explicitly in nativeWrappers (e.g. { "${element.tag}": { role: "button", ... } }).`,
+        );
+      }
+      (nativeWrappers as NativeWrappersMap)[element.tag] = {
+        ...existingWrapperConfig,
+        role: inferred.role,
+      };
     }
 
       const getBestAvailableKeyInfo = (): ResolvedKeyInfo | null => {
@@ -1659,6 +1702,7 @@ export function createTestIdTransform(
         || inferredRole === "toggle"
         || inferredRole === "radio"
         || inferredRole === "grid"
+        || inferredRole === "link"
         || isComponentLikeTag(element.tag);
 
       if (!isRecognizedInteractiveRole) {

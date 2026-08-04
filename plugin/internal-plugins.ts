@@ -62,23 +62,9 @@ export function createInternalPlugins(options: InternalPluginFactoryOptions): Pl
     annotatorRuntime,
   } = options;
   const {
-    outDir,
-    emitLanguages,
-    typescriptOutputStructure,
-    csharp,
-    generateFixtures,
-    customPomAttachments,
-    customPomDir,
-    requireCustomPomDir,
-    customPomImportAliases,
-    customPomImportNameCollisionBehavior,
-    nameCollisionBehavior,
-    existingIdBehavior,
-    testIdAttribute,
     routerAwarePoms,
     routerEntry,
     routerType,
-    routerModuleShims,
   } = generation;
 
   const resolveRouterEntry = () => {

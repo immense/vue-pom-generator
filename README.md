@@ -78,7 +78,7 @@ The generator does not use one naming trick. It layers several signals.
 - **Fallback naming exists, but it is intentionally conservative.** That is why `generation.nameCollisionBehavior` exists.
 - **Wrapper-action generation fails fast.** The generator blocks button-like wrapper `:handler` expressions that it cannot turn into a semantic action name.
 
-Important limit: wrapper inference is helpful, not magical. The current implementation recursively inspects simple local SFC templates for the first inferable primitive (`input`, `textarea`, `select`, `button`, `vselect`, radio/checkbox inputs). It also recognizes some naming patterns like `*Button`. For anything more complex, configure `nativeWrappers` explicitly.
+Important limit: wrapper inference is helpful, not magical. The current implementation recursively inspects simple local SFC templates for the first inferable primitive (`input`, `textarea`, `select`, `button`, `vselect`, radio/checkbox inputs, and `a` *with `href`*/`RouterLink` → `link`). It also recognizes some naming patterns like `*Button`. For anything more complex, configure `nativeWrappers` explicitly.
 
 ## Playwright before/after examples
 
@@ -990,9 +990,10 @@ The sections below follow the actual `VuePomGeneratorPluginOptions` shape from `
 
 ##### `nativeWrappers[...].role`
 
-- **What it does:** Chooses the native behavior to emulate (`button`, `input`, `select`, `vselect`, `checkbox`, `toggle`, `radio`, `grid`).
-- **Why it exists:** Role drives both test-id suffixes and generated POM method families (`click...`, `type...`, `select...`, etc.).
+- **What it does:** Chooses the native behavior to emulate (`button`, `input`, `select`, `vselect`, `checkbox`, `toggle`, `radio`, `grid`, `link`).
+- **Why it exists:** Role drives both test-id suffixes and generated POM method families (`click...`, `type...`, `select...`, etc.). `link` is the role for anchor-rendering wrappers (components that render an `<a>`/`RouterLink`); it produces `...Link` accessors and `-link` test-id suffixes, with `goTo...` navigation methods when a `:to` route target is resolvable.
 - **Benefit:** The generated API matches what the wrapped control actually does.
+- **Optional / inferred:** `role` may be omitted. When omitted, the generator infers it from the wrapper's rendered template — a component rendering an `<a>` *with an `href`* (or a `RouterLink`, directly or through nested wrapper components like a shared `AppLink`) infers `link`, an `<input>` infers `input`, and so on. Recursion follows `wrapperSearchRoots`. A bare `<a>` without an `href` is **not** a link (it has no implicit ARIA role) and won't be classified as `link`. If no native role can be inferred, the generator **throws** rather than guessing — declare `role` explicitly for wrappers that don't render a recognized native control. Declaring `role` explicitly always takes precedence over inference.
 - **Without it:** wrapper components may be treated as generic tags unless they can be inferred.
 
 ##### `nativeWrappers[...].valueAttribute`

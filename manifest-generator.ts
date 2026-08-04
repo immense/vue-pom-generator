@@ -156,7 +156,7 @@ function buildTestIdManifest(componentHierarchyMap: Map<string, IComponentDepend
   );
 }
 
-function writeConstJson(value: unknown): WriterFunction {
+function writeConstJson(value: PomManifest | Record<string, string[]>): WriterFunction {
   return (writer) => {
     writer.write(`${JSON.stringify(value, null, 2)} as const`);
   };

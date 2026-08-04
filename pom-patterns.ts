@@ -25,7 +25,9 @@ export function inferPomPatternKindFromFormattedString(value: string): PomPatter
 function getTemplateVariables(formatted: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
+  /* eslint-disable no-restricted-syntax -- extracting ${var} placeholders from a generated pattern string, not parsing source code */
   const matches = formatted.matchAll(/\$\{(\w+)\}/g);
+  /* eslint-enable no-restricted-syntax */
   for (const match of matches) {
     const variableName = match[1];
     if (seen.has(variableName)) {
@@ -144,7 +146,9 @@ export function toCSharpPomPatternExpression(pattern: PomStringPattern): string 
   }
 
   // Convert our `${var}` placeholder format into C# interpolated-string `{var}`.
+  /* eslint-disable no-restricted-syntax -- converting ${var} placeholders to C# interpolation braces in a generated pattern string, not parsing source code */
   const inner = pattern.formatted.replace(/\$\{/g, "{");
+  /* eslint-enable no-restricted-syntax */
   // JSON.stringify gives us a normal quoted string literal with escaping that is close
   // enough for the C# interpolated-string wrapper we emit.
   return `$${JSON.stringify(inner)}`;

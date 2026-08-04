@@ -1,3 +1,8 @@
+// Humanization helpers for POM method/component names. These operate on already-generated
+// identifier strings (camelCase splitting, separator normalization) — not on source code —
+// so regex is the appropriate tool here rather than AST-based parsing.
+/* eslint-disable no-restricted-syntax */
+
 function splitDiscoverabilityWords(value: string): string[] {
   const normalized = value
     .replace(/ByKey/g, "")
@@ -106,3 +111,5 @@ export function buildPomLocatorDescription(args: {
 
   return toSentenceCase(phrase || "Generated element");
 }
+
+/* eslint-enable no-restricted-syntax */

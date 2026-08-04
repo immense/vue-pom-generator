@@ -17,7 +17,9 @@ export interface ResolvedVueComponentInfo {
   formatted?: string;
 }
 
+/* eslint-disable no-restricted-syntax -- matching well-known synthetic component names from Vue's runtime (not source-code parsing) */
 const ignoredComponentNamePattern = /^(?:items\[\d+\]\.template|template|anonymous|slot|transition|transition-group)$/i;
+/* eslint-enable no-restricted-syntax */
 
 function getDirectVueInstances(element: Element): VueInstance[] {
   const instances: VueInstance[] = [];
@@ -36,15 +38,21 @@ function getDirectVueInstances(element: Element): VueInstance[] {
 }
 
 function stripSourcePosition(sourcePath: string): string {
+  /* eslint-disable no-restricted-syntax -- stripping a trailing line:column position from a file path string, not parsing source code */
   return sourcePath.replace(/:\d+:\d+$/, "");
+  /* eslint-enable no-restricted-syntax */
 }
 
 function inferNameFromFile(filePath: string): string | null {
+  /* eslint-disable no-restricted-syntax -- deriving a component name from a file path string, not parsing source code */
   const fileName = stripSourcePosition(filePath).split("/").pop();
+  /* eslint-enable no-restricted-syntax */
   if (!fileName) {
     return null;
   }
+  /* eslint-disable no-restricted-syntax -- stripping a .vue extension from a file name string, not parsing source code */
   return fileName.replace(/\.vue$/, "");
+  /* eslint-enable no-restricted-syntax */
 }
 
 function isMeaningfulComponentName(name: string | null | undefined): name is string {
@@ -52,17 +60,23 @@ function isMeaningfulComponentName(name: string | null | undefined): name is str
 }
 
 function isComponentLikeSourceTag(tag: string | null | undefined): tag is string {
+  /* eslint-disable no-restricted-syntax -- checking whether a runtime component tag looks like a Vue component (PascalCase or kebab), not parsing source code */
   return !!tag && (/[A-Z]/.test(tag.trim()) || tag.includes("-"));
+  /* eslint-enable no-restricted-syntax */
 }
 
 export function formatSourceLabel(sourcePath: string, includePosition = true): string {
+  /* eslint-disable no-restricted-syntax -- parsing a file-path-with-optional-position string for display, not parsing source code */
   const match = sourcePath.match(/^(.*?)(?::(\d+):(\d+))?$/);
+  /* eslint-enable no-restricted-syntax */
   if (!match) {
     return sourcePath;
   }
 
   const [, rawPath, line, column] = match;
+  /* eslint-disable no-restricted-syntax -- extracting the frontend/src portion of a file path for display, not parsing source code */
   const frontendPathMatch = rawPath.match(/(?:^|\/)frontend\/(src\/.*)$/);
+  /* eslint-enable no-restricted-syntax */
   const normalizedPath = frontendPathMatch?.[1] ?? rawPath;
 
   if (includePosition && line && column) {

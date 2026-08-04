@@ -64,7 +64,9 @@ const SHORTCUT_LABELS = {
 } as const;
 
 function normalizeText(value: string | undefined): string | undefined {
+  /* eslint-disable no-restricted-syntax -- collapsing whitespace in UI display text, not parsing source code */
   const normalized = value?.replace(/\s+/g, " ").trim();
+  /* eslint-enable no-restricted-syntax */
   return normalized || undefined;
 }
 
@@ -725,7 +727,9 @@ class AnnotatorRuntime {
       panel.style.visibility = "visible";
 
       const arrowData = result.middlewareData.arrow;
+      /* eslint-disable no-restricted-syntax -- splitting a CSS placement token (e.g. "top-start") on its separator, not parsing source code */
       const side = result.placement.split("-")[0];
+      /* eslint-enable no-restricted-syntax */
       const staticSide = side === "top" ? "bottom" : side === "bottom" ? "top" : side === "left" ? "right" : "left";
       arrowEl.style.removeProperty("top");
       arrowEl.style.removeProperty("right");

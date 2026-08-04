@@ -672,6 +672,20 @@ describe("utils.ts coverage", () => {
     expect(info.optionDataTestIdPrefixValue).toBeNull();
   });
 
+  it("throws when a wrapper config omits role (valueAttribute and v-model paths)", () => {
+    // `role` is optional on NativeWrappersMap so the transform can omit it and infer later.
+    // When this helper is called directly with an unresolved (role-less) config, it fails
+    // fast and loud rather than silently fabricating a generic "button" suffix. The transform
+    // resolves role (declared or inferred, throwing when it can't infer) before reaching here.
+    const wrappers: NativeWrappersMap = { "stat-link": { valueAttribute: "label" } };
+    const staticNode = firstElement(parseTemplate("<stat-link label=\"Save\" />"));
+    expect(() => getNativeWrapperTransformInfo(staticNode, "Comp", wrappers)).toThrow(/no resolved role/);
+
+    const modelWrappers: NativeWrappersMap = { "v-select": {} };
+    const modelNode = firstElement(parseTemplate("<v-select v-model=\"selectedGroup\" />"));
+    expect(() => getNativeWrapperTransformInfo(modelNode, "Comp", modelWrappers)).toThrow(/no resolved role/);
+  });
+
   it("covers :modelValue AST parsing via getNativeWrapperTransformInfo", () => {
     const wrappers: NativeWrappersMap = { "v-select": { role: "vselect" } };
 
