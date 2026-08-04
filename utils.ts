@@ -94,6 +94,25 @@ export function upperFirst(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+/**
+ * Collapse runs of whitespace in `value` to single spaces and trim both ends.
+ *
+ * Used to normalize rendered UI/display text — e.g. multi-line Vue text nodes
+ * or joined text content — into a single readable line. This is display-text
+ * normalization, not source-code parsing, so a whitespace regex is the
+ * appropriate tool. Callers that need an `undefined` for empty input should
+ * fall back themselves (e.g. `collapseWhitespace(s) || undefined`).
+ *
+ * @example
+ * collapseWhitespace("  foo   bar\n\tbaz  ") // "foo bar baz"
+ * collapseWhitespace("\n\n") // ""
+ */
+export function collapseWhitespace(value: string): string {
+  /* eslint-disable no-restricted-syntax -- collapsing whitespace runs in display text, not parsing source code */
+  return value.replace(/\s+/g, " ").trim();
+  /* eslint-enable no-restricted-syntax */
+}
+
 export function isAsciiUppercaseLetterCode(code: number): boolean {
   return code >= 65 && code <= 90;
 }
@@ -2870,16 +2889,28 @@ function safeMethodNameFromParts(parts: string[]) {
  * interpolation expressions; the POM layer just needs to know that a keyed slot exists and where
  * it sits relative to the surrounding literal text.
  */
-function toPomKeyPattern(templateValue: Extract<AttributeValue, { kind: "template" }>): string {
+/**
+ * Replaces any `${...}` interpolation in a template string with the stable POM placeholder `${key}`,
+ * and reports the template variable names carried as metadata.
+ *
+ * This is only for the generated POM selector shape. Runtime/test-id generation keeps the real
+ * interpolation expressions; the POM layer just needs to know that a keyed slot exists and where
+ * it sits relative to the surrounding literal text. Every interpolation collapses to the single
+ * `${key}` slot, so the variable name is the constant `key` — known at construction, not derived
+ * from the emitted string.
+ */
+function toPomKeyPattern(templateValue: Extract<AttributeValue, { kind: "template" }>): { formatted: string; templateVariables: string[] } {
   const { templateLiteral } = templateValue.parsedTemplate;
   let out = "";
+  let hasExpression = false;
   for (let i = 0; i < templateLiteral.quasis.length; i += 1) {
     out += templateLiteral.quasis[i]?.value.raw ?? "";
     if (templateLiteral.expressions[i]) {
       out += "${key}";
+      hasExpression = true;
     }
   }
-  return out;
+  return { formatted: out, templateVariables: hasExpression ? ["key"] : [] };
 }
 
 // Internal exports for unit testing (not part of the public plugin API).
@@ -2888,6 +2919,59 @@ export const __internal = {
   safeMethodNameFromParts,
   splitNullishCoalescingExpression,
   toPomKeyPattern,
+  // Exposed for targeted unit coverage of file-local helpers.
+  getDataTestIdFromGroupOption,
+  getVueExpressionSource,
+  tryGetExistingVueExpressionAst,
+  tryParseBabelExpressionFromSource,
+  tryGetVueExpressionAst,
+  tryGetDirectiveBabelAst,
+  findAttributeByKey,
+  findDirectiveByName,
+  isClickDirective,
+  findTemplateSlotScopeExpression,
+  isTemplateWithData,
+  tryGetBindingIdentifierName,
+  getSlotScopeObjectPropertyKeyName,
+  tryGetSlotScopeKeyCandidate,
+  tryGetTemplateSlotScopeBindingNode,
+  toResolvedTemplateFragment,
+  toResolvedKeyInfo,
+  tryGetTemplateSlotScopeKeyInfo,
+  tryExtractSlotScopeVariableNames,
+  unwrapToBareCallbackIdentifier,
+  tryGetBareCallbackClickHandlerName,
+  isSlotScopeCallbackClickHandler,
+  nodeHasForDirective,
+  getKeyDirective,
+  tryUnwrapTemplateLiteralSource,
+  tryUnwrapTemplateLiteralExpressionSource,
+  tryParseTemplateFragment,
+  getTemplateExpressionSource,
+  getSingleExpressionTemplateFragment,
+  templateFragmentContainsSingleExpression,
+  getKeyDirectiveExpression,
+  getParent,
+  tryParseBabelAstFromHandlerSource,
+  extractEmittedEventNameFromAst,
+  walkForEmittedEventName,
+  getStableClickHandlerNameFromAst,
+  getStableClickHandlerNameFromExpression,
+  getClickHandlerNameFromAst,
+  extractNameFromCallee,
+  extractMemberPropertyName,
+  getLastIdentifierFromMemberChainBabel,
+  getAssignmentTargetNameFromBabel,
+  getStableAssignmentValueSuffixFromBabel,
+  isCompilerGeneratedReferenceRoot,
+  tryGetPreservableDynamicReferenceExpression,
+  normalizeHandlerName,
+  isTemplatePlaceholder,
+  isAllCapsOrDigits,
+  startsWithDigit,
+  stripNonIdentifierChars,
+  stripTrailingAsciiDigits,
+  matchesStandaloneWrapperFallbackMethodName,
 };
 
 /**
@@ -3119,13 +3203,16 @@ export function applyResolvedDataTestId(args: {
   // It can be provided via entryOverrides (e.g. router-link :to resolution).
   const targetPageObjectModelClass = entryOverrides.targetPageObjectModelClass;
 
-  // Parameterized selectors are represented explicitly in the POM spec instead of being re-inferred
-  // later from the formatted `${key}` placeholder convention.
+  // Parameterized selectors are represented explicitly in the POM spec: the formatted
+  // pattern and its template variables are both carried as metadata from construction,
+  // never re-derived from the formatted string.
+  const pomKeyPattern = dataTestId.kind === "template" ? toPomKeyPattern(dataTestId) : null;
   const formattedDataTestIdForPom = dataTestId.kind === "template"
-    ? toPomKeyPattern(dataTestId)
+    ? pomKeyPattern!.formatted
     : dataTestId.value;
   const selectorPatternKind: PomPatternKind = dataTestId.kind === "template" ? "parameterized" : "static";
-  const selectorPattern = createPomStringPattern(formattedDataTestIdForPom, selectorPatternKind);
+  const selectorTemplateVariables = dataTestId.kind === "template" ? pomKeyPattern!.templateVariables : [];
+  const selectorPattern = createPomStringPattern(formattedDataTestIdForPom, selectorPatternKind, selectorTemplateVariables);
   const selectorIsParameterized = selectorPatternKind === "parameterized";
 
   const deriveBaseMethodNameFromHint = (hint: string | undefined) => {
@@ -3518,6 +3605,7 @@ export function applyResolvedDataTestId(args: {
     selectorValue: entryOverrides.selectorValue ?? createPomStringPattern(
       getAttributeValueText(dataTestId),
       dataTestId.kind === "template" ? "parameterized" : "static",
+      selectorTemplateVariables,
     ),
     templateLiteral: entryOverrides.templateLiteral,
     targetPageObjectModelClass: entryOverrides.targetPageObjectModelClass,
@@ -3806,8 +3894,8 @@ export function applyResolvedDataTestId(args: {
           name: generatedName,
           selector: {
             kind: "withinTestIdByLabel",
-            rootTestId: createPomStringPattern(wrapperTestId, selectorPatternKind),
-            label: createPomStringPattern(label, "static"),
+            rootTestId: createPomStringPattern(wrapperTestId, selectorPatternKind, selectorTemplateVariables),
+            label: createPomStringPattern(label, "static", []),
             exact: true,
           },
           parameters: [createPomParameterSpec("annotationText", `string = ""`)],
@@ -3836,8 +3924,8 @@ export function applyResolvedDataTestId(args: {
       name: generatedName,
       selector: {
         kind: "withinTestIdByLabel",
-        rootTestId: createPomStringPattern(wrapperTestId, selectorPatternKind),
-        label: createPomStringPattern("${value}", "parameterized"),
+        rootTestId: createPomStringPattern(wrapperTestId, selectorPatternKind, selectorTemplateVariables),
+        label: createPomStringPattern("${value}", "parameterized", ["value"]),
         exact: true,
       },
       parameters: [

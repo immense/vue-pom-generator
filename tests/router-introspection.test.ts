@@ -67,7 +67,7 @@ const domShimGlobalNames = [
 
 type GlobalSnapshot = {
   descriptor: PropertyDescriptor | undefined;
-  value: unknown;
+  value: object | undefined;
   hasOwnProperty: boolean;
 };
 

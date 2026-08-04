@@ -73,6 +73,15 @@ export default antfu({
     "tests/fixtures/generated-tsc/**",
   ],
 }, {
+  // Shorthand method signatures mirror Playwright's own `Page`/`Locator`
+  // interfaces and keep the narrowed type aliases readable. Converting to
+  // function properties would tighten parameter checking to contravariant and
+  // needlessly complicate the test doubles that `implements` these interfaces.
+  files: ["class-generation/playwright-types.ts"],
+  rules: {
+    "ts/method-signature-style": "off",
+  },
+}, {
   files: ["**/class-generation/**/*.ts"],
   rules: {
     // These files primarily *emit* source text. Enforcing AST-only parsing here is counterproductive
@@ -97,9 +106,25 @@ export default antfu({
 }, {
   files: ["**/tests/**/*.ts"],
   rules: {
-    "@typescript-eslint/no-explicit-any": "off",
     "no-console": "off",
-    "no-restricted-syntax": "off",
+    // Tests still get the `unknown` guards from the base config — blanket-disabling
+    // `no-restricted-syntax` here would also turn those off. Keep only the unknown
+    // selectors (mirroring the class-generation block) and drop the regex/string
+    // parsing selectors, which tests legitimately use for assertion helpers.
+    "no-restricted-syntax": ["error",
+      {
+        selector: "TSAsExpression[typeAnnotation.type='TSUnknownKeyword']",
+        message: "Avoid type assertions to `unknown`. Fix the types instead of using `as unknown`.",
+      },
+      {
+        selector: "TSTypeAssertion[typeAnnotation.type='TSUnknownKeyword']",
+        message: "Avoid type assertions to `unknown`. Fix the types instead of using `as unknown`.",
+      },
+      {
+        selector: "TSTypeAnnotation[typeAnnotation.type='TSUnknownKeyword']",
+        message: "Avoid `: unknown` type annotations. Fix the types instead of using `unknown`.",
+      },
+    ],
     "test/prefer-lowercase-title": "off",
   },
 });

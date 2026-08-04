@@ -5,8 +5,9 @@ import { createTestIdsVirtualModulesPlugin } from "../plugin/internal/virtual-mo
 import { createPomParameterSpec } from "../pom-params";
 import { createPomStringPattern } from "../pom-patterns";
 import type { IComponentDependencies } from "../utils";
+import { asSinglePlugin, hookFn } from "./helpers/typed-mocks";
 
-function extractCode(loaded: unknown): string {
+function extractCode(loaded: string | { code: string } | null | undefined | void): string {
   return typeof loaded === "string"
     ? loaded
     : (loaded && typeof loaded === "object" && "code" in loaded)
@@ -30,23 +31,23 @@ describe("virtual:testids", () => {
     const componentHierarchyMap = new Map<string, IComponentDependencies>([
       ["Foo", createDependencies(new Set([
         {
-          selectorValue: createPomStringPattern("foo-${key}-button", "parameterized"),
+          selectorValue: createPomStringPattern("foo-${key}-button", "parameterized", ["key"]),
           pom: {
             nativeRole: "button",
             methodName: "FooByKey",
-            selector: createPomStringPattern("foo-${key}-button", "parameterized"),
+            selector: createPomStringPattern("foo-${key}-button", "parameterized", ["key"]),
             parameters: [createPomParameterSpec("key", "string")],
             generatedActionName: "clickFooByKey",
             generatedPropertyName: "FooButton",
           },
         },
         {
-          selectorValue: createPomStringPattern("foo-root", "static"),
+          selectorValue: createPomStringPattern("foo-root", "static", []),
           pom: {
             nativeRole: "button",
             methodName: "FooRoot",
             getterNameOverride: "FooRootButton",
-            selector: createPomStringPattern("foo-root", "static"),
+            selector: createPomStringPattern("foo-root", "static", []),
             parameters: [],
             generatedActionName: "clickFooRoot",
             generatedPropertyName: "FooRootButton",
@@ -60,18 +61,18 @@ describe("virtual:testids", () => {
           name: "clickFirstFoo",
           selector: {
             kind: "testId",
-            testId: createPomStringPattern("foo-${key}-button", "parameterized"),
+            testId: createPomStringPattern("foo-${key}-button", "parameterized", ["key"]),
           },
           parameters: [createPomParameterSpec("key", "string")],
         }],
       })],
       ["Bar", createDependencies(new Set([
         {
-          selectorValue: createPomStringPattern("bar", "static"),
+          selectorValue: createPomStringPattern("bar", "static", []),
           pom: {
             nativeRole: "button",
             methodName: "Bar",
-            selector: createPomStringPattern("bar", "static"),
+            selector: createPomStringPattern("bar", "static", []),
             parameters: [],
             generatedActionName: "clickBar",
             generatedPropertyName: "BarButton",
@@ -82,11 +83,11 @@ describe("virtual:testids", () => {
       })],
       ["WrapperButton", createDependencies(new Set([
         {
-          selectorValue: createPomStringPattern("WrapperButton-Click-button", "static"),
+          selectorValue: createPomStringPattern("WrapperButton-Click-button", "static", []),
           pom: {
             nativeRole: "button",
             methodName: "WrapperButton",
-            selector: createPomStringPattern("WrapperButton-Click-button", "static"),
+            selector: createPomStringPattern("WrapperButton-Click-button", "static", []),
             parameters: [],
             generatedActionName: "clickWrapperButton",
             generatedPropertyName: "WrapperButton",
@@ -111,15 +112,15 @@ describe("virtual:testids", () => {
       ])],
     ]);
 
-    const plugin = createTestIdsVirtualModulesPlugin(componentHierarchyMap, elementMetadata);
+    const plugin = asSinglePlugin(createTestIdsVirtualModulesPlugin(componentHierarchyMap, elementMetadata));
     expect(typeof plugin).toBe("object");
 
-    const resolved = await (plugin as any).resolveId?.("virtual:testids");
-    const resolvedId = typeof resolved === "string" ? resolved : resolved?.id;
+    const resolved = await hookFn(plugin.resolveId)?.("virtual:testids", undefined, { attributes: {}, isEntry: false });
+    const resolvedId = typeof resolved === "string" ? resolved : (resolved && typeof resolved === "object" ? resolved.id : undefined);
 
     expect(typeof resolvedId).toBe("string");
 
-    const loaded = await (plugin as any).load?.(resolvedId);
+    const loaded = await hookFn(plugin.load)?.(resolvedId!);
     const code = extractCode(loaded);
 
     expect(code).toContain("export const testIdManifest");
@@ -152,9 +153,9 @@ describe("virtual:testids", () => {
     expect(testIdSection).toContain("\"WrapperButton-Click-button\"");
     expect(pomSection).not.toContain("\"WrapperButton\":");
 
-    const resolvedPomManifest = await (plugin as any).resolveId?.("virtual:pom-manifest");
-    const resolvedPomManifestId = typeof resolvedPomManifest === "string" ? resolvedPomManifest : resolvedPomManifest?.id;
-    const loadedPomManifest = await (plugin as any).load?.(resolvedPomManifestId);
+    const resolvedPomManifest = await hookFn(plugin.resolveId)?.("virtual:pom-manifest", undefined, { attributes: {}, isEntry: false });
+    const resolvedPomManifestId = typeof resolvedPomManifest === "string" ? resolvedPomManifest : (resolvedPomManifest && typeof resolvedPomManifest === "object" ? resolvedPomManifest.id : undefined);
+    const loadedPomManifest = await hookFn(plugin.load)?.(resolvedPomManifestId!);
     const pomManifestCode = extractCode(loadedPomManifest);
 
     expect(pomManifestCode).toContain("export const pomManifest");
@@ -166,11 +167,11 @@ describe("virtual:testids", () => {
 
     componentHierarchyMap.set("Baz", createDependencies(new Set([
       {
-        selectorValue: createPomStringPattern("baz", "static"),
+        selectorValue: createPomStringPattern("baz", "static", []),
         pom: {
           nativeRole: "button",
           methodName: "Baz",
-          selector: createPomStringPattern("baz", "static"),
+          selector: createPomStringPattern("baz", "static", []),
           parameters: [],
         },
       },
@@ -178,7 +179,7 @@ describe("virtual:testids", () => {
       filePath: "/repo/src/components/Baz.vue",
     }));
 
-    const loaded2 = await (plugin as any).load?.(resolvedId);
+    const loaded2 = await hookFn(plugin.load)?.(resolvedId!);
     const code2 = extractCode(loaded2);
 
     expect(code2).toContain("\"Baz\"");
