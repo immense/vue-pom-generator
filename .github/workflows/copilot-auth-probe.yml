@@ -1,0 +1,86 @@
+# Diagnostic workflow for the Copilot CLI auth migration.
+#
+# Step 1 (already shipped in release.yml / pr-release-notes.yml) replaced the
+# long-lived PAT with the workflow's built-in GITHUB_TOKEN.
+#
+# Step 2 is an experiment: can the Copilot CLI run with NO GitHub token at all
+# when COPILOT_PROVIDER_* (wopr) is configured? This workflow answers that
+# without touching the real release pipeline. Run it manually from the Actions
+# tab ("Run workflow"). Both jobs are best-effort (continue-on-error) and only
+# print results to the run log — they publish nothing.
+#
+# Background: https://github.blog/changelog/2026-07-02-copilot-cli-no-longer-needs-a-personal-access-token-in-github-actions/
+name: Copilot Auth Probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  copilot-requests: write
+
+jobs:
+  probe:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: "with built-in GITHUB_TOKEN"
+            set_github_token: "true"
+          - label: "provider-only (no GitHub token)"
+            set_github_token: "false"
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install
+        run: npm ci
+
+      - name: Run Copilot CLI (${{ matrix.label }})
+        shell: bash
+        env:
+          # Custom provider (wopr) — routes model inference + auth away from GitHub.
+          COPILOT_PROVIDER_BASE_URL: ${{ secrets.COPILOT_PROVIDER_BASE_URL }}
+          COPILOT_PROVIDER_API_KEY: ${{ secrets.COPILOT_PROVIDER_API_KEY }}
+          COPILOT_PROVIDER_MAX_PROMPT_TOKENS: "380000"
+          COPILOT_PROVIDER_MAX_OUTPUT_TOKENS: "16000"
+          # Only set for the "with token" leg. Unset => CLI must rely on the provider.
+          COPILOT_GITHUB_TOKEN: ${{ matrix.set_github_token == 'true' && github.token || '' }}
+          GH_TOKEN: ${{ matrix.set_github_token == 'true' && github.token || '' }}
+        run: |
+          set +e
+          echo "::group::copilot --version"
+          ./node_modules/.bin/copilot --version
+          echo "::endgroup::"
+
+          echo "COPILOT_GITHUB_TOKEN is $([ -n "$COPILOT_GITHUB_TOKEN" ] && echo SET || echo UNSET)"
+          echo "GH_TOKEN is $([ -n "$GH_TOKEN" ] && echo SET || echo UNSET)"
+          echo "COPILOT_PROVIDER_BASE_URL is $([ -n "$COPILOT_PROVIDER_BASE_URL" ] && echo SET || echo UNSET)"
+
+          ./node_modules/.bin/copilot \
+            --log-level none \
+            --stream off \
+            --model "reasoning" \
+            --prompt "Reply with exactly: ok" \
+            --silent \
+            > PROBE_OUT.md 2> PROBE_ERR.txt
+          CODE=$?
+
+          echo "--- exit code: $CODE ---"
+          echo "--- stdout (PROBE_OUT.md) ---"
+          cat PROBE_OUT.md || true
+          echo "--- stderr (PROBE_ERR.txt) ---"
+          cat PROBE_ERR.txt || true
+
+          if [ "$CODE" -eq 0 ] && [ -s PROBE_OUT.md ]; then
+            echo "::notice::SUCCESS — Copilot produced output (${{ matrix.label }})."
+          else
+            echo "::warning::FAILURE — Copilot did not produce output (${{ matrix.label }}). See stderr above."
+          fi

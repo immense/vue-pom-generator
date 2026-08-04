@@ -12,6 +12,9 @@ concurrency:
 permissions:
   contents: read
   pull-requests: write
+  # Lets the built-in GITHUB_TOKEN authenticate Copilot CLI billed to the org
+  # (no PAT needed). See https://github.blog/changelog/2026-07-02-copilot-cli-no-longer-needs-a-personal-access-token-in-github-actions/
+  copilot-requests: write
 
 jobs:
   generate:
@@ -34,7 +37,9 @@ jobs:
         id: ai_release_notes
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          # Copilot CLI now authenticates with the workflow's built-in GITHUB_TOKEN
+          # (see copilot-requests: write above) instead of a long-lived PAT.
+          GH_TOKEN: ${{ github.token }}
           COPILOT_PROVIDER_BASE_URL: ${{ secrets.COPILOT_PROVIDER_BASE_URL }}
           COPILOT_PROVIDER_API_KEY: ${{ secrets.COPILOT_PROVIDER_API_KEY }}
           COPILOT_PROVIDER_MAX_PROMPT_TOKENS: "380000"
