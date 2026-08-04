@@ -25,10 +25,25 @@ const DEFAULT_ENTRY_SUFFIXES = [
   "/src/main.jsx",
 ];
 
-function toFsImportPath(filePath: string): string {
-  /* eslint-disable no-restricted-syntax -- normalizing Windows path separators to POSIX for a Vite /@fs/ import URL, not parsing source code */
-  return `/@fs/${filePath.replace(/\\/g, "/")}`;
+/**
+ * Normalize Windows backslash path separators to POSIX forward slashes.
+ *
+ * Used to build Vite `/@fs/` import URLs and to compare entry-path suffixes
+ * consistently across platforms. This is path-separator normalization, not
+ * source-code parsing.
+ *
+ * @example
+ * normalizePathSeparators("src\\widgets\\Item.vue") // "src/widgets/Item.vue"
+ * normalizePathSeparators("src/widgets/Item.vue") // "src/widgets/Item.vue"
+ */
+function normalizePathSeparators(filePath: string): string {
+  /* eslint-disable no-restricted-syntax -- normalizing path separators, not parsing source code */
+  return filePath.replace(/\\/g, "/");
   /* eslint-enable no-restricted-syntax */
+}
+
+function toFsImportPath(filePath: string): string {
+  return `/@fs/${normalizePathSeparators(filePath)}`;
 }
 
 function resolveAnnotatorClientPath(): string {
@@ -79,9 +94,7 @@ export function createAnnotatorUiPlugin(options: ResolvedAnnotatorUiOptions): Pl
         return null;
       }
 
-      /* eslint-disable no-restricted-syntax -- normalizing Windows path separators to POSIX for entry-suffix matching, not parsing source code */
-      const normalizedId = id.replace(/\\/g, "/");
-      /* eslint-enable no-restricted-syntax */
+      const normalizedId = normalizePathSeparators(id);
       if (!DEFAULT_ENTRY_SUFFIXES.some(suffix => normalizedId.endsWith(suffix))) {
         return null;
       }
@@ -111,3 +124,8 @@ export function createAnnotatorUiPlugin(options: ResolvedAnnotatorUiOptions): Pl
     },
   };
 }
+
+// Exposed for unit tests. Pure helper (no I/O).
+export const __internal = {
+  normalizePathSeparators,
+};

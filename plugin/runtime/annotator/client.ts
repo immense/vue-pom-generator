@@ -2,6 +2,7 @@ import { arrow, autoPlacement, autoUpdate, computePosition, offset, shift, type 
 
 import { formatAnnotations, formatSingleAnnotationPreview, type FormattedAnnotation, type OutputDetail } from "./format";
 import { ANNOTATOR_ROOT_ATTR, ANNOTATOR_STYLES } from "./styles";
+import { normalizeInlineText } from "./text-utils";
 import { resolveVueComponentInfo, type VueDetectorOptions } from "./vue-detector";
 
 export interface AnnotatorClientOptions extends VueDetectorOptions {
@@ -63,13 +64,6 @@ const SHORTCUT_LABELS = {
   cancel: "Esc",
 } as const;
 
-function normalizeText(value: string | undefined): string | undefined {
-  /* eslint-disable no-restricted-syntax -- collapsing whitespace in UI display text, not parsing source code */
-  const normalized = value?.replace(/\s+/g, " ").trim();
-  /* eslint-enable no-restricted-syntax */
-  return normalized || undefined;
-}
-
 function formatShortcutTitle(label: string, shortcut: string | undefined): string {
   return shortcut ? `${label} (${shortcut})` : label;
 }
@@ -121,12 +115,12 @@ function getElementPath(element: Element): string {
 }
 
 function getNearbyText(element: Element): string | undefined {
-  const ownText = normalizeText(element.textContent || undefined);
+  const ownText = normalizeInlineText(element.textContent || undefined);
   if (ownText && ownText.length >= 2) {
     return ownText.length > 160 ? `${ownText.slice(0, 160)}...` : ownText;
   }
 
-  const parentText = normalizeText(element.parentElement?.textContent || undefined);
+  const parentText = normalizeInlineText(element.parentElement?.textContent || undefined);
   if (parentText) {
     return parentText.length > 160 ? `${parentText.slice(0, 160)}...` : parentText;
   }
@@ -157,6 +151,21 @@ function createFloatingArrow(): HTMLDivElement {
 
 function toCssPixels(value: number): string {
   return `${Math.round(value)}px`;
+}
+
+/**
+ * The primary side of a Floating UI placement token (e.g. `"top"` from
+ * `"top-start"`). Used to derive the static side opposite the arrow. This
+ * splits a CSS placement token on its separator, not source code.
+ *
+ * @example
+ * placementPrimarySide("top-start") // "top"
+ * placementPrimarySide("right") // "right"
+ */
+function placementPrimarySide(placement: string): string {
+  /* eslint-disable no-restricted-syntax -- splitting a CSS placement token on its separator, not parsing source code */
+  return placement.split("-")[0];
+  /* eslint-enable no-restricted-syntax */
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -727,9 +736,7 @@ class AnnotatorRuntime {
       panel.style.visibility = "visible";
 
       const arrowData = result.middlewareData.arrow;
-      /* eslint-disable no-restricted-syntax -- splitting a CSS placement token (e.g. "top-start") on its separator, not parsing source code */
-      const side = result.placement.split("-")[0];
-      /* eslint-enable no-restricted-syntax */
+      const side = placementPrimarySide(result.placement);
       const staticSide = side === "top" ? "bottom" : side === "bottom" ? "top" : side === "left" ? "right" : "left";
       arrowEl.style.removeProperty("top");
       arrowEl.style.removeProperty("right");
@@ -1007,3 +1014,8 @@ export function mountAnnotatorClient(options: AnnotatorClientOptions) {
   runtimeWindow[RUNTIME_GUARD] = runtime;
   return runtime;
 }
+
+// Exposed for unit tests. Pure helper (no DOM access).
+export const __internal = {
+  placementPrimarySide,
+};

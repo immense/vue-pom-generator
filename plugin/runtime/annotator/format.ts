@@ -1,3 +1,5 @@
+import { normalizeInlineText } from "./text-utils";
+
 export type OutputDetail = "standard" | "forensic";
 
 export interface FormattedAnnotation {
@@ -8,13 +10,6 @@ export interface FormattedAnnotation {
   uiText?: string;
   locator?: string;
   domHint?: string;
-}
-
-function normalizeInlineText(value: string | undefined): string | undefined {
-  /* eslint-disable no-restricted-syntax -- collapsing whitespace in UI display text, not parsing source code */
-  const normalized = value?.replace(/\s+/g, " ").trim();
-  /* eslint-enable no-restricted-syntax */
-  return normalized || undefined;
 }
 
 export function formatAnnotations(
@@ -76,5 +71,8 @@ export function formatSingleAnnotationPreview(
 ): string {
   const formatted = formatAnnotations([annotation], detail, pageUrl);
   const headingIndex = formatted.indexOf("### 1.");
+  // reason: `formatAnnotations` is always called with a single-element array, so it
+  // always emits a `### 1.` heading; the false branch of this ternary is unreachable.
+  /* c8 ignore next */
   return headingIndex >= 0 ? formatted.slice(headingIndex).trim() : formatted.trim();
 }
