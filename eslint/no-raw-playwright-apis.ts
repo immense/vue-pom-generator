@@ -1,6 +1,10 @@
 import type { Rule } from "eslint";
+import type { MemberExpression } from "estree";
 
-const bannedPlaywrightApis = new Set(["locator", "getByRole", "getByText", "getByLabel"]);
+// Locator-filter methods available on Page/Locator/Frame etc. Banned regardless of
+// the receiver object. `getByTestId` is the generator's own test-id contract — specs
+// should reach it through a generated POM accessor, never a raw `*.getByTestId(...)`.
+const bannedPlaywrightApis = new Set(["locator", "getByRole", "getByText", "getByLabel", "getByTestId"]);
 
 const bannedPageApis = new Set([
 	"$eval",
@@ -16,6 +20,24 @@ const SPEC_FILE_SUFFIXES = [".spec.ts", ".spec.tsx", ".spec.js", ".spec.jsx"];
 
 function isSpecFile(filename: string): boolean {
 	return SPEC_FILE_SUFFIXES.some((suffix) => filename.endsWith(suffix));
+}
+
+/**
+ * Resolve the accessed property name from a MemberExpression callee, covering both
+ * the usual member access (`page.getByTestId(...)`) and the computed equivalent
+ * (`page["getByTestId"](...)`). A computed access whose key is a non-Literal
+ * (e.g. `obj[dynamicKey]()`) cannot be resolved to a name, so it returns
+ * `undefined` and is left alone — it could be anything at runtime.
+ */
+function resolveMemberPropertyName(callee: MemberExpression): string | undefined {
+	const { property, computed } = callee;
+	if (!computed && property.type === "Identifier") {
+		return property.name;
+	}
+	if (computed && property.type === "Literal" && typeof property.value === "string") {
+		return property.value;
+	}
+	return undefined;
 }
 
 export const noRawPlaywrightApisRule: Rule.RuleModule = {
@@ -55,16 +77,16 @@ export const noRawPlaywrightApisRule: Rule.RuleModule = {
 					return;
 				}
 
-				if (
-					node.callee.type !== "MemberExpression"
-					|| node.callee.computed
-					|| node.callee.property.type !== "Identifier"
-				) {
+				if (node.callee.type !== "MemberExpression") {
+					return;
+				}
+
+				const apiName = resolveMemberPropertyName(node.callee as MemberExpression);
+				if (apiName === undefined) {
 					return;
 				}
 
 				const objectText = sourceCode.getText(node.callee.object);
-				const apiName = node.callee.property.name;
 
 				if (
 					(objectText === "page" || objectText === "playwrightPage")
