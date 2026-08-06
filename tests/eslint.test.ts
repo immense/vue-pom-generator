@@ -200,4 +200,75 @@ describe("no-raw-playwright-apis", () => {
 			],
 		});
 	});
+
+	it("flags getByTestId in spec files", () => {
+		tester.run("no-raw-playwright-apis", noRawPlaywrightApisRule, {
+			valid: [],
+			invalid: [
+				{
+					code: "page.getByTestId('save-button');",
+					filename: "/tmp/example.spec.ts",
+					errors: [{ messageId: "rawPlaywrightApi" }],
+				},
+				{
+					// getByTestId is a locator-filter method (like getByRole/getByText),
+					// so it is banned regardless of the receiver object.
+					code: "someLocator.getByTestId('save-button');",
+					filename: "/tmp/example.spec.ts",
+					errors: [{ messageId: "rawPlaywrightApi" }],
+				},
+				{
+					// A template-literal arg is still a raw getByTestId call.
+					code: "page.getByTestId(`edit-person-btn-${id}`);",
+					filename: "/tmp/example.spec.ts",
+					errors: [{ messageId: "rawPlaywrightApi" }],
+				},
+			],
+		});
+	});
+
+	it("flags computed-member access to banned APIs", () => {
+		tester.run("no-raw-playwright-apis", noRawPlaywrightApisRule, {
+			valid: [],
+			invalid: [
+				{
+					// Computed string-literal access (`obj["name"]()`) previously slipped
+					// through the `!callee.computed` guard; the fix resolves the property
+					// name from a string Literal too.
+					code: "page['getByTestId']('save'); page['locator']('button'); page['getByRole']('button');",
+					filename: "/tmp/example.spec.ts",
+					errors: [
+						{ messageId: "rawPlaywrightApi" },
+						{ messageId: "rawPlaywrightApi" },
+						{ messageId: "rawPlaywrightApi" },
+					],
+				},
+				{
+					// Computed page-level APIs are reported with the page message.
+					code: "page['click']('#save');",
+					filename: "/tmp/example.spec.ts",
+					errors: [{ messageId: "rawPlaywrightPageApi" }],
+				},
+			],
+		});
+	});
+
+	it("allows computed access to non-banned APIs and dynamic keys", () => {
+		tester.run("no-raw-playwright-apis", noRawPlaywrightApisRule, {
+			valid: [
+				{
+					// A computed name that is not a banned API is fine.
+					code: "page['someCustomMethod']('x');",
+					filename: "/tmp/example.spec.ts",
+				},
+				{
+					// A dynamic (non-Literal) computed key is not resolvable to a name,
+					// so it is never reported — it could be anything at runtime.
+					code: "obj[dynamicKey]();",
+					filename: "/tmp/example.spec.ts",
+				},
+			],
+			invalid: [],
+		});
+	});
 });
