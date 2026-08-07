@@ -1495,17 +1495,17 @@ describe('createTestIdTransform', () => {
 
   it('infers a link role through a nested link-wrapper component (RouterLink)', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-link-nested-'))
-    const immyLinkPath = path.join(tempRoot, 'src', 'components', 'ImmyLink.vue')
+    const innerLinkPath = path.join(tempRoot, 'src', 'components', 'InnerLink.vue')
     const statLinkPath = path.join(tempRoot, 'src', 'components', 'DashboardStatLink.vue')
-    fs.mkdirSync(path.dirname(immyLinkPath), { recursive: true })
-    // ImmyLink forwards to a RouterLink (which renders an <a>).
-    fs.writeFileSync(immyLinkPath, '<template><RouterLink :to="to"><slot /></RouterLink></template>')
-    // DashboardStatLink wraps ImmyLink — inference must recurse through both.
-    fs.writeFileSync(statLinkPath, '<template><ImmyLink :to="to"><slot /></ImmyLink></template>')
+    fs.mkdirSync(path.dirname(innerLinkPath), { recursive: true })
+    // InnerLink forwards to a RouterLink (which renders an <a>).
+    fs.writeFileSync(innerLinkPath, '<template><RouterLink :to="to"><slot /></RouterLink></template>')
+    // DashboardStatLink wraps InnerLink — inference must recurse through both.
+    fs.writeFileSync(statLinkPath, '<template><InnerLink :to="to"><slot /></InnerLink></template>')
 
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
     const vueFilesPathMap = new Map<string, string>([
-      ['ImmyLink', immyLinkPath],
+      ['InnerLink', innerLinkPath],
       ['DashboardStatLink', statLinkPath],
     ])
 
@@ -1647,5 +1647,93 @@ describe('createTestIdTransform', () => {
         nodeTransforms: [createTestIdTransform('Form', componentHierarchyMap, {}, [], '/src/views')],
       })
     }).toThrow(/no usable identity could be derived/)
+  })
+})
+
+describe('createTestIdTransform — definition-site opaque-:to guard for wrapper SFCs', () => {
+  // Compile a template as a given componentName with declared nativeWrappers, returning
+  // the first injected data-testid (or null if none). componentName is explicit so we can
+  // simulate both usage sites (parent page) and definition sites (the wrapper SFC itself).
+  function compileTestIdAst(
+    source: string,
+    componentName: string,
+    nativeWrappers: NativeWrappersMap,
+  ): RootNode {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    return compileAndCaptureAst(source, {
+      filename: `/src/components/${componentName}.vue`,
+      nodeTransforms: [createTestIdTransform(componentName, componentHierarchyMap, nativeWrappers, [], '/src/views')],
+    })
+  }
+
+  it('T1: a usage-site wrapper with a route-object :to still derives a testid from the route name', () => {
+    // Sanity check: declaring a wrapper role does not regress usage-site :to derivation.
+    // (Route-name derivation strips spaces: "New Tag" → "NewTag".)
+    const ast = compileTestIdAst(
+      '<MyButton :to="{ name: \'New Tag\' }">New</MyButton>',
+      'TagsListPage',
+      { MyButton: { role: 'button' } },
+    )
+    const testId = findFirstDataTestId(ast)
+    expect(testId).toBe('TagsListPage-NewTag-button')
+  })
+
+  it('T2: a usage-site wrapper @click button derives a testid from the click handler', () => {
+    const ast = compileTestIdAst(
+      '<MyButton @click="save">Save</MyButton>',
+      'TagsListPage',
+      { MyButton: { role: 'button' } },
+    )
+    expect(findFirstDataTestId(ast)).toBe('TagsListPage-Save-button')
+  })
+
+  it('T3: a wrapper SFC\'s own template injects no testid for an opaque-prop :to (definition-site guard)', () => {
+    // Compiling MyButton.vue itself: componentName IS the wrapper, so the bare-identifier
+    // `:to="to"` (prop passthrough) must not emit a colliding `MyButton--component`-style id.
+    const ast = compileTestIdAst(
+      `
+        <component :is="'RouterLink'" v-if="to != null" :to="to"><slot /></component>
+        <a v-else-if="href != null" :href="href"><slot /></a>
+        <button v-else><slot /></button>
+      `,
+      'MyButton',
+      { MyButton: { role: 'button' } },
+    )
+    expect(findFirstDataTestId(ast)).toBeNull()
+  })
+
+  it('T4: a non-wrapper usage-site RouterLink with a bare-variable :to is NOT suppressed (guard is definition-site only)', () => {
+    // componentName "TagsListPage" is not a key in nativeWrappers → guard inactive → existing
+    // behavior preserved (a testid is still derived from the variable).
+    const ast = compileTestIdAst(
+      '<RouterLink :to="someVar">Go</RouterLink>',
+      'TagsListPage',
+      { MyButton: { role: 'button' } },
+    )
+    const testId = findFirstDataTestId(ast)
+    expect(testId).not.toBeNull()
+    expect(testId).toContain('routerlink')
+  })
+
+  it('T5: a link wrapper\'s own template injects no testid for an opaque-prop :to', () => {
+    // Usage site: a route-object :to derives a testid from the route name (role "link").
+    const usageAst = compileTestIdAst(
+      '<MyLink :to="{ name: \'Computers\' }">Computers</MyLink>',
+      'SidebarPage',
+      { MyLink: { role: 'link' } },
+    )
+    expect(findFirstDataTestId(usageAst)).toBe('SidebarPage-Computers-link')
+
+    // Definition site: the wrapper's own template forwards `:to="to"` (bare identifier) —
+    // the guard suppresses the colliding literal.
+    const definitionAst = compileTestIdAst(
+      `
+        <RouterLink v-if="to" :to="to"><slot /></RouterLink>
+        <a v-else :href="href"><slot /></a>
+      `,
+      'MyLink',
+      { MyLink: { role: 'link' } },
+    )
+    expect(findFirstDataTestId(definitionAst)).toBeNull()
   })
 })

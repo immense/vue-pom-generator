@@ -2032,6 +2032,28 @@ export function generateToDirectiveDataTestId(componentName: string, node: Eleme
         return null;
       }
 
+      // Definition-site guard: when compiling a native-wrapper SFC's *own* template
+      // (`componentName` is itself a configured wrapper), a `:to` bound to a bare,
+      // unresolvable identifier (e.g. `:to="to"` forwarding a prop) is opaque — its
+      // runtime value is whatever the parent passes. Deriving a testid from it yields a
+      // colliding literal (e.g. `MyButton--component`) on every string-`to` usage.
+      // The wrapper's identity is derived at usage sites (slot text / click handler),
+      // so skip injection here. Usage-site (non-wrapper) RouterLinks are unaffected:
+      // their `componentName` is the parent page, not a key in `nativeWrappers`. Only a
+      // bare `Identifier` is suppressed; string literals, object literals (e.g.
+      // `{ name: 'X' }`), and template literals carry resolvable identity and are left
+      // to the existing logic below.
+      if (nativeWrappers[componentName]) {
+        const toAstForGuard = tryGetDirectiveBabelAst(toDirective, {
+          preferredViews: ["loc", "compiled"],
+          plugins: ["typescript"],
+          preferExistingAst: false,
+        });
+        if (toAstForGuard && isIdentifier(toAstForGuard)) {
+          return null;
+        }
+      }
+
       const source = getVueExpressionSource(toDirective.exp as VueExpressionNode, "compiled", "loc");
 
       const toAst = toDirective.exp.ast;
