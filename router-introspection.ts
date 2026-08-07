@@ -303,6 +303,8 @@ export interface RouterIntrospectionResult {
   routePathMap: Map<string, string>;
   routeMetaEntries: Array<{
     componentName: string;
+    /** Vue Router route `name` (when declared). Used for runtime `router.push({ name, params })`. */
+    name: string | null;
     pathTemplate: string;
     params: Array<{ name: string; optional: boolean }>;
     query: string[];
@@ -431,9 +433,10 @@ type RoutePropsFunction = (route: RouteLocationNormalizedLoaded) => Record<strin
 type RoutePropsValue = boolean | Record<string, RoutePropPrimitive> | RoutePropsFunction;
 type RoutePropsContainer = RoutePropsValue | { default?: RoutePropsValue };
 
-const PARAM_TOKEN_PREFIX = "__VUE_TESTID_PARAM__";
+export const PARAM_TOKEN_PREFIX = "__VUE_TESTID_PARAM__";
 
-function getParamToken(name: string) {
+/** Builds the opaque placeholder token substituted into a route template for a named param. */
+export function getParamToken(name: string) {
   return `${PARAM_TOKEN_PREFIX}${name}__`;
 }
 
@@ -1083,6 +1086,9 @@ export async function introspectNuxtPages(
       routePathMap.set(pathTemplate, componentName);
       routeMetaEntries.push({
         componentName,
+        // Nuxt file-based routes are named by convention, but the static walk does not
+        // recover those names — leave null so callers fall back to path-template navigation.
+        name: null,
         pathTemplate,
         params,
         query: [],
@@ -1212,6 +1218,7 @@ export async function parseRouterFileFromCwd(
           if (typeof pathTemplate === "string" && pathTemplate.length) {
             routeMetaEntries.push({
               componentName,
+              name: typeof r.name === "string" && r.name.length ? r.name : null,
               pathTemplate,
               params: paramsMeta,
               query: queryKeys,

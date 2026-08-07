@@ -28,7 +28,7 @@ import {
   type PomStringPattern,
 } from "../pom-patterns";
 import { buildPomLocatorDescription, stripPomActionPrefix } from "../pom-discoverability";
-import { introspectNuxtPages, parseRouterFileFromCwd } from "../router-introspection";
+import { getParamToken, introspectNuxtPages, parseRouterFileFromCwd } from "../router-introspection";
 import {
   addExportAll,
   addNamedImport,
@@ -108,8 +108,23 @@ function resolveRouterEntry(projectRoot?: string, routerEntry?: string) {
   return path.isAbsolute(routerEntry) ? routerEntry : path.resolve(root, routerEntry);
 }
 
-interface RouteMeta {
+interface RouteParamMeta {
+  name: string;
+  optional: boolean;
+}
+
+interface RouteEntry {
+  /** Vue Router route `name`, when declared. Enables runtime `router.push({ name, params })`. */
+  name: string | null;
   template: string;
+  params: RouteParamMeta[];
+}
+
+interface RouteMeta {
+  /** Shortest route template — used for the static `route` property. */
+  template: string;
+  /** Every route that renders this component (name + template + declared params). */
+  routes: RouteEntry[];
 }
 
 type CustomPomMethodSignatureMap = Map<string, PomMethodSignature>;
@@ -277,27 +292,40 @@ async function getRouteMetaByComponent(
       },
     });
 
-  const map = new Map<string, RouteMeta[]>();
+  const map = new Map<string, RouteEntry[]>();
   for (const entry of routeMetaEntries) {
     const list = map.get(entry.componentName) ?? [];
-    list.push({ template: entry.pathTemplate });
+    list.push({ name: entry.name, template: entry.pathTemplate, params: entry.params });
     map.set(entry.componentName, list);
   }
 
-  const chooseRouteMeta = (entries: RouteMeta[]): RouteMeta | null => {
+  const dedupeRoutes = (entries: RouteEntry[]): RouteEntry[] => {
+    const seen = new Set<string>();
+    const unique: RouteEntry[] = [];
+    for (const entry of entries) {
+      if (seen.has(entry.template))
+        continue;
+      seen.add(entry.template);
+      unique.push(entry);
+    }
+    return unique;
+  };
+
+  const choosePrimaryTemplate = (entries: RouteEntry[]): string | null => {
     if (!entries.length)
       return null;
     return entries
       .slice()
-      .sort((a, b) => a.template.length - b.template.length || a.template.localeCompare(b.template))[0];
+      .sort((a, b) => a.template.length - b.template.length || a.template.localeCompare(b.template))[0].template;
   };
 
   const sorted = Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   return Object.fromEntries(
     sorted
-      .map(([componentName, entries]) => {
-        const chosen = chooseRouteMeta(entries);
-        return chosen ? [componentName, chosen] : null;
+      .map(([componentName, rawEntries]) => {
+        const routes = dedupeRoutes(rawEntries);
+        const primaryTemplate = choosePrimaryTemplate(routes);
+        return primaryTemplate ? [componentName, { template: primaryTemplate, routes }] : null;
       })
       .filter((entry): entry is [string, RouteMeta] => !!entry),
   );
@@ -317,28 +345,208 @@ function generateRouteProperty(routeMeta: RouteMeta | null): TypeScriptClassMemb
   ];
 }
 
-function generateGoToSelfMethod(componentName: string): TypeScriptClassMember[] {
+function buildParamTypeString(params: RouteParamMeta[]): string {
+  return `{ ${params.map(p => `${p.name}${p.optional ? "?" : ""}: string | number`).join("; ")} }`;
+}
+
+function chooseParamlessRoute(routes: RouteEntry[]): RouteEntry | null {
+  const paramless = routes.filter(r => r.params.length === 0);
+  if (!paramless.length)
+    return null;
+  return paramless
+    .slice()
+    .sort((a, b) => a.template.length - b.template.length || a.template.localeCompare(b.template))[0];
+}
+
+function chooseParametrizedRoute(routes: RouteEntry[]): RouteEntry | null {
+  const parametrized = routes.filter(r => r.params.length > 0);
+  if (!parametrized.length)
+    return null;
+  return parametrized
+    .slice()
+    .sort((a, b) => a.params.length - b.params.length || a.template.length - b.template.length || a.template.localeCompare(b.template))[0];
+}
+
+const GOTO_RUNTIME_LINES = [
+  "const runtimeEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;",
+  "const runtimeBaseUrl = runtimeEnv?.PLAYWRIGHT_RUNTIME_BASE_URL ?? runtimeEnv?.PLAYWRIGHT_TEST_BASE_URL ?? runtimeEnv?.VITE_PLAYWRIGHT_BASE_URL;",
+  "const resolvedUrl = runtimeBaseUrl ? new URL(targetUrl, runtimeBaseUrl).toString() : targetUrl;",
+  "await this.page.goto(resolvedUrl);",
+];
+
+/**
+ * The `window`/`globalThis` key the consumer exposes the live Vue Router instance under
+ * (dev-gated), so generated `goTo()` can drive `router.push({ name, params })` instead of
+ * reconstructing URLs from opaque path-template tokens. The consumer is responsible for
+ * installing `globalThis[ROUTER_GLOBAL_NAME] = router` in test/dev builds.
+ */
+const ROUTER_GLOBAL_NAME = "__appRouter";
+
+/**
+ * Emits the router-driven `goTo()` body for a named route. Two regimes:
+ *
+ * - **Cold page** (fresh Playwright page on `about:blank` — the SPA hasn't booted, so the
+ *   router global is `undefined`): boot the app with a cheap `page.goto("/")`, wait for the
+ *   router to install, then **full-load the resolved target URL** (`router.resolve({ name,
+ *   params }).href` + `page.goto`). A full load is unavoidable here — you cannot `push`
+ *   before the router exists — and resolving the target (rather than stopping at "/") means
+ *   the route's component mounts via a stable page load, exactly as the original
+ *   `page.goto`-based tests did. This matters because the POM runtime clicks with
+ *   `force: true` (skipping Playwright's actionability check): a SPA `push` into a freshly
+ *   mounted view can resolve before radios/inputs are interactive, so a force-click fired
+ *   the instant the push resolves can miss (the control's handler isn't attached yet). A
+ *   full load gives a fully-rendered, interactive page.
+ * - **Warm page** (the app is already mounted — any later `goTo()` in the same test): the
+ *   guard is a single cheap `evaluate` that finds the router present, so the navigation is a
+ *   pure SPA `router.push({ name, params })` — no reload — the intended fast path.
+ *
+ * `routeNameExpr` is a TS expression yielding the route name (a string literal for single
+ * routes, or `params ? "edit" : "new"` for the dual-route overload). `paramsExpr` is the
+ * params source (`"undefined"` for a paramless route, `"params"` otherwise); `nullable` is
+ * true only when that source may itself be `undefined` (the all-optional-params overload),
+ * gating the `?? {}` guard that TS2871 would otherwise flag on a required param.
+ */
+const pushBlock = (routeNameExpr: string, paramsExpr: string, nullable: boolean): string[] => {
+  const routerType = `{ ${ROUTER_GLOBAL_NAME}?: { push: (to: { name: string; params: Record<string, unknown> }) => Promise<unknown>; resolve: (to: { name: string; params: Record<string, unknown> }) => { href: string } } }`;
+  const routeParamsLine = paramsExpr === "undefined"
+    ? "const routeParams = {};"
+    : nullable
+      ? `const routeParams = Object.fromEntries(Object.entries(${paramsExpr} ?? {}).filter(([, v]) => v !== undefined));`
+      : `const routeParams = Object.fromEntries(Object.entries(${paramsExpr}).filter(([, v]) => v !== undefined));`;
+  return [
+    routeParamsLine,
+    `const isCold = await this.page.evaluate(() => typeof (globalThis as { ${ROUTER_GLOBAL_NAME}?: unknown }).${ROUTER_GLOBAL_NAME} === "undefined");`,
+    `if (isCold) {`,
+    `  await this.page.goto("/", { waitUntil: "commit" });`,
+    `  await this.page.waitForFunction(() => typeof (globalThis as { ${ROUTER_GLOBAL_NAME}?: unknown }).${ROUTER_GLOBAL_NAME} !== "undefined", { timeout: 15000 });`,
+    `  const href = await this.page.evaluate(({ name, params }) => (globalThis as ${routerType}).${ROUTER_GLOBAL_NAME}?.resolve({ name, params })?.href, { name: ${routeNameExpr}, params: routeParams });`,
+    `  if (href) { await this.page.goto(href, { waitUntil: "domcontentloaded" }); }`,
+    `} else {`,
+    `  await this.page.evaluate(async ({ name, params }) => {`,
+    `    await (globalThis as ${routerType}).${ROUTER_GLOBAL_NAME}?.push({ name, params });`,
+    `  }, { name: ${routeNameExpr}, params: routeParams });`,
+    `}`,
+  ];
+};
+
+function generateGoToMethod(componentName: string, routeMeta: RouteMeta | null): TypeScriptClassMember[] {
+  // No route metadata: emit a goTo() that fails loudly when invoked.
+  if (!routeMeta) {
+    return [
+      createClassMethod({
+        name: "goTo",
+        isAsync: true,
+        statements: [
+          `throw new Error("[pom] No router path found for component/page-object '${componentName}'.");`,
+        ],
+      }),
+    ];
+  }
+
+  const paramless = chooseParamlessRoute(routeMeta.routes);
+  const parametrized = chooseParametrizedRoute(routeMeta.routes);
+  const hasParamless = paramless !== null;
+  const hasParametrized = parametrized !== null;
+
+  // Neither a paramless nor a parametrized route (shouldn't happen — routeMeta is non-null — but guard anyway).
+  if (!hasParamless && !hasParametrized) {
+    return [
+      createClassMethod({
+        name: "goTo",
+        isAsync: true,
+        statements: [
+          `throw new Error("[pom] No router path found for component/page-object '${componentName}'.");`,
+        ],
+      }),
+    ];
+  }
+
+  // Fallback (unnamed routes, e.g. Nuxt file-based routes whose names the static walk
+  // cannot recover): reconstruct the URL from the tokenized template and `page.goto` it.
+  const paramStatements = (entry: RouteEntry): string[] => {
+    const lines: string[] = [];
+    for (const param of entry.params) {
+      const token = getParamToken(param.name);
+      if (param.optional) {
+        // An omitted optional param drops its entire path segment (including the leading "/"),
+        // so `/persons/:personId/:tabName?` with tabName omitted resolves to `/persons/123`.
+        lines.push(`targetUrl = params.${param.name} === undefined ? targetUrl.replaceAll(${JSON.stringify(`/${token}`)}, "") : targetUrl.replaceAll(${JSON.stringify(token)}, String(params.${param.name}));`);
+      }
+      else {
+        lines.push(`targetUrl = targetUrl.replaceAll(${JSON.stringify(token)}, String(params.${param.name}));`);
+      }
+    }
+    return lines;
+  };
+
+  // Preferred path: the route is named, so hand the param object straight to the runtime
+  // router. `undefined` values are stripped first — omitted optional params are simply not
+  // passed, and the router builds the URL (handling optional segments, redirects, and param
+  // coercion) itself. No opaque tokens, no string substitution. See `pushBlock` for the
+  // cold-start (full-load resolved target) vs warm (SPA `router.push`) regimes.
+  // Paramless-only: simple no-arg goTo().
+  if (hasParamless && !hasParametrized) {
+    const route = paramless!;
+    return [
+      createClassMethod({
+        name: "goTo",
+        isAsync: true,
+        statements: route.name !== null
+          ? pushBlock(JSON.stringify(route.name), "undefined", false)
+          : [`const targetUrl = ${JSON.stringify(route.template)};`, ...GOTO_RUNTIME_LINES],
+      }),
+    ];
+  }
+
+  const paramType = buildParamTypeString(parametrized!.params);
+
+  // Parametrized-only: goTo(params). When every declared param is optional, the params
+  // object itself is optional too — `goTo()` is a valid call that navigates to the route
+  // with all optional params omitted (e.g. `/preferences/:tabName?` -> `/preferences`).
+  if (hasParametrized && !hasParamless) {
+    const route = parametrized!;
+    const allOptional = route.params.every(p => p.optional);
+    return [
+      createClassMethod({
+        name: "goTo",
+        isAsync: true,
+        parameters: [{ name: "params", type: paramType, hasQuestionToken: allOptional }],
+        statements: route.name !== null
+          ? pushBlock(JSON.stringify(route.name), "params", allOptional)
+          : [`let targetUrl = ${JSON.stringify(route.template)};`, ...paramStatements(route), ...GOTO_RUNTIME_LINES],
+      }),
+    ];
+  }
+
+  // Both routes present. Use the runtime router only when both chosen routes are named;
+  // otherwise fall back to token reconstruction for consistency across the overloads.
+  const paramlessRoute = paramless!;
+  const parametrizedRoute = parametrized!;
+  const usePush = paramlessRoute.name !== null && parametrizedRoute.name !== null;
+
   return [
     createClassMethod({
       name: "goTo",
       isAsync: true,
-      statements: [
-        "await this.goToSelf();",
+      overloads: [
+        { parameters: [], returnType: "Promise<void>" },
+        { parameters: [{ name: "params", type: paramType }], returnType: "Promise<void>" },
       ],
-    }),
-    createClassMethod({
-      name: "goToSelf",
-      isAsync: true,
-      statements: [
-        `const route = ${componentName}.route;`,
-        "if (!route) {",
-        `    throw new Error("[pom] No router path found for component/page-object '${componentName}'.");`,
-        "}",
-        "const runtimeEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;",
-        "const runtimeBaseUrl = runtimeEnv?.PLAYWRIGHT_RUNTIME_BASE_URL ?? runtimeEnv?.PLAYWRIGHT_TEST_BASE_URL ?? runtimeEnv?.VITE_PLAYWRIGHT_BASE_URL;",
-        "const targetUrl = runtimeBaseUrl ? new URL(route.template, runtimeBaseUrl).toString() : route.template;",
-        "await this.page.goto(targetUrl);",
-      ],
+      parameters: [{ name: "params", type: paramType, hasQuestionToken: true }],
+      statements: usePush
+        ? pushBlock(
+            `params ? ${JSON.stringify(parametrizedRoute.name)} : ${JSON.stringify(paramlessRoute.name)}`,
+            "params",
+            true,
+          )
+        : [
+            `const template = params ? ${JSON.stringify(parametrizedRoute.template)} : ${JSON.stringify(paramlessRoute.template)};`,
+            "let targetUrl = template;",
+            `if (params) {`,
+            ...paramStatements(parametrizedRoute).map(line => `  ${line}`),
+            "}",
+            ...GOTO_RUNTIME_LINES,
+          ],
     }),
   ];
 }
@@ -1795,7 +2003,7 @@ function prepareViewObjectModelClass(
   if (isView && options.vueRouterFluentChaining) {
     const routeMeta = options.routeMetaByComponent?.[componentName] ?? null;
     members.push(...generateRouteProperty(routeMeta));
-    members.push(...generateGoToSelfMethod(className));
+    members.push(...generateGoToMethod(className, routeMeta));
   }
 
   members.push(...generateMethodsContentForDependencies(componentName, dependencies));
