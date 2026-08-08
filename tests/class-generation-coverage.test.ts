@@ -592,11 +592,12 @@ describe("class-generation coverage", () => {
       const aggregatedFile = path.join(outDir, "page-object-models.g.ts");
       const content = readFile(aggregatedFile);
 
-      // Route metadata + goToSelf helpers
+      // Route metadata + goTo helpers. The named route drives the runtime router via push.
       expect(content).toContain("static readonly route");
-      expect(content).toContain("async goToSelf()");
-      expect(content).toContain("const runtimeBaseUrl = runtimeEnv?.PLAYWRIGHT_RUNTIME_BASE_URL ?? runtimeEnv?.PLAYWRIGHT_TEST_BASE_URL ?? runtimeEnv?.VITE_PLAYWRIGHT_BASE_URL;");
-      expect(content).toContain("await this.page.goto(targetUrl)");
+      expect(content).toContain("async goTo()");
+      expect(content).toContain("__appRouter?.push(");
+      expect(content).toContain('name: "users"');
+      expect(content).toContain("await this.page.evaluate(async ({ name, params })");
 
       // Trim + propagate testIdAttribute into BasePage super call.
       expect(content).toContain("super(page, { testIdAttribute: \"data-qa\" });");
@@ -612,6 +613,190 @@ describe("class-generation coverage", () => {
           vueRouterFluentChaining: true,
         }),
       ).rejects.toThrow("Router entry path is required");
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("emits a parametrized goTo(params) that drives the runtime router via push({ name, params })", async () => {
+    const tempRoot = makeTempRoot("vue-pom-router-parametrized-");
+
+    try {
+      const thisDir = path.dirname(fileURLToPath(import.meta.url));
+      const frontendNodeModules = path.resolve(thisDir, "..", "node_modules");
+      const tempNodeModules = path.join(tempRoot, "node_modules");
+      if (!fs.existsSync(tempNodeModules)) {
+        fs.symlinkSync(frontendNodeModules, tempNodeModules, "dir");
+      }
+
+      const basePagePath = path.join(tempRoot, "base-page.ts");
+      writeMinimalBasePage(basePagePath);
+
+      // One component per scenario:
+      //   DashboardView  -> paramless route only (/dashboard)
+      //   UsersView      -> parametrized route only (/users/:id, props declare `id`)
+      //   PersonsView    -> BOTH (/persons/new paramless, /persons/:id parametrized)
+      //   OrgMembersView -> multi-param route (/orgs/:orgId/users/:userId)
+      //   ThingsView     -> optional param route (/things/:thingId?)
+      writeFile(path.join(tempRoot, "DashboardView.vue"), "<template><div /></template>\n");
+      writeFile(path.join(tempRoot, "UsersView.vue"), "<template><div /></template>\n");
+      writeFile(path.join(tempRoot, "PersonsView.vue"), "<template><div /></template>\n");
+      writeFile(path.join(tempRoot, "OrgMembersView.vue"), "<template><div /></template>\n");
+      writeFile(path.join(tempRoot, "ThingsView.vue"), "<template><div /></template>\n");
+
+      writeFile(
+        path.join(tempRoot, "router.ts"),
+        [
+          "import { createMemoryHistory, createRouter } from 'vue-router';",
+          "import DashboardView from './DashboardView.vue';",
+          "import UsersView from './UsersView.vue';",
+          "import PersonsView from './PersonsView.vue';",
+          "import OrgMembersView from './OrgMembersView.vue';",
+          "import ThingsView from './ThingsView.vue';",
+          "",
+          "export default function makeRouter() {",
+          "  return createRouter({",
+          "    history: createMemoryHistory(),",
+          "    routes: [",
+          "      { path: '/dashboard', name: 'dashboard', component: DashboardView },",
+          "      { path: '/users/:id', name: 'users', component: UsersView, props: (route) => ({ id: route.params.id }) },",
+          "      { path: '/persons/new', name: 'persons-new', component: PersonsView },",
+          "      { path: '/persons/:id', name: 'persons-edit', component: PersonsView, props: (route) => ({ id: route.params.id }) },",
+          "      { path: '/orgs/:orgId/users/:userId', name: 'org-members', component: OrgMembersView, props: (route) => ({ orgId: route.params.orgId, userId: route.params.userId }) },",
+          "      { path: '/things/:thingId?', name: 'things', component: ThingsView, props: (route) => ({ thingId: route.params.thingId }) },",
+          "    ],",
+          "  });",
+          "}",
+          "",
+        ].join("\n"),
+      );
+
+      const mkView = (name: string, fileName: string) => [
+        name,
+        makeDeps({
+          filePath: path.join(tempRoot, fileName),
+          isView: true,
+          dataTestIdSet: new Set<IDataTestId>([{ selectorValue: createPomStringPattern(`${name}-Sample-button`, "static", []) }]),
+        }),
+      ] as const;
+
+      const componentHierarchyMap = new Map<string, IComponentDependencies>([
+        mkView("DashboardView", "DashboardView.vue"),
+        mkView("UsersView", "UsersView.vue"),
+        mkView("PersonsView", "PersonsView.vue"),
+        mkView("OrgMembersView", "OrgMembersView.vue"),
+        mkView("ThingsView", "ThingsView.vue"),
+      ]);
+      const outDir = path.join(tempRoot, "pom");
+
+      await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
+        outDir,
+        projectRoot: tempRoot,
+        vueRouterFluentChaining: true,
+        routerEntry: "./router.ts",
+      });
+
+      const content = readFile(path.join(outDir, "page-object-models.g.ts"));
+
+      // Extract one class block regardless of the (alphabetical) emit order.
+      const extractClass = (name: string): string => {
+        const start = content.indexOf(`export class ${name}`);
+        expect(start, `class ${name} should be generated`).toBeGreaterThan(-1);
+        const nextClass = content.indexOf("export class ", start + 1);
+        return nextClass === -1 ? content.slice(start) : content.slice(start, nextClass);
+      };
+
+      // Shared: named routes drive the runtime router, handing it a params object (undefined
+      // values stripped) instead of reconstructing a URL. Warm pages SPA-push via
+      // `__appRouter.push`; cold pages (about:blank, router not yet installed) boot then
+      // full-load the resolved target (`__appRouter.resolve(...).href`) so the route's
+      // component mounts via a stable page load instead of a race-prone SPA push.
+      const PUSH_CALL = "__appRouter?.push(";
+      const RESOLVE_CALL = "__appRouter?.resolve(";
+      const COLD_BOOT = 'this.page.goto("/", { waitUntil: "commit" })';
+      const COLD_TARGET_LOAD = 'await this.page.goto(href, { waitUntil: "domcontentloaded" })';
+      const COLD_START_WAIT = "waitForFunction(() => typeof";
+      const IS_COLD = "const isCold =";
+
+      // --- DashboardView: paramless-only, named -> no-arg goTo() that pushes the named route. ---
+      const dashboardClass = extractClass("DashboardView");
+      expect(dashboardClass).toContain('name: "dashboard"');
+      expect(dashboardClass).toContain(PUSH_CALL);
+      // Cold-start branch: boot "/", wait for the router, resolve the target, full-load it.
+      expect(dashboardClass).toContain(IS_COLD);
+      expect(dashboardClass).toContain(COLD_BOOT);
+      expect(dashboardClass).toContain(COLD_START_WAIT);
+      expect(dashboardClass).toContain(RESOLVE_CALL);
+      expect(dashboardClass).toContain(COLD_TARGET_LOAD);
+      // A paramless route has no params object: emit an empty record literally (no Object.fromEntries).
+      expect(dashboardClass).toContain("const routeParams = {};");
+      expect(dashboardClass).not.toContain("goTo(params");
+      expect(dashboardClass).not.toContain("targetUrl");
+      expect(dashboardClass).not.toContain("replaceAll");
+
+      // --- UsersView: parametrized-only, named -> goTo(params) that pushes with the param object. ---
+      const usersClass = extractClass("UsersView");
+      expect(usersClass).toContain("async goTo(params: { id: string | number })");
+      expect(usersClass).toContain('name: "users"');
+      // Required params are never nullish, so no `?? {}` guard (avoids TS2871).
+      expect(usersClass).toContain("Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined))");
+      expect(usersClass).toContain(PUSH_CALL);
+      expect(usersClass).toContain(RESOLVE_CALL);
+      expect(usersClass).toContain(IS_COLD);
+      // No no-arg overload signature for a parametrized-only route.
+      expect(usersClass).not.toMatch(/goTo\(\): Promise<void>/);
+      expect(usersClass).not.toContain("targetUrl");
+      expect(usersClass).not.toContain("replaceAll");
+      // route property still holds the tokenized template (informational; goTo uses push).
+      expect(usersClass).toContain('{ template: "/users/__VUE_TESTID_PARAM__id__" }');
+
+      // --- PersonsView: BOTH routes, both named -> overloaded goTo() selecting the route name by params presence. ---
+      const personsClass = extractClass("PersonsView");
+      // Overload signatures precede the implementation.
+      expect(personsClass).toContain("goTo(): Promise<void>;");
+      expect(personsClass).toContain("goTo(params: { id: string | number }): Promise<void>;");
+      // The route name is selected by params presence and inlined into the router call args
+      // (no separate `const routeName`, no URL reconstruction from tokens).
+      expect(personsClass).toContain('name: params ? "persons-edit" : "persons-new"');
+      // The both-routes overload is also guarded: cold branch resolves + full-loads the target.
+      expect(personsClass).toContain(IS_COLD);
+      expect(personsClass).toContain(COLD_BOOT);
+      expect(personsClass).toContain(COLD_START_WAIT);
+      expect(personsClass).toContain(RESOLVE_CALL);
+      expect(personsClass).toContain(COLD_TARGET_LOAD);
+      expect(personsClass).toContain("Object.fromEntries(Object.entries(params ?? {})");
+      expect(personsClass).toContain(PUSH_CALL);
+      // Implementation parameter is optional (so the no-arg overload is callable).
+      expect(personsClass).toContain("async goTo(params?: { id: string | number })");
+      expect(personsClass).not.toContain("targetUrl");
+      expect(personsClass).not.toContain("replaceAll");
+      // route property is the shortest (paramless) template.
+      expect(personsClass).toContain('{ template: "/persons/new" }');
+
+      // --- OrgMembersView: multi-param, named -> goTo(params) pushing both params. ---
+      const orgMembersClass = extractClass("OrgMembersView");
+      expect(orgMembersClass).toContain("async goTo(params: { orgId: string | number; userId: string | number })");
+      expect(orgMembersClass).toContain('name: "org-members"');
+      expect(orgMembersClass).toContain("Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined))");
+      expect(orgMembersClass).toContain(PUSH_CALL);
+      expect(orgMembersClass).not.toContain("targetUrl");
+      expect(orgMembersClass).not.toContain("replaceAll");
+
+      // --- ThingsView: optional param, named -> goTo(params?: { thingId? }) that omits it when undefined. ---
+      const thingsClass = extractClass("ThingsView");
+      // The only param is optional, so the params object itself is optional — `goTo()` is valid
+      // and navigates with the optional segment omitted.
+      expect(thingsClass).toContain("async goTo(params?: { thingId?: string | number })");
+      expect(thingsClass).toContain('name: "things"');
+      // undefined values are stripped before handing the object to the router, so an omitted
+      // optional param is simply not passed — the router builds /things (segment omitted),
+      // never /things/undefined. Because params is optional, the `?? {}` guard is used.
+      expect(thingsClass).toContain("Object.fromEntries(Object.entries(params ?? {}).filter(([, v]) => v !== undefined))");
+      expect(thingsClass).toContain(PUSH_CALL);
+      expect(thingsClass).not.toContain("targetUrl");
+      expect(thingsClass).not.toContain("replaceAll");
+      // route property holds the tokenized template (informational; the only route).
+      expect(thingsClass).toContain('{ template: "/things/__VUE_TESTID_PARAM__thingId__" }');
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
