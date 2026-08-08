@@ -1,4 +1,5 @@
-import type { Keyboard, Response, Screencast } from "playwright";
+import type { Keyboard, Locator, Response, Screencast } from "playwright";
+
 
 /**
  * Narrow subset of the Playwright {@link Locator} surface that the generated
@@ -99,6 +100,7 @@ export interface BasePagePage {
     options?: { force?: boolean; noWaitAfter?: boolean; strict?: boolean; timeout?: number },
   ): Promise<string[]>;
   waitForTimeout(timeout: number): Promise<void>;
+  waitForFunction<R, Arg = never>(pageFunction: string | ((arg: Arg) => boolean | Promise<boolean>), arg?: Arg, options?: { polling?: number | "raf"; timeout?: number }): Promise<R>;
   evaluate<R, Arg = never>(pageFunction: string | ((arg: Arg) => R | Promise<R>), arg?: Arg): Promise<R>;
   readonly keyboard: Keyboard;
   readonly screencast: Screencast;
@@ -113,8 +115,15 @@ export type PwPage = BasePagePage;
 
 /**
  * Locator type used by the generated POM runtime. Narrowed from Playwright's
- * full `Locator` to {@link BasePageLocator}. A real `Locator` is still
- * assignable.
+ * full `Locator` to {@link BasePageLocator} so test doubles can satisfy it
+ * without stubbing ~70 members. A real `Locator` is still assignable.
+ *
+ * Note: this narrowed type is used for the runtime's *internal* parameters
+ * (what doubles must satisfy). The locator-*returning* accessors
+ * (`locatorByTestId`, `keyedLocators`, …) widen back to Playwright's full
+ * `Locator` at the boundary so generated accessors can be passed straight to
+ * `expect(...)` (`expect(page.SaveButton).toBeVisible()`) — Playwright's
+ * `LocatorAssertions` matchers are keyed on `Locator`.
  */
 export type PwLocator = BasePageLocator;
 
