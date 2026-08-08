@@ -2111,12 +2111,19 @@ function generateViewObjectModelContent(
   generatedImports.sort((a, b) => a.className.localeCompare(b.className));
 
   const prefixText = `${buildFilePrefix({ eslintDisableSortImports: true })}${doc}\n`;
+  // `BasePage.page` is typed as the narrowed `PwPage` (= `BasePagePage`), not Playwright's full
+  // `Page`. Generated POMs construct each other with `this.page` (e.g. `new ChildView(this.page)`),
+  // so their constructors must take the SAME narrowed type — otherwise passing the narrowed
+  // `this.page` into a constructor declared with the full `Page` fails (full `Page` members the
+  // narrowed type lacks). Import `PwPage` from the vendored runtime `playwright-types` (sibling of
+  // `base-page`) instead of `Page` from `@playwright/test`.
+  const playwrightTypesImportSpecifier = basePageImportSpecifier.replace(/base-page$/, "playwright-types");
   return renderSourceFile(`${prepared.className}.ts`, (sourceFile) => {
     if (needsPlaywrightPageImport) {
       addNamedImport(sourceFile, {
-        moduleSpecifier: "@playwright/test",
+        moduleSpecifier: playwrightTypesImportSpecifier,
         isTypeOnly: true,
-        namedImports: [{ name: "Page", alias: "PwPage" }],
+        namedImports: ["PwPage"],
       });
     }
 
@@ -2448,10 +2455,13 @@ function renderSplitStubPomContent(options: {
   });
 
   return renderSourceFile(`${options.className}.ts`, (sourceFile) => {
+    // Match the narrowed `PwPage` used by non-stub generated POMs (see renderPomSourceFile):
+    // stubs are constructed with `this.page` (narrowed), so their ctors must take the narrowed
+    // type, not Playwright's full `Page`.
     addNamedImport(sourceFile, {
-      moduleSpecifier: "@playwright/test",
+      moduleSpecifier: options.basePageImportSpecifier.replace(/base-page$/, "playwright-types"),
       isTypeOnly: true,
-      namedImports: [{ name: "Page", alias: "PwPage" }],
+      namedImports: ["PwPage"],
     });
     addNamedImport(sourceFile, {
       moduleSpecifier: options.basePageImportSpecifier,
@@ -3161,11 +3171,15 @@ function getConstructor(
       writer.writeLine(`super(page, { testIdAttribute: ${JSON.stringify(attr)} });`);
 
       for (const a of attachmentsForThisView) {
-        writer.writeLine(`this.${a.propertyName} = new ${a.className}(page, this);`);
+        // Custom (hand-written) POMs are declared against Playwright's full `Page`,
+        // not the narrowed `PwPage` this generated POM stores. Route the raw,
+        // un-narrowed page (BasePage.rawPage) into them so their full-`Page`
+        // contract holds. They handle JS/DOM elements the generator can't key.
+        writer.writeLine(`this.${a.propertyName} = new ${a.className}(this.rawPage, this);`);
       }
 
       for (const w of widgetInstances) {
-        writer.writeLine(`this.${w.propertyName} = new ${w.className}(page, ${JSON.stringify(w.testId)});`);
+        writer.writeLine(`this.${w.propertyName} = new ${w.className}(this.rawPage, ${JSON.stringify(w.testId)});`);
       }
 
       childrenComponent.forEach((child) => {

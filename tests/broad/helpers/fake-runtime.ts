@@ -147,6 +147,10 @@ export class FakePage implements BasePagePage {
   }
 
   public async waitForTimeout(_milliseconds: number) {}
+
+  public async waitForFunction<TResult>(_fn: unknown, _arg?: unknown, _options?: { polling?: number | "raf"; timeout?: number }): Promise<TResult> {
+    return undefined as TResult;
+  }
 }
 
 /**

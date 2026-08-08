@@ -1,4 +1,6 @@
+import type { Locator, Page } from "playwright";
 import type { PwLocator, PwPage } from "./playwright-types";
+
 import { TESTID_CLICK_EVENT_NAME } from "../click-instrumentation";
 import type { TestIdClickEventDetail } from "../click-instrumentation";
 import { Callout } from "./callout";
@@ -122,6 +124,19 @@ export class BasePage {
     return this.page.screencast;
   }
 
+  /**
+   * The full Playwright `Page`, un-narrowed. Use this ONLY when handing the page
+   * to a hand-written (custom) POM whose constructor is declared against
+   * Playwright's full `Page` type — not the narrowed {@link PwPage} this class
+   * stores. Generated attachment wiring (e.g. `new CustomPom(this.rawPage, this)`)
+   * routes through here so custom POMs keep their full-`Page` contract without
+   * the narrowed `this.page` leaking a type error. Custom POMs handle JS/DOM
+   * elements the generator can't key; they get the raw page by design.
+   */
+  public get rawPage(): Page {
+    return this.page as unknown as Page;
+  }
+
   private async waitForTestIdClickEventAfter(testId: string, options?: { timeoutMs?: number }): Promise<void> {
     if (!REQUIRE_CLICK_EVENT) {
       return;
@@ -232,12 +247,15 @@ export class BasePage {
     return `[${this.testIdAttribute}="${testId}"]`;
   }
 
-  protected describeLocator(locator: PwLocator, description?: string): PwLocator {
+  protected describeLocator(locator: PwLocator, description?: string): Locator {
     const normalizedDescription = description?.trim();
-    return normalizedDescription ? locator.describe(normalizedDescription) : locator;
+    // `locator` is the narrowed `PwLocator` (so test doubles satisfy it), but the
+    // value is a real Playwright `Locator` at runtime. Widen to `Locator` here so
+    // generated accessors surface the full type and can be passed to `expect(...)`.
+    return (normalizedDescription ? locator.describe(normalizedDescription) : locator) as unknown as Locator;
   }
 
-  protected locatorByTestId(testId: string, description?: string): PwLocator {
+  protected locatorByTestId(testId: string, description?: string): Locator {
     return this.describeLocator(this.page.locator(this.selectorForTestId(testId)), description);
   }
 
@@ -245,9 +263,9 @@ export class BasePage {
     rootTestId: string,
     label: string,
     options?: { exact?: boolean; description?: string },
-  ): PwLocator {
+  ): Locator {
     const locator = this.locatorByTestId(rootTestId).getByLabel(label, { exact: options?.exact ?? true });
-    return this.describeLocator(locator, options?.description);
+    return this.describeLocator(locator as unknown as PwLocator, options?.description);
   }
 
   /**
@@ -282,7 +300,7 @@ export class BasePage {
    * ergonomic accessors like:
    *   expect(page.SaveButton["MyKey"]).toBeVisible();
    */
-  protected keyedLocators<TKey extends string>(getLocator: (key: TKey) => PwLocator): Record<TKey, PwLocator> {
+  protected keyedLocators<TKey extends string>(getLocator: (key: TKey) => PwLocator): Record<TKey, Locator> {
     const handler: ProxyHandler<object> = {
       get: (_t, prop) => {
         // Avoid confusing Promise-like detection and ignore symbols.
@@ -293,7 +311,10 @@ export class BasePage {
       },
     };
 
-    return new Proxy({}, handler) as Record<TKey, PwLocator>;
+    // `getLocator` returns the narrowed `PwLocator`, but each value is a real
+    // Playwright `Locator` at runtime. Widen the record's value type to `Locator`
+    // so generated keyed accessors can be passed to `expect(...)`.
+    return new Proxy({}, handler) as unknown as Record<TKey, Locator>;
   }
 
   public async getObjectId(options?: { timeoutMs?: number }): Promise<ObjectId> {
