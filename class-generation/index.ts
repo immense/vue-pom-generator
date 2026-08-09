@@ -1031,7 +1031,11 @@ async function generateSplitTypeScriptFiles(
     }
 
     const outputDir = path.dirname(filePath);
+    // Both specifiers are derived from their own runtime asset source path: `base-page.ts`
+    // for `BasePage`, and its sibling `playwright-types.ts` for the narrowed `PwPage` the
+    // stub ctor is declared against (stubs are constructed with the narrowed `this.page`).
     const basePageImportSpecifier = stripExtension(toPosixRelativePath(outputDir, runtimeBasePagePath));
+    const playwrightTypesImportSpecifier = stripExtension(toPosixRelativePath(outputDir, path.join(path.dirname(runtimeBasePagePath), "playwright-types.ts")));
     const composed = getComposedStubBody(targetClassName, availableClassNames, depsByClassName, vueFilesPathMap, projectRoot);
     const childImports = getChildImportSpecifiers(outputDir, composed?.childClassNames ?? [], generatedTsFilePathByComponent);
     const members = composed?.members ?? getDefaultStubMembers();
@@ -1039,6 +1043,7 @@ async function generateSplitTypeScriptFiles(
     const content = renderSplitStubPomContent({
       className: targetClassName,
       basePageImportSpecifier,
+      playwrightTypesImportSpecifier,
       childImports,
       members,
     });
@@ -2037,9 +2042,19 @@ function generateViewObjectModelContent(
   const toAbs = basePageClassPath
     ? (path.isAbsolute(basePageClassPath) ? basePageClassPath : path.resolve(projectRoot, basePageClassPath))
     : "";
-  const basePageImport = path.relative(fromAbs, toAbs).replace(/\\/g, "/");
-  const basePageImportNoExt = stripExtension(basePageImport).replace(/\\/g, "/");
-  const basePageImportSpecifier = basePageImportNoExt.startsWith(".") ? basePageImportNoExt : `./${basePageImportNoExt}`;
+  // Resolve an absolute runtime asset path (e.g. base-page.ts) to a relative import
+  // specifier from the output dir. The same generator-side source path drives both the
+  // `BasePage` import and the `PwPage` import, so each specifier is derived from its own
+  // source path rather than string-massaging another specifier.
+  const importSpecifierFor = (absTargetPath: string): string => {
+    const rel = path.relative(fromAbs, absTargetPath).replace(/\\/g, "/");
+    const noExt = stripExtension(rel).replace(/\\/g, "/");
+    return noExt.startsWith(".") ? noExt : `./${noExt}`;
+  };
+  const basePageImportSpecifier = importSpecifierFor(toAbs);
+  // `playwright-types.ts` is the sibling of `base-page.ts` in the vendored runtime dir.
+  const playwrightTypesAbsPath = path.join(path.dirname(toAbs), "playwright-types.ts");
+  const playwrightTypesImportSpecifier = importSpecifierFor(playwrightTypesAbsPath);
   const needsPlaywrightPageImport = prepared.isView
     || prepared.attachmentsForThisClass.length > 0
     || prepared.componentRefsForInstances.size > 0
@@ -2116,8 +2131,8 @@ function generateViewObjectModelContent(
   // so their constructors must take the SAME narrowed type — otherwise passing the narrowed
   // `this.page` into a constructor declared with the full `Page` fails (full `Page` members the
   // narrowed type lacks). Import `PwPage` from the vendored runtime `playwright-types` (sibling of
-  // `base-page`) instead of `Page` from `@playwright/test`.
-  const playwrightTypesImportSpecifier = basePageImportSpecifier.replace(/base-page$/, "playwright-types");
+  // `base-page`) instead of `Page` from `@playwright/test`. The specifier is derived from the
+  // runtime asset's own source path (above), not by mutating the `base-page` specifier.
   return renderSourceFile(`${prepared.className}.ts`, (sourceFile) => {
     if (needsPlaywrightPageImport) {
       addNamedImport(sourceFile, {
@@ -2440,6 +2455,7 @@ function getDefaultStubMembers(): TypeScriptClassMember[] {
 function renderSplitStubPomContent(options: {
   className: string;
   basePageImportSpecifier: string;
+  playwrightTypesImportSpecifier: string;
   childImports: Array<{ className: string; importPath: string }>;
   members: TypeScriptClassMember[];
 }): string {
@@ -2457,9 +2473,10 @@ function renderSplitStubPomContent(options: {
   return renderSourceFile(`${options.className}.ts`, (sourceFile) => {
     // Match the narrowed `PwPage` used by non-stub generated POMs (see renderPomSourceFile):
     // stubs are constructed with `this.page` (narrowed), so their ctors must take the narrowed
-    // type, not Playwright's full `Page`.
+    // type, not Playwright's full `Page`. The specifier is supplied by the caller, derived from
+    // the runtime asset's own source path (sibling of `base-page.ts`).
     addNamedImport(sourceFile, {
-      moduleSpecifier: options.basePageImportSpecifier.replace(/base-page$/, "playwright-types"),
+      moduleSpecifier: options.playwrightTypesImportSpecifier,
       isTypeOnly: true,
       namedImports: ["PwPage"],
     });
