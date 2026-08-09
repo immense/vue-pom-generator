@@ -513,7 +513,7 @@ describe("class-generation coverage", () => {
       });
 
       const componentContent = readFile(path.join(outDir, "MaintenanceItemsMaintenanceItemConfiguration.g.ts"));
-      expect(componentContent).toContain('import type { PwPage } from "./_pom-runtime/class-generation/playwright-types";');
+      expect(componentContent).toContain('import type { Page as PwPage } from "@playwright/test";');
       expect(componentContent).toContain('import { MaintenanceItemsMaintenanceItemSelector }');
       expect(componentContent).toContain('MaintenanceItemsMaintenanceItemSelector: MaintenanceItemsMaintenanceItemSelector;');
       expect(componentContent).toContain('this.MaintenanceItemsMaintenanceItemSelector = new MaintenanceItemsMaintenanceItemSelector(page);');
@@ -602,10 +602,9 @@ describe("class-generation coverage", () => {
       // Trim + propagate testIdAttribute into BasePage super call.
       expect(content).toContain("super(page, { testIdAttribute: \"data-qa\" });");
 
-      // ToggleWidget instance generated. Custom (hand-written) POMs are declared
-      // against Playwright's full `Page`, so the generated attachment wiring routes
-      // the un-narrowed raw page (BasePage.rawPage) into them.
-      expect(content).toContain("new ToggleWidget(this.rawPage, \"UsersView-EnableSessionEmails-toggle\")");
+      // ToggleWidget instance generated. `this.page` surfaces the full `Page`
+      // (BasePage widens it for subclasses), so custom-POM attachments take it directly.
+      expect(content).toContain("new ToggleWidget(this.page, \"UsersView-EnableSessionEmails-toggle\")");
 
       // And validate the error case: enabling fluent chaining without routerEntry.
       await expect(

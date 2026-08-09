@@ -8,10 +8,6 @@ export class BasePage {
     this.page = page;
   }
 
-  public get rawPage(): any {
-    return this.page;
-  }
-
   protected fluent<T extends object>(_factory: () => Promise<T>): Fluent<T> {
     throw new Error("not implemented");
   }

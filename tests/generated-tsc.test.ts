@@ -487,7 +487,6 @@ describe("generated output", () => {
         "export type Fluent<T extends object> = T & PromiseLike<T>;",
         "export class BasePage {",
         "  constructor(public page?: any, _options?: { testIdAttribute?: string }) {}",
-        "  get rawPage(): any { return this.page; }",
         "}",
       ].join("\n"),
     );
@@ -531,7 +530,7 @@ describe("generated output", () => {
 
     expect(generatedContent).toContain("import { PersonListPage as PersonListPageCustom }");
     expect(generatedContent).toContain("personListHelper: PersonListPageCustom;");
-    expect(generatedContent).toContain("this.personListHelper = new PersonListPageCustom(this.rawPage, this);");
+    expect(generatedContent).toContain("this.personListHelper = new PersonListPageCustom(this.page, this);");
   });
 
   it("flattens configured custom attachment methods onto generated classes", async () => {
@@ -546,7 +545,6 @@ describe("generated output", () => {
         "export type Fluent<T extends object> = T & PromiseLike<T>;",
         "export class BasePage {",
         "  constructor(public page?: any, _options?: { testIdAttribute?: string }) {}",
-        "  get rawPage(): any { return this.page; }",
         "}",
       ].join("\n"),
     );
@@ -635,7 +633,6 @@ describe("generated output", () => {
         "export type Fluent<T extends object> = T & PromiseLike<T>;",
         "export class BasePage {",
         "  constructor(public page?: any, _options?: { testIdAttribute?: string }) {}",
-        "  get rawPage(): any { return this.page; }",
         "}",
       ].join("\n"),
     );
