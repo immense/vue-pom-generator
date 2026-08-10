@@ -530,7 +530,7 @@ describe("generated output", () => {
 
     expect(generatedContent).toContain("import { PersonListPage as PersonListPageCustom }");
     expect(generatedContent).toContain("personListHelper: PersonListPageCustom;");
-    expect(generatedContent).toContain("this.personListHelper = new PersonListPageCustom(page, this);");
+    expect(generatedContent).toContain("this.personListHelper = new PersonListPageCustom(this.page, this);");
   });
 
   it("flattens configured custom attachment methods onto generated classes", async () => {

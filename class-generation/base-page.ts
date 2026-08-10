@@ -1,4 +1,6 @@
+import type { Locator, Page } from "playwright";
 import type { PwLocator, PwPage } from "./playwright-types";
+
 import { TESTID_CLICK_EVENT_NAME } from "../click-instrumentation";
 import type { TestIdClickEventDetail } from "../click-instrumentation";
 import { Callout } from "./callout";
@@ -105,20 +107,42 @@ export class BasePage {
   private readonly pointer: InstanceType<typeof Pointer>;
 
   /**
-   * @param {Page} page - Playwright page object
+   * The narrowed Playwright page, stored privately. The narrowing (`PwPage` =
+   * `BasePagePage`) is what lets the unit-test `FakePage` double satisfy the
+   * constructor without stubbing ~250 `Page` members; it never escapes this
+   * class. Subclasses (generated and hand-written POMs) reach the page through
+   * the widened {@link BasePage.page} getter, which surfaces Playwright's full
+   * `Page` so custom POMs can use `getByRole`/`waitForResponse`/`waitForFunction`
+   * etc. for JS/DOM elements the generator can't key.
    */
-  public constructor(protected page: PwPage, options?: BasePageOptions) {
+  private readonly _page: PwPage;
+
+  /**
+   * Playwright's full `Page`, exposed to subclasses. This is the single,
+   * sanctioned way generated/custom POMs touch the page — there is no separate
+   * `rawPage`. The narrowed storage (`_page`) is widened here; the value is a
+   * real `Page` at runtime.
+   */
+  protected get page(): Page {
+    return this._page as unknown as Page;
+  }
+
+  /**
+   * @param page - Playwright page object (narrowed `PwPage` so test doubles fit).
+   */
+  public constructor(page: PwPage, options?: BasePageOptions) {
+    this._page = page;
     this.testIdAttribute = (options?.testIdAttribute || "data-testid").trim() || "data-testid";
 
     const pointerRenderer = options?.renderers?.pointer;
-    this.callout = new Callout(this.page, {
+    this.callout = new Callout(this._page, {
       extraOverlayIds: pointerRenderer?.overlayIds,
       renderer: options?.renderers?.callout,
     });
-    this.pointer = new Pointer(this.page, this.testIdAttribute, this.callout, pointerRenderer);
+    this.pointer = new Pointer(this._page, this.testIdAttribute, this.callout, pointerRenderer);
   }
 
-  public get screencast(): PwPage["screencast"] {
+  public get screencast(): Page["screencast"] {
     return this.page.screencast;
   }
 
@@ -232,12 +256,12 @@ export class BasePage {
     return `[${this.testIdAttribute}="${testId}"]`;
   }
 
-  protected describeLocator(locator: PwLocator, description?: string): PwLocator {
+  protected describeLocator(locator: Locator, description?: string): Locator {
     const normalizedDescription = description?.trim();
     return normalizedDescription ? locator.describe(normalizedDescription) : locator;
   }
 
-  protected locatorByTestId(testId: string, description?: string): PwLocator {
+  protected locatorByTestId(testId: string, description?: string): Locator {
     return this.describeLocator(this.page.locator(this.selectorForTestId(testId)), description);
   }
 
@@ -245,7 +269,7 @@ export class BasePage {
     rootTestId: string,
     label: string,
     options?: { exact?: boolean; description?: string },
-  ): PwLocator {
+  ): Locator {
     const locator = this.locatorByTestId(rootTestId).getByLabel(label, { exact: options?.exact ?? true });
     return this.describeLocator(locator, options?.description);
   }
@@ -282,7 +306,7 @@ export class BasePage {
    * ergonomic accessors like:
    *   expect(page.SaveButton["MyKey"]).toBeVisible();
    */
-  protected keyedLocators<TKey extends string>(getLocator: (key: TKey) => PwLocator): Record<TKey, PwLocator> {
+  protected keyedLocators<TKey extends string>(getLocator: (key: TKey) => PwLocator): Record<TKey, Locator> {
     const handler: ProxyHandler<object> = {
       get: (_t, prop) => {
         // Avoid confusing Promise-like detection and ignore symbols.
@@ -293,7 +317,10 @@ export class BasePage {
       },
     };
 
-    return new Proxy({}, handler) as Record<TKey, PwLocator>;
+    // `getLocator` returns the narrowed `PwLocator` (so test doubles satisfy it), but each
+    // value is a real Playwright `Locator` at runtime. Widen the record's value type so
+    // generated keyed accessors can be passed to `expect(...)`.
+    return new Proxy({}, handler) as unknown as Record<TKey, Locator>;
   }
 
   public async getObjectId(options?: { timeoutMs?: number }): Promise<ObjectId> {

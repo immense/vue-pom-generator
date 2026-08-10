@@ -2040,6 +2040,11 @@ function generateViewObjectModelContent(
   const basePageImport = path.relative(fromAbs, toAbs).replace(/\\/g, "/");
   const basePageImportNoExt = stripExtension(basePageImport).replace(/\\/g, "/");
   const basePageImportSpecifier = basePageImportNoExt.startsWith(".") ? basePageImportNoExt : `./${basePageImportNoExt}`;
+  // Generated POM constructors take Playwright's full `Page` (not the narrowed `PwPage`):
+  // `BasePage` widens `page` to the full `Page` for subclasses, so generated POMs construct
+  // each other with `new Child(this.page)` where `this.page` is `Page`. Importing the
+  // standard `Page` from `@playwright/test` keeps the narrowed types internal to the vendored
+  // runtime — they never surface in generated output.
   const needsPlaywrightPageImport = prepared.isView
     || prepared.attachmentsForThisClass.length > 0
     || prepared.componentRefsForInstances.size > 0
@@ -2448,6 +2453,8 @@ function renderSplitStubPomContent(options: {
   });
 
   return renderSourceFile(`${options.className}.ts`, (sourceFile) => {
+    // Stub ctors take Playwright's full `Page` (aliased `PwPage`), matching non-stub generated
+    // POMs — stubs are constructed with `new Stub(this.page)` where `this.page` is `Page`.
     addNamedImport(sourceFile, {
       moduleSpecifier: "@playwright/test",
       isTypeOnly: true,
@@ -3161,11 +3168,14 @@ function getConstructor(
       writer.writeLine(`super(page, { testIdAttribute: ${JSON.stringify(attr)} });`);
 
       for (const a of attachmentsForThisView) {
-        writer.writeLine(`this.${a.propertyName} = new ${a.className}(page, this);`);
+        // Hand-written (custom) POMs are declared against Playwright's full `Page`.
+        // `this.page` already surfaces the full `Page` (BasePage widens it for
+        // subclasses), so pass it straight through — no separate raw-page accessor.
+        writer.writeLine(`this.${a.propertyName} = new ${a.className}(this.page, this);`);
       }
 
       for (const w of widgetInstances) {
-        writer.writeLine(`this.${w.propertyName} = new ${w.className}(page, ${JSON.stringify(w.testId)});`);
+        writer.writeLine(`this.${w.propertyName} = new ${w.className}(this.page, ${JSON.stringify(w.testId)});`);
       }
 
       childrenComponent.forEach((child) => {

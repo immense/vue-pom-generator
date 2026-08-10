@@ -602,8 +602,9 @@ describe("class-generation coverage", () => {
       // Trim + propagate testIdAttribute into BasePage super call.
       expect(content).toContain("super(page, { testIdAttribute: \"data-qa\" });");
 
-      // ToggleWidget instance generated.
-      expect(content).toContain("new ToggleWidget(page, \"UsersView-EnableSessionEmails-toggle\")");
+      // ToggleWidget instance generated. `this.page` surfaces the full `Page`
+      // (BasePage widens it for subclasses), so custom-POM attachments take it directly.
+      expect(content).toContain("new ToggleWidget(this.page, \"UsersView-EnableSessionEmails-toggle\")");
 
       // And validate the error case: enabling fluent chaining without routerEntry.
       await expect(
