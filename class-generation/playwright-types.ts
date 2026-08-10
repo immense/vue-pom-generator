@@ -100,7 +100,6 @@ export interface BasePagePage {
     options?: { force?: boolean; noWaitAfter?: boolean; strict?: boolean; timeout?: number },
   ): Promise<string[]>;
   waitForTimeout(timeout: number): Promise<void>;
-  waitForFunction<R, Arg = never>(pageFunction: string | ((arg: Arg) => boolean | Promise<boolean>), arg?: Arg, options?: { polling?: number | "raf"; timeout?: number }): Promise<R>;
   evaluate<R, Arg = never>(pageFunction: string | ((arg: Arg) => R | Promise<R>), arg?: Arg): Promise<R>;
   readonly keyboard: Keyboard;
   readonly screencast: Screencast;
