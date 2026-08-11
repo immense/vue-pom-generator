@@ -17,6 +17,7 @@ interface InternalPluginFactoryOptions {
   elementMetadata: Map<string, Map<string, ElementMetadata>>;
   vueFilesPathMap: Map<string, string>;
   nativeWrappers: NativeWrappersMap;
+  optionKeyAttribute: Record<string, string>;
   excludedComponents: string[];
   getPageDirs: () => string[];
   getComponentDirs: () => string[];
@@ -48,6 +49,7 @@ export function createInternalPlugins(options: InternalPluginFactoryOptions): Pl
     elementMetadata,
     vueFilesPathMap,
     nativeWrappers,
+    optionKeyAttribute,
     excludedComponents,
     getPageDirs,
     getComponentDirs,
@@ -108,6 +110,7 @@ export function createInternalPlugins(options: InternalPluginFactoryOptions): Pl
     generation,
     projectRootRef,
     nativeWrappers,
+    optionKeyAttribute,
     excludedComponents,
     getWrapperSearchRoots,
     getResolvedRouterEntry: resolveRouterEntry,
@@ -116,6 +119,7 @@ export function createInternalPlugins(options: InternalPluginFactoryOptions): Pl
 
   const devProcessor = createDevProcessorPlugin({
     nativeWrappers,
+    optionKeyAttribute,
     excludedComponents,
     getPageDirs,
     getComponentDirs,

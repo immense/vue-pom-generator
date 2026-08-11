@@ -25,6 +25,7 @@ interface InternalFactoryOptions {
   nameCollisionBehavior: PomNameCollisionBehavior;
   missingSemanticNameBehavior?: MissingSemanticNameBehavior;
   nativeWrappers: NativeWrappersMap;
+  optionKeyAttribute: Record<string, string>;
   elementMetadata: Map<string, Map<string, ElementMetadata>>;
   semanticNameMap: Map<string, string>;
   componentHierarchyMap: Map<string, IComponentDependencies>;
@@ -130,6 +131,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     nameCollisionBehavior,
     missingSemanticNameBehavior = "error",
     nativeWrappers,
+    optionKeyAttribute,
     elementMetadata,
     semanticNameMap,
     componentHierarchyMap,
@@ -223,6 +225,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
                   wrapperSearchRoots: getWrapperSearchRoots(),
                   annotatorMetadata,
                   crossFileKeyRegistry,
+                  optionKeyAttribute,
                 },
               ),
             );
@@ -288,6 +291,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
                 wrapperSearchRoots: getWrapperSearchRoots(),
                 annotatorMetadata,
                 crossFileKeyRegistry,
+                optionKeyAttribute,
               },
             );
           perFileTransform.set(componentName, transform);

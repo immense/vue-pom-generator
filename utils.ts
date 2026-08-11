@@ -1140,6 +1140,29 @@ export function getKeyDirectiveInfo(node: ElementNode): ResolvedKeyInfo | null {
 }
 
 /**
+ * Resolves a keyed accessor fragment from an arbitrary `:bind` directive (e.g. `:value`)
+ * on an option element, parallel to {@link getKeyDirectiveInfo} which reads the `:key` directive.
+ *
+ * Used by the per-component `optionKeyAttribute` config: when a component maps an attribute
+ * name (e.g. "value"), this reads that `:bind` directive and produces the same `ResolvedKeyInfo`
+ * shape so the existing parameterized keyed-accessor machinery is reused verbatim.
+ *
+ * @internal
+ */
+export function getBindingKeyInfo(node: ElementNode, attrName: string): ResolvedKeyInfo | null {
+  const directive = findDirectiveByName(node, "bind", attrName);
+  const exp = directive?.exp;
+  if (!exp || (exp.type !== NodeTypes.SIMPLE_EXPRESSION && exp.type !== NodeTypes.COMPOUND_EXPRESSION)) {
+    return null;
+  }
+
+  const expression = exp as SimpleExpressionNode | CompoundExpressionNode;
+  const selectorSource = getVueExpressionSource(expression, "compiled", "loc");
+  const runtimeSource = getVueExpressionSource(expression, "loc", "compiled");
+  return toResolvedKeyInfo(selectorSource, runtimeSource);
+}
+
+/**
  * Gets both v-model and :model-value directive values in a single pass
  * Consolidates the previous getVModelDirectiveValue and getModelValueValue helpers
  *

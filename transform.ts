@@ -35,6 +35,7 @@ import {
   renderTemplateLiteralExpression,
   tryGetContainedInStaticVForSourceLiteralValues,
   getKeyDirectiveInfo,
+  getBindingKeyInfo,
   getModelBindingValues,
   getNativeWrapperTransformInfo,
   nodeHandlerAttributeValue,
@@ -909,6 +910,12 @@ export function createTestIdTransform(
     } | null;
     /** Shared registry for cross-file keyed slot context. */
     crossFileKeyRegistry?: CrossFileKeyRegistry;
+    /**
+     * Per-component map of SFC component name -> attribute/binding name to derive the
+     * keyed accessor's key fragment from (e.g. `{ MyRadioGroup: "value" }`).
+     * When a component is absent, the default `:key` directive resolution applies.
+     */
+    optionKeyAttribute?: Record<string, string>;
   } = {},
 ): NodeTransform {
   const existingIdBehavior = options.existingIdBehavior ?? "error";
@@ -920,6 +927,7 @@ export function createTestIdTransform(
   const wrapperSearchRoots = options.wrapperSearchRoots ?? [];
   const annotatorMetadata = options.annotatorMetadata ?? null;
   const crossFileKeyRegistry = options.crossFileKeyRegistry;
+  const optionKeyAttribute = options.optionKeyAttribute ?? {};
 
   // Some projects (and dev environments) use symlinks. We want viewsDir containment checks
   // to behave like the filesystem does (real paths), but we must not crash for virtual
@@ -1204,6 +1212,18 @@ export function createTestIdTransform(
       const getBestAvailableKeyInfo = (): ResolvedKeyInfo | null => {
         const parentNode = (context.parent && typeof context.parent === "object") ? context.parent as { type?: number } : null;
         const isDirectVForChild = parentNode?.type === NodeTypes.FOR;
+
+        // Per-component optionKeyAttribute: when configured for this SFC, derive the keyed
+        // fragment from the named :bind directive (e.g. :value) on the option element
+        // BEFORE the default :key resolution. The default ":key" directive name is a no-op
+        // here (it would duplicate the existing path below), so only non-"key" names apply.
+        const configuredAttrName = optionKeyAttribute[componentName];
+        if (configuredAttrName && configuredAttrName !== "key") {
+          const bindingKeyInfo = getBindingKeyInfo(element, configuredAttrName);
+          if (bindingKeyInfo) {
+            return bindingKeyInfo;
+          }
+        }
 
         const vForKeyInfo = (isDirectVForChild ? getKeyDirectiveInfo(element) : null)
           || getContainedInVForDirectiveKeyInfo(context, element, hierarchyMap);

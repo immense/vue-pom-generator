@@ -10,6 +10,7 @@ export interface ResolvedInjectionSupportOptions {
   layoutDirs: string[];
   wrapperSearchRoots: string[];
   nativeWrappers: NativeWrappersMap;
+  optionKeyAttribute: Record<string, string>;
   excludedComponents: string[];
   existingIdBehavior: ExistingIdBehavior;
   testIdAttribute: string;
@@ -22,6 +23,7 @@ export interface ResolveInjectionSupportOptionsInput {
   layoutDirs?: string[];
   wrapperSearchRoots?: string[];
   nativeWrappers?: NativeWrappersMap;
+  optionKeyAttribute?: Record<string, string>;
   excludedComponents?: string[];
   existingIdBehavior?: ExistingIdBehavior;
   testIdAttribute?: string;
@@ -38,6 +40,7 @@ export function resolveInjectionSupportOptions(
     layoutDirs: isNuxt ? ["app/layouts"] : (options.layoutDirs ?? ["src/layouts"]),
     wrapperSearchRoots: isNuxt ? [] : (options.wrapperSearchRoots ?? []),
     nativeWrappers: options.nativeWrappers ?? {},
+    optionKeyAttribute: options.optionKeyAttribute ?? {},
     excludedComponents: options.excludedComponents ?? [],
     existingIdBehavior: options.existingIdBehavior ?? "error",
     testIdAttribute: (options.testIdAttribute ?? "data-testid").trim() || "data-testid",

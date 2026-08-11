@@ -162,6 +162,20 @@ export interface VuePomGeneratorPluginOptions {
       */
     nativeWrappers?: NativeWrappersMap;
 
+    /**
+     * Per-component option-key attribute override.
+     *
+     * Maps an SFC component name to the attribute/binding name the keyed accessor should
+     * derive its key fragment from, instead of the default `:key` directive. A component
+     * absent from the map keeps the current `:key`-based behavior.
+     *
+     * Example: `{ MyRadioGroup: "value" }` keys `page.Option[...]` off the `:value` binding
+     * on each option element rather than Vue's reconciliation `:key`.
+     *
+     * Default: `{}` (every component uses `:key`).
+     */
+    optionKeyAttribute?: Record<string, string>;
+
     /** Components to exclude from test id injection/collection. */
     excludeComponents?: string[];
 

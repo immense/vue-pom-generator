@@ -19,6 +19,7 @@ import type { ResolvedGenerationSupportOptions } from "../resolved-generation-op
 
 interface DevProcessorOptions {
   nativeWrappers: NativeWrappersMap;
+  optionKeyAttribute: Record<string, string>;
   excludedComponents: string[];
   getPageDirs: () => string[];
   getComponentDirs: () => string[];
@@ -39,6 +40,7 @@ interface DevProcessorOptions {
 export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOption {
   const {
     nativeWrappers,
+    optionKeyAttribute,
     excludedComponents,
     getPageDirs,
     getComponentDirs,
@@ -319,6 +321,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
                 vueFilesPathMap: provisionalVuePathMap,
                 wrapperSearchRoots: getWrapperSearchRoots(),
                 crossFileKeyRegistry: provisionalKeyRegistry,
+                optionKeyAttribute,
               },
             ),
           ],

@@ -350,6 +350,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
       layoutDirs: injection.layoutDirs,
       wrapperSearchRoots: injection.wrapperSearchRoots,
       nativeWrappers: injection.nativeWrappers,
+      optionKeyAttribute: injection.optionKeyAttribute,
       excludedComponents: injection.excludeComponents,
       existingIdBehavior: injection.existingIdBehavior,
       testIdAttribute: injection.attribute,
@@ -357,6 +358,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
   };
   const resolvedInjectionOptions = resolvedInjectionOptionsRef.current;
   const nativeWrappers = resolvedInjectionOptions.nativeWrappers;
+  const optionKeyAttribute = resolvedInjectionOptions.optionKeyAttribute;
   const excludedComponents = resolvedInjectionOptions.excludedComponents;
   const testIdAttribute = resolvedInjectionOptions.testIdAttribute;
   const routerEntry = !isNuxt ? vueGenerationOptions?.router?.entry : undefined;
@@ -497,6 +499,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
     nameCollisionBehavior: resolvedGenerationOptions.nameCollisionBehavior,
     missingSemanticNameBehavior: resolvedGenerationOptions.missingSemanticNameBehavior,
     nativeWrappers,
+    optionKeyAttribute,
     elementMetadata,
     semanticNameMap,
     componentHierarchyMap,
@@ -523,6 +526,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
     elementMetadata,
     vueFilesPathMap,
     nativeWrappers,
+    optionKeyAttribute,
     excludedComponents,
     getPageDirs,
     getComponentDirs,

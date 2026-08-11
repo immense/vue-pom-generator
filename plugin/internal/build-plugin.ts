@@ -32,6 +32,8 @@ interface BuildProcessorOptions {
   projectRootRef: { current: string };
   /** Native wrapper component config. */
   nativeWrappers: NativeWrappersMap;
+  /** Per-component option-key attribute override map. */
+  optionKeyAttribute: Record<string, string>;
   /** Components excluded from test-id injection. */
   excludedComponents: string[];
   /** Getter for resolved wrapper search root directories. */
@@ -93,6 +95,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     generation,
     projectRootRef,
     nativeWrappers,
+    optionKeyAttribute,
     excludedComponents,
     getWrapperSearchRoots,
     getResolvedRouterEntry,
@@ -255,6 +258,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
                   vueFilesPathMap,
                   wrapperSearchRoots: getWrapperSearchRoots(),
                   crossFileKeyRegistry,
+                  optionKeyAttribute,
                 },
               ),
             ],
