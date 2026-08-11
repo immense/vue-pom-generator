@@ -94,6 +94,7 @@ function compileWithRuntimeTemplateOptions(
     existingIdBehavior: 'preserve',
     nameCollisionBehavior: 'error',
     nativeWrappers: options.nativeWrappers ?? {},
+    optionKeyAttribute: {},
     elementMetadata: new Map(),
     semanticNameMap: new Map(),
     componentHierarchyMap,
@@ -1647,5 +1648,91 @@ describe('createTestIdTransform', () => {
         nodeTransforms: [createTestIdTransform('Form', componentHierarchyMap, {}, [], '/src/views')],
       })
     }).toThrow(/no usable identity could be derived/)
+  })
+})
+
+describe('option-keying: per-component optionKeyAttribute config', () => {
+  // Resolves the single keyed IDataTestId entry produced for the radio <input> in a
+  // radiogroup v-for fixture, and asserts both the injected selector template
+  // (selectorValue — what becomes data-testid in the DOM) and the keyed accessor's
+  // PomStringPattern (pom.selector — what generateGetElementByDataTestId feeds into
+  // `this.keyedLocators((key) => this.locatorByTestId(...))`).
+  function compileRadioFixture(
+    fixtureName: string,
+    componentName: string,
+    options?: { optionKeyAttribute?: Record<string, string> },
+  ) {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+
+    const transformOptions: Record<string, unknown> = { existingIdBehavior: 'preserve' }
+    if (options?.optionKeyAttribute) {
+      transformOptions.optionKeyAttribute = options.optionKeyAttribute
+    }
+
+    compileAndCaptureAst(
+      readFixtureTemplate(fixtureName),
+      {
+        filename: `/src/components/${componentName}.vue`,
+        nodeTransforms: [
+          createTestIdTransform(componentName, componentHierarchyMap, {}, [], '/src/views', transformOptions as Parameters<typeof createTestIdTransform>[5]),
+        ],
+      },
+    )
+
+    const deps = componentHierarchyMap.get(componentName) as IComponentDependencies | undefined
+    expect(deps).toBeTruthy()
+
+    const entries = Array.from(deps?.dataTestIdSet ?? [])
+    const keyed = entries.find(e => e.pom?.selector && (e.pom.selector as { patternKind?: string }).patternKind === 'parameterized')
+      ?? entries.find(e => e.selectorValue && (e.selectorValue as { patternKind?: string }).patternKind === 'parameterized')
+    expect(keyed).toBeTruthy()
+    return { deps, keyed }
+  }
+
+  it('keys off configured :value binding when :key is the non-meaningful v-for index', () => {
+    // config: optionKeyAttribute = { MyRadioGroup: "value" }
+    const { keyed } = compileRadioFixture('MyRadioGroup_OptionValue.vue', 'MyRadioGroup', {
+      optionKeyAttribute: { MyRadioGroup: 'value' },
+    })
+
+    // The injected data-testid template interpolates option.value, NOT the v-for index.
+    expect((keyed!.selectorValue as { formatted: string }).formatted)
+      .toBe('MyRadioGroup-${option.value}-option-radio')
+
+    // The keyed accessor's selector pattern is parameterized by `key` (the generated
+    // parameter name), collapsing option.value -> ${key}.
+    expect(keyed!.pom?.selector).toEqual(createPomStringPattern('MyRadioGroup-${key}-option-radio', 'parameterized', ['key']))
+
+    // The accessor's parameter list carries the `key` parameter (plus the standard
+    // annotationText argument that radio select methods accept).
+    expect(keyed!.pom?.parameters).toEqual(createPomParameters(['key', 'string'], ['annotationText', 'string = ""']))
+  })
+
+  it('default (no optionKeyAttribute config) keys off the non-meaningful :key=index — the gap', () => {
+    // config: (none)
+    const { keyed } = compileRadioFixture('MyRadioGroup_OptionValue.vue', 'MyRadioGroup')
+
+    // Without the config, the keyed fragment comes from the enclosing v-for :key="index".
+    expect((keyed!.selectorValue as { formatted: string }).formatted)
+      .toBe('MyRadioGroup-${index}-option-radio')
+
+    expect(keyed!.pom?.selector).toEqual(createPomStringPattern('MyRadioGroup-${key}-option-radio', 'parameterized', ['key']))
+    expect(keyed!.pom?.parameters).toEqual(createPomParameters(['key', 'string'], ['annotationText', 'string = ""']))
+  })
+
+  it('configured binding absent on the element falls back to the existing :key resolution', () => {
+    // config: optionKeyAttribute = { MyRadioGroup: "label" } but <input> has NO :label binding;
+    // the fixture's v-for :key is option.id, so the fall-through path keys by option.id.
+    const { keyed } = compileRadioFixture('MyRadioGroup_OptionId.vue', 'MyRadioGroup', {
+      optionKeyAttribute: { MyRadioGroup: 'label' },
+    })
+
+    // getBindingKeyInfo(element, "label") returns null (no :label on <input>), so
+    // getBestAvailableKeyInfo falls through to the existing :key resolution -> option.id.
+    expect((keyed!.selectorValue as { formatted: string }).formatted)
+      .toBe('MyRadioGroup-${option.id}-option-radio')
+
+    expect(keyed!.pom?.selector).toEqual(createPomStringPattern('MyRadioGroup-${key}-option-radio', 'parameterized', ['key']))
+    expect(keyed!.pom?.parameters).toEqual(createPomParameters(['key', 'string'], ['annotationText', 'string = ""']))
   })
 })

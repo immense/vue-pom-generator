@@ -103,6 +103,7 @@ describe("dev processor option plumbing", () => {
 
       const plugin = createDevProcessorPlugin({
         nativeWrappers: {},
+        optionKeyAttribute: {},
         excludedComponents: [],
         getPageDirs: () => ["src/views"],
         getComponentDirs: () => ["src/components"],
@@ -190,6 +191,7 @@ describe("dev processor option plumbing", () => {
 
       const plugin = createDevProcessorPlugin({
         nativeWrappers: {},
+        optionKeyAttribute: {},
         excludedComponents: [],
         getPageDirs: () => ["src/views"],
         getComponentDirs: () => ["src/components"],
@@ -256,6 +258,7 @@ describe("dev processor option plumbing", () => {
 
       const plugin = createDevProcessorPlugin({
         nativeWrappers: {},
+        optionKeyAttribute: {},
         excludedComponents: [],
         getPageDirs: () => ["src/views"],
         getComponentDirs: () => ["src/components"],

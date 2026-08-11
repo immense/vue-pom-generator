@@ -15,6 +15,7 @@ function createMetadataCollector(nativeWrappers: NativeWrappersMap = {}, options
     existingIdBehavior: 'preserve',
     nameCollisionBehavior: 'error',
     nativeWrappers,
+    optionKeyAttribute: {},
     elementMetadata: new Map(),
     semanticNameMap: new Map(),
     componentHierarchyMap,

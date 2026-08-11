@@ -111,6 +111,7 @@ function makeDevPlugin(
   } = overrides ?? {};
   return createDevProcessorPlugin({
     nativeWrappers: {},
+    optionKeyAttribute: {},
     excludedComponents: [],
     getPageDirs: () => ["src/views"],
     getComponentDirs: () => ["src/components"],
