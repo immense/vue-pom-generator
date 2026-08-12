@@ -367,7 +367,20 @@ function findDirectiveByName(node: ElementNode, directiveName: string, argumentN
 }
 
 /**
- * Checks if a prop/attribute is a @click directive
+ * The set of DOM events the generator treats as "action-able" — i.e. an interactive
+ * handler that warrants a generated POM accessor and runtime test-event instrumentation.
+ *
+ * `click` is the general-purpose action. The others are the semantic selection events
+ * real controls fire: `change` on radios/checkboxes/selects (the Vue `v-model` idiom
+ * for radios compiles to `@change`), and `mousedown` on combobox/listbox `<option>`
+ * elements (often `.prevent`-ed to select on pointer-down). Without these, v-for
+ * option lists that use the idiomatic event for their control type produce empty POMs.
+ */
+const ACTION_EVENTS = new Set(["click", "change", "mousedown"]);
+
+/**
+ * Checks if a prop/attribute is a recognized action-event directive (@click, @change,
+ * or @mousedown / their v-on: equivalents).
  *
  * @internal
  */
@@ -379,20 +392,19 @@ function isClickDirective(prop: AttributeNode | DirectiveNode): boolean {
   const directive = prop as DirectiveNode;
   return directive.name === "on"
     && directive.arg?.type === NodeTypes.SIMPLE_EXPRESSION
-    && (directive.arg as SimpleExpressionNode).content === "click";
+    && ACTION_EVENTS.has((directive.arg as SimpleExpressionNode).content);
 }
 
 /**
- * Returns the @click / v-on:click directive if present.
- *
- * Prefer this over re-scanning node.props in multiple places.
+ * Returns the first recognized action-event directive (@click / @change / @mousedown)
+ * if present. Prefer this over re-scanning node.props in multiple places.
  */
 export function tryGetClickDirective(node: ElementNode): DirectiveNode | undefined {
   return node.props.find((p): p is DirectiveNode => isClickDirective(p as AttributeNode | DirectiveNode)) as DirectiveNode | undefined;
 }
 
 /**
- * Checks if a node has an @click or v-on:click directive
+ * Checks if a node has a recognized action-event directive (@click / @change / @mousedown).
  * Helper function that uses isClickDirective
  *
  * @internal
@@ -1192,6 +1204,28 @@ export function getModelBindingValues(node: ElementNode): { vModel: string; mode
   }
 
   return { vModel, modelValue };
+}
+
+/**
+ * Resolves a `:value` bind directive's source string for use as a binding hint.
+ *
+ * Used by the native-role path's identifier resolution as a fallback for radios/checkboxes
+ * that use the standard component-library pattern (`:value` + `:checked` + `@change`, no
+ * `v-model`): there is no v-model/`:model-value` to derive an identifier from, so the
+ * `:value` binding (e.g. `option.value`) stands in, yielding a role-based keyed accessor
+ * instead of falling through to the @change handler-name path.
+ *
+ * @internal
+ */
+export function getBindingValueHint(node: ElementNode): string | null {
+  const directive = findDirectiveByName(node, "bind", "value");
+  const exp = directive?.exp;
+  if (!exp || (exp.type !== NodeTypes.SIMPLE_EXPRESSION && exp.type !== NodeTypes.COMPOUND_EXPRESSION)) {
+    return null;
+  }
+
+  const source = getVueExpressionSource(exp as SimpleExpressionNode | CompoundExpressionNode, "loc", "content");
+  return source || null;
 }
 
 /**

@@ -36,6 +36,7 @@ import {
   tryGetContainedInStaticVForSourceLiteralValues,
   getKeyDirectiveInfo,
   getBindingKeyInfo,
+  getBindingValueHint,
   getModelBindingValues,
   getNativeWrapperTransformInfo,
   nodeHandlerAttributeValue,
@@ -1542,7 +1543,17 @@ export function createTestIdTransform(
         || getStaticAttributeContent(element, "name");
       const labelText = getAssociatedLabelText(element, hierarchyMap);
       const { vModel, modelValue } = getModelBindingValues(element);
-      const bindingHint = modelValue || vModel || null;
+      // For radios/checkboxes using the standard component-library binding pattern
+      // (`:value` + `:checked` + `@change`, no `v-model` — the de-facto convention to
+      // preserve typed, non-string values that native-radio `v-model` would coerce),
+      // there is no v-model/`:model-value` to derive an identifier from. Fall back to
+      // the `:value` binding so the role path still emits a role-based keyed accessor
+      // (`…-${key}-${valueToken}-radio`) instead of falling through to the @click
+      // handler-name path (`…-${key}-SetModelValueValue-input`).
+      const valueBindingHint = (nativeHtmlRole === "radio" || nativeHtmlRole === "checkbox")
+        ? getBindingValueHint(element)
+        : null;
+      const bindingHint = modelValue || vModel || valueBindingHint || null;
       const labelToken = labelText ? toPascalCase(labelText) : "";
       const bindingToken = bindingHint ? toPascalCase(bindingHint) : "";
 

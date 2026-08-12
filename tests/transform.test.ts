@@ -1736,3 +1736,80 @@ describe('option-keying: per-component optionKeyAttribute config', () => {
     expect(keyed!.pom?.parameters).toEqual(createPomParameters(['key', 'string'], ['annotationText', 'string = ""']))
   })
 })
+
+describe('action-event recognition: option-selection events beyond @click', () => {
+  // Real option-selection controls fire the semantic event for their control type —
+  // @change on radios/checkboxes, @mousedown on combobox/listbox <option> elements —
+  // not @click. The generator must recognize these as action-able (like @click) so
+  // it emits keyed accessors for v-for option elements that use them.
+  function compileOptionFixture(
+    fixtureName: string,
+    componentName: string,
+    options?: { optionKeyAttribute?: Record<string, string> },
+  ) {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+
+    const transformOptions: Record<string, unknown> = { existingIdBehavior: 'preserve' }
+    if (options?.optionKeyAttribute) {
+      transformOptions.optionKeyAttribute = options.optionKeyAttribute
+    }
+
+    compileAndCaptureAst(
+      readFixtureTemplate(fixtureName),
+      {
+        filename: `/src/components/${componentName}.vue`,
+        nodeTransforms: [
+          createTestIdTransform(componentName, componentHierarchyMap, {}, [], '/src/views', transformOptions as Parameters<typeof createTestIdTransform>[5]),
+        ],
+      },
+    )
+
+    const deps = componentHierarchyMap.get(componentName) as IComponentDependencies | undefined
+    expect(deps).toBeTruthy()
+
+    const entries = Array.from(deps?.dataTestIdSet ?? [])
+    const keyed = entries.find(e => e.pom?.selector && (e.pom.selector as { patternKind?: string }).patternKind === 'parameterized')
+      ?? entries.find(e => e.selectorValue && (e.selectorValue as { patternKind?: string }).patternKind === 'parameterized')
+    expect(keyed).toBeTruthy()
+    return { deps, keyed }
+  }
+
+  it('emits a keyed accessor for a v-for radio driven by @change (not @click)', () => {
+    // The fixture uses @change="modelValue = option.value" — the Vue idiom for radio
+    // selection — instead of @click. Before action-event widening this produced an
+    // EMPTY POM (no recognized handler); it must emit a keyed Option[key] accessor.
+    const { keyed } = compileOptionFixture('MyRadioGroup_OptionChange.vue', 'MyRadioGroup', {
+      optionKeyAttribute: { MyRadioGroup: 'value' },
+    })
+
+    // The keyed accessor is parameterized by the configured :value binding, collapsing
+    // option.value -> ${key}, regardless of whether the radio is driven by @click or @change.
+    // The fixture mirrors the real component-library radio pattern: a <template v-for>
+    // wrapping v-if/v-else <input> branches with `:value` + `:checked` + `@change` (no
+    // v-model, to preserve typed values). The `:value` fallback yields the identifier
+    // token `OptionValue`, and the native `radio` role supplies the `-radio` suffix —
+    // a role-based keyed accessor rather than the @change handler-name path.
+    expect((keyed!.selectorValue as { formatted: string }).formatted)
+      .toBe('MyRadioGroup-${option.value}-OptionValue-radio')
+    expect(keyed!.pom?.selector).toEqual(createPomStringPattern('MyRadioGroup-${key}-OptionValue-radio', 'parameterized', ['key']))
+    // The accessor carries a `key` parameter (the option value the test selects by).
+    expect(keyed!.pom?.parameters.map((p: { name: string }) => p.name)).toContain('key')
+  })
+
+  it('emits a keyed accessor for a v-for <li role="option"> driven by @mousedown', () => {
+    // Combobox/listbox option elements commonly use @mousedown (often .prevent) to
+    // select on pointer-down for responsive UX. The fixture keys off :data-value
+    // (the meaningful option value) via optionKeyAttribute.
+    const { keyed } = compileOptionFixture('MyList_OptionMousedown.vue', 'MyList', {
+      optionKeyAttribute: { MyList: 'data-value' },
+    })
+
+    // The keyed accessor is parameterized by the configured :data-value binding,
+    // collapsing option.value -> ${key}. The suffix derives from the handler name
+    // (select) + tag (li), matching the generator's accessor-naming convention.
+    expect((keyed!.selectorValue as { formatted: string }).formatted)
+      .toBe('MyList-${option.value}-Select-li')
+    expect(keyed!.pom?.selector).toEqual(createPomStringPattern('MyList-${key}-Select-li', 'parameterized', ['key']))
+    expect(keyed!.pom?.parameters.map((p: { name: string }) => p.name)).toContain('key')
+  })
+})
