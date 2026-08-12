@@ -133,7 +133,7 @@ export function isAsciiAlphaNumericCode(code: number): boolean {
   return isAsciiLetterCode(code) || isAsciiDigitCode(code);
 }
 
-export type NativeRole = 'button' | 'input' | 'select' | 'vselect' | 'checkbox' | 'toggle' | 'radio' | 'grid' | 'link'
+export type NativeRole = 'button' | 'input' | 'select' | 'vselect' | 'checkbox' | 'toggle' | 'radio' | 'grid' | 'link' | 'tab'
 // In this plugin, the hierarchy map stores: key = child element, value = parent element (or null for root).
 export type Child = ElementNode;
 export type Parent = ElementNode | null;
@@ -3248,6 +3248,7 @@ export function applyResolvedDataTestId(args: {
       case "radio":
       case "grid":
       case "link":
+      case "tab":
         return role;
       default:
         return undefined;
@@ -4247,6 +4248,7 @@ const STANDALONE_WRAPPER_FALLBACK_ROLES = new Set<NativeRole>([
   "toggle",
   "radio",
   "link",
+  "tab",
 ]);
 
 function stripTrailingAsciiDigits(value: string): string {

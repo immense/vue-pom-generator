@@ -1729,6 +1729,7 @@ export function createTestIdTransform(
         || inferredRole === "radio"
         || inferredRole === "grid"
         || inferredRole === "link"
+        || inferredRole === "tab"
         || isComponentLikeTag(element.tag);
 
       if (!isRecognizedInteractiveRole) {

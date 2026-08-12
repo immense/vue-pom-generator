@@ -1577,6 +1577,58 @@ describe('createTestIdTransform', () => {
     }).toThrow(/Could not infer a native role for declared wrapper <MyDiv>/)
   })
 
+  it('emits per-usage tab accessors keyed by a literal valueAttribute (role: "tab")', () => {
+    // ARIA `tab` is a first-class interactive control (a tab button in a tablist). Declaring
+    // `role: "tab"` on a wrapper component — combined with `valueAttribute: "title"` — lets the
+    // generator derive a per-usage data-testid from each tab's literal title prop and emit a
+    // distinct named accessor per tab (e.g. clickUsers / clickRoles), with a `-tab` selector
+    // suffix. This mirrors how `link`/`button` wrappers behave, and lets consumers delete
+    // hand-rolled tab POMs that previously clicked by accessible name (which is brittle when a
+    // tab's slot content carries a badge that pollutes its accessible name).
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-tab-'))
+    const tabItemPath = path.join(tempRoot, 'src', 'components', 'TabItem.vue')
+    fs.mkdirSync(path.dirname(tabItemPath), { recursive: true })
+    // TabItem renders a list-item wrapping a `role="tab"` button; the model is driven by
+    // `tabValue`. role is declared explicitly as "tab" (not inferred from the <li> wrapper).
+    fs.writeFileSync(
+      tabItemPath,
+      '<template><li role="presentation"><button role="tab" :class="{ active: modelValue == tabValue }" @click="$emit(\'update:modelValue\', tabValue)"><slot>{{ title }}</slot></button></li></template>',
+    )
+
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const vueFilesPathMap = new Map<string, string>([['TabItem', tabItemPath]])
+
+    const nativeWrappers: NativeWrappersMap = { TabItem: { role: 'tab', valueAttribute: 'title' } }
+
+    const ast = compileAndCaptureAst(
+      `<TabItem v-model="currentTab" title="Users" :tabValue="'users'" /><TabItem v-model="currentTab" title="Roles" :tabValue="'roles'" />`,
+      {
+        filename: path.join(tempRoot, 'src', 'views', 'MyPage.vue'),
+        nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, nativeWrappers, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],
+      },
+    )
+
+    // Each literal title produces a distinct per-usage data-testid with the `-tab` suffix.
+    const testIds = (ast.children as ElementNode[])
+      .filter((n): n is ElementNode => n.type === NodeTypes.ELEMENT)
+      .flatMap((el) => el.props.filter((p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === 'data-testid'))
+      .map((attr) => attr.value?.content ?? '')
+    expect(testIds).toEqual(expect.arrayContaining(['MyPage-Users-tab', 'MyPage-Roles-tab']))
+
+    // And a distinct click accessor per tab, named from the title hint.
+    const deps = componentHierarchyMap.get('MyPage') as IComponentDependencies | undefined
+    expect(deps).toBeTruthy()
+    expect(deps?.generatedMethods?.has('clickUsers')).toBe(true)
+    expect(deps?.generatedMethods?.has('clickRoles')).toBe(true)
+
+    // The locator getter carries the `-tab` role suffix (UsersTab / RolesTab), matching the
+    // injected selector. Without "tab" as a recognized NativeRole, normalizeNativeRole falls
+    // back to "button" and the getter would be `UsersButton` — inconsistent with the `-tab` id.
+    expect(deps?.__pomPrimaryByGetterName?.has('UsersTab')).toBe(true)
+    expect(deps?.__pomPrimaryByGetterName?.has('RolesTab')).toBe(true)
+    expect(deps?.__pomPrimaryByGetterName?.has('UsersButton')).toBe(false)
+  })
+
   it('parses template expressions containing TypeScript type annotations when expressionPlugins: ["typescript"] is set', () => {
     // Regression for a real-world Nuxt + Vue 3 pattern: inline arrow
     // handlers that annotate their parameter with a TS type. Without the
