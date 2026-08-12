@@ -3027,8 +3027,6 @@ export const __internal = {
   isAllCapsOrDigits,
   startsWithDigit,
   stripNonIdentifierChars,
-  stripTrailingAsciiDigits,
-  matchesStandaloneWrapperFallbackMethodName,
 };
 
 /**
@@ -4237,72 +4235,4 @@ export interface IComponentDependencies {
 
   /** Internal: lookup of already-emitted primaries by their generated getter name. */
   __pomPrimaryByGetterName?: Map<string, IDataTestId>;
-}
-
-const STANDALONE_WRAPPER_FALLBACK_ROLES = new Set<NativeRole>([
-  "button",
-  "input",
-  "select",
-  "vselect",
-  "checkbox",
-  "toggle",
-  "radio",
-  "link",
-  "tab",
-]);
-
-function stripTrailingAsciiDigits(value: string): string {
-  let end = value.length;
-  while (end > 0 && isAsciiDigitCode(value.charCodeAt(end - 1))) {
-    end -= 1;
-  }
-  return value.slice(0, end);
-}
-
-function matchesStandaloneWrapperFallbackMethodName(methodName: string, componentClassName: string): boolean {
-  let normalizedMethodName = methodName;
-  if (normalizedMethodName.endsWith("ByKey")) {
-    normalizedMethodName = normalizedMethodName.slice(0, -("ByKey".length));
-  }
-  normalizedMethodName = stripTrailingAsciiDigits(normalizedMethodName);
-  return normalizedMethodName === componentClassName;
-}
-
-/**
- * Suppress standalone wrapper surfaces when every emitted primary is just a generic native-control fallback:
- * the wrapper only exposes button/input/select/etc. semantics, and the generated member names collapse to the
- * wrapper's own class name (optionally with keyed or numeric collision suffixes). Those wrappers only become
- * meaningfully named at their usage sites, where parent views/components contribute handler-derived semantics.
- */
-export function shouldSuppressStandaloneWrapperFallbackSurface(
-  componentName: string,
-  dependencies: IComponentDependencies,
-): boolean {
-  if (dependencies.isView || (dependencies.pomExtraMethods?.length ?? 0) > 0) {
-    return false;
-  }
-
-  const entries = Array.from(dependencies.dataTestIdSet ?? []);
-  if (!entries.length) {
-    return false;
-  }
-
-  const primaryEntries = entries.filter((entry): entry is IDataTestId & { pom: PomPrimarySpec } => {
-    return !!entry.pom && entry.pom.emitPrimary !== false;
-  });
-
-  // Be conservative: only suppress when every emitted entry is a primary wrapper fallback.
-  if (!primaryEntries.length || primaryEntries.length !== entries.length) {
-    return false;
-  }
-
-  const componentClassName = toPascalCase(componentName.endsWith(".vue") ? componentName.slice(0, -4) : componentName);
-  if (!componentClassName) {
-    return false;
-  }
-
-  return primaryEntries.every(({ pom }) => {
-    return STANDALONE_WRAPPER_FALLBACK_ROLES.has(pom.nativeRole)
-      && matchesStandaloneWrapperFallbackMethodName(pom.methodName, componentClassName);
-  });
 }

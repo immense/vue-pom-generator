@@ -151,7 +151,7 @@ describe("virtual:testids", () => {
     const pomSection = code.slice(code.indexOf("export const pomManifest"));
     expect(testIdSection).toContain("\"WrapperButton\"");
     expect(testIdSection).toContain("\"WrapperButton-Click-button\"");
-    expect(pomSection).not.toContain("\"WrapperButton\":");
+    expect(pomSection).toContain("\"WrapperButton\":");
 
     const resolvedPomManifest = await hookFn(plugin.resolveId)?.("virtual:pom-manifest", undefined, { attributes: {}, isEntry: false });
     const resolvedPomManifestId = typeof resolvedPomManifest === "string" ? resolvedPomManifest : (resolvedPomManifest && typeof resolvedPomManifest === "object" ? resolvedPomManifest.id : undefined);
@@ -163,7 +163,7 @@ describe("virtual:testids", () => {
     expect(pomManifestCode).toContain("\"generatedPropertyName\": \"FooButton\"");
     expect(pomManifestCode).toContain("\"locatorDescription\": \"Foo button\"");
     expect(pomManifestCode).toContain("\"accessibleNameSource\": \"text\"");
-    expect(pomManifestCode).not.toContain("\"WrapperButton\":");
+    expect(pomManifestCode).toContain("\"WrapperButton\":");
 
     componentHierarchyMap.set("Baz", createDependencies(new Set([
       {
@@ -173,6 +173,8 @@ describe("virtual:testids", () => {
           methodName: "Baz",
           selector: createPomStringPattern("baz", "static", []),
           parameters: [],
+          generatedActionName: "clickBaz",
+          generatedPropertyName: "Baz",
         },
       },
     ]), {

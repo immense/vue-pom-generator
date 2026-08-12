@@ -54,7 +54,6 @@ import {
   PomExtraClickMethodSpec,
   PomPrimarySpec,
   PomSelectorSpec,
-  shouldSuppressStandaloneWrapperFallbackSurface,
   toPascalCase,
   upperFirst,
 } from "../utils";
@@ -872,11 +871,7 @@ export async function generateFiles(
         layoutDirs,
       })
       : undefined);
-  const emittableComponentHierarchyMap = new Map(
-    Array.from(componentHierarchyMap.entries()).filter(([componentName, dependencies]) => {
-      return !shouldSuppressStandaloneWrapperFallbackSurface(componentName, dependencies);
-    }),
-  );
+  const emittableComponentHierarchyMap = componentHierarchyMap;
   const generatedFilePaths: string[] = [];
   const writeGeneratedFile = (file: GeneratedFileOutput) => {
     const resolvedFilePath = path.resolve(file.filePath);

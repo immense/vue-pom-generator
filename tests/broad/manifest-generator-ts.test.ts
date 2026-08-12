@@ -208,52 +208,6 @@ describe("manifest-generator.ts generateTestIdsModule / generatePomManifestModul
     expect(code).toContain("\"emitPrimary\": true");
   });
 
-  it("suppresses standalone wrapper fallback surfaces from the pom manifest but keeps them in testIdManifest", () => {
-    // A wrapper whose only entry is a generic button fallback named after the component class.
-    const wrapperSelector = createPomStringPattern("WrapperButton-Click-button", "static", []);
-    const dataTestIdSet = new Set<IDataTestId>([
-      {
-        selectorValue: wrapperSelector,
-        pom: pom({
-          nativeRole: "button",
-          methodName: "WrapperButton",
-          selector: wrapperSelector,
-          generatedActionName: "clickWrapperButton",
-          generatedPropertyName: "WrapperButton",
-        }),
-      },
-    ]);
-
-    const componentHierarchyMap = new Map<string, IComponentDependencies>([
-      ["WrapperButton", deps(dataTestIdSet, { filePath: "/repo/src/components/WrapperButton.vue" })],
-      // A view component that should remain in the pom manifest (views are never suppressed).
-      ["NormalView", deps(new Set<IDataTestId>([entry({
-        selectorValue: createPomStringPattern("normal", "static", []),
-        pom: pom({
-          methodName: "NormalView",
-          selector: createPomStringPattern("normal", "static", []),
-          generatedActionName: "clickNormalView",
-          generatedPropertyName: "NormalViewButton",
-        }),
-      })]), { filePath: "/repo/src/views/Normal.vue", isView: true })],
-    ]);
-
-    const code = generateTestIdsModule(componentHierarchyMap, new Map());
-
-    const testIdSection = code.slice(
-      code.indexOf("export const testIdManifest"),
-      code.indexOf("export const pomManifest"),
-    );
-    const pomSection = code.slice(code.indexOf("export const pomManifest"));
-
-    // WrapperButton present in testIdManifest, suppressed in pomManifest.
-    expect(testIdSection).toContain("\"WrapperButton\"");
-    expect(pomSection).not.toContain("\"WrapperButton\":");
-    // NormalView present in both.
-    expect(testIdSection).toContain("\"NormalView\"");
-    expect(pomSection).toContain("\"NormalView\"");
-  });
-
   it("excludes components with no data-testid entries from both manifests (lines 124-125, 150-151)", () => {
     const componentHierarchyMap = new Map<string, IComponentDependencies>([
       ["Empty", deps(new Set<IDataTestId>())],

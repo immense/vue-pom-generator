@@ -159,7 +159,7 @@ describe("class-generation coverage", () => {
       expect(defaultFixtureContent).toContain("import { UsersPage as UsersPageOverride } from \"../tests/playwright/pom/overrides/UsersPage\";");
       expect(defaultFixtureContent).toContain("usersPage: UsersPageOverride");
       expect(defaultFixtureContent).toContain("thingWidget: Pom.ThingWidget");
-      expect(defaultFixtureContent).not.toContain("wrapperButton: Pom.WrapperButton");
+      expect(defaultFixtureContent).toContain("wrapperButton: Pom.WrapperButton");
       // Reserved fixture name should not appear as a generated component fixture.
       expect(defaultFixtureContent).not.toContain("page: Pom.Page");
 

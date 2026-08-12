@@ -8,7 +8,7 @@ import { buildAccessibilityAudit } from "./accessibility-audit";
 import type { ElementMetadata } from "./metadata-collector";
 import { buildPomLocatorDescription, humanizePomMethodName } from "./pom-discoverability";
 import type { IComponentDependencies, IDataTestId, PomExtraClickMethodSpec, PomPrimarySpec } from "./utils";
-import { buildPomGeneratedActionName, buildPomGeneratedPropertyName, shouldSuppressStandaloneWrapperFallbackSurface } from "./utils";
+import { buildPomGeneratedActionName, buildPomGeneratedPropertyName } from "./utils";
 import { renderSourceFile, VariableDeclarationKind, type WriterFunction } from "./typescript-codegen";
 
 type PomManifestEntry = {
@@ -114,7 +114,6 @@ export function buildPomManifest(
   elementMetadata: Map<string, Map<string, ElementMetadata>>,
 ): PomManifest {
   const manifestEntries = Array.from(componentHierarchyMap.entries())
-    .filter(([componentName, dependencies]) => !shouldSuppressStandaloneWrapperFallbackSurface(componentName, dependencies))
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([componentName, dependencies]) => {
       const entries = Array.from(dependencies.dataTestIdSet)
