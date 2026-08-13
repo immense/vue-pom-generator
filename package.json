@@ -28,6 +28,11 @@
       "types": "./dist/eslint/index.d.ts",
       "import": "./dist/eslint/index.mjs",
       "require": "./dist/eslint/index.cjs"
+    },
+    "./router": {
+      "types": "./dist/router-bridge.d.ts",
+      "import": "./dist/router.mjs",
+      "require": "./dist/router.cjs"
     }
   },
   "files": [

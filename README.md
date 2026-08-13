@@ -215,6 +215,7 @@ Exports:
 - `defineVuePomGeneratorConfig()`
 - `defineNuxtPomGeneratorConfig()`
 - `@immense/vue-pom-generator/eslint`
+- `@immense/vue-pom-generator/router` (browser-safe runtime bridge)
 
 ## Basic Vue/Vite setup
 
@@ -288,7 +289,7 @@ When router-aware generation is enabled, expose the live router only in the envi
 where Playwright runs:
 
 ```ts
-import { exposeRouterForPomNavigation } from "@immense/vue-pom-generator";
+import { exposeRouterForPomNavigation } from "@immense/vue-pom-generator/router";
 
 if (import.meta.env.DEV) {
   exposeRouterForPomNavigation(router);

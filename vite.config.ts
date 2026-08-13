@@ -11,6 +11,8 @@ export default defineConfig({
         index: "./index.ts",
         // eslint sub-export: import "@immense/vue-pom-generator/eslint"
         "eslint/index": "./eslint/index.ts",
+        // browser-safe router bridge: import "@immense/vue-pom-generator/router"
+        router: "./router-bridge.ts",
       },
       external: (() => {
         const externals = new Set<string>([
