@@ -4,8 +4,10 @@ export interface PomNavigationTarget {
 }
 
 export interface PomNavigationRouter {
-  push: (to: PomNavigationTarget) => unknown | Promise<unknown>;
-  resolve: (to: PomNavigationTarget) => { href: string };
+  // The bridge only stores the router. Generated POMs own the concrete named-route
+  // payload, so keep these callable constraints broad enough for Vue Router's overloads.
+  push: (...args: never[]) => object | undefined;
+  resolve: (...args: never[]) => { href: string };
 }
 
 /** Global key shared by the runtime bridge and generated `goTo()` methods. */
