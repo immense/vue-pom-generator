@@ -595,7 +595,7 @@ describe("class-generation coverage", () => {
       // Route metadata + goTo helpers. The named route drives the runtime router via push.
       expect(content).toContain("static readonly route");
       expect(content).toContain("async goTo()");
-      expect(content).toContain("__appRouter?.push(");
+      expect(content).toContain("__vuePomGeneratorRouter?.push(");
       expect(content).toContain('name: "users"');
       expect(content).toContain("await this.page.evaluate(async ({ name, params })");
 
@@ -709,11 +709,11 @@ describe("class-generation coverage", () => {
 
       // Shared: named routes drive the runtime router, handing it a params object (undefined
       // values stripped) instead of reconstructing a URL. Warm pages SPA-push via
-      // `__appRouter.push`; cold pages (about:blank, router not yet installed) boot then
-      // full-load the resolved target (`__appRouter.resolve(...).href`) so the route's
+      // `__vuePomGeneratorRouter.push`; cold pages (about:blank, router not yet installed) boot then
+      // full-load the resolved target (`__vuePomGeneratorRouter.resolve(...).href`) so the route's
       // component mounts via a stable page load instead of a race-prone SPA push.
-      const PUSH_CALL = "__appRouter?.push(";
-      const RESOLVE_CALL = "__appRouter?.resolve(";
+      const PUSH_CALL = "__vuePomGeneratorRouter?.push(";
+      const RESOLVE_CALL = "__vuePomGeneratorRouter?.resolve(";
       const COLD_BOOT = 'this.page.goto("/", { waitUntil: "commit" })';
       const COLD_TARGET_LOAD = 'await this.page.goto(href, { waitUntil: "domcontentloaded" })';
       const COLD_START_WAIT = "waitForFunction(() => typeof";

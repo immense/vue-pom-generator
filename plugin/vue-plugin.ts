@@ -17,11 +17,11 @@ import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 
 import type { VuePomGeneratorLogger } from "./logger";
 import { isFileInConfiguredSourceScope, resolveComponentNameFromPath } from "./path-utils";
-import type { MissingSemanticNameBehavior, PomNameCollisionBehavior } from "./types";
+import type { ExistingIdBehavior, ExistingIdBehaviorConfig, MissingSemanticNameBehavior, PomNameCollisionBehavior } from "./types";
 
 interface InternalFactoryOptions {
   vueOptions?: VuePluginOptions;
-  existingIdBehavior: "preserve" | "overwrite" | "error";
+  existingIdBehavior: ExistingIdBehaviorConfig;
   nameCollisionBehavior: PomNameCollisionBehavior;
   missingSemanticNameBehavior?: MissingSemanticNameBehavior;
   nativeWrappers: NativeWrappersMap;
@@ -46,6 +46,15 @@ interface InternalFactoryOptions {
 }
 
 type VueCompilerSfcNamespace = Awaited<typeof import("@vue/compiler-sfc")>;
+
+export function resolveExistingIdBehavior(
+  config: ExistingIdBehaviorConfig,
+  componentName: string,
+): ExistingIdBehavior {
+  return typeof config === "string"
+    ? config
+    : (config.components[componentName] ?? config.default);
+}
 
 function resolveCompilerSfcParse(compilerSfc: VueCompilerSfcNamespace): VueCompilerSfcNamespace["parse"] {
   const parse = compilerSfc.parse
@@ -216,7 +225,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
               excludedComponents,
               viewsDirAbs,
                 {
-                  existingIdBehavior,
+                  existingIdBehavior: resolveExistingIdBehavior(existingIdBehavior, componentName),
                   testIdAttribute,
                   nameCollisionBehavior,
                   missingSemanticNameBehavior,
@@ -282,7 +291,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
             excludedComponents,
             viewsDirAbs,
               {
-                existingIdBehavior,
+                existingIdBehavior: resolveExistingIdBehavior(existingIdBehavior, componentName),
                 testIdAttribute,
                 nameCollisionBehavior,
                 missingSemanticNameBehavior,

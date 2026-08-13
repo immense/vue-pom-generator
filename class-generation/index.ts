@@ -29,6 +29,7 @@ import {
 } from "../pom-patterns";
 import { buildPomLocatorDescription, stripPomActionPrefix } from "../pom-discoverability";
 import { getParamToken, introspectNuxtPages, parseRouterFileFromCwd } from "../router-introspection";
+import { POM_ROUTER_GLOBAL_NAME } from "../router-bridge";
 import {
   addExportAll,
   addNamedImport,
@@ -374,12 +375,11 @@ const GOTO_RUNTIME_LINES = [
 ];
 
 /**
- * The `window`/`globalThis` key the consumer exposes the live Vue Router instance under
- * (dev-gated), so generated `goTo()` can drive `router.push({ name, params })` instead of
- * reconstructing URLs from opaque path-template tokens. The consumer is responsible for
- * installing `globalThis[ROUTER_GLOBAL_NAME] = router` in test/dev builds.
+ * The generator-owned `window`/`globalThis` key used by `exposeRouterForPomNavigation`,
+ * so generated `goTo()` can drive `router.push({ name, params })` instead of reconstructing
+ * URLs from opaque path-template tokens.
  */
-const ROUTER_GLOBAL_NAME = "__appRouter";
+const ROUTER_GLOBAL_NAME = POM_ROUTER_GLOBAL_NAME;
 
 /**
  * Emits the router-driven `goTo()` body for a named route. Two regimes:

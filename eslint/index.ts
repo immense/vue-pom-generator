@@ -1,6 +1,7 @@
 import type { Rule } from "eslint";
 import type { CallExpression, Expression, MemberExpression } from "estree";
 
+import { noDataTestIdInSpecsRule } from "./no-data-testid-in-specs";
 import { noPageFixtureInSpecsRule } from "./no-page-fixture-in-specs";
 import { noRawPlaywrightApisRule } from "./no-raw-playwright-apis";
 import { removeExistingTestIdAttributesRule } from "./remove-existing-test-id-attributes";
@@ -105,6 +106,7 @@ export const noRawLocatorActionRule: Rule.RuleModule = {
 
 export const plugin = {
 	rules: {
+		"no-data-testid-in-specs": noDataTestIdInSpecsRule,
 		"no-page-fixture-in-specs": noPageFixtureInSpecsRule,
 		"no-raw-locator-action": noRawLocatorActionRule,
 		"no-raw-playwright-apis": noRawPlaywrightApisRule,
@@ -113,5 +115,6 @@ export const plugin = {
 } satisfies { rules: Record<string, Rule.RuleModule> };
 
 export { noPageFixtureInSpecsRule };
+export { noDataTestIdInSpecsRule };
 export { noRawPlaywrightApisRule };
 export { removeExistingTestIdAttributesRule };

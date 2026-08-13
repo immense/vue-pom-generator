@@ -2,7 +2,7 @@ import path from "node:path";
 
 import type { NativeWrappersMap } from "../utils";
 import type { NuxtResolvedDiscovery } from "./nuxt-discovery";
-import type { ExistingIdBehavior } from "./types";
+import type { ExistingIdBehaviorConfig } from "./types";
 
 export interface ResolvedInjectionSupportOptions {
   pageDirs: string[];
@@ -12,7 +12,7 @@ export interface ResolvedInjectionSupportOptions {
   nativeWrappers: NativeWrappersMap;
   optionKeyAttribute: Record<string, string>;
   excludedComponents: string[];
-  existingIdBehavior: ExistingIdBehavior;
+  existingIdBehavior: ExistingIdBehaviorConfig;
   testIdAttribute: string;
 }
 
@@ -25,7 +25,7 @@ export interface ResolveInjectionSupportOptionsInput {
   nativeWrappers?: NativeWrappersMap;
   optionKeyAttribute?: Record<string, string>;
   excludedComponents?: string[];
-  existingIdBehavior?: ExistingIdBehavior;
+  existingIdBehavior?: ExistingIdBehaviorConfig;
   testIdAttribute?: string;
 }
 

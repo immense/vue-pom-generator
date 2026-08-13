@@ -32,6 +32,34 @@ describe("existingIdBehavior: 'error'", () => {
 
     await expect(hookFn(metadataPlugin.transform)!(code, id)).rejects.toThrow(expectedError);
   });
+
+  it("allows a named component to override the default behavior", async () => {
+    const plugins = createVuePomGeneratorPlugins({
+      injection: {
+        existingIdBehavior: {
+          default: "error",
+          components: {
+            TestComponent: "overwrite",
+          },
+        },
+        componentDirs: ["."],
+      },
+      generation: false,
+    });
+
+    const metadataPlugin = plugins.find((p): p is Plugin =>
+      !!(p && typeof p === "object" && "name" in p && p.name === "vue-pom-generator-metadata-collector")
+    );
+
+    if (!metadataPlugin || typeof metadataPlugin.transform !== "function") {
+      throw new Error("Could not find metadata collector plugin");
+    }
+
+    const code = `<template><button data-testid="existing" @click="save">Save</button></template>`;
+    const id = path.resolve(process.cwd(), "TestComponent.vue");
+
+    await expect(hookFn(metadataPlugin.transform)!(code, id)).resolves.toBeNull();
+  });
 });
 
 describe("existingIdBehavior: 'preserve'", () => {

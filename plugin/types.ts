@@ -2,6 +2,13 @@ import type { Options as VuePluginOptions } from "@vitejs/plugin-vue";
 import type { NativeWrappersMap } from "../utils";
 
 export type ExistingIdBehavior = "preserve" | "overwrite" | "error";
+export interface ExistingIdBehaviorByComponent {
+  /** Behavior used for every component not named in `components`. */
+  default: ExistingIdBehavior;
+  /** Per-SFC component-name overrides. */
+  components: Record<string, ExistingIdBehavior>;
+}
+export type ExistingIdBehaviorConfig = ExistingIdBehavior | ExistingIdBehaviorByComponent;
 export type VuePluginOwnership = "internal" | "external";
 export type PlaywrightOutputStructure = "aggregated" | "split";
 export type MissingSemanticNameBehavior = "error" | "ignore";
@@ -195,11 +202,12 @@ export interface VuePomGeneratorPluginOptions {
     /**
       * What to do when the author already provided a test id attribute.
       *
-     * - `"preserve"` (default): keep the existing value
+     * - `"preserve"`: keep the existing value
      * - `"overwrite"`: replace it with the generated value
-     * - `"error"`: throw to force cleanup/migration
+     * - `"error"` (default): throw to force cleanup/migration
+     * - `{ default, components }`: apply a default with named per-component overrides
      */
-    existingIdBehavior?: ExistingIdBehavior;
+    existingIdBehavior?: ExistingIdBehaviorConfig;
   };
 
   /**

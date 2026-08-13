@@ -15,6 +15,7 @@ import { setResolveToComponentNameFn, setRouteNameToComponentNameMap, toPascalCa
 import type { VuePomGeneratorLogger } from "../logger";
 import { resolveComponentNameFromPath } from "../path-utils";
 import type { ResolvedGenerationSupportOptions } from "../resolved-generation-options";
+import { resolveExistingIdBehavior } from "../vue-plugin";
 
 interface BuildProcessorOptions {
   componentHierarchyMap: Map<string, IComponentDependencies>;
@@ -250,7 +251,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
                 excludedComponents,
                 getViewsDirAbs(),
                 {
-                  existingIdBehavior: existingIdBehavior ?? "error",
+                  existingIdBehavior: resolveExistingIdBehavior(existingIdBehavior, componentName),
                   testIdAttribute,
                   nameCollisionBehavior,
                   missingSemanticNameBehavior,

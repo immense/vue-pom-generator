@@ -284,6 +284,17 @@ export default defineConfig({
 });
 ```
 
+When router-aware generation is enabled, expose the live router only in the environment
+where Playwright runs:
+
+```ts
+import { exposeRouterForPomNavigation } from "@immense/vue-pom-generator";
+
+if (import.meta.env.DEV) {
+  exposeRouterForPomNavigation(router);
+}
+```
+
 ## Basic Nuxt setup
 
 ```ts

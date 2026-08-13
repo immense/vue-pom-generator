@@ -2,10 +2,39 @@
 import { RuleTester } from "eslint";
 import { describe, it } from "vitest";
 
-import { noPageFixtureInSpecsRule, noRawLocatorActionRule, noRawPlaywrightApisRule } from "../eslint/index";
+import { noDataTestIdInSpecsRule, noPageFixtureInSpecsRule, noRawLocatorActionRule, noRawPlaywrightApisRule } from "../eslint/index";
 
 const tester = new RuleTester({
 	languageOptions: { ecmaVersion: 2022, sourceType: "module" },
+});
+
+describe("no-data-testid-in-specs", () => {
+	it("flags raw data-testid selectors and getByTestId calls", () => {
+		tester.run("no-data-testid-in-specs", noDataTestIdInSpecsRule, {
+			valid: [
+				{ code: "page.locator('.save-button')" },
+				{ code: "page.locator(`.row-${index}`)" },
+			],
+			invalid: [
+				{
+					code: "page.locator('[data-testid=save-button]')",
+					errors: [{ messageId: "noDataTestIdInSpecs" }],
+				},
+				{
+					code: "page.locator(`[data-testid=option-${id}]`)",
+					errors: [{ messageId: "noDataTestIdInSpecs" }],
+				},
+				{
+					code: "page.getByTestId('save-button')",
+					errors: [{ messageId: "noGetByTestIdInSpecs" }],
+				},
+				{
+					code: "page['getByTestId']('save-button')",
+					errors: [{ messageId: "noGetByTestIdInSpecs" }],
+				},
+			],
+		});
+	});
 });
 
 describe("no-raw-locator-action", () => {

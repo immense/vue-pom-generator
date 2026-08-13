@@ -28,6 +28,8 @@ export function defineNuxtPomGeneratorConfig(options: NuxtPomGeneratorPluginOpti
 
 export type {
   ExistingIdBehavior,
+  ExistingIdBehaviorByComponent,
+  ExistingIdBehaviorConfig,
   MissingSemanticNameBehavior,
   NuxtPomGeneratorPluginOptions,
   PomGeneratorPluginOptions,
@@ -37,3 +39,6 @@ export type {
   VuePomGeneratorRuntimeAnnotatorOptions,
   VuePomGeneratorRuntimeAnnotatorUiOptions,
 } from "./plugin/types";
+
+export { exposeRouterForPomNavigation, POM_ROUTER_GLOBAL_NAME } from "./router-bridge";
+export type { PomNavigationRouter, PomNavigationTarget } from "./router-bridge";

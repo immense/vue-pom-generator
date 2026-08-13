@@ -1,5 +1,5 @@
 import type {
-  ExistingIdBehavior,
+  ExistingIdBehaviorConfig,
   MissingSemanticNameBehavior,
   PlaywrightOutputStructure,
   PomNameCollisionBehavior,
@@ -29,7 +29,7 @@ export interface ResolvedGenerationSupportOptions {
   customPomImportNameCollisionBehavior: "error" | "alias";
   nameCollisionBehavior: PomNameCollisionBehavior;
   missingSemanticNameBehavior: MissingSemanticNameBehavior;
-  existingIdBehavior: ExistingIdBehavior;
+  existingIdBehavior: ExistingIdBehaviorConfig;
   testIdAttribute: string;
   accessibilityAudit: boolean;
   routerAwarePoms: boolean;

@@ -16,6 +16,7 @@ import { setResolveToComponentNameFn, setRouteNameToComponentNameMap, toPascalCa
 import type { VuePomGeneratorLogger } from "../logger";
 import { isPathWithinDir, resolveComponentNameFromPath } from "../path-utils";
 import type { ResolvedGenerationSupportOptions } from "../resolved-generation-options";
+import { resolveExistingIdBehavior } from "../vue-plugin";
 
 interface DevProcessorOptions {
   nativeWrappers: NativeWrappersMap;
@@ -313,7 +314,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
               excludedComponents,
               getViewsDirAbs(),
               {
-                existingIdBehavior: existingIdBehavior ?? "error",
+                existingIdBehavior: resolveExistingIdBehavior(existingIdBehavior, componentName),
                 nameCollisionBehavior,
                 missingSemanticNameBehavior,
                 testIdAttribute,
