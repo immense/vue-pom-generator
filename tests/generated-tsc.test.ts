@@ -147,6 +147,77 @@ describe("generated output", () => {
     }
   });
 
+  it("typechecks query-aware navigation for create and details routes", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-query-navigation-"));
+
+    try {
+      fs.symlinkSync(path.resolve(process.cwd(), "node_modules"), path.join(tempRoot, "node_modules"), "dir");
+      const basePagePath = path.join(tempRoot, "base-page.ts");
+      copyRepoFixture(tempRoot, "base-page.full.ts", "base-page.ts");
+      copyRepoFixture(tempRoot, "pointer.ts", "pointer.ts");
+
+      const componentName = "RecordDetailsPage";
+      const viewPath = path.join(tempRoot, `${componentName}.vue`);
+      writeFile(viewPath, "<template><div /></template>\n");
+      writeFile(
+        path.join(tempRoot, "router.ts"),
+        [
+          "import { createMemoryHistory, createRouter } from 'vue-router';",
+          "import RecordDetailsPage from './RecordDetailsPage.vue';",
+          "export default function makeRouter() {",
+          "  return createRouter({",
+          "    history: createMemoryHistory(),",
+          "    routes: [",
+          "      { path: '/records/new', name: 'record-new', component: RecordDetailsPage, props: route => ({ mode: route.query.mode }) },",
+          "      { path: '/records/:recordId?', name: 'record-details', component: RecordDetailsPage, props: route => ({ recordId: route.params.recordId, tab: route.query.tab }) },",
+          "    ],",
+          "  });",
+          "}",
+        ].join("\n"),
+      );
+
+      const dependencies: IComponentDependencies = {
+        filePath: viewPath,
+        childrenComponentSet: new Set(),
+        usedComponentSet: new Set(),
+        dataTestIdSet: new Set(),
+        generatedMethods: new Map(),
+        isView: true,
+      };
+      const outDir = path.join(tempRoot, "out");
+      await generateFiles(new Map([[componentName, dependencies]]), new Map(), basePagePath, {
+        outDir,
+        projectRoot: tempRoot,
+        routerEntry: "./router.ts",
+        vueRouterFluentChaining: true,
+      });
+
+      const generatedFilePath = path.join(outDir, "page-object-models.g.ts");
+      writeFile(
+        path.join(tempRoot, "usage.ts"),
+        [
+          'import type { Page } from "@playwright/test";',
+          'import { RecordDetailsPage } from "./out/page-object-models.g";',
+          "declare const page: Page;",
+          "const recordDetailsPage = new RecordDetailsPage(page);",
+          'void recordDetailsPage.goTo({ mode: "summary" });',
+          'void recordDetailsPage.goTo({ recordId: 42, tab: "history" });',
+          'void recordDetailsPage.goTo({ recordId: undefined, tab: "history" });',
+          "// @ts-expect-error A details-only query cannot select the details route without path-key presence.",
+          'void recordDetailsPage.goTo({ tab: "history" });',
+        ].join("\n"),
+      );
+
+      const result = runTscNoEmit([generatedFilePath, basePagePath, path.join(tempRoot, "usage.ts")], { cwd: tempRoot });
+      if (result.status !== 0) {
+        throw new Error(`tsc failed (exit ${result.status})\n\nSTDOUT:\n${result.stdout}\n\nSTDERR:\n${result.stderr}`);
+      }
+    }
+    finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   it("fails fast when parameterized input methods omit key params", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-keyed-input-"));
 

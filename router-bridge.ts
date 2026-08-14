@@ -1,6 +1,7 @@
 export interface PomNavigationTarget {
   name: string;
   params: Record<string, unknown>;
+  query?: Record<string, unknown>;
 }
 
 export interface PomNavigationRouter {

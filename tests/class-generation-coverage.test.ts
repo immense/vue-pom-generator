@@ -634,16 +634,18 @@ describe("class-generation coverage", () => {
       writeMinimalBasePage(basePagePath);
 
       // One component per scenario:
-      //   DashboardView  -> paramless route only (/dashboard)
-      //   UsersView      -> parametrized route only (/users/:id, props declare `id`)
-      //   PersonsView    -> BOTH (/persons/new paramless, /persons/:id parametrized)
+      //   DashboardView  -> paramless route with an optional query prop (/dashboard?section=...)
+      //   UsersView      -> parametrized route with a query prop (/users/:id?q=...)
+      //   PersonsView    -> BOTH (/persons/new and /persons/:id), each with a query prop
       //   OrgMembersView -> multi-param route (/orgs/:orgId/users/:userId)
       //   ThingsView     -> optional param route (/things/:thingId?)
+      //   UnnamedView    -> unnamed parametrized route with a query prop
       writeFile(path.join(tempRoot, "DashboardView.vue"), "<template><div /></template>\n");
       writeFile(path.join(tempRoot, "UsersView.vue"), "<template><div /></template>\n");
       writeFile(path.join(tempRoot, "PersonsView.vue"), "<template><div /></template>\n");
       writeFile(path.join(tempRoot, "OrgMembersView.vue"), "<template><div /></template>\n");
       writeFile(path.join(tempRoot, "ThingsView.vue"), "<template><div /></template>\n");
+      writeFile(path.join(tempRoot, "UnnamedView.vue"), "<template><div /></template>\n");
 
       writeFile(
         path.join(tempRoot, "router.ts"),
@@ -654,17 +656,19 @@ describe("class-generation coverage", () => {
           "import PersonsView from './PersonsView.vue';",
           "import OrgMembersView from './OrgMembersView.vue';",
           "import ThingsView from './ThingsView.vue';",
+          "import UnnamedView from './UnnamedView.vue';",
           "",
           "export default function makeRouter() {",
           "  return createRouter({",
           "    history: createMemoryHistory(),",
           "    routes: [",
-          "      { path: '/dashboard', name: 'dashboard', component: DashboardView },",
-          "      { path: '/users/:id', name: 'users', component: UsersView, props: (route) => ({ id: route.params.id }) },",
-          "      { path: '/persons/new', name: 'persons-new', component: PersonsView },",
-          "      { path: '/persons/:id', name: 'persons-edit', component: PersonsView, props: (route) => ({ id: route.params.id }) },",
+          "      { path: '/dashboard', name: 'dashboard', component: DashboardView, props: (route) => ({ section: route.query.section }) },",
+          "      { path: '/users/:id', name: 'users', component: UsersView, props: (route) => ({ id: route.params.id, q: route.query.q }) },",
+          "      { path: '/persons/new', name: 'persons-new', component: PersonsView, props: (route) => ({ mode: route.query.mode }) },",
+          "      { path: '/persons/:id', name: 'persons-edit', component: PersonsView, props: (route) => ({ id: route.params.id, mode: route.query.mode }) },",
           "      { path: '/orgs/:orgId/users/:userId', name: 'org-members', component: OrgMembersView, props: (route) => ({ orgId: route.params.orgId, userId: route.params.userId }) },",
           "      { path: '/things/:thingId?', name: 'things', component: ThingsView, props: (route) => ({ thingId: route.params.thingId }) },",
+          "      { path: '/unnamed/:id', component: UnnamedView, props: (route) => ({ id: route.params.id, sort: route.query.sort }) },",
           "    ],",
           "  });",
           "}",
@@ -687,6 +691,7 @@ describe("class-generation coverage", () => {
         mkView("PersonsView", "PersonsView.vue"),
         mkView("OrgMembersView", "OrgMembersView.vue"),
         mkView("ThingsView", "ThingsView.vue"),
+        mkView("UnnamedView", "UnnamedView.vue"),
       ]);
       const outDir = path.join(tempRoot, "pom");
 
@@ -707,8 +712,8 @@ describe("class-generation coverage", () => {
         return nextClass === -1 ? content.slice(start) : content.slice(start, nextClass);
       };
 
-      // Shared: named routes drive the runtime router, handing it a params object (undefined
-      // values stripped) instead of reconstructing a URL. Warm pages SPA-push via
+      // Shared: named routes drive the runtime router, partitioning the generated method's
+      // flat navigation arguments into params and query records. Warm pages SPA-push via
       // `__vuePomGeneratorRouter.push`; cold pages (about:blank, router not yet installed) boot then
       // full-load the resolved target (`__vuePomGeneratorRouter.resolve(...).href`) so the route's
       // component mounts via a stable page load instead of a race-prone SPA push.
@@ -719,8 +724,9 @@ describe("class-generation coverage", () => {
       const COLD_START_WAIT = "waitForFunction(() => typeof";
       const IS_COLD = "const isCold =";
 
-      // --- DashboardView: paramless-only, named -> no-arg goTo() that pushes the named route. ---
+      // --- DashboardView: query-only, named -> optional goTo(params) that pushes query. ---
       const dashboardClass = extractClass("DashboardView");
+      expect(dashboardClass).toContain("async goTo(params?: { section?: string | number })");
       expect(dashboardClass).toContain('name: "dashboard"');
       expect(dashboardClass).toContain(PUSH_CALL);
       // Cold-start branch: boot "/", wait for the router, resolve the target, full-load it.
@@ -729,18 +735,20 @@ describe("class-generation coverage", () => {
       expect(dashboardClass).toContain(COLD_START_WAIT);
       expect(dashboardClass).toContain(RESOLVE_CALL);
       expect(dashboardClass).toContain(COLD_TARGET_LOAD);
-      // A paramless route has no params object: emit an empty record literally (no Object.fromEntries).
+      // A path-paramless route emits an empty params record and a filtered query record.
       expect(dashboardClass).toContain("const routeParams = {};");
-      expect(dashboardClass).not.toContain("goTo(params");
+      expect(dashboardClass).toContain('const routeQuery = Object.fromEntries([["section", params?.["section"]]]');
+      expect(dashboardClass).toContain("resolve({ name, params, query })");
+      expect(dashboardClass).toContain("push({ name, params, query })");
       expect(dashboardClass).not.toContain("targetUrl");
       expect(dashboardClass).not.toContain("replaceAll");
 
-      // --- UsersView: parametrized-only, named -> goTo(params) that pushes with the param object. ---
+      // --- UsersView: path + query, named -> one flat typed input partitioned for the router. ---
       const usersClass = extractClass("UsersView");
-      expect(usersClass).toContain("async goTo(params: { id: string | number })");
+      expect(usersClass).toContain("async goTo(params: { id: string | number; q?: string | number })");
       expect(usersClass).toContain('name: "users"');
-      // Required params are never nullish, so no `?? {}` guard (avoids TS2871).
-      expect(usersClass).toContain("Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined))");
+      expect(usersClass).toContain('const routeParams = Object.fromEntries([["id", params["id"]]]');
+      expect(usersClass).toContain('const routeQuery = Object.fromEntries([["q", params["q"]]]');
       expect(usersClass).toContain(PUSH_CALL);
       expect(usersClass).toContain(RESOLVE_CALL);
       expect(usersClass).toContain(IS_COLD);
@@ -754,21 +762,23 @@ describe("class-generation coverage", () => {
       // --- PersonsView: BOTH routes, both named -> overloaded goTo() selecting the route name by params presence. ---
       const personsClass = extractClass("PersonsView");
       // Overload signatures precede the implementation.
-      expect(personsClass).toContain("goTo(): Promise<void>;");
-      expect(personsClass).toContain("goTo(params: { id: string | number }): Promise<void>;");
-      // The route name is selected by params presence and inlined into the router call args
-      // (no separate `const routeName`, no URL reconstruction from tokens).
-      expect(personsClass).toContain('name: params ? "persons-edit" : "persons-new"');
+      expect(personsClass).toContain("goTo(params?: { mode?: string | number }): Promise<void>;");
+      expect(personsClass).toContain("goTo(params: { id: string | number; mode?: string | number }): Promise<void>;");
+      // A query-only object selects the path-paramless route; presence of the path-param key
+      // selects the parametrized route, including when an optional path param is undefined.
+      expect(personsClass).toContain('const useParametrizedRoute = params !== undefined && ["id"].some(');
+      expect(personsClass).toContain('name: useParametrizedRoute ? "persons-edit" : "persons-new"');
       // The both-routes overload is also guarded: cold branch resolves + full-loads the target.
       expect(personsClass).toContain(IS_COLD);
       expect(personsClass).toContain(COLD_BOOT);
       expect(personsClass).toContain(COLD_START_WAIT);
       expect(personsClass).toContain(RESOLVE_CALL);
       expect(personsClass).toContain(COLD_TARGET_LOAD);
-      expect(personsClass).toContain("Object.fromEntries(Object.entries(params ?? {})");
+      expect(personsClass).toContain('const routeParams = Object.fromEntries([["id", params?.["id"]]]');
+      expect(personsClass).toContain('const routeQuery = Object.fromEntries([["mode", params?.["mode"]]]');
       expect(personsClass).toContain(PUSH_CALL);
       // Implementation parameter is optional (so the no-arg overload is callable).
-      expect(personsClass).toContain("async goTo(params?: { id: string | number })");
+      expect(personsClass).toContain("async goTo(params?: { mode?: string | number; id?: string | number })");
       expect(personsClass).not.toContain("targetUrl");
       expect(personsClass).not.toContain("replaceAll");
       // route property is the shortest (paramless) template.
@@ -798,6 +808,14 @@ describe("class-generation coverage", () => {
       expect(thingsClass).not.toContain("replaceAll");
       // route property holds the tokenized template (informational; the only route).
       expect(thingsClass).toContain('{ template: "/things/__VUE_TESTID_PARAM__thingId__" }');
+
+      // --- UnnamedView: fallback URL construction preserves both path and query values. ---
+      const unnamedClass = extractClass("UnnamedView");
+      expect(unnamedClass).toContain("async goTo(params: { id: string | number; sort?: string | number })");
+      expect(unnamedClass).toContain("targetUrl.replaceAll");
+      expect(unnamedClass).toContain("const routeQuery = new URLSearchParams();");
+      expect(unnamedClass).toContain('routeQuery.set("sort", String(params["sort"]))');
+      expect(unnamedClass).toContain('targetUrl += `?${routeQueryString}`');
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
