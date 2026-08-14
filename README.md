@@ -23,7 +23,7 @@ If you already use Playwright with `getByTestId`, the point is simple: this pack
 
 - **It is not a runtime DOM crawler.** It only knows what it can learn from Vue SFC templates and router introspection.
 - **It does not fully understand arbitrary wrapper components automatically.** There is some wrapper inference for simple local SFCs and some naming conventions, but serious design-system components still need `injection.nativeWrappers`.
-- **It does not fully fill route params for you.** Generated `goTo()` / `goToSelf()` methods use the discovered route template literally. A route like `/users/:id` still needs a real `/users/123` when you actually navigate.
+- **It cannot infer query-value types from arbitrary route-props code.** Generated `goTo()` accepts discovered query keys as optional `string | number` values; callers still choose and supply the values appropriate for their application.
 - **It does not auto-attach every file in `pom/custom`.** Custom helpers are imported, but they only affect generated classes when you explicitly configure attachments, or when they match the built-in `Toggle` / `Checkbox` widget conventions.
 - **It does not make override classes globally replace generated classes.** `pom/overrides` only changes generated fixture instantiation. Direct imports from the generated barrel still give you the generated class unless you import your override yourself.
 - **The C# emitter is not feature-parity with the TypeScript emitter.** It emits locator/action classes, but not Playwright fixtures, not helper attachments, and not the same route helper surface.
@@ -407,26 +407,45 @@ What is not fully supported:
 
 - arbitrary computed `:to` expressions
 - parameter-aware `goToSelf()` URL filling
-- exposing rich route-param metadata on the generated POM surface
+- inferring query-value types from arbitrary route-props transformations
 
 ### 2) View-level `route`, `goTo()`, and `goToSelf()`
 
 When `generation.router` is enabled, each view POM gets:
 
 - `static readonly route: { template: string } | null`
-- `async goTo()`
+- a typed `async goTo(...)` whose flat input includes discovered path params and optional query keys
 - `async goToSelf()`
+
+For a route such as:
+
+```ts
+{
+  path: "/users/:userId",
+  name: "user-details",
+  component: UserDetailsPage,
+  props: route => ({
+    userId: route.params.userId,
+    tab: route.query.tab,
+  }),
+}
+```
+
+the generated method is shaped like this:
+
+```ts
+goTo(params: { userId: string | number; tab?: string | number }): Promise<void>
+```
+
+`goTo({ userId: 42, tab: "activity" })` partitions the flat input into Vue Router's
+`params` and `query` records. On a cold page it resolves and fully loads the named route;
+on a warm page it uses `router.push`.
 
 Important caveats:
 
 - `goToSelf()` calls `page.goto(...)`, resolving the route template against `PLAYWRIGHT_RUNTIME_BASE_URL`, `PLAYWRIGHT_TEST_BASE_URL`, or `VITE_PLAYWRIGHT_BASE_URL` when those runtime env vars are present
-- a dynamic route template like `/users/:id` stays `/users/:id`
+- unlike `goTo()`, a dynamic `goToSelf()` template like `/users/:id` stays `/users/:id`
 - if a component is matched by multiple routes, the generator currently picks one route template (the shortest one)
-
-So the safe rule is:
-
-- use generated `goTo()` for simple/static routes
-- for dynamic routes, navigate with a real URL yourself or wrap that behavior in your override/custom code
 
 ### Why `moduleShims` exists
 
@@ -1266,7 +1285,7 @@ If you are evaluating this package critically, the most accurate short version i
 - it is strongest when your team already wants `getByTestId`-style Playwright tests
 - it is strongest in TypeScript-first Playwright projects
 - it is strongest when your Vue component library is either native-heavy or can be described with `nativeWrappers`
-- it is useful with router-aware pages, but you should treat dynamic-route `goTo()` support as partial and explicit
+- it is useful with router-aware pages, including typed path params and discovered query keys
 - it becomes much more maintainable when you pair it with the ESLint cleanup rule and a small `pom/custom` folder for the genuinely hard widgets
 
 If that matches your codebase, the package removes a surprising amount of repetitive test maintenance. If it does not, the caveats above are the important ones to believe.

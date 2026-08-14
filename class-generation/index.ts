@@ -118,6 +118,7 @@ interface RouteEntry {
   name: string | null;
   template: string;
   params: RouteParamMeta[];
+  query: string[];
 }
 
 interface RouteMeta {
@@ -295,7 +296,7 @@ async function getRouteMetaByComponent(
   const map = new Map<string, RouteEntry[]>();
   for (const entry of routeMetaEntries) {
     const list = map.get(entry.componentName) ?? [];
-    list.push({ name: entry.name, template: entry.pathTemplate, params: entry.params });
+    list.push({ name: entry.name, template: entry.pathTemplate, params: entry.params, query: entry.query });
     map.set(entry.componentName, list);
   }
 
@@ -345,8 +346,32 @@ function generateRouteProperty(routeMeta: RouteMeta | null): TypeScriptClassMemb
   ];
 }
 
-function buildParamTypeString(params: RouteParamMeta[]): string {
-  return `{ ${params.map(p => `${p.name}${p.optional ? "?" : ""}: string | number`).join("; ")} }`;
+function formatNavigationFieldName(name: string): string {
+  return /^[$a-z_][$\w]*$/i.test(name) ? name : JSON.stringify(name);
+}
+
+function buildNavigationTypeString(route: RouteEntry): string {
+  const pathFields = route.params.map(param => `${formatNavigationFieldName(param.name)}${param.optional ? "?" : ""}: string | number`);
+  const pathNames = new Set(route.params.map(param => param.name));
+  const queryFields = route.query
+    .filter(query => !pathNames.has(query))
+    .map(query => `${formatNavigationFieldName(query)}?: string | number`);
+  return `{ ${[...pathFields, ...queryFields].join("; ")} }`;
+}
+
+function buildImplementationNavigationTypeString(routes: RouteEntry[]): string {
+  const fields = new Map<string, boolean>();
+  for (const route of routes) {
+    for (const param of route.params) {
+      fields.set(param.name, true);
+    }
+    for (const query of route.query) {
+      if (!fields.has(query)) {
+        fields.set(query, true);
+      }
+    }
+  }
+  return `{ ${Array.from(fields.keys()).map(name => `${formatNavigationFieldName(name)}?: string | number`).join("; ")} }`;
 }
 
 function chooseParamlessRoute(routes: RouteEntry[]): RouteEntry | null {
@@ -376,7 +401,7 @@ const GOTO_RUNTIME_LINES = [
 
 /**
  * The generator-owned `window`/`globalThis` key used by `exposeRouterForPomNavigation`,
- * so generated `goTo()` can drive `router.push({ name, params })` instead of reconstructing
+ * so generated `goTo()` can drive `router.push({ name, params, query })` instead of reconstructing
  * URLs from opaque path-template tokens.
  */
 const ROUTER_GLOBAL_NAME = POM_ROUTER_GLOBAL_NAME;
@@ -387,7 +412,7 @@ const ROUTER_GLOBAL_NAME = POM_ROUTER_GLOBAL_NAME;
  * - **Cold page** (fresh Playwright page on `about:blank` — the SPA hasn't booted, so the
  *   router global is `undefined`): boot the app with a cheap `page.goto("/")`, wait for the
  *   router to install, then **full-load the resolved target URL** (`router.resolve({ name,
- *   params }).href` + `page.goto`). A full load is unavoidable here — you cannot `push`
+ *   params, query }).href` + `page.goto`). A full load is unavoidable here — you cannot `push`
  *   before the router exists — and resolving the target (rather than stopping at "/") means
  *   the route's component mounts via a stable page load, exactly as the original
  *   `page.goto`-based tests did. This matters because the POM runtime clicks with
@@ -397,33 +422,73 @@ const ROUTER_GLOBAL_NAME = POM_ROUTER_GLOBAL_NAME;
  *   full load gives a fully-rendered, interactive page.
  * - **Warm page** (the app is already mounted — any later `goTo()` in the same test): the
  *   guard is a single cheap `evaluate` that finds the router present, so the navigation is a
- *   pure SPA `router.push({ name, params })` — no reload — the intended fast path.
+ *   pure SPA `router.push({ name, params, query })` — no reload — the intended fast path.
  *
- * `routeNameExpr` is a TS expression yielding the route name (a string literal for single
- * routes, or `params ? "edit" : "new"` for the dual-route overload). `paramsExpr` is the
- * params source (`"undefined"` for a paramless route, `"params"` otherwise); `nullable` is
- * true only when that source may itself be `undefined` (the all-optional-params overload),
- * gating the `?? {}` guard that TS2871 would otherwise flag on a required param.
+ * `routeNameExpr` is a TS expression yielding the route name. `paramsExpr` is the generated
+ * method's flat navigation input (`"undefined"` when the route accepts no values); path and
+ * query key lists partition that input before handing it to Vue Router. `nullable` records
+ * whether the input itself may be omitted.
  */
-const pushBlock = (routeNameExpr: string, paramsExpr: string, nullable: boolean): string[] => {
-  const routerType = `{ ${ROUTER_GLOBAL_NAME}?: { push: (to: { name: string; params: Record<string, unknown> }) => Promise<unknown>; resolve: (to: { name: string; params: Record<string, unknown> }) => { href: string } } }`;
-  const routeParamsLine = paramsExpr === "undefined"
-    ? "const routeParams = {};"
-    : nullable
-      ? `const routeParams = Object.fromEntries(Object.entries(${paramsExpr} ?? {}).filter(([, v]) => v !== undefined));`
-      : `const routeParams = Object.fromEntries(Object.entries(${paramsExpr}).filter(([, v]) => v !== undefined));`;
+const navigationRecordLine = (
+  variableName: "routeParams" | "routeQuery",
+  paramsExpr: string,
+  names: string[],
+  nullable: boolean,
+): string => {
+  if (!names.length || paramsExpr === "undefined") {
+    return `const ${variableName} = {};`;
+  }
+  const entries = names.map((name) => {
+    const value = nullable ? `${paramsExpr}?.[${JSON.stringify(name)}]` : `${paramsExpr}[${JSON.stringify(name)}]`;
+    return `[${JSON.stringify(name)}, ${value}]`;
+  });
+  return `const ${variableName} = Object.fromEntries([${entries.join(", ")}].filter(([, value]) => value !== undefined));`;
+};
+
+const pushBlock = (
+  routeNameExpr: string,
+  paramsExpr: string,
+  nullable: boolean,
+  routeParamNames: string[],
+  routeQueryNames: string[],
+): string[] => {
+  if (!routeQueryNames.length) {
+    const routerType = `{ ${ROUTER_GLOBAL_NAME}?: { push: (to: { name: string; params: Record<string, unknown> }) => Promise<unknown>; resolve: (to: { name: string; params: Record<string, unknown> }) => { href: string } } }`;
+    const routeParamsLine = paramsExpr === "undefined"
+      ? "const routeParams = {};"
+      : nullable
+        ? `const routeParams = Object.fromEntries(Object.entries(${paramsExpr} ?? {}).filter(([, v]) => v !== undefined));`
+        : `const routeParams = Object.fromEntries(Object.entries(${paramsExpr}).filter(([, v]) => v !== undefined));`;
+    return [
+      routeParamsLine,
+      `const isCold = await this.page.evaluate(() => typeof (globalThis as { ${ROUTER_GLOBAL_NAME}?: unknown }).${ROUTER_GLOBAL_NAME} === "undefined");`,
+      `if (isCold) {`,
+      `  await this.page.goto("/", { waitUntil: "commit" });`,
+      `  await this.page.waitForFunction(() => typeof (globalThis as { ${ROUTER_GLOBAL_NAME}?: unknown }).${ROUTER_GLOBAL_NAME} !== "undefined", { timeout: 15000 });`,
+      `  const href = await this.page.evaluate(({ name, params }) => (globalThis as ${routerType}).${ROUTER_GLOBAL_NAME}?.resolve({ name, params })?.href, { name: ${routeNameExpr}, params: routeParams });`,
+      `  if (href) { await this.page.goto(href, { waitUntil: "domcontentloaded" }); }`,
+      `} else {`,
+      `  await this.page.evaluate(async ({ name, params }) => {`,
+      `    await (globalThis as ${routerType}).${ROUTER_GLOBAL_NAME}?.push({ name, params });`,
+      `  }, { name: ${routeNameExpr}, params: routeParams });`,
+      `}`,
+    ];
+  }
+
+  const routerType = `{ ${ROUTER_GLOBAL_NAME}?: { push: (to: { name: string; params: Record<string, unknown>; query: Record<string, unknown> }) => Promise<unknown>; resolve: (to: { name: string; params: Record<string, unknown>; query: Record<string, unknown> }) => { href: string } } }`;
   return [
-    routeParamsLine,
+    navigationRecordLine("routeParams", paramsExpr, routeParamNames, nullable),
+    navigationRecordLine("routeQuery", paramsExpr, routeQueryNames, nullable),
     `const isCold = await this.page.evaluate(() => typeof (globalThis as { ${ROUTER_GLOBAL_NAME}?: unknown }).${ROUTER_GLOBAL_NAME} === "undefined");`,
     `if (isCold) {`,
     `  await this.page.goto("/", { waitUntil: "commit" });`,
     `  await this.page.waitForFunction(() => typeof (globalThis as { ${ROUTER_GLOBAL_NAME}?: unknown }).${ROUTER_GLOBAL_NAME} !== "undefined", { timeout: 15000 });`,
-    `  const href = await this.page.evaluate(({ name, params }) => (globalThis as ${routerType}).${ROUTER_GLOBAL_NAME}?.resolve({ name, params })?.href, { name: ${routeNameExpr}, params: routeParams });`,
+    `  const href = await this.page.evaluate(({ name, params, query }) => (globalThis as ${routerType}).${ROUTER_GLOBAL_NAME}?.resolve({ name, params, query })?.href, { name: ${routeNameExpr}, params: routeParams, query: routeQuery });`,
     `  if (href) { await this.page.goto(href, { waitUntil: "domcontentloaded" }); }`,
     `} else {`,
-    `  await this.page.evaluate(async ({ name, params }) => {`,
-    `    await (globalThis as ${routerType}).${ROUTER_GLOBAL_NAME}?.push({ name, params });`,
-    `  }, { name: ${routeNameExpr}, params: routeParams });`,
+    `  await this.page.evaluate(async ({ name, params, query }) => {`,
+    `    await (globalThis as ${routerType}).${ROUTER_GLOBAL_NAME}?.push({ name, params, query });`,
+    `  }, { name: ${routeNameExpr}, params: routeParams, query: routeQuery });`,
     `}`,
   ];
 };
@@ -466,15 +531,29 @@ function generateGoToMethod(componentName: string, routeMeta: RouteMeta | null):
     const lines: string[] = [];
     for (const param of entry.params) {
       const token = getParamToken(param.name);
+      const value = `params[${JSON.stringify(param.name)}]`;
       if (param.optional) {
         // An omitted optional param drops its entire path segment (including the leading "/"),
         // so `/persons/:personId/:tabName?` with tabName omitted resolves to `/persons/123`.
-        lines.push(`targetUrl = params.${param.name} === undefined ? targetUrl.replaceAll(${JSON.stringify(`/${token}`)}, "") : targetUrl.replaceAll(${JSON.stringify(token)}, String(params.${param.name}));`);
+        lines.push(`targetUrl = ${value} === undefined ? targetUrl.replaceAll(${JSON.stringify(`/${token}`)}, "") : targetUrl.replaceAll(${JSON.stringify(token)}, String(${value}));`);
       }
       else {
-        lines.push(`targetUrl = targetUrl.replaceAll(${JSON.stringify(token)}, String(params.${param.name}));`);
+        lines.push(`targetUrl = targetUrl.replaceAll(${JSON.stringify(token)}, String(${value}));`);
       }
     }
+    return lines;
+  };
+
+  const queryStatements = (queryNames: string[], nullable: boolean): string[] => {
+    if (!queryNames.length)
+      return [];
+    const lines = ["const routeQuery = new URLSearchParams();"];
+    for (const query of queryNames) {
+      const value = nullable ? `params?.[${JSON.stringify(query)}]` : `params[${JSON.stringify(query)}]`;
+      lines.push(`if (${value} !== undefined) { routeQuery.set(${JSON.stringify(query)}, String(${value})); }`);
+    }
+    lines.push("const routeQueryString = routeQuery.toString();");
+    lines.push('if (routeQueryString) { targetUrl += `?${routeQueryString}`; }');
     return lines;
   };
 
@@ -483,21 +562,28 @@ function generateGoToMethod(componentName: string, routeMeta: RouteMeta | null):
   // passed, and the router builds the URL (handling optional segments, redirects, and param
   // coercion) itself. No opaque tokens, no string substitution. See `pushBlock` for the
   // cold-start (full-load resolved target) vs warm (SPA `router.push`) regimes.
-  // Paramless-only: simple no-arg goTo().
+  // Paramless-only: query keys, when present, are optional navigation arguments.
   if (hasParamless && !hasParametrized) {
     const route = paramless!;
+    const hasQuery = route.query.length > 0;
+    const paramType = buildNavigationTypeString(route);
     return [
       createClassMethod({
         name: "goTo",
         isAsync: true,
+        parameters: hasQuery ? [{ name: "params", type: paramType, hasQuestionToken: true }] : [],
         statements: route.name !== null
-          ? pushBlock(JSON.stringify(route.name), "undefined", false)
-          : [`const targetUrl = ${JSON.stringify(route.template)};`, ...GOTO_RUNTIME_LINES],
+          ? pushBlock(JSON.stringify(route.name), hasQuery ? "params" : "undefined", hasQuery, [], route.query)
+          : [
+              `let targetUrl = ${JSON.stringify(route.template)};`,
+              ...queryStatements(route.query, true),
+              ...GOTO_RUNTIME_LINES,
+            ],
       }),
     ];
   }
 
-  const paramType = buildParamTypeString(parametrized!.params);
+  const paramType = buildNavigationTypeString(parametrized!);
 
   // Parametrized-only: goTo(params). When every declared param is optional, the params
   // object itself is optional too — `goTo()` is a valid call that navigates to the route
@@ -511,8 +597,19 @@ function generateGoToMethod(componentName: string, routeMeta: RouteMeta | null):
         isAsync: true,
         parameters: [{ name: "params", type: paramType, hasQuestionToken: allOptional }],
         statements: route.name !== null
-          ? pushBlock(JSON.stringify(route.name), "params", allOptional)
-          : [`let targetUrl = ${JSON.stringify(route.template)};`, ...paramStatements(route), ...GOTO_RUNTIME_LINES],
+          ? pushBlock(
+              JSON.stringify(route.name),
+              "params",
+              allOptional,
+              route.params.map(param => param.name),
+              route.query,
+            )
+          : [
+              `let targetUrl = ${JSON.stringify(route.template)};`,
+              ...paramStatements(route),
+              ...queryStatements(route.query, allOptional),
+              ...GOTO_RUNTIME_LINES,
+            ],
       }),
     ];
   }
@@ -522,30 +619,66 @@ function generateGoToMethod(componentName: string, routeMeta: RouteMeta | null):
   const paramlessRoute = paramless!;
   const parametrizedRoute = parametrized!;
   const usePush = paramlessRoute.name !== null && parametrizedRoute.name !== null;
+  const paramlessType = buildNavigationTypeString(paramlessRoute);
+  const queryNames = Array.from(new Set([...paramlessRoute.query, ...parametrizedRoute.query]));
+  const hasQuery = queryNames.length > 0;
+  const implementationType = hasQuery
+    ? buildImplementationNavigationTypeString([paramlessRoute, parametrizedRoute])
+    : paramType;
+  const routeSelector = `const useParametrizedRoute = params !== undefined && [${parametrizedRoute.params.map(param => JSON.stringify(param.name)).join(", ")}].some(key => Object.prototype.hasOwnProperty.call(params, key));`;
 
   return [
     createClassMethod({
       name: "goTo",
       isAsync: true,
       overloads: [
-        { parameters: [], returnType: "Promise<void>" },
+        {
+          parameters: paramlessRoute.query.length
+            ? [{ name: "params", type: paramlessType, hasQuestionToken: true }]
+            : [],
+          returnType: "Promise<void>",
+        },
         { parameters: [{ name: "params", type: paramType }], returnType: "Promise<void>" },
       ],
-      parameters: [{ name: "params", type: paramType, hasQuestionToken: true }],
+      parameters: [{ name: "params", type: implementationType, hasQuestionToken: true }],
       statements: usePush
-        ? pushBlock(
-            `params ? ${JSON.stringify(parametrizedRoute.name)} : ${JSON.stringify(paramlessRoute.name)}`,
-            "params",
-            true,
-          )
-        : [
-            `const template = params ? ${JSON.stringify(parametrizedRoute.template)} : ${JSON.stringify(paramlessRoute.template)};`,
-            "let targetUrl = template;",
-            `if (params) {`,
-            ...paramStatements(parametrizedRoute).map(line => `  ${line}`),
-            "}",
-            ...GOTO_RUNTIME_LINES,
-          ],
+        ? hasQuery
+          ? [
+              routeSelector,
+              ...pushBlock(
+                `useParametrizedRoute ? ${JSON.stringify(parametrizedRoute.name)} : ${JSON.stringify(paramlessRoute.name)}`,
+                "params",
+                true,
+                parametrizedRoute.params.map(param => param.name),
+                queryNames,
+              ),
+            ]
+          : pushBlock(
+              `params ? ${JSON.stringify(parametrizedRoute.name)} : ${JSON.stringify(paramlessRoute.name)}`,
+              "params",
+              true,
+              parametrizedRoute.params.map(param => param.name),
+              [],
+            )
+        : hasQuery
+          ? [
+              routeSelector,
+              `const template = useParametrizedRoute ? ${JSON.stringify(parametrizedRoute.template)} : ${JSON.stringify(paramlessRoute.template)};`,
+              "let targetUrl = template;",
+              `if (params && useParametrizedRoute) {`,
+              ...paramStatements(parametrizedRoute).map(line => `  ${line}`),
+              "}",
+              ...queryStatements(queryNames, true),
+              ...GOTO_RUNTIME_LINES,
+            ]
+          : [
+              `const template = params ? ${JSON.stringify(parametrizedRoute.template)} : ${JSON.stringify(paramlessRoute.template)};`,
+              "let targetUrl = template;",
+              `if (params) {`,
+              ...paramStatements(parametrizedRoute).map(line => `  ${line}`),
+              "}",
+              ...GOTO_RUNTIME_LINES,
+            ],
     }),
   ];
 }
