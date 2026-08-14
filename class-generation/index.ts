@@ -28,8 +28,7 @@ import {
   type PomStringPattern,
 } from "../pom-patterns";
 import { buildPomLocatorDescription, stripPomActionPrefix } from "../pom-discoverability";
-import { getParamToken, introspectNuxtPages, parseRouterFileFromCwd } from "../router-introspection";
-import { POM_ROUTER_GLOBAL_NAME } from "../router-bridge";
+import { introspectNuxtPages, parseRouterFileFromCwd } from "../router-introspection";
 import {
   addExportAll,
   addNamedImport,
@@ -62,6 +61,10 @@ import {
 // Intentionally imported so tooling understands this exported helper is part of the
 // generated POM public surface (it is consumed by generated Playwright fixtures).
 import { setPlaywrightAnimationOptions } from "./pointer";
+import {
+  createRouterNavigationWriter,
+  createUrlNavigationWriter,
+} from "../route-navigation-codegen";
 
 void setPlaywrightAnimationOptions;
 
@@ -410,106 +413,12 @@ function chooseParametrizedRoute(routes: RouteEntry[]): RouteEntry | null {
     .sort((a, b) => a.params.length - b.params.length || a.template.length - b.template.length || a.template.localeCompare(b.template))[0];
 }
 
-const GOTO_RUNTIME_LINES = [
-  "const runtimeEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;",
-  "const runtimeBaseUrl = runtimeEnv?.PLAYWRIGHT_RUNTIME_BASE_URL ?? runtimeEnv?.PLAYWRIGHT_TEST_BASE_URL ?? runtimeEnv?.VITE_PLAYWRIGHT_BASE_URL;",
-  "const resolvedUrl = runtimeBaseUrl ? new URL(targetUrl, runtimeBaseUrl).toString() : targetUrl;",
-  "await this.page.goto(resolvedUrl);",
-];
-
-/**
- * The generator-owned `window`/`globalThis` key used by `exposeRouterForPomNavigation`,
- * so generated `goTo()` can drive `router.push({ name, params, query })` instead of reconstructing
- * URLs from opaque path-template tokens.
- */
-const ROUTER_GLOBAL_NAME = POM_ROUTER_GLOBAL_NAME;
-
-/**
- * Emits the router-driven `goTo()` body for a named route. Two regimes:
- *
- * - **Cold page** (fresh Playwright page on `about:blank` — the SPA hasn't booted, so the
- *   router global is `undefined`): boot the app with a cheap `page.goto("/")`, wait for the
- *   router to install, then **full-load the resolved target URL** (`router.resolve({ name,
- *   params, query }).href` + `page.goto`). A full load is unavoidable here — you cannot `push`
- *   before the router exists — and resolving the target (rather than stopping at "/") means
- *   the route's component mounts via a stable page load, exactly as the original
- *   `page.goto`-based tests did. This matters because the POM runtime clicks with
- *   `force: true` (skipping Playwright's actionability check): a SPA `push` into a freshly
- *   mounted view can resolve before radios/inputs are interactive, so a force-click fired
- *   the instant the push resolves can miss (the control's handler isn't attached yet). A
- *   full load gives a fully-rendered, interactive page.
- * - **Warm page** (the app is already mounted — any later `goTo()` in the same test): the
- *   guard is a single cheap `evaluate` that finds the router present, so the navigation is a
- *   pure SPA `router.push({ name, params, query })` — no reload — the intended fast path.
- *
- * `routeNameExpr` is a TS expression yielding the route name. `paramsExpr` is the generated
- * method's flat navigation input (`"undefined"` when the route accepts no values); path and
- * query key lists partition that input before handing it to Vue Router. `nullable` records
- * whether the input itself may be omitted.
- */
-const navigationRecordLine = (
-  variableName: "routeParams" | "routeQuery",
-  paramsExpr: string,
-  names: string[],
-  nullable: boolean,
-): string => {
-  if (!names.length || paramsExpr === "undefined") {
-    return `const ${variableName} = {};`;
+function requireRouteName(route: RouteEntry): string {
+  if (route.name === null) {
+    throw new VuePomGeneratorError(`Named navigation requires a route name for template "${route.template}".`);
   }
-  const entries = names.map((name) => {
-    const value = nullable ? `${paramsExpr}?.[${JSON.stringify(name)}]` : `${paramsExpr}[${JSON.stringify(name)}]`;
-    return `[${JSON.stringify(name)}, ${value}]`;
-  });
-  return `const ${variableName} = Object.fromEntries([${entries.join(", ")}].filter(([, value]) => value !== undefined));`;
-};
-
-const pushBlock = (
-  routeNameExpr: string,
-  paramsExpr: string,
-  nullable: boolean,
-  routeParamNames: string[],
-  routeQueryNames: string[],
-): string[] => {
-  if (!routeQueryNames.length) {
-    const routerType = `{ ${ROUTER_GLOBAL_NAME}?: { push: (to: { name: string; params: Record<string, unknown> }) => Promise<unknown>; resolve: (to: { name: string; params: Record<string, unknown> }) => { href: string } } }`;
-    const routeParamsLine = paramsExpr === "undefined"
-      ? "const routeParams = {};"
-      : nullable
-        ? `const routeParams = Object.fromEntries(Object.entries(${paramsExpr} ?? {}).filter(([, v]) => v !== undefined));`
-        : `const routeParams = Object.fromEntries(Object.entries(${paramsExpr}).filter(([, v]) => v !== undefined));`;
-    return [
-      routeParamsLine,
-      `const isCold = await this.page.evaluate(() => typeof (globalThis as { ${ROUTER_GLOBAL_NAME}?: unknown }).${ROUTER_GLOBAL_NAME} === "undefined");`,
-      `if (isCold) {`,
-      `  await this.page.goto("/", { waitUntil: "commit" });`,
-      `  await this.page.waitForFunction(() => typeof (globalThis as { ${ROUTER_GLOBAL_NAME}?: unknown }).${ROUTER_GLOBAL_NAME} !== "undefined", { timeout: 15000 });`,
-      `  const href = await this.page.evaluate(({ name, params }) => (globalThis as ${routerType}).${ROUTER_GLOBAL_NAME}?.resolve({ name, params })?.href, { name: ${routeNameExpr}, params: routeParams });`,
-      `  if (href) { await this.page.goto(href, { waitUntil: "domcontentloaded" }); }`,
-      `} else {`,
-      `  await this.page.evaluate(async ({ name, params }) => {`,
-      `    await (globalThis as ${routerType}).${ROUTER_GLOBAL_NAME}?.push({ name, params });`,
-      `  }, { name: ${routeNameExpr}, params: routeParams });`,
-      `}`,
-    ];
-  }
-
-  const routerType = `{ ${ROUTER_GLOBAL_NAME}?: { push: (to: { name: string; params: Record<string, unknown>; query: Record<string, unknown> }) => Promise<unknown>; resolve: (to: { name: string; params: Record<string, unknown>; query: Record<string, unknown> }) => { href: string } } }`;
-  return [
-    navigationRecordLine("routeParams", paramsExpr, routeParamNames, nullable),
-    navigationRecordLine("routeQuery", paramsExpr, routeQueryNames, nullable),
-    `const isCold = await this.page.evaluate(() => typeof (globalThis as { ${ROUTER_GLOBAL_NAME}?: unknown }).${ROUTER_GLOBAL_NAME} === "undefined");`,
-    `if (isCold) {`,
-    `  await this.page.goto("/", { waitUntil: "commit" });`,
-    `  await this.page.waitForFunction(() => typeof (globalThis as { ${ROUTER_GLOBAL_NAME}?: unknown }).${ROUTER_GLOBAL_NAME} !== "undefined", { timeout: 15000 });`,
-    `  const href = await this.page.evaluate(({ name, params, query }) => (globalThis as ${routerType}).${ROUTER_GLOBAL_NAME}?.resolve({ name, params, query })?.href, { name: ${routeNameExpr}, params: routeParams, query: routeQuery });`,
-    `  if (href) { await this.page.goto(href, { waitUntil: "domcontentloaded" }); }`,
-    `} else {`,
-    `  await this.page.evaluate(async ({ name, params, query }) => {`,
-    `    await (globalThis as ${routerType}).${ROUTER_GLOBAL_NAME}?.push({ name, params, query });`,
-    `  }, { name: ${routeNameExpr}, params: routeParams, query: routeQuery });`,
-    `}`,
-  ];
-};
+  return route.name;
+}
 
 function generateGoToMethod(componentName: string, routeMeta: RouteMeta | null): TypeScriptClassMember[] {
   // No route metadata: emit a goTo() that fails loudly when invoked.
@@ -543,42 +452,10 @@ function generateGoToMethod(componentName: string, routeMeta: RouteMeta | null):
     ];
   }
 
-  // Fallback (unnamed routes, e.g. Nuxt file-based routes whose names the static walk
-  // cannot recover): reconstruct the URL from the tokenized template and `page.goto` it.
-  const paramStatements = (entry: RouteEntry): string[] => {
-    const lines: string[] = [];
-    for (const param of entry.params) {
-      const token = getParamToken(param.name);
-      const value = `params[${JSON.stringify(param.name)}]`;
-      if (param.optional) {
-        // An omitted optional param drops its entire path segment (including the leading "/"),
-        // so `/persons/:personId/:tabName?` with tabName omitted resolves to `/persons/123`.
-        lines.push(`targetUrl = ${value} === undefined ? targetUrl.replaceAll(${JSON.stringify(`/${token}`)}, "") : targetUrl.replaceAll(${JSON.stringify(token)}, String(${value}));`);
-      }
-      else {
-        lines.push(`targetUrl = targetUrl.replaceAll(${JSON.stringify(token)}, String(${value}));`);
-      }
-    }
-    return lines;
-  };
-
-  const queryStatements = (queryNames: string[], nullable: boolean): string[] => {
-    if (!queryNames.length)
-      return [];
-    const lines = ["const routeQuery = new URLSearchParams();"];
-    for (const query of queryNames) {
-      const value = nullable ? `params?.[${JSON.stringify(query)}]` : `params[${JSON.stringify(query)}]`;
-      lines.push(`if (${value} !== undefined) { routeQuery.set(${JSON.stringify(query)}, String(${value})); }`);
-    }
-    lines.push("const routeQueryString = routeQuery.toString();");
-    lines.push('if (routeQueryString) { targetUrl += `?${routeQueryString}`; }');
-    return lines;
-  };
-
   // Preferred path: the route is named, so hand the param object straight to the runtime
   // router. `undefined` values are stripped first — omitted optional params are simply not
   // passed, and the router builds the URL (handling optional segments, redirects, and param
-  // coercion) itself. No opaque tokens, no string substitution. See `pushBlock` for the
+  // coercion) itself. No opaque tokens, no string substitution. The centralized router writer owns the
   // cold-start (full-load resolved target) vs warm (SPA `router.push`) regimes.
   // Paramless-only: query keys, when present, are optional navigation arguments.
   if (hasParamless && !hasParametrized) {
@@ -591,12 +468,18 @@ function generateGoToMethod(componentName: string, routeMeta: RouteMeta | null):
         isAsync: true,
         parameters: hasQuery ? [{ name: "params", type: paramType, hasQuestionToken: true }] : [],
         statements: route.name !== null
-          ? pushBlock(JSON.stringify(route.name), hasQuery ? "params" : "undefined", hasQuery, [], route.query)
-          : [
-              `let targetUrl = ${JSON.stringify(route.template)};`,
-              ...queryStatements(route.query, true),
-              ...GOTO_RUNTIME_LINES,
-            ],
+          ? createRouterNavigationWriter({
+              routeName: { kind: "single", target: route.name },
+              input: hasQuery ? { identifier: "params", optional: true } : undefined,
+              pathParamNames: [],
+              queryNames: route.query,
+            })
+          : createUrlNavigationWriter({
+              routeTemplate: { kind: "single", target: route.template },
+              input: hasQuery ? { identifier: "params", optional: true } : undefined,
+              pathParams: [],
+              queryNames: route.query,
+            }),
       }),
     ];
   }
@@ -615,19 +498,18 @@ function generateGoToMethod(componentName: string, routeMeta: RouteMeta | null):
         isAsync: true,
         parameters: [{ name: "params", type: paramType, hasQuestionToken: allOptional }],
         statements: route.name !== null
-          ? pushBlock(
-              JSON.stringify(route.name),
-              "params",
-              allOptional,
-              route.params.map(param => param.name),
-              route.query,
-            )
-          : [
-              `let targetUrl = ${JSON.stringify(route.template)};`,
-              ...paramStatements(route),
-              ...queryStatements(route.query, allOptional),
-              ...GOTO_RUNTIME_LINES,
-            ],
+          ? createRouterNavigationWriter({
+              routeName: { kind: "single", target: route.name },
+              input: { identifier: "params", optional: allOptional },
+              pathParamNames: route.params.map(param => param.name),
+              queryNames: route.query,
+            })
+          : createUrlNavigationWriter({
+              routeTemplate: { kind: "single", target: route.template },
+              input: { identifier: "params", optional: allOptional },
+              pathParams: route.params,
+              queryNames: route.query,
+            }),
       }),
     ];
   }
@@ -644,8 +526,6 @@ function generateGoToMethod(componentName: string, routeMeta: RouteMeta | null):
   const implementationType = hasQuery
     ? buildImplementationNavigationTypeString([paramlessRoute, parametrizedRoute])
     : paramType;
-  const routeSelector = `const useParametrizedRoute = params !== undefined && [${parametrizedRoute.params.map(param => JSON.stringify(param.name)).join(", ")}].some(key => Object.prototype.hasOwnProperty.call(params, key));`;
-
   return [
     createClassMethod({
       name: "goTo",
@@ -661,43 +541,28 @@ function generateGoToMethod(componentName: string, routeMeta: RouteMeta | null):
       ],
       parameters: [{ name: "params", type: implementationType, hasQuestionToken: true }],
       statements: usePush
-        ? hasQuery
-          ? [
-              routeSelector,
-              ...pushBlock(
-                `useParametrizedRoute ? ${JSON.stringify(parametrizedRoute.name)} : ${JSON.stringify(paramlessRoute.name)}`,
-                "params",
-                true,
-                parametrizedRoute.params.map(param => param.name),
-                queryNames,
-              ),
-            ]
-          : pushBlock(
-              `params ? ${JSON.stringify(parametrizedRoute.name)} : ${JSON.stringify(paramlessRoute.name)}`,
-              "params",
-              true,
-              parametrizedRoute.params.map(param => param.name),
-              [],
-            )
-        : hasQuery
-          ? [
-              routeSelector,
-              `const template = useParametrizedRoute ? ${JSON.stringify(parametrizedRoute.template)} : ${JSON.stringify(paramlessRoute.template)};`,
-              "let targetUrl = template;",
-              `if (params && useParametrizedRoute) {`,
-              ...paramStatements(parametrizedRoute).map(line => `  ${line}`),
-              "}",
-              ...queryStatements(queryNames, true),
-              ...GOTO_RUNTIME_LINES,
-            ]
-          : [
-              `const template = params ? ${JSON.stringify(parametrizedRoute.template)} : ${JSON.stringify(paramlessRoute.template)};`,
-              "let targetUrl = template;",
-              `if (params) {`,
-              ...paramStatements(parametrizedRoute).map(line => `  ${line}`),
-              "}",
-              ...GOTO_RUNTIME_LINES,
-            ],
+        ? createRouterNavigationWriter({
+            routeName: {
+              kind: "dual",
+              parametrizedTarget: requireRouteName(parametrizedRoute),
+              paramlessTarget: requireRouteName(paramlessRoute),
+              selectBy: hasQuery ? "path-param-presence" : "input-presence",
+            },
+            input: { identifier: "params", optional: true },
+            pathParamNames: parametrizedRoute.params.map(param => param.name),
+            queryNames: hasQuery ? queryNames : [],
+          })
+        : createUrlNavigationWriter({
+            routeTemplate: {
+              kind: "dual",
+              parametrizedTarget: parametrizedRoute.template,
+              paramlessTarget: paramlessRoute.template,
+              selectBy: hasQuery ? "path-param-presence" : "input-presence",
+            },
+            input: { identifier: "params", optional: true },
+            pathParams: parametrizedRoute.params,
+            queryNames: hasQuery ? queryNames : [],
+          }),
     }),
   ];
 }
