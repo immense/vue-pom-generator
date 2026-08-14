@@ -168,8 +168,8 @@ describe("generated output", () => {
           "  return createRouter({",
           "    history: createMemoryHistory(),",
           "    routes: [",
-          "      { path: '/records/new', name: 'record-new', component: RecordDetailsPage, props: route => ({ tab: route.query.tab }) },",
-          "      { path: '/records/:recordId', name: 'record-details', component: RecordDetailsPage, props: route => ({ recordId: route.params.recordId, tab: route.query.tab }) },",
+          "      { path: '/records/new', name: 'record-new', component: RecordDetailsPage, props: route => ({ mode: route.query.mode }) },",
+          "      { path: '/records/:recordId?', name: 'record-details', component: RecordDetailsPage, props: route => ({ recordId: route.params.recordId, tab: route.query.tab }) },",
           "    ],",
           "  });",
           "}",
@@ -200,8 +200,11 @@ describe("generated output", () => {
           'import { RecordDetailsPage } from "./out/page-object-models.g";',
           "declare const page: Page;",
           "const recordDetailsPage = new RecordDetailsPage(page);",
-          'void recordDetailsPage.goTo({ tab: "summary" });',
+          'void recordDetailsPage.goTo({ mode: "summary" });',
           'void recordDetailsPage.goTo({ recordId: 42, tab: "history" });',
+          'void recordDetailsPage.goTo({ recordId: undefined, tab: "history" });',
+          "// @ts-expect-error A details-only query cannot select the details route without path-key presence.",
+          'void recordDetailsPage.goTo({ tab: "history" });',
         ].join("\n"),
       );
 

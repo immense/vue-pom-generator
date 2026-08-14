@@ -350,13 +350,31 @@ function formatNavigationFieldName(name: string): string {
   return /^[$a-z_][$\w]*$/i.test(name) ? name : JSON.stringify(name);
 }
 
-function buildNavigationTypeString(route: RouteEntry): string {
-  const pathFields = route.params.map(param => `${formatNavigationFieldName(param.name)}${param.optional ? "?" : ""}: string | number`);
+function buildNavigationTypeString(route: RouteEntry, requiredOptionalParamName?: string): string {
+  const pathFields = route.params.map((param) => {
+    const forcePresent = param.optional && param.name === requiredOptionalParamName;
+    return `${formatNavigationFieldName(param.name)}${param.optional && !forcePresent ? "?" : ""}: string | number${forcePresent ? " | undefined" : ""}`;
+  });
   const pathNames = new Set(route.params.map(param => param.name));
   const queryFields = route.query
     .filter(query => !pathNames.has(query))
     .map(query => `${formatNavigationFieldName(query)}?: string | number`);
   return `{ ${[...pathFields, ...queryFields].join("; ")} }`;
+}
+
+function buildParametrizedRouteSelectionTypeString(route: RouteEntry): string {
+  if (route.params.some(param => !param.optional)) {
+    return buildNavigationTypeString(route);
+  }
+
+  // In a dual-route overload, the runtime selects the parametrized route by path-key
+  // presence. Require at least one optional path key to be present so the public type
+  // cannot accept an object that runtime would send to the paramless route. Its value may
+  // still be undefined, which intentionally selects the optional-param route with that
+  // segment omitted.
+  return route.params
+    .map(param => buildNavigationTypeString(route, param.name))
+    .join(" | ");
 }
 
 function buildImplementationNavigationTypeString(routes: RouteEntry[]): string {
@@ -620,6 +638,7 @@ function generateGoToMethod(componentName: string, routeMeta: RouteMeta | null):
   const parametrizedRoute = parametrized!;
   const usePush = paramlessRoute.name !== null && parametrizedRoute.name !== null;
   const paramlessType = buildNavigationTypeString(paramlessRoute);
+  const parametrizedOverloadType = buildParametrizedRouteSelectionTypeString(parametrizedRoute);
   const queryNames = Array.from(new Set([...paramlessRoute.query, ...parametrizedRoute.query]));
   const hasQuery = queryNames.length > 0;
   const implementationType = hasQuery
@@ -638,7 +657,7 @@ function generateGoToMethod(componentName: string, routeMeta: RouteMeta | null):
             : [],
           returnType: "Promise<void>",
         },
-        { parameters: [{ name: "params", type: paramType }], returnType: "Promise<void>" },
+        { parameters: [{ name: "params", type: parametrizedOverloadType }], returnType: "Promise<void>" },
       ],
       parameters: [{ name: "params", type: implementationType, hasQuestionToken: true }],
       statements: usePush

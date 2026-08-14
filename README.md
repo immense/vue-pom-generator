@@ -446,6 +446,7 @@ Important caveats:
 - `goToSelf()` calls `page.goto(...)`, resolving the route template against `PLAYWRIGHT_RUNTIME_BASE_URL`, `PLAYWRIGHT_TEST_BASE_URL`, or `VITE_PLAYWRIGHT_BASE_URL` when those runtime env vars are present
 - unlike `goTo()`, a dynamic `goToSelf()` template like `/users/:id` stays `/users/:id`
 - if a component is matched by multiple routes, the generator currently picks one route template (the shortest one)
+- when a component has both a paramless route and a route whose path params are all optional, pass at least one path-param key (it may be `undefined`) to select the parametrized route; a query-only object selects the paramless route
 
 ### Why `moduleShims` exists
 
