@@ -70,7 +70,12 @@ export interface BasePageLocator {
     options?: { force?: boolean; noWaitAfter?: boolean; timeout?: number },
   ): Promise<string[]>;
   type(text: string, options?: { delay?: number; noWaitAfter?: boolean; timeout?: number }): Promise<void>;
-  evaluate<R>(pageFunction: (element: { tagName: string; isContentEditable?: boolean }) => R | Promise<R>): Promise<R>;
+  evaluate<R>(pageFunction: (element: {
+    tagName: string;
+    isContentEditable?: boolean;
+    parentElement?: Element | null;
+    getAnimations?: () => Animation[];
+  }) => R | Promise<R>): Promise<R>;
 }
 
 /**
@@ -88,17 +93,8 @@ export interface BasePageLocator {
  */
 export interface BasePagePage {
   url(): string;
-  goto(url: string, options?: { referer?: string; timeout?: number; waitUntil?: "load" | "domcontentloaded" | "networkidle" | "commit" }): Promise<Response | null>;
+  goto(url: string, options?: { referer?: string; timeout?: number; waitUntil?: "load" | "domcontentloaded" | "commit" }): Promise<Response | null>;
   locator(selector: string, options?: { has?: BasePageLocator; hasNot?: BasePageLocator; hasNotText?: string | RegExp; hasText?: string | RegExp }): BasePageLocator;
-  isVisible(selector: string, options?: { strict?: boolean; timeout?: number }): Promise<boolean>;
-  textContent(selector: string, options?: { strict?: boolean; timeout?: number }): Promise<string | null>;
-  waitForSelector(selector: string, options?: { state?: "attached" | "detached" | "visible" | "hidden"; timeout?: number; strict?: boolean }): Promise<unknown>;
-  hover(selector: string, options?: { force?: boolean; noWaitAfter?: boolean; position?: { x: number; y: number }; strict?: boolean; timeout?: number; trial?: boolean }): Promise<void>;
-  selectOption(
-    selector: string,
-    values: null | string | ReadonlyArray<string> | { value?: string; label?: string; index?: number } | ReadonlyArray<{ value?: string; label?: string; index?: number }>,
-    options?: { force?: boolean; noWaitAfter?: boolean; strict?: boolean; timeout?: number },
-  ): Promise<string[]>;
   waitForTimeout(timeout: number): Promise<void>;
   evaluate<R, Arg = never>(pageFunction: string | ((arg: Arg) => R | Promise<R>), arg?: Arg): Promise<R>;
   readonly keyboard: Keyboard;

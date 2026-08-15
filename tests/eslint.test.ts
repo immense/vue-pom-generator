@@ -2,10 +2,33 @@
 import { RuleTester } from "eslint";
 import { describe, it } from "vitest";
 
-import { noDataTestIdInSpecsRule, noPageFixtureInSpecsRule, noRawLocatorActionRule, noRawPlaywrightApisRule } from "../eslint/index";
+import { noDataTestIdInSpecsRule, noPageFixtureInSpecsRule, noRawLocatorActionRule, noRawPlaywrightApisRule, plugin, recommendedPlaywrightConfig } from "../eslint/index";
 
 const tester = new RuleTester({
 	languageOptions: { ecmaVersion: 2022, sourceType: "module" },
+});
+
+describe("flat/recommended config", () => {
+	it("composes upstream Playwright wait/action rules as errors", () => {
+		const upstream = recommendedPlaywrightConfig[0];
+		const generator = recommendedPlaywrightConfig[1];
+
+		for (const ruleName of [
+			"playwright/no-force-option",
+			"playwright/no-networkidle",
+			"playwright/no-wait-for-selector",
+			"playwright/no-wait-for-timeout",
+			"playwright/prefer-web-first-assertions",
+		]) {
+			if (upstream?.rules?.[ruleName] !== "error") throw new Error(`${ruleName} must be an error`);
+		}
+		if (generator?.plugins?.["@immense/vue-pom-generator"] !== plugin) {
+			throw new Error("recommended config must install the generator plugin");
+		}
+		if (upstream?.rules?.["playwright/valid-describe-callback"] !== undefined) {
+			throw new Error("recommended config must not enable unrelated upstream policy");
+		}
+	});
 });
 
 describe("no-data-testid-in-specs", () => {
@@ -95,6 +118,18 @@ describe("no-raw-locator-action", () => {
 				{
 					code: "pom.ToggleButton.check()",
 					errors: [{ messageId: "noRawAction" }],
+				},
+				{
+					code: "pom.SubmitButton.scrollIntoViewIfNeeded()",
+					errors: [{ messageId: "noRawAction" }],
+				},
+				{
+					code: "pom.clickLocator(pom.SubmitButton)",
+					errors: [{ messageId: "noRawPomActionHelper" }],
+				},
+				{
+					code: "pom.clickByTestId('Submit-button')",
+					errors: [{ messageId: "noRawPomActionHelper" }],
 				},
 			],
 		});

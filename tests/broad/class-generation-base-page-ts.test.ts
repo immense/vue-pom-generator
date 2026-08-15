@@ -49,8 +49,8 @@ class ExposedBasePage extends BasePage {
   public makeFluent<T extends object>(factory: () => Promise<T>): Fluent<T> {
     return this.fluent(factory);
   }
-  public clickTestId(testId: string, annotation = "", wait = true, description?: string) {
-    return this.clickByTestId(testId, annotation, wait, description);
+  public clickTestId(testId: string, annotation = "", wait = true, description?: string, action?: { componentName?: string; methodName: string; preferAssociatedLabel?: boolean }) {
+    return this.clickByTestId(testId, annotation, wait, description, action);
   }
   public clickLoc(locator: PwLocator, annotation = "", wait = true) {
     return this.clickLocator(locator, annotation, wait);
@@ -61,8 +61,8 @@ class ExposedBasePage extends BasePage {
   public fillTestId(testId: string, text: string, annotation = "", description?: string) {
     return this.fillInputByTestId(testId, text, annotation, description);
   }
-  public selectVSelect(testId: string, value: string, timeOut = 0, annotation = "", description?: string) {
-    return this.selectVSelectByTestId(testId, value, timeOut, annotation, description);
+  public selectVSelect(testId: string, value: string, annotation = "", description?: string) {
+    return this.selectVSelectByTestId(testId, value, annotation, description);
   }
   public fillLoc(locator: PwLocator, text: string, annotation = "") {
     return this.fillInputByLocator(locator, text, annotation);
@@ -147,12 +147,12 @@ describe("BasePage locators", () => {
     const rawLocator = new FakeLocator({ tagName: "DIV" });
     const byLabelLocator = new FakeLocator({ tagName: "DIV" });
     vi.spyOn(rawLocator, "describe").mockReturnValue(described);
-    vi.spyOn(byLabelLocator, "getByLabel").mockReturnValue(rawLocator);
+    vi.spyOn(byLabelLocator, "getByText").mockReturnValue(rawLocator);
     const fakePage = new FakePage();
     fakePage.locator = vi.fn(() => byLabelLocator);
     const page = new ExposedBasePage(fakePage);
     const result = page.locByLabel("panel", "Email", { exact: false, description: "email field" });
-    expect(byLabelLocator.getByLabel).toHaveBeenCalledWith("Email", { exact: false });
+    expect(byLabelLocator.getByText).toHaveBeenCalledWith("Email", { exact: false });
     expect(rawLocator.describe).toHaveBeenCalledWith("email field");
     expect(result).toBe(described);
   });
@@ -160,12 +160,12 @@ describe("BasePage locators", () => {
   it("defaults the exact flag to true when locating by label", () => {
     const byLabelLocator = new FakeLocator({ tagName: "DIV" });
     const rawLocator = new FakeLocator({ tagName: "DIV" });
-    vi.spyOn(byLabelLocator, "getByLabel").mockReturnValue(rawLocator);
+    vi.spyOn(byLabelLocator, "getByText").mockReturnValue(rawLocator);
     const fakePage = new FakePage();
     fakePage.locator = vi.fn(() => byLabelLocator);
     const page = new ExposedBasePage(fakePage);
     page.locByLabel("panel", "Email");
-    expect(byLabelLocator.getByLabel).toHaveBeenCalledWith("Email", { exact: true });
+    expect(byLabelLocator.getByText).toHaveBeenCalledWith("Email", { exact: true });
   });
 });
 
@@ -219,7 +219,7 @@ describe("BasePage action helpers", () => {
     expect(target.scrollCalls).toBeGreaterThan(0);
   });
 
-  it("clicks by test id and propagates afterClick for instrumented clicks", async () => {
+  it("clicks by test id without requiring custom instrumentation waits", async () => {
     const fakePage = new FakePage();
     const btn = new FakeLocator({ tagName: "BUTTON" }, { testId: "btn" });
     fakePage.locator = () => btn;
@@ -228,6 +228,42 @@ describe("BasePage action helpers", () => {
     // exercise the wait=false early return path
     await page.clickTestId("btn", "note", false);
     expect(btn.clicks).toBe(2);
+  });
+
+  it("clicks the visible associated label for generated checkbox actions", async () => {
+    const checkbox = new FakeLocator({ tagName: "INPUT" }, { id: "select-page", testId: "SelectPage-checkbox" });
+    const label = new FakeLocator({ tagName: "LABEL" });
+    const fakePage = new FakePage();
+    fakePage.locator = vi.fn((selector: string) => selector.startsWith("label[for=") ? label : checkbox);
+    const page = new ExposedBasePage(fakePage);
+
+    await page.clickTestId("SelectPage-checkbox", "", true, "Select page", {
+      componentName: "RecordListPage",
+      methodName: "clickSelectPage",
+      preferAssociatedLabel: true,
+    });
+
+    expect(label.clicks).toBe(1);
+    expect(checkbox.clicks).toBe(0);
+    expect(checkbox.presses).toEqual([]);
+  });
+
+  it("keyboard-activates a checkable input whose empty associated label has no visible box", async () => {
+    const checkbox = new FakeLocator({ tagName: "INPUT" }, { id: "select-page", testId: "SelectPage-checkbox" });
+    const emptyLabel = new FakeLocator({ tagName: "LABEL" }, { visible: false });
+    const fakePage = new FakePage();
+    fakePage.locator = vi.fn((selector: string) => selector.startsWith("label[for=") ? emptyLabel : checkbox);
+    const page = new ExposedBasePage(fakePage);
+
+    await page.clickTestId("SelectPage-checkbox", "", true, "Select page", {
+      componentName: "RecordListPage",
+      methodName: "clickSelectPage",
+      preferAssociatedLabel: true,
+    });
+
+    expect(emptyLabel.clicks).toBe(0);
+    expect(checkbox.clicks).toBe(0);
+    expect(checkbox.presses).toEqual(["Space"]);
   });
 
   it("clicks a locator directly", async () => {
@@ -283,12 +319,12 @@ describe("BasePage action helpers", () => {
       return original(selector);
     };
     fakePage.locator = () => root;
-    await page.selectVSelect("vs", "Acme", 0, "note", "vs field");
+    await page.selectVSelect("vs", "Acme", "note", "vs field");
     expect(input.clicks).toBeGreaterThanOrEqual(1);
     expect(option.clicks).toBe(1);
   });
 
-  it("selects a vue-select option when no dropdown option is present", async () => {
+  it("fails when no vue-select dropdown option becomes visible", async () => {
     const fakePage = new FakePage();
     const page = new ExposedBasePage(fakePage);
     const input = new FakeLocator({ tagName: "INPUT" });
@@ -301,7 +337,7 @@ describe("BasePage action helpers", () => {
       return original(selector);
     };
     fakePage.locator = () => root;
-    await page.selectVSelect("vs", "Acme", 0, "note");
+    await expect(page.selectVSelect("vs", "Acme", "note")).rejects.toThrow("locator did not become visible");
     expect(input.clicks).toBeGreaterThanOrEqual(1);
     expect(option.clicks).toBe(0);
   });
@@ -330,19 +366,17 @@ describe("BasePage action helpers", () => {
 
   it("checks visibility, text, wait, hover, and select by test id", async () => {
     const fakePage = new FakePage();
-    fakePage.isVisibleResult = false;
-    fakePage.textContentResult = "hello";
     const page = new ExposedBasePage(fakePage);
-    const input = new FakeLocator({ tagName: "SELECT" }, { testId: "sel" });
+    const input = new FakeLocator({ tagName: "SELECT" }, { testId: "sel", visible: false, textContent: "hello" });
     fakePage.locator = () => input;
     expect(await page.visibleTestId("x")).toBe(false);
     expect(await page.textTestId("x")).toBe("hello");
     await page.waitTestId("x", { timeout: 500 });
-    expect(fakePage.waitForSelectorCalls[0]).toEqual({ selector: '[data-testid="x"]', options: { timeout: 500 } });
+    expect(input.waitForCalls[0]).toEqual({ state: "visible", timeout: 500 });
     await page.hoverTestId("x");
-    expect(fakePage.hoverCalls).toContain('[data-testid="x"]');
+    expect(input.hoverCalls).toBe(1);
     await page.selectTestId("x", "opt");
-    expect(fakePage.selectOptionCalls[0]).toEqual({ selector: '[data-testid="x"]', value: "opt" });
+    expect(input.selectedOptions).toEqual(["opt"]);
   });
 });
 

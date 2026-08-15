@@ -7,11 +7,12 @@ import type { AccessibilityAuditResult } from "./accessibility-audit";
 import { buildAccessibilityAudit } from "./accessibility-audit";
 import type { ElementMetadata } from "./metadata-collector";
 import { buildPomLocatorDescription, humanizePomMethodName } from "./pom-discoverability";
+import type { PomParameterSpec } from "./pom-params";
 import type { IComponentDependencies, IDataTestId, PomExtraClickMethodSpec, PomPrimarySpec } from "./utils";
 import { buildPomGeneratedActionName, buildPomGeneratedPropertyName } from "./utils";
 import { renderSourceFile, VariableDeclarationKind, type WriterFunction } from "./typescript-codegen";
 
-type PomManifestEntry = {
+export type PomManifestEntry = {
   testId: string;
   selectorPatternKind: "static" | "parameterized";
   semanticName: string;
@@ -21,6 +22,11 @@ type PomManifestEntry = {
   generatedPropertyName: string | null;
   generatedActionName: string | null;
   generatedActionNames: string[];
+  generatedMethods: Array<{
+    name: string;
+    kind: "action" | "locator";
+    parameters: PomParameterSpec[];
+  }>;
   emitPrimary: boolean;
   targetPageObjectModelClass?: string;
   sourceTag?: string;
@@ -35,7 +41,7 @@ type PomManifestEntry = {
   hasDynamicText?: boolean;
 };
 
-type PomManifestComponent = {
+export type PomManifestComponent = {
   componentName: string;
   className: string;
   sourceFile: string;
@@ -44,7 +50,7 @@ type PomManifestComponent = {
   entries: PomManifestEntry[];
 };
 
-type PomManifest = Record<string, PomManifestComponent>;
+export type PomManifest = Record<string, PomManifestComponent>;
 
 function matchesPrimarySelector(extraMethod: PomExtraClickMethodSpec, pom: PomPrimarySpec): boolean {
   if (extraMethod.selector.kind !== "testId") {
@@ -76,6 +82,19 @@ function getManifestEntry(
     ...(generatedActionName ? [generatedActionName] : []),
     ...extraActionNames.filter(name => name !== generatedActionName),
   ]));
+  const generatedMethods = [
+    ...(pom && generatedActionName
+      ? [{ name: generatedActionName, kind: "action" as const, parameters: pom.parameters }]
+      : []),
+    ...(pom
+      ? extraMethods
+        .filter(extraMethod => matchesPrimarySelector(extraMethod, pom))
+        .map(extraMethod => ({ name: extraMethod.name, kind: "action" as const, parameters: extraMethod.parameters }))
+      : []),
+    ...(pom
+      ? [{ name: buildPomGeneratedPropertyName(pom), kind: "locator" as const, parameters: pom.parameters }]
+      : []),
+  ].filter((method, index, methods) => methods.findIndex(candidate => candidate.name === method.name && candidate.kind === method.kind) === index);
   const accessibility = buildAccessibilityAudit(metadata, pom?.nativeRole ?? null);
 
   return {
@@ -94,6 +113,7 @@ function getManifestEntry(
     generatedPropertyName: pom ? buildPomGeneratedPropertyName(pom) : null,
     generatedActionName,
     generatedActionNames,
+    generatedMethods,
     emitPrimary: pom?.emitPrimary !== false,
     ...(entry.targetPageObjectModelClass ? { targetPageObjectModelClass: entry.targetPageObjectModelClass } : {}),
     ...(metadata?.tag ? { sourceTag: metadata.tag } : {}),
@@ -215,11 +235,12 @@ export function generateTestIdsModule(
 export function generatePomManifestModule(
   componentHierarchyMap: Map<string, IComponentDependencies>,
   elementMetadata: Map<string, Map<string, ElementMetadata>>,
+  fileName: string = "virtual-pom-manifest.ts",
 ): string {
   const pomManifest = buildPomManifest(componentHierarchyMap, elementMetadata);
 
-  return renderSourceFile("virtual-pom-manifest.ts", (sourceFile) => {
-    sourceFile.addStatements("// Virtual module: richer POM discoverability manifest");
+  return renderSourceFile(fileName, (sourceFile) => {
+    sourceFile.addStatements("// Rich POM discoverability manifest.");
     sourceFile.addVariableStatement({
       declarationKind: VariableDeclarationKind.Const,
       isExported: true,

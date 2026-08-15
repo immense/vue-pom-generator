@@ -33,6 +33,11 @@
       "types": "./dist/router-bridge.d.ts",
       "import": "./dist/router.mjs",
       "require": "./dist/router.cjs"
+    },
+    "./playwright/reporter": {
+      "types": "./dist/playwright/reporter.d.ts",
+      "import": "./dist/playwright/reporter.mjs",
+      "require": "./dist/playwright/reporter.cjs"
     }
   },
   "files": [
@@ -62,6 +67,7 @@
   },
   "peerDependencies": {
     "@babel/parser": ">=7",
+    "@playwright/test": ">=1.61.0 <2",
     "@vitejs/plugin-vue": ">=5",
     "@vue/compiler-core": ">=3.5",
     "@vue/compiler-dom": ">=3.5",
@@ -77,6 +83,7 @@
   },
   "dependencies": {
     "@floating-ui/dom": "^1.7.4",
+    "eslint-plugin-playwright": "^2.11.0",
     "ts-morph": "^27.0.2"
   },
   "devDependencies": {

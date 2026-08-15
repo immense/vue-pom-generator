@@ -568,9 +568,9 @@ describe("utils.ts coverage", () => {
     const span = findFirstTag(compiled, "span");
 
     expect(getContainedInSlotDataKeyInfo(span, map)).toEqual({
-      selectorFragment: "${data.key ?? data.data?.id ?? data.id ?? data.value ?? data}",
-      runtimeFragment: "${data.key ?? data.data?.id ?? data.id ?? data.value ?? data}",
-      rawExpression: "data.key ?? data.data?.id ?? data.id ?? data.value ?? data",
+      selectorFragment: "${data.key ?? data.data?.id ?? data.id ?? data.value ?? data.url ?? data}",
+      runtimeFragment: "${data.key ?? data.data?.id ?? data.id ?? data.value ?? data.url ?? data}",
+      rawExpression: "data.key ?? data.data?.id ?? data.id ?? data.value ?? data.url ?? data",
     });
   });
 
@@ -950,9 +950,9 @@ describe("utils.ts coverage", () => {
       nativeRole: "button",
       preferredGeneratedValue: staticAttributeValue("ignored"),
       keyInfo: {
-        selectorFragment: "${data.key ?? data.data?.id ?? data.id ?? data.value ?? data}",
-        runtimeFragment: "${data.key ?? data.data?.id ?? data.id ?? data.value ?? data}",
-        rawExpression: "data.key ?? data.data?.id ?? data.id ?? data.value ?? data",
+        selectorFragment: "${data.key ?? data.data?.id ?? data.id ?? data.value ?? data.url ?? data}",
+        runtimeFragment: "${data.key ?? data.data?.id ?? data.id ?? data.value ?? data.url ?? data}",
+        rawExpression: "data.key ?? data.data?.id ?? data.id ?? data.value ?? data.url ?? data",
       },
       testIdAttribute: "data-testid",
       existingIdBehavior: "preserve",

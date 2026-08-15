@@ -161,6 +161,10 @@ export class FakeLocator implements BasePageLocator {
   public readonly fills: string[] = [];
   public descendant?: FakeLocator;
   public lastClickOptions: { delay?: number; force?: boolean } | undefined;
+  public hoverCalls = 0;
+  public presses: string[] = [];
+  public readonly selectedOptions: string[] = [];
+  public readonly waitForCalls: Array<{ state?: "attached" | "detached" | "visible" | "hidden"; timeout?: number }> = [];
   public scrollCalls = 0;
 
   public constructor(
@@ -168,8 +172,11 @@ export class FakeLocator implements BasePageLocator {
     public readonly options: {
       boundingBox?: BoundingBox;
       count?: number;
+      id?: string;
+      textContent?: string | null;
       testId?: string;
       selector?: string;
+      visible?: boolean;
     } = {},
   ) {}
 
@@ -244,6 +251,9 @@ export class FakeLocator implements BasePageLocator {
     if (name === "data-testid") {
       return this.options.testId ?? null;
     }
+    if (name === "id") {
+      return this.options.id ?? null;
+    }
     return null;
   }
 
@@ -266,18 +276,27 @@ export class FakeLocator implements BasePageLocator {
     this.fills.push(text);
   }
 
-  async hover(): Promise<void> {}
+  async hover(): Promise<void> {
+    this.hoverCalls += 1;
+  }
 
-  async press(_key: string): Promise<void> {}
+  async press(key: string): Promise<void> {
+    this.presses.push(key);
+  }
 
   async check(): Promise<void> {}
 
   async uncheck(): Promise<void> {}
 
-  async waitFor(): Promise<void> {}
+  async waitFor(options?: { state?: "attached" | "detached" | "visible" | "hidden"; timeout?: number }): Promise<void> {
+    this.waitForCalls.push(options ?? {});
+    if ((this.options.count ?? 1) === 0) {
+      throw new Error("locator did not become visible");
+    }
+  }
 
   async isVisible(): Promise<boolean> {
-    return true;
+    return this.options.visible ?? true;
   }
 
   async isHidden(): Promise<boolean> {
@@ -293,7 +312,7 @@ export class FakeLocator implements BasePageLocator {
   }
 
   async textContent(): Promise<string | null> {
-    return null;
+    return this.options.textContent ?? null;
   }
 
   async innerText(): Promise<string> {
@@ -304,8 +323,10 @@ export class FakeLocator implements BasePageLocator {
     return "";
   }
 
-  async selectOption(): Promise<string[]> {
-    return [];
+  async selectOption(value: null | string | ReadonlyArray<string> | { value?: string; label?: string; index?: number } | ReadonlyArray<{ value?: string; label?: string; index?: number }>): Promise<string[]> {
+    const selected = typeof value === "string" ? value : "";
+    if (selected) this.selectedOptions.push(selected);
+    return selected ? [selected] : [];
   }
 
   async type(_text: string): Promise<void> {}

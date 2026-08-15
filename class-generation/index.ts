@@ -9,6 +9,8 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { generateViewObjectModelMembers, generateViewObjectModelMethodContent } from "../method-generation";
+import { generatePomManifestModule } from "../manifest-generator";
+import type { ElementMetadata } from "../metadata-collector";
 import {
   createPomMethodSignature,
   createPomParameterSpec,
@@ -469,12 +471,14 @@ function generateGoToMethod(componentName: string, routeMeta: RouteMeta | null):
         parameters: hasQuery ? [{ name: "params", type: paramType, hasQuestionToken: true }] : [],
         statements: route.name !== null
           ? createRouterNavigationWriter({
+              componentName,
               routeName: { kind: "single", target: route.name },
               input: hasQuery ? { identifier: "params", optional: true } : undefined,
               pathParamNames: [],
               queryNames: route.query,
             })
           : createUrlNavigationWriter({
+              componentName,
               routeTemplate: { kind: "single", target: route.template },
               input: hasQuery ? { identifier: "params", optional: true } : undefined,
               pathParams: [],
@@ -499,12 +503,14 @@ function generateGoToMethod(componentName: string, routeMeta: RouteMeta | null):
         parameters: [{ name: "params", type: paramType, hasQuestionToken: allOptional }],
         statements: route.name !== null
           ? createRouterNavigationWriter({
+              componentName,
               routeName: { kind: "single", target: route.name },
               input: { identifier: "params", optional: allOptional },
               pathParamNames: route.params.map(param => param.name),
               queryNames: route.query,
             })
           : createUrlNavigationWriter({
+              componentName,
               routeTemplate: { kind: "single", target: route.template },
               input: { identifier: "params", optional: allOptional },
               pathParams: route.params,
@@ -542,6 +548,7 @@ function generateGoToMethod(componentName: string, routeMeta: RouteMeta | null):
       parameters: [{ name: "params", type: implementationType, hasQuestionToken: true }],
       statements: usePush
         ? createRouterNavigationWriter({
+            componentName,
             routeName: {
               kind: "dual",
               parametrizedTarget: requireRouteName(parametrizedRoute),
@@ -553,6 +560,7 @@ function generateGoToMethod(componentName: string, routeMeta: RouteMeta | null):
             queryNames: hasQuery ? queryNames : [],
           })
         : createUrlNavigationWriter({
+            componentName,
             routeTemplate: {
               kind: "dual",
               parametrizedTarget: parametrizedRoute.template,
@@ -611,7 +619,7 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec, componen
           for (const statement of testIdBinding.setupStatements) {
             writer.writeLine(statement);
           }
-          writer.writeLine(`await this.clickByTestId(${testIdBinding.expression}, ${annotationArg}, ${waitArg}, ${locatorDescription});`);
+          writer.writeLine(`await this.clickByTestId(${testIdBinding.expression}, ${annotationArg}, ${waitArg}, ${locatorDescription}, { componentName: ${JSON.stringify(componentName)}, methodName: ${JSON.stringify(spec.name)} });`);
         },
       }),
     ];
@@ -634,7 +642,7 @@ function generateExtraClickMethodMembers(spec: PomExtraClickMethodSpec, componen
         for (const statement of labelBinding.setupStatements) {
           writer.writeLine(statement);
         }
-        writer.writeLine(`await this.clickWithinTestIdByLabel(${rootBinding.expression}, ${labelBinding.expression}, ${annotationArg}, ${waitArg}, { description: ${locatorDescription} });`);
+        writer.writeLine(`await this.clickWithinTestIdByLabel(${rootBinding.expression}, ${labelBinding.expression}, ${annotationArg}, ${waitArg}, { description: ${locatorDescription}, componentName: ${JSON.stringify(componentName)}, methodName: ${JSON.stringify(spec.name)} });`);
       },
     }),
   ];
@@ -808,6 +816,9 @@ export interface GenerateFilesOptions {
   layoutDirs?: string[];
 
   routeMetaByComponent?: Record<string, RouteMeta>;
+
+  /** Metadata used by the generated Node-importable POM discoverability manifest. */
+  elementMetadata?: Map<string, Map<string, ElementMetadata>>;
 }
 
 interface BaseGenerateContentOptions {
@@ -872,6 +883,7 @@ export async function generateFiles(
     componentDirs,
     layoutDirs,
     routeMetaByComponent: routeMetaByComponentOverride,
+    elementMetadata = new Map<string, Map<string, ElementMetadata>>(),
   } = options;
 
   const emitLanguages: Array<"ts" | "csharp"> = emitLanguagesOverride?.length
@@ -925,13 +937,15 @@ export async function generateFiles(
       writeGeneratedFile(file);
     }
 
-    const fixtureRegistryFile = maybeGenerateFixtureRegistry(emittableComponentHierarchyMap, {
+    const fixtureRegistryFiles = maybeGenerateFixtureRegistry(emittableComponentHierarchyMap, {
       generateFixtures,
       pomOutDir: outDir,
       projectRoot,
       customPomDir,
+      elementMetadata,
+      testIdAttribute,
     });
-    if (fixtureRegistryFile) {
+    for (const fixtureRegistryFile of fixtureRegistryFiles) {
       writeGeneratedFile(fixtureRegistryFile);
     }
   }
@@ -1540,11 +1554,13 @@ function maybeGenerateFixtureRegistry(
     pomOutDir: string;
     projectRoot?: string;
     customPomDir?: string;
+    elementMetadata: Map<string, Map<string, ElementMetadata>>;
+    testIdAttribute?: string;
   },
-): GeneratedFileOutput | null {
+): GeneratedFileOutput[] {
   const { generateFixtures, pomOutDir } = options;
   if (!generateFixtures)
-    return null;
+    return [];
 
   // generateFixtures accepts:
   // - true: enable fixtures with defaults
@@ -1576,6 +1592,10 @@ function maybeGenerateFixtureRegistry(
   const pomDirAbs = path.isAbsolute(pomOutDir) ? pomOutDir : path.resolve(root, pomOutDir);
 
   const pomImport = toPosixRelativePath(fixtureOutDirAbs, pomDirAbs);
+  const diagnosticsImport = stripExtension(toPosixRelativePath(
+    fixtureOutDirAbs,
+    path.join(pomDirAbs, "_pom-runtime", "class-generation", "diagnostics.ts"),
+  ));
 
   const viewClassNames = Array.from(componentHierarchyMap.entries())
     .filter(([, deps]) => !!deps.isView)
@@ -1591,6 +1611,7 @@ function maybeGenerateFixtureRegistry(
     "request",
     // Our own fixtureOptions
     "animation",
+    "pomDiagnostics",
   ]);
 
   const viewFixtureNames = new Set(viewClassNames.map(name => lowerFirst(name)));
@@ -1653,12 +1674,26 @@ function maybeGenerateFixtureRegistry(
       namedImports: [
         { name: "Page", alias: "PwPage" },
         "PlaywrightTestArgs",
+        "TestInfo",
         "TestType",
       ],
+    });
+    addNamedImport(sourceFile, {
+      moduleSpecifier: diagnosticsImport,
+      namedImports: ["installPomFailureDiagnostics"],
+    });
+    addNamedImport(sourceFile, {
+      moduleSpecifier: diagnosticsImport,
+      isTypeOnly: true,
+      namedImports: ["PomFailureDiagnosticsOptions"],
     });
     sourceFile.addImportDeclaration({
       namespaceImport: "Pom",
       moduleSpecifier: pomImport,
+    });
+    addNamedImport(sourceFile, {
+      moduleSpecifier: "./pom-manifest.g",
+      namedImports: ["pomManifest"],
     });
     for (const entry of overrideCtorEntries) {
       addNamedImport(sourceFile, {
@@ -1673,6 +1708,9 @@ function maybeGenerateFixtureRegistry(
       properties: [{
         name: "animation",
         type: "Pom.PlaywrightAnimationOptions",
+      }, {
+        name: "pomDiagnostics",
+        type: "PomFailureDiagnosticsOptions",
       }],
     });
     sourceFile.addTypeAlias({
@@ -1698,6 +1736,10 @@ function maybeGenerateFixtureRegistry(
     sourceFile.addTypeAlias({
       name: "PomFactoryFixture",
       type: "{ pomFactory: PomFactory }",
+    });
+    sourceFile.addTypeAlias({
+      name: "PomDiagnosticsSetupFixture",
+      type: "{ pomDiagnosticsSetup: void }",
     });
 
     sourceFile.addVariableStatement({
@@ -1748,7 +1790,7 @@ function maybeGenerateFixtureRegistry(
         description: "Every fixture contributed by the generator: the `animation` option, the internal\n"
           + "`pomSetup`/`pomFactory` fixtures, and one fixture per generated page/component POM.",
       }],
-      type: "PlaywrightOptions & PomSetupFixture & PomFactoryFixture & GeneratedPageFixtures & GeneratedComponentFixtures",
+      type: "PlaywrightOptions & PomSetupFixture & PomFactoryFixture & PomDiagnosticsSetupFixture & GeneratedPageFixtures & GeneratedComponentFixtures",
     });
 
     sourceFile.addFunction({
@@ -1802,10 +1844,12 @@ function maybeGenerateFixtureRegistry(
         writer.block(() => {
           writer.writeLine("animation: [{");
           writer.indent(() => {
+            writer.writeLine("enabled: false,");
             writer.writeLine('pointer: { durationMilliseconds: 250, transitionStyle: "ease-in-out", clickDelayMilliseconds: 0 },');
             writer.writeLine("keyboard: { typeDelayMilliseconds: 100 },");
           });
           writer.writeLine("}, { option: true }],");
+          writer.writeLine(`pomDiagnostics: [{ captureBudgetMs: 5_000, testIdAttribute: ${JSON.stringify(options.testIdAttribute ?? "data-testid")} }, { option: true }],`);
           // The fixture callbacks are annotated explicitly rather than relying on
           // contextual typing: `base` is generic here, so TypeScript cannot resolve
           // Playwright's `Fixtures<...>` parameter types and the callbacks would
@@ -1814,6 +1858,20 @@ function maybeGenerateFixtureRegistry(
           writer.indent(() => {
             writer.writeLine("Pom.setPlaywrightAnimationOptions(animation);");
             writer.writeLine("await use();");
+          });
+          writer.writeLine("}, { auto: true }],");
+          writer.writeLine("pomDiagnosticsSetup: [async ({ page, pomDiagnostics }: { page: PwPage; pomDiagnostics: PomFailureDiagnosticsOptions }, use: (r: void) => Promise<void>, testInfo: TestInfo) => {");
+          writer.indent(() => {
+            writer.writeLine("const capture = installPomFailureDiagnostics(page, pomManifest, testInfo, pomDiagnostics);");
+            writer.writeLine("try {");
+            writer.indent(() => writer.writeLine("await use();"));
+            writer.writeLine("} finally {");
+            writer.indent(() => {
+              writer.writeLine("if (testInfo.status !== undefined && testInfo.status !== testInfo.expectedStatus) {");
+              writer.indent(() => writer.writeLine("await capture.capture().catch(() => undefined);"));
+              writer.writeLine("}");
+            });
+            writer.writeLine("}");
           });
           writer.writeLine("}, { auto: true }],");
           writer.writeLine("pomFactory: async ({ page }: { page: PwPage }, use: (r: PomFactory) => Promise<void>) => {");
@@ -1847,10 +1905,32 @@ function maybeGenerateFixtureRegistry(
     }),
   });
 
-  return {
-    filePath: path.resolve(fixtureOutDirAbs, fixtureFileName),
-    content: fixturesContent,
-  };
+  const manifestFileName = "pom-manifest.g.ts";
+  const manifestContent = generatePomManifestModule(
+    componentHierarchyMap,
+    options.elementMetadata,
+    manifestFileName,
+  );
+  const [diagnosticsRuntimeFile] = buildRuntimeGeneratedFilesFromSpecs([{
+    absolutePath: resolvePluginAsset("../class-generation/diagnostics.ts"),
+    description: "diagnostics.ts",
+    outputPath: path.join(pomDirAbs, "_pom-runtime", "class-generation", "diagnostics.ts"),
+  }]);
+  if (!diagnosticsRuntimeFile) {
+    throw new Error("[vue-pom-generator] Failed to generate the Playwright diagnostics runtime.");
+  }
+
+  return [
+    {
+      filePath: path.resolve(fixtureOutDirAbs, fixtureFileName),
+      content: fixturesContent,
+    },
+    {
+      filePath: path.resolve(fixtureOutDirAbs, manifestFileName),
+      content: manifestContent,
+    },
+    diagnosticsRuntimeFile,
+  ];
 
   // No pomFixture is generated; goToSelf is emitted directly on each view POM.
 }
@@ -1895,6 +1975,33 @@ function prepareViewObjectModelClass(
     return match;
   };
 
+  const hasGeneratedPomSurface = (value: string, seen = new Set<string>()): boolean => {
+    const resolvedRef = resolveTrackedComponentRef(value);
+    if (!resolvedRef || seen.has(resolvedRef)) {
+      return false;
+    }
+
+    const resolvedDependencies = componentHierarchyMap.get(resolvedRef);
+    if (!resolvedDependencies) {
+      return false;
+    }
+
+    if (
+      resolvedDependencies.dataTestIdSet.size > 0
+      || (resolvedDependencies.pomExtraMethods?.length ?? 0) > 0
+      || (resolvedDependencies.generatedMethods?.size ?? 0) > 0
+    ) {
+      return true;
+    }
+
+    const nextSeen = new Set(seen);
+    nextSeen.add(resolvedRef);
+    const nestedRefs = resolvedDependencies.usedComponentSet?.size
+      ? resolvedDependencies.usedComponentSet
+      : resolvedDependencies.childrenComponentSet;
+    return Array.from(nestedRefs).some(child => hasGeneratedPomSurface(child, nextSeen));
+  };
+
   const rawComponentRefsForInstances = usedComponentSet?.size
     ? usedComponentSet
     : childrenComponentSet;
@@ -1913,8 +2020,7 @@ function prepareViewObjectModelClass(
     if (isSelfReference(resolvedRef)) {
       continue;
     }
-    const resolvedDependencies = componentHierarchyMap.get(resolvedRef);
-    if (!resolvedDependencies?.dataTestIdSet.size) {
+    if (!hasGeneratedPomSurface(resolvedRef, new Set([componentName]))) {
       continue;
     }
     componentRefsForInstances.add(resolvedRef);
@@ -1973,7 +2079,6 @@ function prepareViewObjectModelClass(
 
   const className = toPascalCaseLocal(componentName);
   const childInstancePropertyNames = Array.from(componentRefsForInstances)
-    .filter(child => componentHierarchyMap.has(child) && componentHierarchyMap.get(child)?.dataTestIdSet.size)
     .map(child => child.split(".vue")[0]);
   const blockedViewPassthroughMethodNames = new Set(
     attachmentsForThisClass
@@ -2107,10 +2212,7 @@ function generateViewObjectModelContent(
 
   for (const child of prepared.componentRefsForInstances) {
     const childName = child.endsWith(".vue") ? child.slice(0, -4) : child;
-    const childDeps = componentHierarchyMap.get(child) ?? componentHierarchyMap.get(childName);
-    if (childDeps?.dataTestIdSet.size) {
-      addGeneratedImport(childName);
-    }
+    addGeneratedImport(childName);
   }
 
   const targetClassNames = Array.from(
@@ -2565,7 +2667,7 @@ function getRuntimeGeneratedAssetSpecs(baseDir: string, basePageClassPath: strin
   const runtimeClassGenSourceDir = resolvePluginAsset("../class-generation");
   const runtimeClassGenFiles = fs.readdirSync(runtimeClassGenSourceDir)
     .filter(file => file.endsWith(".ts"))
-    .filter(file => file !== "base-page.ts" && file !== "index.ts")
+    .filter(file => file !== "base-page.ts" && file !== "diagnostics.ts" && file !== "index.ts")
     .sort((left, right) => left.localeCompare(right));
 
   return [
@@ -3154,7 +3256,7 @@ function getComponentInstances(
   }
 
   childrenComponent.forEach((child) => {
-    if (componentHierarchyMap.has(child) && componentHierarchyMap.get(child)?.dataTestIdSet.size) {
+    if (componentHierarchyMap.has(child)) {
       const childName = child.split(".vue")[0];
       declarations.push(createClassProperty({
         name: childName,
@@ -3191,7 +3293,7 @@ function getConstructor(
       }
 
       childrenComponent.forEach((child) => {
-        if (componentHierarchyMap.has(child) && componentHierarchyMap.get(child)?.dataTestIdSet.size) {
+        if (componentHierarchyMap.has(child)) {
           const childName = child.split(".vue")[0];
           writer.writeLine(`this.${childName} = new ${childName}(page);`);
         }

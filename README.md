@@ -14,6 +14,7 @@ If you already use Playwright with `getByTestId`, the point is simple: this pack
 - **Generates TypeScript POM output as either one aggregate or split per class, always with a stable `index.ts` barrel.**
 - **Describes generated Playwright locators** with deterministic human-readable labels via `Locator.describe()`.
 - **Can generate Playwright fixtures** so tests can request `userListPage` instead of constructing `new UserListPage(page)` manually.
+- **Captures generator-aware failure diagnostics before fixture teardown** and prints the relevant DOM, accessibility tree, browser errors, generated methods, and isolated rerun command to stdout.
 - **Can fail fast on unnameable wrapper-button actions** so complex inline handlers do not silently degrade into low-signal generated APIs.
 - **Can emit a single C# POM file** for Playwright .NET consumers.
 - **Exposes `virtual:testids` and `virtual:pom-manifest`** so your app can inspect collected ids and generated POM metadata at runtime.
@@ -215,6 +216,7 @@ Exports:
 - `defineVuePomGeneratorConfig()`
 - `defineNuxtPomGeneratorConfig()`
 - `@immense/vue-pom-generator/eslint`
+- `@immense/vue-pom-generator/playwright/reporter`
 - `@immense/vue-pom-generator/router` (browser-safe runtime bridge)
 
 ## Basic Vue/Vite setup
@@ -366,6 +368,7 @@ TypeScript output:
 Optional Playwright fixture output:
 
 - `fixtures.g.ts` next to the POMs by default
+- `pom-manifest.g.ts` — a Node-importable map from Vue source/test ids to generated methods
 - or a custom directory / file path when configured
 
 Optional C# output:
@@ -373,6 +376,60 @@ Optional C# output:
 - `page-object-models.g.cs`
 
 If you emit outside a `__generated__` path, the generator also manages `.gitattributes` entries for generated files.
+
+## Fast, loud Playwright failures
+
+Generated fixtures install a failure capture around the browser page. On every unexpected failed attempt, before Playwright destroys the browser context, it captures within one five-second total budget:
+
+- the URL and page title
+- rendered generated test ids with visible/hidden and enabled/disabled state
+- the best matching generated POM and its method catalog
+- the most recent generated action and all test-id candidates it expected
+- an accessibility snapshot
+- buffered browser console errors, uncaught page errors, failed requests, and HTTP error responses
+- a screenshot and structured JSON attachment
+
+Add the reporter to print this as one bounded, LLM-friendly stdout block. In GitHub Actions, compose Playwright's built-in `github` reporter for canonical line annotations:
+
+```ts
+import { defineConfig } from "@playwright/test";
+
+export default defineConfig({
+  expect: { timeout: 5_000 },
+  reporter: process.env.CI
+    ? [
+        ["github"],
+        ["@immense/vue-pom-generator/playwright/reporter"],
+      ]
+    : [
+        ["list"],
+        ["@immense/vue-pom-generator/playwright/reporter"],
+      ],
+  use: {
+    actionTimeout: 5_000,
+    navigationTimeout: 5_000,
+    trace: "retain-on-first-failure",
+  },
+});
+```
+
+The report ends with a file-and-line-targeted command that includes `--max-failures=1`. Method availability is descriptive only: `absent`, `hidden`, or `disabled` can be a valid state for the current page.
+
+Animations and presentation delays are disabled by default. Recording/demo projects can opt in through the generated `animation` fixture option; ordinary tests use Playwright's actionability checks without forced clicks. Before clicking, generated actions also await finite CSS animations on the target's ancestor chain (bounded by five seconds). This covers overlays that are visible to Playwright while their component library still suppresses input during an opening transition; infinite decorative animations are ignored.
+
+## Recommended Playwright lint rules
+
+The ESLint export composes its generator-specific conventions with `eslint-plugin-playwright`. The flat recommended config treats manual sleeps, `networkidle`, selector waits, forced actions, and non-web-first assertions as errors:
+
+```ts
+import { recommendedPlaywrightConfig } from "@immense/vue-pom-generator/eslint";
+
+export default [
+  ...recommendedPlaywrightConfig,
+];
+```
+
+It enables `playwright/no-wait-for-timeout`, `playwright/no-networkidle`, `playwright/no-wait-for-selector`, `playwright/no-force-option`, and `playwright/prefer-web-first-assertions` alongside the generated-POM rules. Presentation waits inside the generator's explicitly enabled animation runtime are not test-authored waits and remain isolated there.
 
 ## Actual Vite dev/build behavior
 
@@ -438,8 +495,9 @@ goTo(params: { userId: string | number; tab?: string | number }): Promise<void>
 ```
 
 `goTo({ userId: 42, tab: "activity" })` partitions the flat input into Vue Router's
-`params` and `query` records. On a cold page it resolves and fully loads the named route;
-on a warm page it uses `router.push`.
+`params` and `query` records. On a cold page it boots the application, waits for Vue
+Router's initial navigation to settle, and then uses `router.push`; warm pages use the
+same awaited push without booting again.
 
 Important caveats:
 

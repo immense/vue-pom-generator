@@ -8,6 +8,7 @@ import { compileScript, parse as parseSfc } from "@vue/compiler-sfc";
 import type { PluginOption } from "vite";
 
 import { generateFiles } from "../../class-generation";
+import type { ElementMetadata } from "../../metadata-collector";
 import { introspectNuxtPages, parseRouterFileFromCwd } from "../../router-introspection";
 import { createTestIdTransform } from "../../transform";
 import type { IComponentDependencies, NativeWrappersMap, RouterIntrospectionResult } from "../../utils";
@@ -19,6 +20,7 @@ import { resolveExistingIdBehavior } from "../vue-plugin";
 
 interface BuildProcessorOptions {
   componentHierarchyMap: Map<string, IComponentDependencies>;
+  elementMetadata: Map<string, Map<string, ElementMetadata>>;
   crossFileKeyRegistry: Map<string, string>;
   vueFilesPathMap: Map<string, string>;
   getPageDirs: () => string[];
@@ -84,6 +86,7 @@ function isLessRich(candidate: HierarchyGenerationMetrics, previous: HierarchyGe
 export function createBuildProcessorPlugin(options: BuildProcessorOptions): PluginOption {
   const {
     componentHierarchyMap,
+    elementMetadata,
     crossFileKeyRegistry,
     vueFilesPathMap,
     getPageDirs,
@@ -394,6 +397,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
         pageDirs: getPageDirs(),
         componentDirs: getComponentDirs(),
         layoutDirs: getLayoutDirs(),
+        elementMetadata,
       });
       lastGeneratedMetrics = metrics;
       loggerRef.current.info(`generated POMs (${metrics.entryCount} entries, ${metrics.interactiveComponentCount} interactive components, ${metrics.dataTestIdCount} selectors)`);

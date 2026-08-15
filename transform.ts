@@ -562,6 +562,21 @@ function tryInferNativeWrapperRoleFromSfc(
   try {
     const ast = parseTemplate(template, { comments: false });
 
+    // Vue only applies fallthrough attributes automatically when a component
+    // renders a single root. A fragment can contain an interactive descendant,
+    // but a data-testid injected on the component invocation will never reach
+    // that descendant unless the component explicitly forwards $attrs. Do not
+    // manufacture an action whose selector cannot exist; authors can declare an
+    // explicit nativeWrappers entry when a fragment intentionally forwards it.
+    const renderedRoots = ast.children.filter((child) => {
+      return child.type !== NodeTypes.COMMENT
+        && !(child.type === NodeTypes.TEXT && child.content.trim() === "");
+    });
+    if (renderedRoots.length !== 1) {
+      inferredNativeWrapperConfigByLookup.set(cacheKey, { role: "" });
+      return null;
+    }
+
     const nextSeen = new Set(seenTags);
     nextSeen.add(tag);
 
@@ -1175,8 +1190,14 @@ export function createTestIdTransform(
         // Cache onto the nativeWrappers map so downstream utilities (formatTagName, wrapper transform)
         // see it consistently.
         (nativeWrappers as NativeWrappersMap)[element.tag] = { role: inferred.role, inferred: true };
-      } else if (element.tag.endsWith("Button")) {
+      } else if (
+        element.tag.endsWith("Button")
+        && !tryResolveSfcPathForTag(element.tag, vueFilesPathMap, wrapperSearchRoots)
+      ) {
         // Recognition of conventional naming for button components.
+        // Only use this for components whose source is unavailable. When the
+        // source is available but cannot be safely inferred (for example, a
+        // fragment root), naming alone must not override that evidence.
         (nativeWrappers as NativeWrappersMap)[element.tag] = { role: "button" };
       } else if (element.tag === "DxDataGrid") {
         (nativeWrappers as NativeWrappersMap)[element.tag] = { role: "grid" };
@@ -1648,7 +1669,11 @@ export function createTestIdTransform(
       return;
     }
 
-    if (handlerInfo) {
+    // `handler` is only actionable when this invocation is a proven native
+    // wrapper. Arbitrary Vue components may expose a prop with that name, and
+    // fragment components cannot receive an injected fallthrough attribute.
+    // Emitting a method in either case creates a selector that cannot exist.
+    if (handlerInfo && nativeWrappers[element.tag]) {
       const testId = getHandlerAttributeValueDataTestId(handlerInfo.semanticNameHint);
 
       applyResolvedDataTestIdForElement({

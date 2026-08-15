@@ -521,7 +521,7 @@ describe('createTestIdTransform', () => {
 
     expect(code).toContain('__testid_event__')
     expect(code).toContain('"data-click-instrumented": "1"')
-    expect(code).toContain('"data-testid": `MyComp-${item.key ?? item.data?.id ?? item.id ?? item.value ?? item}-Remove-button`')
+    expect(code).toContain('"data-testid": `MyComp-${item.key ?? item.data?.id ?? item.id ?? item.value ?? item.url ?? item}-Remove-button`')
     expect(code).not.toContain('__testid_click_event_strict__')
   })
 
@@ -618,7 +618,7 @@ describe('createTestIdTransform', () => {
     )
 
     const testId = findFirstDataTestId(ast)
-    expect(testId).toBe('`MyComp-${data.key ?? data.data?.id ?? data.id ?? data.value ?? data}-OpenProject-button`')
+    expect(testId).toBe('`MyComp-${data.key ?? data.data?.id ?? data.id ?? data.value ?? data.url ?? data}-OpenProject-button`')
   })
 
   it('injects a stable keyed test id for scoped slot data objects through v-if wrappers', () => {
@@ -645,7 +645,7 @@ describe('createTestIdTransform', () => {
     )
 
     const testId = findFirstDataTestId(ast)
-    expect(testId).toBe('`MyComp-${maintenanceItem.key ?? maintenanceItem.data?.id ?? maintenanceItem.id ?? maintenanceItem.value ?? maintenanceItem}-MoveToTop-button`')
+    expect(testId).toBe('`MyComp-${maintenanceItem.key ?? maintenanceItem.data?.id ?? maintenanceItem.id ?? maintenanceItem.value ?? maintenanceItem.url ?? maintenanceItem}-MoveToTop-button`')
   })
 
   it('injects a stable keyed test id for scoped slot data objects with key prop', () => {
@@ -667,6 +667,27 @@ describe('createTestIdTransform', () => {
 
     const testId = findFirstDataTestId(ast)
     expect(testId).toBe('`MyComp-${key}-Remove-button`')
+  })
+
+  it('uses a slot item URL before falling back to object stringification', () => {
+    const componentHierarchyMap = new Map()
+
+    const ast = compileAndCaptureAst(
+      `
+        <MyList :items="items">
+          <template #item="{ item }">
+            <button @click="navigate(item)">Open</button>
+          </template>
+        </MyList>
+      `,
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+      },
+    )
+
+    const testId = findFirstDataTestId(ast)
+    expect(testId).toBe('`MyComp-${item.key ?? item.data?.id ?? item.id ?? item.value ?? item.url ?? item}-Navigate-button`')
   })
 
   it('emits a singleton (non-keyed) test id for a slot-scope callback click handler', () => {
@@ -753,7 +774,7 @@ describe('createTestIdTransform', () => {
     )
 
     const testId = findFirstDataTestId(childAst)
-    expect(testId).toBe('`RolePermissionSubject-${subject.key ?? subject.data?.id ?? subject.id ?? subject.value ?? subject}-SelectAll-button`')
+    expect(testId).toBe('`RolePermissionSubject-${subject.key ?? subject.data?.id ?? subject.id ?? subject.value ?? subject.url ?? subject}-SelectAll-button`')
   })
 
   it('does not key child component testids when not in a keyed slot', () => {
@@ -1526,6 +1547,41 @@ describe('createTestIdTransform', () => {
       (p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === 'data-testid',
     )
     expect(dataTestIdAttr?.value?.content).toBe('MyPage-Computers missing critical-link')
+  })
+
+  it('does not infer an action for a fragment wrapper whose injected attribute cannot fall through', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-fragment-wrapper-'))
+    const actionButtonPath = path.join(tempRoot, 'src', 'components', 'ActionButton.vue')
+    const fragmentButtonPath = path.join(tempRoot, 'src', 'components', 'FragmentButton.vue')
+    fs.mkdirSync(path.dirname(actionButtonPath), { recursive: true })
+    fs.writeFileSync(actionButtonPath, '<template><button type="button"><slot /></button></template>')
+    fs.writeFileSync(
+      fragmentButtonPath,
+      '<template><ActionButton :handler="handler" /><div class="dialog" /></template>',
+    )
+
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const vueFilesPathMap = new Map<string, string>([
+      ['ActionButton', actionButtonPath],
+      ['FragmentButton', fragmentButtonPath],
+    ])
+
+    const ast = compileAndCaptureAst(
+      '<FragmentButton :handler="saveRecord" />',
+      {
+        filename: path.join(tempRoot, 'src', 'views', 'RecordPage.vue'),
+        nodeTransforms: [createTestIdTransform('RecordPage', componentHierarchyMap, {}, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],
+      },
+    )
+
+    expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
+    const fragmentButton = ast.children[0] as ElementNode
+    expect(fragmentButton.props.some(
+      prop => prop.type === NodeTypes.ATTRIBUTE && prop.name === 'data-testid',
+    )).toBe(false)
+
+    const methods = componentHierarchyMap.get('RecordPage')?.generatedMethods
+    expect(methods?.has('clickSaveRecord')).not.toBe(true)
   })
 
   it('does not infer a link role from a bare <a> without an href (and throws for the omitted role)', () => {

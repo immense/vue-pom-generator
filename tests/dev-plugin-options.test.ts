@@ -102,6 +102,7 @@ describe("dev processor option plumbing", () => {
       const basePageClassPath = path.join(projectRoot, "base-page.ts");
 
       const plugin = createDevProcessorPlugin({
+        elementMetadata: new Map(),
         nativeWrappers: {},
         optionKeyAttribute: {},
         excludedComponents: [],
@@ -190,6 +191,7 @@ describe("dev processor option plumbing", () => {
       );
 
       const plugin = createDevProcessorPlugin({
+        elementMetadata: new Map(),
         nativeWrappers: {},
         optionKeyAttribute: {},
         excludedComponents: [],
@@ -257,6 +259,7 @@ describe("dev processor option plumbing", () => {
       });
 
       const plugin = createDevProcessorPlugin({
+        elementMetadata: new Map(),
         nativeWrappers: {},
         optionKeyAttribute: {},
         excludedComponents: [],

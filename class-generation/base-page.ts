@@ -7,6 +7,23 @@ import { Callout } from "./callout";
 import type { CalloutRenderer } from "./callout";
 import { Pointer, type AfterPointerClick, type AfterPointerClickInfo, type PointerRenderer } from "./pointer";
 
+const POM_ACTIVE_ACTION_REGISTRY = Symbol.for("@immense/vue-pom-generator.active-action-registry");
+
+interface PomActiveActionRecord {
+  componentName?: string;
+  methodName: string;
+  expectedTestIds: readonly string[];
+}
+
+function setPomAction(page: object, action: PomActiveActionRecord): void {
+  const globalRecord = globalThis as typeof globalThis & {
+    [POM_ACTIVE_ACTION_REGISTRY]?: WeakMap<object, PomActiveActionRecord>;
+  };
+  const registry = globalRecord[POM_ACTIVE_ACTION_REGISTRY] ?? new WeakMap<object, PomActiveActionRecord>();
+  globalRecord[POM_ACTIVE_ACTION_REGISTRY] = registry;
+  registry.set(page, { ...action, expectedTestIds: [...action.expectedTestIds] });
+}
+
 // Click instrumentation is optional for generated POMs.
 //
 // When enabled, POM click/fill helpers will wait for the app to emit
@@ -124,7 +141,7 @@ export class BasePage {
    * real `Page` at runtime.
    */
   protected get page(): Page {
-    return this._page as unknown as Page;
+    return this._page as Page;
   }
 
   /**
@@ -252,6 +269,15 @@ export class BasePage {
     }
   }
 
+  private getAfterPointerClick(wait: boolean = true): AfterPointerClick | undefined {
+    if (!REQUIRE_CLICK_EVENT || !wait) return undefined;
+
+    return async ({ testId, instrumented }: AfterPointerClickInfo) => {
+      if (!testId || !instrumented) return;
+      await this.waitForTestIdClickEventAfter(testId);
+    };
+  }
+
   protected selectorForTestId(testId: string): string {
     return `[${this.testIdAttribute}="${testId}"]`;
   }
@@ -265,12 +291,55 @@ export class BasePage {
     return this.describeLocator(this.page.locator(this.selectorForTestId(testId)), description);
   }
 
+  protected async resolveVisibleTestIdLocator(
+    testIds: readonly string[],
+    description: string,
+    methodName: string,
+    componentName?: string,
+  ): Promise<Locator> {
+    this.recordPomAction(componentName, methodName, testIds);
+    const locators = testIds.map(testId => this.locatorByTestId(testId, description));
+    if (!locators.length) {
+      throw new Error(`[pom] ${methodName} has no candidate test ids.`);
+    }
+
+    try {
+      await Promise.any(locators.map(locator => locator.waitFor({ state: "visible", timeout: 5_000 })));
+    }
+    catch (error) {
+      throw new Error(
+        `[pom] ${methodName} could not find a visible element for any generated test id: ${testIds.join(", ")}`,
+        { cause: error },
+      );
+    }
+
+    for (const locator of locators) {
+      if (await locator.isVisible()) return locator;
+    }
+    return locators[0]!;
+  }
+
+  protected recordPomAction(
+    componentName: string | undefined,
+    methodName: string,
+    expectedTestIds: readonly string[],
+  ): void {
+    setPomAction(this.page, { componentName, methodName, expectedTestIds });
+  }
+
   protected locatorWithinTestIdByLabel(
     rootTestId: string,
     label: string,
     options?: { exact?: boolean; description?: string },
   ): Locator {
-    const locator = this.locatorByTestId(rootTestId).getByLabel(label, { exact: options?.exact ?? true });
+    // Custom radio controls commonly render an invisible input beneath its visible
+    // associated <label>. getByLabel() correctly resolves the input, but clicking it
+    // then fails actionability because the label intercepts pointer events. Generated
+    // radio actions are user interactions, so click the visible labelled surface.
+    const locator = this.locatorByTestId(rootTestId)
+      .filter({ visible: true })
+      .first()
+      .getByText(label, { exact: options?.exact ?? true });
     return this.describeLocator(locator, options?.description);
   }
 
@@ -320,11 +389,11 @@ export class BasePage {
     // `getLocator` returns the narrowed `PwLocator` (so test doubles satisfy it), but each
     // value is a real Playwright `Locator` at runtime. Widen the record's value type so
     // generated keyed accessors can be passed to `expect(...)`.
-    return new Proxy({}, handler) as unknown as Record<TKey, Locator>;
+    return new Proxy({}, handler) as Record<TKey, Locator>;
   }
 
   public async getObjectId(options?: { timeoutMs?: number }): Promise<ObjectId> {
-    const timeoutMs = options?.timeoutMs ?? 10_000;
+    const timeoutMs = options?.timeoutMs ?? 5_000;
     const deadline = Date.now() + timeoutMs;
 
     while (true) {
@@ -529,25 +598,52 @@ export class BasePage {
     annotationText: string = "",
     wait: boolean = true,
     description?: string,
+    action?: { componentName?: string; methodName: string; preferAssociatedLabel?: boolean },
   ): Promise<void> {
-    const locator = this.locatorByTestId(testId, description);
-    await this.pointer.animateCursorToElement(locator, true, 200, annotationText, {
-      afterClick: async ({ testId: clickedTestId, instrumented }: AfterPointerClickInfo) => {
-        if (!wait) return;
-        if (!clickedTestId || !instrumented) return;
-        await this.waitForTestIdClickEventAfter(clickedTestId);
-      },
-    });
+    this.recordPomAction(action?.componentName, action?.methodName ?? description ?? "clickByTestId", [testId]);
+    const locator = this.locatorByTestId(testId, description).filter({ visible: true }).first();
+    let clickTarget = locator;
+    let activateWithKeyboard = false;
+    if (action?.preferAssociatedLabel) {
+      const visibleControl = locator;
+      const controlId = await visibleControl.getAttribute("id");
+      if (controlId) {
+        // Bootstrap custom controls often use an empty label whose painted ::before/::after
+        // pseudo-elements intercept the pointer. Playwright's visible filter can exclude that
+        // empty label even though its pseudo-element is the actual interaction surface, so first
+        // select the associated label by DOM presence and then choose pointer or keyboard activation.
+        const associatedLabel = this.page.locator(`label[for=${JSON.stringify(controlId)}]`).first();
+        if (await associatedLabel.count() > 0) {
+          if (await associatedLabel.isVisible()) {
+            clickTarget = associatedLabel;
+          }
+          else {
+            // An empty label can have a zero-size element box while its ::before checkbox/radio
+            // remains painted over the input. Pointer clicks cannot target either surface without
+            // force; Space is the native, actionability-checked keyboard activation for both.
+            activateWithKeyboard = true;
+          }
+        }
+      }
+      else {
+        clickTarget = visibleControl;
+      }
+    }
+    const afterClick = this.getAfterPointerClick(wait);
+    if (activateWithKeyboard) {
+      await this.pointer.animateCursorToElement(locator, false, 200, annotationText);
+      await locator.press("Space");
+      if (afterClick) {
+        await afterClick({ testId, instrumented: true });
+      }
+      return;
+    }
+    await this.pointer.animateCursorToElement(clickTarget, true, 200, annotationText, afterClick ? { afterClick } : undefined);
   }
 
   public async clickLocator(locator: PwLocator, annotationText: string = "", wait: boolean = true): Promise<void> {
-    await this.pointer.animateCursorToElement(locator, true, 200, annotationText, {
-      afterClick: async ({ testId: clickedTestId, instrumented }: AfterPointerClickInfo) => {
-        if (!wait) return;
-        if (!clickedTestId || !instrumented) return;
-        await this.waitForTestIdClickEventAfter(clickedTestId);
-      },
-    });
+    const afterClick = this.getAfterPointerClick(wait);
+    await this.pointer.animateCursorToElement(locator, true, 200, annotationText, afterClick ? { afterClick } : undefined);
   }
 
   protected async clickWithinTestIdByLabel(
@@ -555,8 +651,9 @@ export class BasePage {
     label: string,
     annotationText: string = "",
     wait: boolean = true,
-    options?: { exact?: boolean; description?: string },
+    options?: { exact?: boolean; description?: string; componentName?: string; methodName?: string },
   ): Promise<void> {
+    this.recordPomAction(options?.componentName, options?.methodName ?? options?.description ?? "clickWithinTestIdByLabel", [rootTestId]);
     const locator = this.locatorWithinTestIdByLabel(rootTestId, label, {
       exact: options?.exact,
       description: options?.description,
@@ -569,14 +666,12 @@ export class BasePage {
     text: string,
     annotationText: string = "",
     description?: string,
+    action?: { componentName?: string; methodName: string },
   ): Promise<void> {
-    const locator = this.locatorByTestId(testId, description);
-    await this.pointer.animateCursorToElementAndClickAndFill(locator, text, true, 200, annotationText, {
-      afterClick: async ({ testId: clickedTestId, instrumented }: AfterPointerClickInfo) => {
-        if (!clickedTestId || !instrumented) return;
-        await this.waitForTestIdClickEventAfter(clickedTestId);
-      },
-    });
+    this.recordPomAction(action?.componentName, action?.methodName ?? description ?? "fillInputByTestId", [testId]);
+    const locator = this.locatorByTestId(testId, description).filter({ visible: true }).first();
+    const afterClick = this.getAfterPointerClick();
+    await this.pointer.animateCursorToElementAndClickAndFill(locator, text, true, 200, annotationText, afterClick ? { afterClick } : undefined);
   }
 
   /**
@@ -586,45 +681,32 @@ export class BasePage {
   protected async selectVSelectByTestId(
     testId: string,
     value: string,
-    timeOut: number = 500,
     annotationText: string = "",
     description?: string,
+    action?: { componentName?: string; methodName: string },
   ): Promise<void> {
-    const root = this.locatorByTestId(testId, description);
+    this.recordPomAction(action?.componentName, action?.methodName ?? description ?? "selectVSelectByTestId", [testId]);
+    const root = this.locatorByTestId(testId, description).filter({ visible: true }).first();
     const input = root.locator("input");
 
     await this.pointer.animateCursorToElement(input, false, 200, annotationText);
-    await input.click({ force: true });
+    await input.click();
     await this.pointer.animateCursorToElementAndClickAndFill(input, value, false, 200, annotationText);
-    await this.page.waitForTimeout(timeOut);
 
     const option = root.locator("ul.vs__dropdown-menu li[role='option']").first();
-    if (await option.count()) {
-      await this.pointer.animateCursorToElement(option, true, 200, annotationText, {
-        afterClick: async ({ testId: clickedTestId, instrumented }: AfterPointerClickInfo) => {
-          if (!clickedTestId || !instrumented) return;
-          await this.waitForTestIdClickEventAfter(clickedTestId);
-        },
-      });
-    }
+    await option.waitFor({ state: "visible", timeout: 5_000 });
+    const afterClick = this.getAfterPointerClick();
+    await this.pointer.animateCursorToElement(option, true, 200, annotationText, afterClick ? { afterClick } : undefined);
   }
 
   public async fillInputByLocator(locator: PwLocator, text: string, annotationText: string = ""): Promise<void> {
-    await this.pointer.animateCursorToElementAndClickAndFill(locator, text, true, 200, annotationText, {
-      afterClick: async ({ testId: clickedTestId, instrumented }: AfterPointerClickInfo) => {
-        if (!clickedTestId || !instrumented) return;
-        await this.waitForTestIdClickEventAfter(clickedTestId);
-      },
-    });
+    const afterClick = this.getAfterPointerClick();
+    await this.pointer.animateCursorToElementAndClickAndFill(locator, text, true, 200, annotationText, afterClick ? { afterClick } : undefined);
   }
 
   protected async clickByAriaLabel(ariaLabel: string, annotationText: string = ""): Promise<void> {
-    await this.pointer.animateCursorToElement(`[aria-label="${ariaLabel}"]`, true, 200, annotationText, {
-      afterClick: async ({ testId: clickedTestId, instrumented }: AfterPointerClickInfo) => {
-        if (!clickedTestId || !instrumented) return;
-        await this.waitForTestIdClickEventAfter(clickedTestId);
-      },
-    });
+    const afterClick = this.getAfterPointerClick();
+    await this.pointer.animateCursorToElement(`[aria-label="${ariaLabel}"]`, true, 200, annotationText, afterClick ? { afterClick } : undefined);
   }
 
   /**
@@ -642,7 +724,7 @@ export class BasePage {
    * @returns True if the element is visible, false otherwise
    */
   protected async isVisibleByTestId(testId: string): Promise<boolean> {
-    return await this.page.isVisible(this.selectorForTestId(testId));
+    return this.locatorByTestId(testId).isVisible();
   }
 
   /**
@@ -651,18 +733,18 @@ export class BasePage {
    * @returns The text content of the element
    */
   protected async getTextByTestId(testId: string): Promise<string | null> {
-    return await this.page.textContent(this.selectorForTestId(testId));
+    return this.locatorByTestId(testId).textContent();
   }
 
   /**
    * Waits for an element with the specified data-testid to be visible
    * @param testId The data-testid of the element to wait for
    * @param options Optional timeout and other options
-   * @param options.timeout The maximum time to wait for the element to be visible (default is 3000ms)
+   * @param options.timeout The maximum time to wait for the element to be visible (default is 5000ms)
    * @returns A promise that resolves when the element is visible
    */
   protected async waitForTestId(testId: string, options?: { timeout?: number }): Promise<void> {
-    await this.page.waitForSelector(this.selectorForTestId(testId), options);
+    await this.locatorByTestId(testId).waitFor({ state: "visible", timeout: options?.timeout ?? 5_000 });
   }
 
   /**
@@ -670,9 +752,9 @@ export class BasePage {
    * @param testId The data-testid of the element to hover over
    */
   protected async hoverByTestId(testId: string): Promise<void> {
-    const selector = this.selectorForTestId(testId);
-    await this.pointer.animateCursorToElement(selector, false, 200, "");
-    await this.page.hover(selector);
+    const locator = this.locatorByTestId(testId);
+    await this.pointer.animateCursorToElement(locator, false, 200, "");
+    await locator.hover();
   }
 
   /**
@@ -681,6 +763,6 @@ export class BasePage {
    * @param value The value to select
    */
   protected async selectByTestId(testId: string, value: string): Promise<void> {
-    await this.page.selectOption(this.selectorForTestId(testId), value);
+    await this.locatorByTestId(testId).selectOption(value);
   }
 }

@@ -56,7 +56,7 @@ export interface PointerRenderer {
 export interface PlaywrightAnimationOptions {
 	/**
 	 * Set to false to disable all animations and delays. Clicks/fills still happen.
-	 * Default: true
+	 * Default: false
 	 */
 	enabled?: boolean;
 
@@ -99,7 +99,7 @@ export interface PlaywrightAnimationOptions {
 }
 
 let animationOptions: PlaywrightAnimationOptions = {
-	enabled: true,
+	enabled: false,
 	extraDelayMs: 0,
 	pointer: { durationMilliseconds: 250, transitionStyle: "ease-in-out", clickDelayMilliseconds: 0 },
 	keyboard: { typeDelayMilliseconds: 100 },
@@ -107,7 +107,7 @@ let animationOptions: PlaywrightAnimationOptions = {
 
 export function setPlaywrightAnimationOptions(options: PlaywrightAnimationOptions): void {
 	animationOptions = {
-		enabled: options?.enabled ?? true,
+		enabled: options?.enabled ?? false,
 		extraDelayMs: options?.extraDelayMs ?? 0,
 		pointer: {
 			durationMilliseconds: options?.pointer?.durationMilliseconds ?? 250,
@@ -259,6 +259,47 @@ export class Pointer {
 		return trimmed || undefined;
 	}
 
+	/**
+	 * Playwright waits for an element's box to be stable, but a component library can
+	 * still suppress pointer handlers while an ancestor overlay is finishing a CSS
+	 * transition. Wait for finite animations on the target's ancestor chain so the
+	 * generated action observes the same ready state a user sees. Infinite decorative
+	 * animations are ignored, and a stuck finite animation fails within the shared 5s
+	 * interaction budget instead of encouraging consumer-side sleeps.
+	 */
+	private async waitForFiniteAncestorAnimations(locator: PwLocator): Promise<void> {
+		await locator.first().evaluate(async (element) => {
+			const timeoutMs = 5_000;
+			const animations = new Set<Animation>();
+			for (let current: typeof element | Element | null = element; current; current = current.parentElement ?? null) {
+				if (typeof current.getAnimations !== "function") continue;
+				for (const animation of current.getAnimations()) {
+					const iterations = Number(animation.effect?.getComputedTiming().iterations ?? 1);
+					if (animation.playState === "running" && Number.isFinite(iterations)) {
+						animations.add(animation);
+					}
+				}
+			}
+
+			if (animations.size === 0) return;
+
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			try {
+				await Promise.race([
+					Promise.allSettled([...animations].map(animation => animation.finished)),
+					new Promise<never>((_resolve, reject) => {
+						timer = setTimeout(() => {
+							reject(new Error(`[vue-pom-generator] Timed out after ${timeoutMs}ms waiting for click-target animations to finish.`));
+						}, timeoutMs);
+					}),
+				]);
+			}
+			finally {
+				if (timer !== undefined) clearTimeout(timer);
+			}
+		});
+	}
+
 	private async isEditableElement(locator: PwLocator): Promise<boolean> {
 		try {
 			return await locator.first().evaluate((element) => {
@@ -309,32 +350,29 @@ export class Pointer {
 		const locator = this.toLocator(target);
 		const trimmedAnnotationText = annotationText.trim();
 
-		try {
-			await locator.first().scrollIntoViewIfNeeded();
-		}
-		catch {
-			// Element may detach during navigation; let the subsequent action surface the error.
-		}
-
 		const opts = animationOptions;
 		const animEnabled = opts.enabled !== false;
+		if (executeClick) {
+			await this.waitForFiniteAncestorAnimations(locator);
+		}
 
 		if (!animEnabled) {
 			if (trimmedAnnotationText) {
 				await this.callout.showForElement(locator, trimmedAnnotationText);
 			}
-			else {
-				await this.callout.hide();
-			}
 
-			// Fast path: no animations.
+			// Fast path: no animation or presentation DOM work. In ordinary test runs
+			// annotationText is empty, so touching the callout would add a page.evaluate
+			// that can outlive a navigation and obscure the real Playwright failure.
 			const extraDelay = Math.max(0, opts.extraDelayMs ?? 0);
 			if (extraDelay > 0) await this.page.waitForTimeout(extraDelay);
 
 			let clickedTestId: string | undefined;
 			if (executeClick) {
-				try { clickedTestId = await this.getTestId(locator); } catch { /* noop */ }
-				await locator.first().click({ force: true });
+				if (options?.afterClick) {
+					try { clickedTestId = await this.getTestId(locator); } catch { /* noop */ }
+				}
+				await locator.first().click();
 			}
 			if (options?.afterClick) {
 				await options.afterClick({ testId: clickedTestId, instrumented: Boolean(clickedTestId) });
@@ -343,6 +381,13 @@ export class Pointer {
 		}
 
 		// --- Animated path ---
+		try {
+			await locator.first().scrollIntoViewIfNeeded();
+		}
+		catch {
+			// Element may detach during navigation; let the subsequent action surface the error.
+		}
+
 		const moveDurationMs = opts.pointer?.durationMilliseconds ?? 250;
 		const transitionStyle = opts.pointer?.transitionStyle ?? "ease-in-out";
 		const clickDelayMs = opts.pointer?.clickDelayMilliseconds ?? 0;
@@ -404,8 +449,10 @@ export class Pointer {
 				await this.renderer.press(this.page, { durationMilliseconds: pressDur });
 			}
 
-			try { clickedTestId = await this.getTestId(locator); } catch { /* noop */ }
-			await locator.first().click({ delay: clickDelayMs, force: true });
+			if (options?.afterClick) {
+				try { clickedTestId = await this.getTestId(locator); } catch { /* noop */ }
+			}
+			await locator.first().click({ delay: clickDelayMs });
 		}
 
 		if (options?.afterClick) {

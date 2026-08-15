@@ -523,6 +523,74 @@ describe("class-generation coverage", () => {
     }
   });
 
+  it("retains wrapper-only components that lead to a generated descendant POM", async () => {
+    const tempRoot = makeTempRoot("vue-pom-transitive-component-child-");
+
+    try {
+      const basePagePath = path.join(tempRoot, "base-page.ts");
+      writeMinimalBasePage(basePagePath);
+
+      const recordDialog = makeDeps({
+        filePath: path.join(tempRoot, "src", "components", "RecordDialog.vue"),
+        isView: false,
+        childrenComponentSet: new Set(["ActionWrapper"]),
+        dataTestIdSet: new Set([{
+          selectorValue: createPomStringPattern("RecordDialog-Name-input", "static", []),
+          pom: {
+            nativeRole: "input",
+            methodName: "Name",
+            selector: createPomStringPattern("RecordDialog-Name-input", "static", []),
+            parameters: createPomParameters(["text", "string"]),
+          },
+        }]),
+      });
+      const actionWrapper = makeDeps({
+        filePath: path.join(tempRoot, "src", "components", "ActionWrapper.vue"),
+        isView: false,
+        childrenComponentSet: new Set(["ActionButton"]),
+      });
+      const actionButton = makeDeps({
+        filePath: path.join(tempRoot, "src", "components", "ActionButton.vue"),
+        isView: false,
+        dataTestIdSet: new Set([{
+          selectorValue: createPomStringPattern("ActionButton-Run-button", "static", []),
+          pom: {
+            nativeRole: "button",
+            methodName: "Run",
+            selector: createPomStringPattern("ActionButton-Run-button", "static", []),
+            parameters: [],
+          },
+        }]),
+      });
+
+      const componentHierarchyMap = new Map<string, IComponentDependencies>([
+        ["RecordDialog", recordDialog],
+        ["ActionWrapper", actionWrapper],
+        ["ActionButton", actionButton],
+      ]);
+
+      const outDir = path.join(tempRoot, "pom");
+      await generateFiles(componentHierarchyMap, new Map(), basePagePath, {
+        outDir,
+        projectRoot: tempRoot,
+        typescriptOutputStructure: "split",
+      });
+
+      const dialogContent = readFile(path.join(outDir, "RecordDialog.g.ts"));
+      expect(dialogContent).toContain('import { ActionWrapper }');
+      expect(dialogContent).toContain('ActionWrapper: ActionWrapper;');
+      expect(dialogContent).toContain('this.ActionWrapper = new ActionWrapper(page);');
+
+      const wrapperContent = readFile(path.join(outDir, "ActionWrapper.g.ts"));
+      expect(wrapperContent).toContain('import { ActionButton }');
+      expect(wrapperContent).toContain('ActionButton: ActionButton;');
+      expect(wrapperContent).toContain('this.ActionButton = new ActionButton(page);');
+    }
+    finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("supports vueRouterFluentChaining by emitting route metadata and goToSelf/goTo methods", async () => {
     const tempRoot = makeTempRoot("vue-pom-router-fluent-");
 
@@ -595,9 +663,9 @@ describe("class-generation coverage", () => {
       // Route metadata + goTo helpers. The named route drives the runtime router via push.
       expect(content).toContain("static readonly route");
       expect(content).toContain("async goTo()");
-      expect(content).toContain("__vuePomGeneratorRouter?.push(");
+      expect(content).toContain("router.beginNavigation(");
       expect(content).toContain('name: "users"');
-      expect(content).toContain("await this.page.evaluate(async ({ name, params })");
+      expect(content).toContain("await this.page.evaluate(({ name, params })");
 
       // Trim + propagate testIdAttribute into BasePage super call.
       expect(content).toContain("super(page, { testIdAttribute: \"data-qa\" });");
@@ -713,15 +781,14 @@ describe("class-generation coverage", () => {
       };
 
       // Shared: named routes drive the runtime router, partitioning the generated method's
-      // flat navigation arguments into params and query records. Warm pages SPA-push via
-      // `__vuePomGeneratorRouter.push`; cold pages (about:blank, router not yet installed) boot then
-      // full-load the resolved target (`__vuePomGeneratorRouter.resolve(...).href`) so the route's
-      // component mounts via a stable page load instead of a race-prone SPA push.
-      const PUSH_CALL = "__vuePomGeneratorRouter?.push(";
-      const RESOLVE_CALL = "__vuePomGeneratorRouter?.resolve(";
+      // flat navigation arguments into params and query records. Both warm and cold pages SPA-push
+      // via `__vuePomGeneratorRouter.push`; cold pages (about:blank, router not yet installed) first
+      // boot the app, then `isReady()` prevents its initial navigation from racing the generated push.
+      const PUSH_CALL = "router.beginNavigation(";
+      const NAVIGATION_WAIT = 'navigation.status !== "pending"';
       const COLD_BOOT = 'this.page.goto("/", { waitUntil: "commit" })';
-      const COLD_TARGET_LOAD = 'await this.page.goto(href, { waitUntil: "domcontentloaded" })';
       const COLD_START_WAIT = "waitForFunction(() => typeof";
+      const COLD_START_TIMEOUT = "!== \"undefined\", undefined, { timeout: 5000 })";
       const IS_COLD = "const isCold =";
 
       // --- DashboardView: query-only, named -> optional goTo(params) that pushes query. ---
@@ -729,17 +796,18 @@ describe("class-generation coverage", () => {
       expect(dashboardClass).toContain("async goTo(params?: { section?: string | number })");
       expect(dashboardClass).toContain('name: "dashboard"');
       expect(dashboardClass).toContain(PUSH_CALL);
-      // Cold-start branch: boot "/", wait for the router, resolve the target, full-load it.
+      // Cold-start branch: boot "/", wait for the router, await initial navigation, then push.
       expect(dashboardClass).toContain(IS_COLD);
       expect(dashboardClass).toContain(COLD_BOOT);
       expect(dashboardClass).toContain(COLD_START_WAIT);
-      expect(dashboardClass).toContain(RESOLVE_CALL);
-      expect(dashboardClass).toContain(COLD_TARGET_LOAD);
+      expect(dashboardClass).toContain(COLD_START_TIMEOUT);
+      expect(dashboardClass).toContain(NAVIGATION_WAIT);
       // A path-paramless route emits an empty params record and a filtered query record.
       expect(dashboardClass).toContain("const routeParams = {};");
       expect(dashboardClass).toContain('const routeQuery = Object.fromEntries([["section", params?.["section"]]]');
-      expect(dashboardClass).toContain("resolve({ name, params, query })");
-      expect(dashboardClass).toContain("push({ name, params, query })");
+      expect(dashboardClass).toContain("beginNavigation({ name, params, query })");
+      expect(dashboardClass).not.toContain(".resolve(");
+      expect(dashboardClass).not.toContain("page.goto(href");
       expect(dashboardClass).not.toContain("targetUrl");
       expect(dashboardClass).not.toContain("replaceAll");
 
@@ -750,7 +818,7 @@ describe("class-generation coverage", () => {
       expect(usersClass).toContain('const routeParams = Object.fromEntries([["id", params["id"]]]');
       expect(usersClass).toContain('const routeQuery = Object.fromEntries([["q", params["q"]]]');
       expect(usersClass).toContain(PUSH_CALL);
-      expect(usersClass).toContain(RESOLVE_CALL);
+      expect(usersClass).toContain(NAVIGATION_WAIT);
       expect(usersClass).toContain(IS_COLD);
       // No no-arg overload signature for a parametrized-only route.
       expect(usersClass).not.toMatch(/goTo\(\): Promise<void>/);
@@ -768,12 +836,12 @@ describe("class-generation coverage", () => {
       // selects the parametrized route, including when an optional path param is undefined.
       expect(personsClass).toContain('const useParametrizedRoute = params !== undefined && ["id"].some(');
       expect(personsClass).toContain('name: useParametrizedRoute ? "persons-edit" : "persons-new"');
-      // The both-routes overload is also guarded: cold branch resolves + full-loads the target.
+      // The both-routes overload is also guarded: cold boot settles before the target push.
       expect(personsClass).toContain(IS_COLD);
       expect(personsClass).toContain(COLD_BOOT);
       expect(personsClass).toContain(COLD_START_WAIT);
-      expect(personsClass).toContain(RESOLVE_CALL);
-      expect(personsClass).toContain(COLD_TARGET_LOAD);
+      expect(personsClass).toContain(COLD_START_TIMEOUT);
+      expect(personsClass).toContain(NAVIGATION_WAIT);
       expect(personsClass).toContain('const routeParams = Object.fromEntries([["id", params?.["id"]]]');
       expect(personsClass).toContain('const routeQuery = Object.fromEntries([["mode", params?.["mode"]]]');
       expect(personsClass).toContain(PUSH_CALL);
@@ -1008,9 +1076,9 @@ describe("class-generation coverage", () => {
       const content = readFile(path.join(outDir, "page-object-models.g.ts"));
 
       expect(content).toContain('return this.locatorByTestId("UserListPage-Search-input", "User list search input");');
-      expect(content).toContain('await this.fillInputByTestId("UserListPage-Search-input", text, annotationText, "User list search input");');
+      expect(content).toContain('await this.fillInputByTestId("UserListPage-Search-input", text, annotationText, "User list search input", { componentName: "UserListPage", methodName: "typeSearch" });');
       expect(content).toContain('return this.locatorByTestId("UserListPage-Save-button", "User list save button");');
-      expect(content).toContain('await this.clickByTestId("UserListPage-Save-button", annotationText, wait, "User list save button");');
+      expect(content).toContain('await this.clickByTestId("UserListPage-Save-button", annotationText, wait, "User list save button", { componentName: "UserListPage", methodName: "clickSave" });');
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

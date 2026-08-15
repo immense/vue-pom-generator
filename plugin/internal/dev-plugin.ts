@@ -9,6 +9,7 @@ import { compileScript, parse as parseSfc } from "@vue/compiler-sfc";
 import type { PluginOption, ViteDevServer } from "vite";
 
 import { generateFiles } from "../../class-generation";
+import type { ElementMetadata } from "../../metadata-collector";
 import { introspectNuxtPages, parseRouterFileFromCwd } from "../../router-introspection";
 import { createTestIdTransform } from "../../transform";
 import type { IComponentDependencies, NativeWrappersMap, RouterIntrospectionResult } from "../../utils";
@@ -19,6 +20,7 @@ import type { ResolvedGenerationSupportOptions } from "../resolved-generation-op
 import { resolveExistingIdBehavior } from "../vue-plugin";
 
 interface DevProcessorOptions {
+  elementMetadata: Map<string, Map<string, ElementMetadata>>;
   nativeWrappers: NativeWrappersMap;
   optionKeyAttribute: Record<string, string>;
   excludedComponents: string[];
@@ -40,6 +42,7 @@ interface DevProcessorOptions {
 
 export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOption {
   const {
+    elementMetadata,
     nativeWrappers,
     optionKeyAttribute,
     excludedComponents,
@@ -389,6 +392,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
           vueRouterFluentChaining: routerAwarePoms,
           routerEntry: getResolvedRouterEntry(),
           routerType,
+          elementMetadata,
         });
         const t1 = performance.now();
         logInfo(`generate(${logLabel}): components=${snapshotHierarchy.size} in ${formatMs(t1 - t0)}`);

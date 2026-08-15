@@ -98,6 +98,7 @@ export function createInternalPlugins(options: InternalPluginFactoryOptions): Pl
 
   const tsProcessor = createBuildProcessorPlugin({
     componentHierarchyMap,
+    elementMetadata,
     crossFileKeyRegistry,
     vueFilesPathMap,
     getPageDirs,
@@ -118,6 +119,7 @@ export function createInternalPlugins(options: InternalPluginFactoryOptions): Pl
   });
 
   const devProcessor = createDevProcessorPlugin({
+    elementMetadata,
     nativeWrappers,
     optionKeyAttribute,
     excludedComponents,
