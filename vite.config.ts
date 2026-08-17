@@ -11,6 +11,8 @@ export default defineConfig({
         index: "./index.ts",
         // eslint sub-export: import "@immense/vue-pom-generator/eslint"
         "eslint/index": "./eslint/index.ts",
+        // Playwright failure reporter: import "@immense/vue-pom-generator/playwright/reporter"
+        "playwright/reporter": "./playwright/reporter.ts",
         // browser-safe router bridge: import "@immense/vue-pom-generator/router"
         router: "./router-bridge.ts",
       },
@@ -23,9 +25,14 @@ export default defineConfig({
           "@vue/compiler-dom",
           "@vue/compiler-sfc",
           "vite",
+          "playwright",
+          "@playwright/test",
         ]);
 
-        return (id: string) => id.startsWith("node:") || externals.has(id);
+        return (id: string) => id.startsWith("node:")
+          || id.startsWith("playwright/")
+          || id.startsWith("@playwright/test/")
+          || externals.has(id);
       })(),
       output: [
         {

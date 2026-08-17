@@ -38,6 +38,7 @@ function copyRepoFixture(rootDir: string, fixtureName: string, destinationRelati
 }
 
 function writePlaywrightTypeStub(rootDir: string) {
+  copyRepoFixture(rootDir, "node.d.ts", path.join("node_modules", "@types", "node", "index.d.ts"));
   copyRepoFixture(rootDir, "playwright.d.ts", path.join("node_modules", "playwright", "index.d.ts"));
   copyRepoFixture(rootDir, "playwright-test.d.ts", path.join("node_modules", "@playwright", "test", "index.d.ts"));
 }
@@ -489,7 +490,12 @@ describe("generated output", () => {
     });
 
     const fixtureFile = path.join(outDir, "fixtures.g.ts");
+    const manifestFile = path.join(outDir, "pom-manifest.g.ts");
     const fixtureContent = fs.readFileSync(fixtureFile, "utf8");
+    expect(fs.existsSync(manifestFile)).toBe(true);
+    expect(fs.readFileSync(manifestFile, "utf8")).toContain("export const pomManifest");
+    expect(fixtureContent).toContain('from "./pom-manifest.g"');
+    expect(fixtureContent).toContain("installPomFailureDiagnostics");
     expect(fixtureContent).toContain("import { PersonListPage as PersonListPageOverride }");
     expect(fixtureContent).toContain("personListPage: PersonListPageOverride");
 
@@ -782,10 +788,11 @@ describe("generated output", () => {
         "  protected selectorForTestId(testId: string): string {",
         "    return `[data-testid=\"${testId}\"]`;",
         "  }",
-        "  protected async clickByTestId(_testId: string, _annotationText: string = '', _wait: boolean = true, _description?: string): Promise<void> {}",
+        "  protected async clickByTestId(_testId: string, _annotationText: string = '', _wait: boolean = true, _description?: string, _action?: { componentName?: string; methodName: string; preferAssociatedLabel?: boolean }): Promise<void> {}",
         "  protected async clickLocator(_locator: any, _annotationText: string = '', _wait: boolean = true): Promise<void> {}",
-        "  protected async fillInputByTestId(_testId: string, _text: string, _annotationText: string = '', _description?: string): Promise<void> {}",
-        "  protected async selectVSelectByTestId(_testId: string, _value: string, _timeOut = 500, _annotationText: string = '', _description?: string): Promise<void> {}",
+        "  protected async fillInputByTestId(_testId: string, _text: string, _annotationText: string = '', _description?: string, _action?: { componentName?: string; methodName: string }): Promise<void> {}",
+        "  protected async selectVSelectByTestId(_testId: string, _value: string, _annotationText: string = '', _description?: string, _action?: { componentName?: string; methodName: string }): Promise<void> {}",
+        "  protected recordPomAction(_componentName: string | undefined, _methodName: string, _expectedTestIds: readonly string[]): void {}",
         "  protected async animateCursorToElement(_selector: string, _executeClick = true, _delay = 100, _annotationText: string = '', _waitForInstrumentationEvent = true): Promise<void> {}",
         "}",
         "",

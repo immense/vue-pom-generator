@@ -36,6 +36,15 @@ function upperFirst(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+function generatedActionMetadata(
+  componentName: string | undefined,
+  methodName: string,
+  options: { preferAssociatedLabel?: boolean } = {},
+): string {
+  const preferAssociatedLabel = options.preferAssociatedLabel ? ", preferAssociatedLabel: true" : "";
+  return `{ componentName: ${JSON.stringify(componentName)}, methodName: ${JSON.stringify(methodName)}${preferAssociatedLabel} }`;
+}
+
 function createParameters(params: readonly PomParameterSpec[]): OptionalKind<ParameterDeclarationStructure>[] {
   return toTypeScriptPomParameterStructures(params);
 }
@@ -78,6 +87,7 @@ function createAsyncMethod(
 function generateClickMethod(
   componentName: string | undefined,
   methodName: string,
+  nativeRole: string,
   selector: PomStringPattern,
   alternateSelectors: PomStringPattern[] | undefined,
   parameters: PomParameterSpec[],
@@ -95,6 +105,9 @@ function generateClickMethod(
   const argsForForward = getPomParameterNames(selectorParams).join(", ");
   const alternates = uniquePomStringPatterns(selector, alternateSelectors).slice(1);
   const primaryTestIdExpr = toTypeScriptPomPatternExpression(selector);
+  const actionMetadata = generatedActionMetadata(componentName, name, {
+    preferAssociatedLabel: nativeRole === "checkbox",
+  });
 
   if (alternates.length > 0) {
     const candidatesExpr = [primaryTestIdExpr, ...alternates.map(id => toTypeScriptPomPatternExpression(id))].join(", ");
@@ -112,20 +125,8 @@ function generateClickMethod(
           ],
         (writer) => {
           writer.writeLine(`const candidates = [${candidatesExpr}] as const;`);
-          writer.writeLine("let lastError: unknown;");
-          writer.write("for (const testId of candidates) ").block(() => {
-            writer.writeLine(`const locator = this.locatorByTestId(testId, ${locatorDescription});`);
-            writer.write("try ").block(() => {
-              writer.write("if (await locator.count()) ").block(() => {
-                writer.writeLine("await this.clickLocator(locator, annotationText, wait);");
-                writer.writeLine("return;");
-              });
-            });
-            writer.write("catch (e) ").block(() => {
-              writer.writeLine("lastError = e;");
-            });
-          });
-          writer.writeLine(`throw (lastError instanceof Error) ? lastError : new Error("[pom] Failed to click any candidate locator for ${name}.");`);
+          writer.writeLine(`const locator = await this.resolveVisibleTestIdLocator(candidates, ${locatorDescription}, ${JSON.stringify(name)}, ${JSON.stringify(componentName)});`);
+          writer.writeLine("await this.clickLocator(locator, annotationText, wait);");
         },
     );
 
@@ -153,7 +154,7 @@ function generateClickMethod(
           createInlineParameter("annotationText", { type: "string", initializer: "\"\"" }),
         ],
         (writer) => {
-          writer.writeLine(`await this.clickByTestId(${primaryTestIdExpr}, annotationText, wait, ${locatorDescription});`);
+          writer.writeLine(`await this.clickByTestId(${primaryTestIdExpr}, annotationText, wait, ${locatorDescription}, ${actionMetadata});`);
         },
       ),
       createAsyncMethod(
@@ -174,7 +175,7 @@ function generateClickMethod(
         createInlineParameter("annotationText", { type: "string", initializer: "\"\"" }),
       ],
       (writer) => {
-        writer.writeLine(`await this.clickByTestId(${primaryTestIdExpr}, annotationText, wait, ${locatorDescription});`);
+        writer.writeLine(`await this.clickByTestId(${primaryTestIdExpr}, annotationText, wait, ${locatorDescription}, ${actionMetadata});`);
       },
     ),
     createAsyncMethod(
@@ -205,7 +206,7 @@ function generateRadioMethod(
 
   return [
     createAsyncMethod(name, methodParameters, (writer) => {
-      writer.writeLine(`await this.clickByTestId(${testIdExpr}, annotationText, true, ${locatorDescription});`);
+      writer.writeLine(`await this.clickByTestId(${testIdExpr}, annotationText, true, ${locatorDescription}, ${generatedActionMetadata(componentName, name, { preferAssociatedLabel: true })});`);
     }),
   ];
 }
@@ -231,7 +232,8 @@ function generateSelectMethod(
       createParameters(selectorParams),
       (writer) => {
         writer.writeLine(`const testId = ${testIdExpr};`);
-        writer.writeLine(`const locator = this.locatorByTestId(testId, ${locatorDescription});`);
+        writer.writeLine(`this.recordPomAction(${JSON.stringify(componentName)}, ${JSON.stringify(name)}, [testId]);`);
+        writer.writeLine(`const locator = this.locatorByTestId(testId, ${locatorDescription}).filter({ visible: true }).first();`);
         writer.writeLine("await this.animateCursorToElement(locator, false, 500, annotationText);");
         writer.writeLine("await locator.selectOption(value);");
       },
@@ -251,14 +253,15 @@ function generateVSelectMethod(
     methodName,
     nativeRole: "vselect",
   }));
-  const selectorParams = orderPomPatternParameters(parameters, [selector]);
+  const selectorParams = orderPomPatternParameters(parameters, [selector])
+    .filter(parameter => parameter.name !== "timeOut" && parameter.name !== "timeout");
 
   return [
     createAsyncMethod(
       name,
       createParameters(selectorParams),
       (writer) => {
-        writer.writeLine(`await this.selectVSelectByTestId(${toTypeScriptPomPatternExpression(selector)}, value, timeOut, annotationText, ${locatorDescription});`);
+        writer.writeLine(`await this.selectVSelectByTestId(${toTypeScriptPomPatternExpression(selector)}, value, annotationText, ${locatorDescription}, ${generatedActionMetadata(componentName, name)});`);
       },
     ),
   ];
@@ -283,7 +286,7 @@ function generateTypeMethod(
       name,
       createParameters(selectorParams),
       (writer) => {
-        writer.writeLine(`await this.fillInputByTestId(${toTypeScriptPomPatternExpression(selector)}, text, annotationText, ${locatorDescription});`);
+        writer.writeLine(`await this.fillInputByTestId(${toTypeScriptPomPatternExpression(selector)}, text, annotationText, ${locatorDescription}, ${generatedActionMetadata(componentName, name)});`);
       },
     ),
   ];
@@ -392,20 +395,9 @@ function generateNavigationMethod(args: {
         statements: (writer) => {
           writer.write("return this.fluent(async () => ").block(() => {
             writer.writeLine(`const candidates = [${candidatesExpr}] as const;`);
-            writer.writeLine("let lastError: unknown;");
-            writer.write("for (const testId of candidates) ").block(() => {
-              writer.writeLine(`const locator = this.locatorByTestId(testId, ${locatorDescription});`);
-              writer.write("try ").block(() => {
-                writer.write("if (await locator.count()) ").block(() => {
-                  writer.writeLine("await this.clickLocator(locator);");
-                  writer.writeLine(`return new ${target}(this.page);`);
-                });
-              });
-              writer.write("catch (e) ").block(() => {
-                writer.writeLine("lastError = e;");
-              });
-            });
-            writer.writeLine(`throw (lastError instanceof Error) ? lastError : new Error("[pom] Failed to navigate using any candidate locator for ${methodName}.");`);
+            writer.writeLine(`const locator = await this.resolveVisibleTestIdLocator(candidates, ${locatorDescription}, ${JSON.stringify(methodName)}, ${JSON.stringify(componentName)});`);
+            writer.writeLine("await this.clickLocator(locator);");
+            writer.writeLine(`return new ${target}(this.page);`);
           });
           writer.writeLine(");");
         },
@@ -419,9 +411,10 @@ function generateNavigationMethod(args: {
       parameters: methodParameters,
       returnType: `Fluent<${target}>`,
       statements: (writer) => {
-        writer.write("return this.fluent(async () => ").block(() => {
-          writer.writeLine(`const locator = this.locatorByTestId(${toTypeScriptPomPatternExpression(selector)}, ${locatorDescription});`);
-          writer.writeLine("await this.clickLocator(locator);");
+          writer.write("return this.fluent(async () => ").block(() => {
+            writer.writeLine(`const locator = this.locatorByTestId(${toTypeScriptPomPatternExpression(selector)}, ${locatorDescription});`);
+            writer.writeLine(`this.recordPomAction(${JSON.stringify(componentName)}, ${JSON.stringify(methodName)}, [${toTypeScriptPomPatternExpression(selector)}]);`);
+            writer.writeLine("await this.clickLocator(locator);");
           writer.writeLine(`return new ${target}(this.page);`);
         });
         writer.writeLine(");");
@@ -481,7 +474,7 @@ export function generateViewObjectModelMembers(
     return [...members, ...generateRadioMethod(componentName, baseMethodName || "Radio", selector, parameters)];
   }
 
-  return [...members, ...generateClickMethod(componentName, baseMethodName, selector, alternateSelectors, parameters)];
+  return [...members, ...generateClickMethod(componentName, baseMethodName, nativeRole, selector, alternateSelectors, parameters)];
 }
 
 export function generateViewObjectModelMethodContent(

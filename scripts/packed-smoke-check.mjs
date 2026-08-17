@@ -25,7 +25,7 @@ const packageDir = path.resolve(scriptDir, "..");
 const peerVite = "7.3.1";
 const peerVue = "3.5.22";
 const peerPluginVue = "6.0.1";
-const consumerPlaywrightTest = "1.60.0";
+const consumerPlaywrightTest = "1.61.0";
 
 function lastNonEmptyLine(value) {
   // Avoid regex and split/replace/match-style parsing (repo lint rule).
@@ -80,8 +80,7 @@ try {
   );
 
   // Install peers + the packed tarball as a consumer would.
-  // Intentionally use a newer Playwright test version than our minimum supported peer so
-  // exact pinning would create a nested duplicate playwright install.
+  // Exercise the minimum supported Playwright Test peer as a consumer would.
   run(
     "npm",
     [

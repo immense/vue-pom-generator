@@ -31,6 +31,7 @@ class FakeKeyboard {
 class FakePage {
   public readonly keyboard = new FakeKeyboard();
   public readonly dom = new JSDOM("<!doctype html><html><body></body></html>");
+  public evaluateCalls = 0;
 
   public constructor() {
     this.setViewport(1280, 720);
@@ -44,6 +45,7 @@ class FakePage {
   }
 
   async evaluate<TResult, TArg>(fn: ((arg: TArg) => TResult) | string, arg?: TArg): Promise<TResult> {
+    this.evaluateCalls += 1;
     if (typeof fn === "string") {
       return undefined as TResult;
     }
@@ -99,10 +101,17 @@ class FakePage {
 interface FakeElement {
   tagName: string;
   isContentEditable?: boolean;
+  parentElement?: FakeElement | null;
+  getAnimations?: () => Array<{
+    playState: string;
+    effect?: { getComputedTiming: () => { iterations: number } };
+    finished: Promise<unknown>;
+  }>;
 }
 
 class FakeLocator {
   public clicks = 0;
+  public lastClickOptions: { delay?: number; force?: boolean } | undefined;
   public clears = 0;
   public readonly fills: string[] = [];
   public descendant?: FakeLocator;
@@ -146,8 +155,9 @@ class FakeLocator {
     return null;
   }
 
-  async click(_options?: { delay?: number; force?: boolean }) {
+  async click(options?: { delay?: number; force?: boolean }) {
     this.clicks += 1;
+    this.lastClickOptions = options;
   }
 
   async clear() {
@@ -254,7 +264,48 @@ describe("pointer", () => {
     await pointer.animateCursorToElementAndClickAndFill(wrapper as never, "Acme", true, 0);
 
     expect(wrapper.clicks).toBe(1);
+    expect(wrapper.lastClickOptions?.force).toBeUndefined();
     expect(input.fills).toEqual(["Acme"]);
+  });
+
+  it("treats an empty animation option as the fast non-forced path", async () => {
+    setPlaywrightAnimationOptions({});
+    const page = new FakePage();
+    const target = new FakeLocator({ tagName: "BUTTON" }, { testId: "Save-button" });
+
+    const pointer = new Pointer(page as never, "data-testid");
+    await pointer.animateCursorToElement(target as never, true, 1_000);
+
+    expect(target.clicks).toBe(1);
+    expect(target.lastClickOptions?.force).toBeUndefined();
+    expect(page.evaluateCalls).toBe(0);
+    expect(page.dom.window.document.getElementById("__pw_pointer__")).toBeNull();
+  });
+
+  it("waits for a finite ancestor transition before clicking", async () => {
+    setPlaywrightAnimationOptions({ enabled: false });
+    let finishTransition!: () => void;
+    const transitionFinished = new Promise<void>((resolve) => {
+      finishTransition = resolve;
+    });
+    const overlay: FakeElement = {
+      tagName: "DIV",
+      getAnimations: () => [{
+        playState: "running",
+        effect: { getComputedTiming: () => ({ iterations: 1 }) },
+        finished: transitionFinished,
+      }],
+    };
+    const target = new FakeLocator({ tagName: "BUTTON", parentElement: overlay });
+    const pointer = new Pointer(new FakePage() as never, "data-testid");
+
+    const click = pointer.animateCursorToElement(target as never, true, 0);
+    await Promise.resolve();
+    expect(target.clicks).toBe(0);
+
+    finishTransition();
+    await click;
+    expect(target.clicks).toBe(1);
   });
 
   it("renders the simple red fallback bubble by default", async () => {

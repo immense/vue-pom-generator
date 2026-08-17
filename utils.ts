@@ -462,7 +462,7 @@ function isSimpleScopeIdentifier(value: string): boolean {
 }
 
 export function buildSlotScopeFallbackKeyExpression(identifier: string): string {
-  return `${identifier}.key ?? ${identifier}.data?.id ?? ${identifier}.id ?? ${identifier}.value ?? ${identifier}`;
+  return `${identifier}.key ?? ${identifier}.data?.id ?? ${identifier}.id ?? ${identifier}.value ?? ${identifier}.url ?? ${identifier}`;
 }
 
 function tryGetBindingIdentifierName(node: BabelNode | null | undefined): string | null {

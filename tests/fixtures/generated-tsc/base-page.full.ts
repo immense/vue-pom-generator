@@ -28,15 +28,17 @@ export class BasePage {
     return `[data-testid="${testId}"]`;
   }
 
-  protected async clickByTestId(_testId: string, _annotationText: string = "", _wait: boolean = true, _description?: string): Promise<void> {}
+  protected async clickByTestId(_testId: string, _annotationText: string = "", _wait: boolean = true, _description?: string, _action?: { componentName?: string; methodName: string; preferAssociatedLabel?: boolean }): Promise<void> {}
 
   protected async clickLocator(_locator: any, _annotationText: string = "", _wait: boolean = true): Promise<void> {}
 
-  protected async clickWithinTestIdByLabel(_rootTestId: string, _label: string, _annotationText: string = "", _wait: boolean = true, _options?: { exact?: boolean; description?: string }): Promise<void> {}
+  protected async clickWithinTestIdByLabel(_rootTestId: string, _label: string, _annotationText: string = "", _wait: boolean = true, _options?: { exact?: boolean; description?: string; componentName?: string; methodName?: string }): Promise<void> {}
 
-  protected async fillInputByTestId(_testId: string, _text: string, _annotationText: string = "", _description?: string): Promise<void> {}
+  protected async fillInputByTestId(_testId: string, _text: string, _annotationText: string = "", _description?: string, _action?: { componentName?: string; methodName: string }): Promise<void> {}
 
-  protected async selectVSelectByTestId(_testId: string, _value: string, _timeOut = 500, _annotationText: string = "", _description?: string): Promise<void> {}
+  protected async selectVSelectByTestId(_testId: string, _value: string, _annotationText: string = "", _description?: string, _action?: { componentName?: string; methodName: string }): Promise<void> {}
+
+  protected recordPomAction(_componentName: string | undefined, _methodName: string, _expectedTestIds: readonly string[]): void {}
 
   protected async animateCursorToElement(_selector: string, _executeClick = true, _delay = 100, _annotationText: string = "", _waitForInstrumentationEvent = true): Promise<void> {}
 }

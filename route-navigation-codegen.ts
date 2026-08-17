@@ -22,6 +22,7 @@ export type NavigationTargetSelection =
     };
 
 export interface RouterNavigationWriterOptions {
+  componentName: string;
   routeName: NavigationTargetSelection;
   input?: NavigationInput;
   pathParamNames: string[];
@@ -29,6 +30,7 @@ export interface RouterNavigationWriterOptions {
 }
 
 export interface UrlNavigationWriterOptions {
+  componentName: string;
   routeTemplate: NavigationTargetSelection;
   input?: NavigationInput;
   pathParams: NavigationPathParam[];
@@ -98,11 +100,9 @@ function writeRouterTargetType(writer: TypeScriptWriter, includeQuery: boolean):
 }
 
 function writeRouterType(writer: TypeScriptWriter, includeQuery: boolean): void {
-  writer.write(`{ ${POM_ROUTER_GLOBAL_NAME}?: { push: (to: `);
+  writer.write(`{ ${POM_ROUTER_GLOBAL_NAME}?: { beginNavigation: (to: `);
   writeRouterTargetType(writer, includeQuery);
-  writer.write(") => Promise<unknown>; resolve: (to: ");
-  writeRouterTargetType(writer, includeQuery);
-  writer.write(") => { href: string } } }");
+  writer.write(") => number; navigation?: { id: number; status: \"pending\" | \"succeeded\" | \"failed\"; stage: \"waiting-for-router-ready\" | \"pushing-route\" | \"complete\"; targetName: string; error?: string } } }");
 }
 
 function writeRouterBinding(writer: TypeScriptWriter, includeQuery: boolean): void {
@@ -127,6 +127,71 @@ function writeRouterTarget(
     writer.write(`, query: ${queryExpression}`);
   }
   writer.write(" }");
+}
+
+function writeRouterNavigation(
+  writer: TypeScriptWriter,
+  writeName: WriterFunction,
+  includeQuery: boolean,
+): void {
+  writer.write("const navigationId = await this.page.evaluate((");
+  writeRouterBinding(writer, includeQuery);
+  writer.write(") => {").newLine();
+  writer.indent(() => {
+    writer.write("const router = (globalThis as ");
+    writeRouterType(writer, includeQuery);
+    writer.write(`).${POM_ROUTER_GLOBAL_NAME};`).newLine();
+    writer.writeLine("if (!router) {");
+    writer.indent(() => {
+      writer.writeLine('throw new Error("[vue-pom-generator] Vue Router bridge is unavailable.");');
+    });
+    writer.writeLine("}");
+    writer.write("return router.beginNavigation(");
+    writeRouterBinding(writer, includeQuery);
+    writer.write(");").newLine();
+  });
+  writer.write("}, ");
+  writeRouterTarget(writer, writeName, includeQuery, "routeParams", "routeQuery");
+  writer.write(");").newLine();
+  writer.writeLine("try {");
+  writer.indent(() => {
+    writer.write("await this.page.waitForFunction((id) => {").newLine();
+    writer.indent(() => {
+      writer.write("const navigation = (globalThis as ");
+      writeRouterType(writer, includeQuery);
+      writer.write(`).${POM_ROUTER_GLOBAL_NAME}?.navigation;`).newLine();
+      writer.writeLine('return navigation?.id === id && navigation.status !== "pending";');
+    });
+    writer.writeLine("}, navigationId, { timeout: 5000 });");
+  });
+  writer.writeLine("}");
+  writer.writeLine("catch (error) {");
+  writer.indent(() => {
+    writer.write("const navigation = await this.page.evaluate((id) => {").newLine();
+    writer.indent(() => {
+      writer.write("const current = (globalThis as ");
+      writeRouterType(writer, includeQuery);
+      writer.write(`).${POM_ROUTER_GLOBAL_NAME}?.navigation;`).newLine();
+      writer.writeLine("return current?.id === id ? current : undefined;");
+    });
+    writer.writeLine("}, navigationId).catch(() => undefined);");
+    writer.writeLine('const detail = error instanceof Error ? error.message : String(error);');
+    writer.writeLine('throw new Error(`[vue-pom-generator] Vue Router navigation timed out after 5000ms (stage: ${navigation?.stage ?? "unknown"}, target: ${navigation?.targetName ?? "unknown"}, current URL: ${this.page.url()}). ${detail}`);');
+  });
+  writer.writeLine("}");
+  writer.write("const navigationError = await this.page.evaluate((id) => {").newLine();
+  writer.indent(() => {
+    writer.write("const navigation = (globalThis as ");
+    writeRouterType(writer, includeQuery);
+    writer.write(`).${POM_ROUTER_GLOBAL_NAME}?.navigation;`).newLine();
+    writer.writeLine('return navigation?.id === id && navigation.status === "failed" ? navigation.error ?? "Unknown navigation error" : undefined;');
+  });
+  writer.writeLine("}, navigationId);");
+  writer.writeLine("if (navigationError) {");
+  writer.indent(() => {
+    writer.writeLine('throw new Error(`[vue-pom-generator] Vue Router navigation failed: ${navigationError}`);');
+  });
+  writer.writeLine("}");
 }
 
 function requireNavigationInput(
@@ -190,10 +255,11 @@ function writeSelectedTarget(
 
 /**
  * Emits the complete named-route navigation body. The caller supplies route metadata;
- * this writer owns params/query partitioning and both the cold-load and warm-router paths.
+ * this writer owns params/query partitioning and both the cold-boot and warm-router paths.
  */
 export function createRouterNavigationWriter(options: RouterNavigationWriterOptions): WriterFunction {
   return (writer) => {
+    writer.writeLine(`this.recordPomAction(${JSON.stringify(options.componentName)}, "goTo", []);`);
     writeSelectionPrelude(writer, options.routeName, options.input, options.pathParamNames);
     const writeRouteName: WriterFunction = nameWriter => writeSelectedTarget(nameWriter, options.routeName, options.input);
 
@@ -214,40 +280,11 @@ export function createRouterNavigationWriter(options: RouterNavigationWriterOpti
     writer.indent(() => {
       writer.writeLine('await this.page.goto("/", { waitUntil: "commit" });');
       writer.writeLine(
-        `await this.page.waitForFunction(() => typeof (globalThis as { ${POM_ROUTER_GLOBAL_NAME}?: unknown }).${POM_ROUTER_GLOBAL_NAME} !== "undefined", { timeout: 15000 });`,
+        `await this.page.waitForFunction(() => typeof (globalThis as { ${POM_ROUTER_GLOBAL_NAME}?: unknown }).${POM_ROUTER_GLOBAL_NAME} !== "undefined", undefined, { timeout: 5000 });`,
       );
-      writer.write("const href = await this.page.evaluate((");
-      writeRouterBinding(writer, includeQuery);
-      writer.write(") => (globalThis as ");
-      writeRouterType(writer, includeQuery);
-      writer.write(`).${POM_ROUTER_GLOBAL_NAME}?.resolve(`);
-      writeRouterBinding(writer, includeQuery);
-      writer.write(")?.href, ");
-      writeRouterTarget(writer, writeRouteName, includeQuery, "routeParams", "routeQuery");
-      writer.write(");").newLine();
-      writer.writeLine("if (href) {");
-      writer.indent(() => {
-        writer.writeLine('await this.page.goto(href, { waitUntil: "domcontentloaded" });');
-      });
-      writer.writeLine("}");
-    });
-    writer.writeLine("} else {");
-    writer.indent(() => {
-      writer.write("await this.page.evaluate(async (");
-      writeRouterBinding(writer, includeQuery);
-      writer.write(") => {").newLine();
-      writer.indent(() => {
-        writer.write("await (globalThis as ");
-        writeRouterType(writer, includeQuery);
-        writer.write(`).${POM_ROUTER_GLOBAL_NAME}?.push(`);
-        writeRouterBinding(writer, includeQuery);
-        writer.write(");").newLine();
-      });
-      writer.write("}, ");
-      writeRouterTarget(writer, writeRouteName, includeQuery, "routeParams", "routeQuery");
-      writer.write(");").newLine();
     });
     writer.writeLine("}");
+    writeRouterNavigation(writer, writeRouteName, includeQuery);
   };
 }
 
@@ -316,6 +353,7 @@ function writeRuntimeUrlNavigation(writer: TypeScriptWriter): void {
 /** Emits the complete URL-construction navigation body used for unnamed routes. */
 export function createUrlNavigationWriter(options: UrlNavigationWriterOptions): WriterFunction {
   return (writer) => {
+    writer.writeLine(`this.recordPomAction(${JSON.stringify(options.componentName)}, "goTo", []);`);
     writeSelectionPrelude(writer, options.routeTemplate, options.input, options.pathParams.map(param => param.name));
     if (options.routeTemplate.kind === "single") {
       writer.write(`let targetUrl = ${JSON.stringify(options.routeTemplate.target)};`).newLine();
