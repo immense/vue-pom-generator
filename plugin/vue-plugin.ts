@@ -31,7 +31,7 @@ interface InternalFactoryOptions {
   componentHierarchyMap: Map<string, IComponentDependencies>;
   crossFileKeyRegistry: CrossFileKeyRegistry;
   vueFilesPathMap: Map<string, string>;
-  excludedComponents: string[];
+  skipTestIdGenerationInsideComponents: string[];
   getViewsDirAbs: () => string;
   testIdAttribute: string;
   accessibilityAudit: boolean;
@@ -146,7 +146,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     componentHierarchyMap,
     crossFileKeyRegistry,
     vueFilesPathMap,
-    excludedComponents,
+    skipTestIdGenerationInsideComponents,
     getViewsDirAbs,
     testIdAttribute,
     accessibilityAudit,
@@ -222,7 +222,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
               componentName,
               componentHierarchyMap,
               nativeWrappers,
-              excludedComponents,
+              skipTestIdGenerationInsideComponents,
               viewsDirAbs,
                 {
                   existingIdBehavior: resolveExistingIdBehavior(existingIdBehavior, componentName),
@@ -288,7 +288,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
             componentName,
             componentHierarchyMap,
             nativeWrappers,
-            excludedComponents,
+            skipTestIdGenerationInsideComponents,
             viewsDirAbs,
               {
                 existingIdBehavior: resolveExistingIdBehavior(existingIdBehavior, componentName),

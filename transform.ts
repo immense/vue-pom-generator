@@ -13,13 +13,19 @@ import type {
 } from "@vue/compiler-core";
 import type { AttributeValue, DataTestIdEntryOverrides, HierarchyMap, ResolvedKeyInfo } from "./utils";
 import { NodeTypes } from "@vue/compiler-core";
-import { parse as parseSfc } from "@vue/compiler-sfc";
-import { parse as parseTemplate } from "@vue/compiler-dom";
 import { parseExpression } from "@babel/parser";
 import path from "node:path";
 import fs from "node:fs";
-import process from "node:process";
 import { TESTID_CLICK_EVENT_NAME } from "./click-instrumentation";
+import {
+  buildVueSfcPathIndex,
+  getElementControlRole,
+  normalizeWrapperSearchRoots,
+  resetWrapperContractCaches,
+  resolveSfcPathForTag,
+  resolveWrapperContractForTag,
+  toKebabCaseTag,
+} from "./wrapper-contract";
 import {
   isAsciiDigitCode,
   isAsciiLetterCode,
@@ -63,45 +69,6 @@ import {
 } from "./utils";
 
 const CLICK_EVENT_NAME = TESTID_CLICK_EVENT_NAME;
-// Cache inferred wrapper configs across transforms/build passes.
-const inferredNativeWrapperConfigByLookup = new Map<string, { role: string }>();
-const inferredSfcPathByLookup = new Map<string, string | null>();
-const indexedVueSfcPathsByRoots = new Map<string, Map<string, string[]>>();
-
-function toKebabCaseTag(tag: string): string {
-  let result = "";
-  let previousWasSeparator = false;
-
-  for (let i = 0; i < tag.length; i += 1) {
-    const ch = tag[i];
-    const code = ch.charCodeAt(0);
-
-    if (ch === "_" || ch === "-" || ch === "." || ch === " " || ch === "\t" || ch === "\n" || ch === "\r") {
-      if (result && !previousWasSeparator) {
-        result += "-";
-      }
-      previousWasSeparator = true;
-      continue;
-    }
-
-    const previous = i > 0 ? tag[i - 1] : "";
-    const previousCode = previous ? previous.charCodeAt(0) : 0;
-    const hasPrevious = i > 0;
-    const shouldInsertSeparator = hasPrevious
-      && isAsciiUppercaseLetterCode(code)
-      && (isAsciiLetterCode(previousCode) || isAsciiDigitCode(previousCode))
-      && !previousWasSeparator;
-
-    if (shouldInsertSeparator) {
-      result += "-";
-    }
-
-    result += ch.toLowerCase();
-    previousWasSeparator = false;
-  }
-
-  return result;
-}
 
 function getStaticAttributeContent(element: ElementNode, name: string): string | null {
   const attr = element.props.find((prop): prop is AttributeNode => {
@@ -112,30 +79,7 @@ function getStaticAttributeContent(element: ElementNode, name: string): string |
 }
 
 function getNativeHtmlControlRole(element: ElementNode): NativeRole | null {
-  const tag = (element.tag || "").toLowerCase();
-  const type = (getStaticAttributeContent(element, "type") || "").toLowerCase();
-
-  if (tag === "textarea") {
-    return "input";
-  }
-
-  if (tag === "select") {
-    return "select";
-  }
-
-  if (tag !== "input") {
-    return null;
-  }
-
-  if (type === "radio") {
-    return "radio";
-  }
-
-  if (type === "checkbox") {
-    return "checkbox";
-  }
-
-  return "input";
+  return getElementControlRole(element);
 }
 
 /**
@@ -218,156 +162,6 @@ function getAssociatedLabelText(element: ElementNode, hierarchyMap: HierarchyMap
   }
 
   return null;
-}
-
-function normalizeSearchRoots(wrapperSearchRoots: string[]): string[] {
-  const normalized = new Set<string>();
-  for (const root of wrapperSearchRoots) {
-    const resolved = path.resolve(root);
-    try {
-      if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
-        continue;
-      }
-      normalized.add(path.normalize(fs.realpathSync(resolved)));
-    }
-    catch {
-      continue;
-    }
-  }
-  return [...normalized];
-}
-
-function buildSearchRootsKey(searchRoots: string[]): string {
-  return searchRoots.join("\n");
-}
-
-function buildVueSfcPathIndex(searchRoots: string[]): Map<string, string[]> {
-  const indexKey = buildSearchRootsKey(searchRoots);
-  const existingIndex = indexedVueSfcPathsByRoots.get(indexKey);
-  if (existingIndex) {
-    return existingIndex;
-  }
-
-  const index = new Map<string, string[]>();
-  const ignoredDirNames = new Set([
-    ".git",
-    ".idea",
-    ".next",
-    ".nuxt",
-    ".output",
-    ".turbo",
-    ".yarn",
-    "coverage",
-    "dist",
-    "build",
-    "node_modules",
-    "out",
-    "tmp",
-  ]);
-
-  const stack = [...searchRoots];
-  const seenDirs = new Set<string>();
-
-  while (stack.length > 0) {
-    const dirPath = stack.pop()!;
-    const normalizedDir = path.normalize(dirPath);
-    if (seenDirs.has(normalizedDir)) {
-      continue;
-    }
-    seenDirs.add(normalizedDir);
-
-    let entries: fs.Dirent[] = [];
-    try {
-      entries = fs.readdirSync(dirPath, { withFileTypes: true });
-    }
-    catch {
-      continue;
-    }
-
-    for (const entry of entries) {
-      const fullPath = path.join(dirPath, entry.name);
-      if (entry.isDirectory()) {
-        if (ignoredDirNames.has(entry.name) || entry.name.startsWith(".")) {
-          continue;
-        }
-        stack.push(fullPath);
-        continue;
-      }
-
-      if (!entry.isFile() || !entry.name.endsWith(".vue")) {
-        continue;
-      }
-
-      const matches = index.get(entry.name) ?? [];
-      matches.push(fullPath);
-      index.set(entry.name, matches);
-    }
-  }
-
-  indexedVueSfcPathsByRoots.set(indexKey, index);
-  return index;
-}
-
-function tryResolveSfcPathForTag(
-  tag: string,
-  vueFilesPathMap?: Map<string, string>,
-  wrapperSearchRoots: string[] = [],
-): string | null {
-  const registeredPath = vueFilesPathMap?.get(tag);
-  const normalizedSearchRoots = normalizeSearchRoots(wrapperSearchRoots);
-  const lookupKey = `${tag}\n${registeredPath ?? ""}\n${buildSearchRootsKey(normalizedSearchRoots)}`;
-  if (inferredSfcPathByLookup.has(lookupKey)) {
-    return inferredSfcPathByLookup.get(lookupKey) ?? null;
-  }
-
-  const candidateNames = [`${tag}.vue`, `${toKebabCaseTag(tag)}.vue`];
-  const directCandidates = [
-    registeredPath ? path.resolve(process.cwd(), registeredPath) : null,
-    ...normalizedSearchRoots.flatMap(root => candidateNames.map(fileName => path.join(root, fileName))),
-  ].filter((value): value is string => !!value);
-
-  const directMatch = directCandidates.find(candidatePath => fs.existsSync(candidatePath));
-  if (directMatch) {
-    inferredSfcPathByLookup.set(lookupKey, directMatch);
-    return directMatch;
-  }
-
-  if (normalizedSearchRoots.length === 0) {
-    inferredSfcPathByLookup.set(lookupKey, null);
-    return null;
-  }
-
-  const index = buildVueSfcPathIndex(normalizedSearchRoots);
-  const scorePath = (candidatePath: string): [number, number, string] => {
-    const rootIndex = normalizedSearchRoots.findIndex((root) => {
-      return candidatePath === root || candidatePath.startsWith(root + path.sep);
-    });
-    const effectiveRootIndex = rootIndex === -1 ? Number.MAX_SAFE_INTEGER : rootIndex;
-    const relativeLength = rootIndex === -1
-      ? candidatePath.length
-      : path.relative(normalizedSearchRoots[rootIndex], candidatePath).length;
-    return [effectiveRootIndex, relativeLength, candidatePath];
-  };
-
-  let bestMatch: string | null = null;
-  let bestScore: [number, number, string] | null = null;
-  for (const fileName of candidateNames) {
-    const matches = index.get(fileName);
-    if (!matches?.length) {
-      continue;
-    }
-
-    for (const match of matches) {
-      const score = scorePath(match);
-      if (!bestScore || score[0] < bestScore[0] || (score[0] === bestScore[0] && score[1] < bestScore[1]) || (score[0] === bestScore[0] && score[1] === bestScore[1] && score[2] < bestScore[2])) {
-        bestScore = score;
-        bestMatch = match;
-      }
-    }
-  }
-
-  inferredSfcPathByLookup.set(lookupKey, bestMatch);
-  return bestMatch;
 }
 
 function trimLeadingSeparators(value: string): string {
@@ -503,205 +297,6 @@ function tryExtractStableHintFromConditionalExpressionSource(source: string): st
   catch {
     return null;
   }
-}
-
-function tryInferNativeWrapperRoleFromSfc(
-  tag: string,
-  vueFilesPathMap?: Map<string, string>,
-  wrapperSearchRoots: string[] = [],
-  seenTags: Set<string> = new Set(),
-): { role: NativeRole } | null {
-  // Only attempt inference for PascalCase component tags.
-  const first = tag.charCodeAt(0);
-  const isUpper = isAsciiUppercaseLetterCode(first);
-  if (!isUpper)
-    return null;
-
-  if (seenTags.has(tag)) {
-    return null;
-  }
-
-  const normalizedSearchRoots = normalizeSearchRoots(wrapperSearchRoots);
-  const cacheKey = `${tag}\n${vueFilesPathMap?.get(tag) ?? ""}\n${buildSearchRootsKey(normalizedSearchRoots)}`;
-  const cached = inferredNativeWrapperConfigByLookup.get(cacheKey);
-  if (cached)
-    return cached.role ? cached as { role: NativeRole } : null;
-
-  const filePath = tryResolveSfcPathForTag(tag, vueFilesPathMap, normalizedSearchRoots);
-  if (!filePath) {
-    inferredNativeWrapperConfigByLookup.set(cacheKey, { role: "" });
-    return null;
-  }
-
-  let source = "";
-  try {
-    source = fs.readFileSync(filePath, "utf8");
-  }
-  catch {
-    inferredNativeWrapperConfigByLookup.set(cacheKey, { role: "" });
-    return null;
-  }
-
-  // Parse the SFC and walk the template AST to find the first inferable interactive primitive,
-  // following local wrapper components recursively when needed.
-  let template = "";
-  try {
-    const { descriptor } = parseSfc(source, { filename: filePath });
-    template = descriptor.template?.content ?? "";
-  }
-  catch {
-    inferredNativeWrapperConfigByLookup.set(cacheKey, { role: "" });
-    return null;
-  }
-
-  if (!template.trim()) {
-    inferredNativeWrapperConfigByLookup.set(cacheKey, { role: "" });
-    return null;
-  }
-
-  try {
-    const ast = parseTemplate(template, { comments: false });
-
-    // Vue only applies fallthrough attributes automatically when a component
-    // renders a single root. A fragment can contain an interactive descendant,
-    // but a data-testid injected on the component invocation will never reach
-    // that descendant unless the component explicitly forwards $attrs. Do not
-    // manufacture an action whose selector cannot exist; authors can declare an
-    // explicit nativeWrappers entry when a fragment intentionally forwards it.
-    const renderedRoots = ast.children.filter((child) => {
-      return child.type !== NodeTypes.COMMENT
-        && !(child.type === NodeTypes.TEXT && child.content.trim() === "");
-    });
-    if (renderedRoots.length !== 1) {
-      inferredNativeWrapperConfigByLookup.set(cacheKey, { role: "" });
-      return null;
-    }
-
-    const nextSeen = new Set(seenTags);
-    nextSeen.add(tag);
-
-    const isComponentLikeTag = (value: string) => {
-      if (!value)
-        return false;
-      const code = value.charCodeAt(0);
-      return isAsciiUppercaseLetterCode(code) || value.includes("-");
-    };
-
-    const getStaticTypeAttribute = (element: ElementNode): string => {
-      const typeAttr = element.props.find((prop): prop is AttributeNode => {
-        return prop.type === NodeTypes.ATTRIBUTE && prop.name === "type";
-      });
-      return (typeAttr?.value?.content ?? "").toLowerCase();
-    };
-
-    // `<a>` only carries the implicit ARIA role "link" when it has an `href` (static or
-    // bound). A bare `<a>` is not a link — it may be an anchor target/placeholder or an
-    // anchor-styled button — so it must not be classified as `link`.
-    const hasHrefAttribute = (element: ElementNode): boolean => {
-      return element.props.some((prop) => {
-        if (prop.type === NodeTypes.ATTRIBUTE) {
-          return (prop as AttributeNode).name === "href";
-        }
-        if (prop.type === NodeTypes.DIRECTIVE) {
-          const directive = prop as DirectiveNode;
-          return directive.name === "bind"
-            && directive.arg?.type === NodeTypes.SIMPLE_EXPRESSION
-            && (directive.arg as SimpleExpressionNode).content === "href";
-        }
-        return false;
-      });
-    };
-
-    type InferableNode = RootNode | TemplateChildNode | IfBranchNode;
-
-    let inferRoleFromNode: (node: InferableNode) => { role: NativeRole } | null;
-
-    const inferRoleFromElement = (element: ElementNode): { role: NativeRole } | null => {
-      const elementTag = (element.tag || "").toLowerCase();
-      const inputType = getStaticTypeAttribute(element);
-
-      if (elementTag === "input" || elementTag === "uinput") {
-        if (inputType === "radio")
-          return { role: "radio" };
-        if (inputType === "checkbox")
-          return { role: "checkbox" };
-        return { role: "input" };
-      }
-      if (elementTag === "textarea" || elementTag === "utextarea")
-        return { role: "input" };
-      if (elementTag === "select" || elementTag === "uselect")
-        return { role: "select" };
-      if (elementTag === "vselect")
-        return { role: "vselect" };
-      if (elementTag === "button" || elementTag === "ubutton")
-        return { role: "button" };
-      // Anchors and Vue's RouterLink render <a>, which carries the implicit ARIA role
-      // "link". RouterLink always renders a navigable <a>, so it is always treated as
-      // `link`. A plain <a>/<ua> is only a link when it has an `href` (see hasHrefAttribute)
-      // — a bare anchor may be a placeholder or an anchor-styled button. Recognizing these
-      // lets a wrapper's role be inferred as `link` instead of forcing consumers to declare
-      // a mismatched role (e.g. "button") for anchor-rendering components.
-      if (elementTag === "router-link" || elementTag === "routerlink")
-        return { role: "link" };
-      if ((elementTag === "a" || elementTag === "ua") && hasHrefAttribute(element))
-        return { role: "link" };
-
-      if (isComponentLikeTag(element.tag) && element.tag !== tag) {
-        const nested = tryInferNativeWrapperRoleFromSfc(element.tag, vueFilesPathMap, normalizedSearchRoots, nextSeen);
-        if (nested)
-          return nested;
-      }
-
-      for (const child of element.children ?? []) {
-        const inferred = inferRoleFromNode(child);
-        if (inferred)
-          return inferred;
-      }
-
-      return null;
-    };
-
-    inferRoleFromNode = (node: InferableNode): { role: NativeRole } | null => {
-      if (!node || typeof node !== "object")
-        return null;
-
-      if (node.type === NodeTypes.ELEMENT) {
-        return inferRoleFromElement(node as ElementNode);
-      }
-
-      if (node.type === NodeTypes.ROOT || node.type === NodeTypes.IF_BRANCH || node.type === NodeTypes.FOR) {
-        for (const child of node.children ?? []) {
-          const inferred = inferRoleFromNode(child);
-          if (inferred)
-            return inferred;
-        }
-        return null;
-      }
-
-      if (node.type === NodeTypes.IF) {
-        for (const branch of node.branches ?? []) {
-          const inferred = inferRoleFromNode(branch);
-          if (inferred)
-            return inferred;
-        }
-      }
-
-      return null;
-    };
-
-    const inferred = inferRoleFromNode(ast);
-    if (inferred) {
-      inferredNativeWrapperConfigByLookup.set(cacheKey, inferred);
-      return inferred;
-    }
-  }
-  catch {
-    inferredNativeWrapperConfigByLookup.set(cacheKey, { role: "" });
-    return null;
-  }
-
-  inferredNativeWrapperConfigByLookup.set(cacheKey, { role: "" });
-  return null;
 }
 
 function tryWrapClickDirectiveForTestEvents(
@@ -910,7 +505,7 @@ export function createTestIdTransform(
   componentName: string,
   componentHierarchyMap: Map<string, IComponentDependencies>,
   nativeWrappers: NativeWrappersMap = {},
-  excludedComponents: string[] = [],
+  skipTestIdGenerationInsideComponents: string[] = [],
   viewsDirAbs: string,
   options: {
     existingIdBehavior?: "preserve" | "overwrite" | "error";
@@ -944,6 +539,21 @@ export function createTestIdTransform(
   const annotatorMetadata = options.annotatorMetadata ?? null;
   const crossFileKeyRegistry = options.crossFileKeyRegistry;
   const optionKeyAttribute = options.optionKeyAttribute ?? {};
+  const resolvedNativeWrappers: NativeWrappersMap = Object.fromEntries(
+    Object.entries(nativeWrappers).map(([tag, config]) => [tag, { ...config }]),
+  );
+  const wrapperContractByTag = new Map<string, ReturnType<typeof resolveWrapperContractForTag>>();
+  const getWrapperContract = (tag: string) => {
+    if (!wrapperContractByTag.has(tag)) {
+      wrapperContractByTag.set(tag, resolveWrapperContractForTag({
+        tag,
+        vueFilesPathMap,
+        wrapperSearchRoots,
+        testIdAttribute,
+      }));
+    }
+    return wrapperContractByTag.get(tag) ?? null;
+  };
 
   // Some projects (and dev environments) use symlinks. We want viewsDir containment checks
   // to behave like the filesystem does (real paths), but we must not crash for virtual
@@ -1025,7 +635,7 @@ export function createTestIdTransform(
   };
 
   return (node: RootNode | TemplateChildNode, context) => {
-    if (excludedComponents.includes(componentName)) {
+    if (skipTestIdGenerationInsideComponents.includes(componentName)) {
       return;
     }
 
@@ -1180,27 +790,36 @@ export function createTestIdTransform(
       }
     }
 
-    // Opportunistically infer wrapper semantics for simple "single native input" components
-    // (e.g. CustomInput/CustomTextArea) so they behave like real inputs without requiring
-    // explicit configuration in vite.config.ts.
-    const existingWrapperConfig = nativeWrappers[element.tag];
+    // A reusable component's public test id belongs on the exact element that receives
+    // Vue fallthrough attributes. Do not generate a competing component-internal id on
+    // that target; continue traversing so unrelated internal controls still get POM APIs.
+    const ownWrapperContract = getWrapperContract(componentName);
+    const elementStartOffset = element.loc.start.offset;
+    const isExplicitFallthroughTarget = ownWrapperContract?.explicitlyForwardedTestIdTargetOffsets.has(elementStartOffset)
+      || ownWrapperContract?.explicitlyForwardedTestIdTargetSfcOffsets.has(elementStartOffset);
+    if (!dependencies.isView && isExplicitFallthroughTarget) {
+      return;
+    }
+
+    // Resolve wrapper behavior from the element that actually receives Vue fallthrough
+    // attributes. Explicit overrides remain available for genuinely polymorphic or
+    // third-party components, but source-derived contracts are the default.
+    const existingWrapperConfig = resolvedNativeWrappers[element.tag];
     if (!existingWrapperConfig) {
-      const inferred = tryInferNativeWrapperRoleFromSfc(element.tag, vueFilesPathMap, wrapperSearchRoots);
-      if (inferred?.role) {
-        // Cache onto the nativeWrappers map so downstream utilities (formatTagName, wrapper transform)
-        // see it consistently.
-        (nativeWrappers as NativeWrappersMap)[element.tag] = { role: inferred.role, inferred: true };
+      const contract = getWrapperContract(element.tag);
+      if (contract?.role) {
+        resolvedNativeWrappers[element.tag] = { role: contract.role, inferred: true };
       } else if (
         element.tag.endsWith("Button")
-        && !tryResolveSfcPathForTag(element.tag, vueFilesPathMap, wrapperSearchRoots)
+        && !resolveSfcPathForTag(element.tag, vueFilesPathMap, wrapperSearchRoots)
       ) {
         // Recognition of conventional naming for button components.
         // Only use this for components whose source is unavailable. When the
         // source is available but cannot be safely inferred (for example, a
         // fragment root), naming alone must not override that evidence.
-        (nativeWrappers as NativeWrappersMap)[element.tag] = { role: "button" };
+        resolvedNativeWrappers[element.tag] = { role: "button" };
       } else if (element.tag === "DxDataGrid") {
-        (nativeWrappers as NativeWrappersMap)[element.tag] = { role: "grid" };
+        resolvedNativeWrappers[element.tag] = { role: "grid" };
       }
     } else if (!existingWrapperConfig.role) {
       // The wrapper is configured (e.g. with a `valueAttribute`) but `role` was omitted.
@@ -1215,19 +834,22 @@ export function createTestIdTransform(
       // Fail fast: if no native role can be inferred, throw rather than silently defaulting
       // to a generic role. A declared wrapper whose role can't be determined is a
       // misconfiguration the author must fix by declaring `role` explicitly.
-      const inferred = tryInferNativeWrapperRoleFromSfc(element.tag, vueFilesPathMap, wrapperSearchRoots);
-      if (!inferred?.role) {
+      const contract = getWrapperContract(element.tag);
+      if (!contract?.role) {
         const loc = element.loc?.start;
         const locationHint = loc ? `${loc.line}:${loc.column}` : "unknown";
+        const targetRoles = contract?.targetRoles.length
+          ? contract.targetRoles.map(role => role ?? "non-interactive").join(", ")
+          : "no forwarded test-id target";
         throw new Error(
           `[vue-pom-generator] Could not infer a native role for declared wrapper <${element.tag}> in ${componentName} (${context.filename ?? "unknown"}:${locationHint}).\n`
-          + `The component's template does not render a recognized native control (input, textarea, select, button, vselect, a[href]/RouterLink, radio, checkbox).\n\n`
+          + `Resolved fallthrough targets: ${targetRoles}. The generator requires one stable role across every target.\n\n`
           + `Fix: set \`role\` explicitly in nativeWrappers (e.g. { "${element.tag}": { role: "button", ... } }).`,
         );
       }
-      (nativeWrappers as NativeWrappersMap)[element.tag] = {
+      resolvedNativeWrappers[element.tag] = {
         ...existingWrapperConfig,
-        role: inferred.role,
+        role: contract.role,
       };
     }
 
@@ -1401,7 +1023,7 @@ export function createTestIdTransform(
     // Some branches need a formatted tag suffix / native role. Compute lazily and cache.
     let cachedTagSuffix: string | null = null;
     const getTagSuffix = () => {
-      cachedTagSuffix ??= formatTagName(element, nativeWrappers);
+      cachedTagSuffix ??= formatTagName(element, resolvedNativeWrappers);
       return cachedTagSuffix;
     };
     const getNativeRoleFromTagSuffix = () => getTagSuffix().slice(1);
@@ -1472,7 +1094,7 @@ export function createTestIdTransform(
 
     // Inline the old nodeShouldBeIgnored gating logic, but compute signals incrementally.
     // Native wrapper detection + option-prefix needs are computed in one place to avoid duplicate checks.
-    const { nativeWrappersValue, optionDataTestIdPrefixValue, semanticNameHint } = getNativeWrapperTransformInfo(element, componentName, nativeWrappers);
+    const { nativeWrappersValue, optionDataTestIdPrefixValue, semanticNameHint } = getNativeWrapperTransformInfo(element, componentName, resolvedNativeWrappers);
     const handlerDirective = element.props.find((p): p is DirectiveNode => {
       return p.type === NodeTypes.DIRECTIVE
         && p.name === "bind"
@@ -1482,7 +1104,7 @@ export function createTestIdTransform(
     }) ?? null;
     const handlerInfo = handlerDirective ? nodeHandlerAttributeInfo(element) : null;
 
-    if (nativeWrappers[element.tag]?.role === "button" && handlerDirective && !handlerInfo) {
+    if (resolvedNativeWrappers[element.tag]?.role === "button" && handlerDirective && !handlerInfo) {
       const loc = element.loc?.start;
       const locationHint = loc ? `${loc.line}:${loc.column}` : "unknown";
       const handlerSource = (handlerDirective.exp?.loc?.source ?? "").trim() || "<unknown>";
@@ -1522,7 +1144,7 @@ export function createTestIdTransform(
         upsertAttribute(element, "option-data-testid-prefix", optionDataTestIdPrefixValue);
       }
 
-      const nativeRole = nativeWrappers[element.tag]?.role ?? element.tag;
+      const nativeRole = resolvedNativeWrappers[element.tag]?.role ?? element.tag;
 
       const wrapperHintCandidates = [
         semanticNameHint,
@@ -1631,7 +1253,7 @@ export function createTestIdTransform(
     // RouterLink / :to is a special case; handle it early.
     const toDirective = nodeHasToDirective(element);
     if (toDirective) {
-      const dataTestId = generateToDirectiveDataTestId(componentName, element, toDirective, context, hierarchyMap, nativeWrappers);
+      const dataTestId = generateToDirectiveDataTestId(componentName, element, toDirective, context, hierarchyMap, resolvedNativeWrappers);
       const target = tryResolveToDirectiveTargetComponentName(toDirective);
       const routeNameHint = toDirectiveObjectFieldNameValue(toDirective);
 
@@ -1673,13 +1295,25 @@ export function createTestIdTransform(
     // wrapper. Arbitrary Vue components may expose a prop with that name, and
     // fragment components cannot receive an injected fallthrough attribute.
     // Emitting a method in either case creates a selector that cannot exist.
-    if (handlerInfo && nativeWrappers[element.tag]) {
+    if (handlerInfo && resolvedNativeWrappers[element.tag]) {
       const testId = getHandlerAttributeValueDataTestId(handlerInfo.semanticNameHint);
 
       applyResolvedDataTestIdForElement({
         preferredGeneratedValue: testId,
         semanticNameHint: handlerInfo.semanticNameHint || conditionalHint || undefined,
         pomMergeKey: handlerInfo.mergeKey,
+      });
+      return;
+    }
+
+    const inferredWrapperRole = resolvedNativeWrappers[element.tag]?.inferred
+      ? resolvedNativeWrappers[element.tag]?.role
+      : null;
+    if (inferredWrapperRole && innerText) {
+      applyResolvedDataTestIdForElement({
+        preferredGeneratedValue: staticAttributeValue(`${componentName}-${innerText}-${inferredWrapperRole}`),
+        nativeRoleOverride: inferredWrapperRole,
+        semanticNameHint: innerText,
       });
       return;
     }
@@ -1822,18 +1456,23 @@ export const __internal = {
   toKebabCaseTag,
   trimLeadingSeparators,
   tryExtractStableHintFromConditionalExpressionSource,
-  normalizeSearchRoots,
+  normalizeSearchRoots: normalizeWrapperSearchRoots,
   buildVueSfcPathIndex,
-  tryResolveSfcPathForTag,
-  tryInferNativeWrapperRoleFromSfc,
+  tryResolveSfcPathForTag: resolveSfcPathForTag,
+  tryInferNativeWrapperRoleFromSfc: (
+    tag: string,
+    vueFilesPathMap?: Map<string, string>,
+    wrapperSearchRoots: string[] = [],
+  ) => resolveWrapperContractForTag({
+    tag,
+    vueFilesPathMap,
+    wrapperSearchRoots,
+    testIdAttribute: "data-testid",
+  }),
   getConditionalDirectiveInfo,
   getNativeHtmlControlRole,
   getLabelNodeText,
   getAssociatedLabelText,
   tryWrapClickDirectiveForTestEvents,
-  resetCaches: () => {
-    inferredNativeWrapperConfigByLookup.clear();
-    inferredSfcPathByLookup.clear();
-    indexedVueSfcPathsByRoots.clear();
-  },
+  resetCaches: resetWrapperContractCaches,
 };

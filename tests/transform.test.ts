@@ -100,7 +100,7 @@ function compileWithRuntimeTemplateOptions(
     componentHierarchyMap,
     crossFileKeyRegistry: new Map(),
     vueFilesPathMap: new Map(),
-    excludedComponents: [],
+    skipTestIdGenerationInsideComponents: [],
     getViewsDirAbs: () => '/src/views',
     testIdAttribute: 'data-testid',
     accessibilityAudit: false,
@@ -1350,7 +1350,7 @@ describe('createTestIdTransform', () => {
     fs.writeFileSync(radioPath, '<template><div><input type="radio" /></div></template>')
     fs.writeFileSync(
       radioGroupPath,
-      '<template><div><MyRadio v-for="option in props.options" :key="option.value" :text="option.text" :modelValue="option.value" /></div></template>',
+      '<template><div role="radiogroup"><MyRadio v-for="option in props.options" :key="option.value" :text="option.text" :modelValue="option.value" /></div></template>',
     )
 
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
@@ -1409,7 +1409,7 @@ describe('createTestIdTransform', () => {
     fs.writeFileSync(radioPath, '<template><div><input type="radio" /></div></template>')
     fs.writeFileSync(
       radioGroupPath,
-      '<template><div><SharedRadio v-for="option in props.options" :key="option.value" :text="option.text" :modelValue="option.value" /></div></template>',
+      '<template><div role="radiogroup"><SharedRadio v-for="option in props.options" :key="option.value" :text="option.text" :modelValue="option.value" /></div></template>',
     )
 
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
@@ -1444,7 +1444,7 @@ describe('createTestIdTransform', () => {
     fs.writeFileSync(radioPath, '<template><div><input type="radio" /></div></template>')
     fs.writeFileSync(
       radioGroupPath,
-      '<template><div><SharedRadio v-for="option in props.options" :key="option.value" :text="option.text" :modelValue="option.value" /></div></template>',
+      '<template><div role="radiogroup"><SharedRadio v-for="option in props.options" :key="option.value" :text="option.text" :modelValue="option.value" /></div></template>',
     )
 
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
@@ -1683,6 +1683,146 @@ describe('createTestIdTransform', () => {
     expect(deps?.__pomPrimaryByGetterName?.has('UsersTab')).toBe(true)
     expect(deps?.__pomPrimaryByGetterName?.has('RolesTab')).toBe(true)
     expect(deps?.__pomPrimaryByGetterName?.has('UsersButton')).toBe(false)
+  })
+
+  it('infers a forwarded tab contract and semantic title without nativeWrappers config', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-inferred-tab-'))
+    const tabItemPath = path.join(tempRoot, 'src', 'components', 'TabItem.vue')
+    fs.mkdirSync(path.dirname(tabItemPath), { recursive: true })
+    fs.writeFileSync(
+      tabItemPath,
+      `<template><li role="presentation"><button v-bind="$attrs" role="tab"><slot /></button></li></template>
+       <script setup>defineOptions({ inheritAttrs: false })</script>`,
+    )
+
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const vueFilesPathMap = new Map<string, string>([['TabItem', tabItemPath]])
+
+    const ast = compileAndCaptureAst(
+      `<TabItem v-model="currentTab" title="Users" /><TabItem v-model="currentTab" title="Roles" />`,
+      {
+        filename: path.join(tempRoot, 'src', 'views', 'MyPage.vue'),
+        nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, {}, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],
+      },
+    )
+
+    const testIds = (ast.children as ElementNode[])
+      .filter((node): node is ElementNode => node.type === NodeTypes.ELEMENT)
+      .flatMap(element => element.props.filter((prop): prop is AttributeNode => prop.type === NodeTypes.ATTRIBUTE && prop.name === 'data-testid'))
+      .map(attribute => attribute.value?.content ?? '')
+
+    expect(testIds).toEqual(expect.arrayContaining(['MyPage-Users-tab', 'MyPage-Roles-tab']))
+    expect(componentHierarchyMap.get('MyPage')?.generatedMethods?.has('clickUsers')).toBe(true)
+    expect(componentHierarchyMap.get('MyPage')?.generatedMethods?.has('clickRoles')).toBe(true)
+  })
+
+  it('uses static slot text to name an inferred wrapper with no model or semantic prop', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-inferred-link-text-'))
+    const linkPath = path.join(tempRoot, 'src', 'components', 'AppLink.vue')
+    fs.mkdirSync(path.dirname(linkPath), { recursive: true })
+    fs.writeFileSync(linkPath, '<template><a :href="href"><slot /></a></template>')
+
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const vueFilesPathMap = new Map<string, string>([['AppLink', linkPath]])
+    const ast = compileAndCaptureAst('<AppLink href="/docs">Documentation</AppLink>', {
+      filename: path.join(tempRoot, 'src', 'views', 'MyPage.vue'),
+      nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, {}, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],
+    })
+
+    expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
+    const link = ast.children[0] as ElementNode
+    const testId = link.props.find(
+      (prop): prop is AttributeNode => prop.type === NodeTypes.ATTRIBUTE && prop.name === 'data-testid',
+    )
+    expect(testId?.value?.content).toBe('MyPage-Documentation-link')
+    expect(componentHierarchyMap.get('MyPage')?.generatedMethods?.has('clickDocumentation')).toBe(true)
+  })
+
+  it('does not persist source-inferred roles into the caller nativeWrappers config', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-wrapper-config-'))
+    const linkPath = path.join(tempRoot, 'src', 'components', 'AppLink.vue')
+    fs.mkdirSync(path.dirname(linkPath), { recursive: true })
+    fs.writeFileSync(linkPath, '<template><a :href="href"><slot /></a></template>')
+
+    const nativeWrappers: NativeWrappersMap = {}
+    compileAndCaptureAst('<AppLink href="/docs">Documentation</AppLink>', {
+      filename: path.join(tempRoot, 'src', 'views', 'MyPage.vue'),
+      nodeTransforms: [createTestIdTransform('MyPage', new Map(), nativeWrappers, [], path.join(tempRoot, 'src', 'views'), {
+        vueFilesPathMap: new Map([['AppLink', linkPath]]),
+      })],
+    })
+
+    expect(nativeWrappers).toEqual({})
+  })
+
+  it('suppresses generation only on a component own fallthrough target', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-forward-target-'))
+    const componentPath = path.join(tempRoot, 'src', 'components', 'ActionWithHelp.vue')
+    const source = `<template>
+      <button v-bind="$attrs" type="button" @click="submit">Submit</button>
+      <button type="button" @click="showHelp">Help</button>
+    </template>
+    <script setup>defineOptions({ inheritAttrs: false })</script>`
+    fs.mkdirSync(path.dirname(componentPath), { recursive: true })
+    fs.writeFileSync(componentPath, source)
+    const { descriptor } = parseSfc(source, { filename: componentPath })
+
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const ast = compileAndCaptureAst(descriptor.template?.content ?? '', {
+      filename: componentPath,
+      nodeTransforms: [createTestIdTransform(
+        'ActionWithHelp',
+        componentHierarchyMap,
+        {},
+        [],
+        path.join(tempRoot, 'src', 'views'),
+        { vueFilesPathMap: new Map([['ActionWithHelp', componentPath]]) },
+      )],
+    })
+
+    const buttons = (ast.children as ElementNode[]).filter((node): node is ElementNode => node.type === NodeTypes.ELEMENT)
+    const testIdFor = (element: ElementNode) => element.props.find(
+      (prop): prop is AttributeNode => prop.type === NodeTypes.ATTRIBUTE && prop.name === 'data-testid',
+    )?.value?.content
+
+    expect(testIdFor(buttons[0]!)).toBeUndefined()
+    expect(testIdFor(buttons[1]!)).toBe('ActionWithHelp-ShowHelp-button')
+    expect(componentHierarchyMap.get('ActionWithHelp')?.generatedMethods?.has('clickSubmit')).not.toBe(true)
+    expect(componentHierarchyMap.get('ActionWithHelp')?.generatedMethods?.has('clickShowHelp')).toBe(true)
+  })
+
+  it('suppresses explicit test-id forwarding targets inside conditional fragments', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-conditional-forward-target-'))
+    const componentPath = path.join(tempRoot, 'src', 'components', 'ActionMenuItem.vue')
+    const source = `<template>
+      <li v-if="asListItem" role="presentation">
+        <a v-if="href" :href="href" :data-testid="$attrs['data-testid']"><slot /></a>
+        <RouterLink v-else-if="to" :to="to" :data-testid="$attrs['data-testid']"><slot /></RouterLink>
+        <button v-else v-bind="$attrs"><slot /></button>
+      </li>
+      <a v-else-if="href" v-bind="$attrs" :href="href"><slot /></a>
+      <RouterLink v-else-if="to" v-bind="$attrs" :to="to"><slot /></RouterLink>
+      <button v-else v-bind="$attrs"><slot /></button>
+    </template>
+    <script setup>defineOptions({ inheritAttrs: false })</script>`
+    fs.mkdirSync(path.dirname(componentPath), { recursive: true })
+    fs.writeFileSync(componentPath, source)
+    const { descriptor } = parseSfc(source, { filename: componentPath })
+
+    expect(() => compileAndCaptureAst(descriptor.template?.content ?? '', {
+      filename: componentPath,
+      nodeTransforms: [createTestIdTransform(
+        'ActionMenuItem',
+        new Map(),
+        {},
+        [],
+        path.join(tempRoot, 'src', 'views'),
+        {
+          existingIdBehavior: 'error',
+          vueFilesPathMap: new Map([['ActionMenuItem', componentPath]]),
+        },
+      )],
+    })).not.toThrow()
   })
 
   it('parses template expressions containing TypeScript type annotations when expressionPlugins: ["typescript"] is set', () => {

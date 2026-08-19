@@ -15,7 +15,7 @@ describe("resolved injection options", () => {
       wrapperSearchRoots: [],
       nativeWrappers: {},
       optionKeyAttribute: {},
-      excludedComponents: [],
+      skipTestIdGenerationInsideComponents: [],
       existingIdBehavior: "error",
       testIdAttribute: "data-testid",
     });
@@ -24,7 +24,7 @@ describe("resolved injection options", () => {
   it("starts from Nuxt defaults and applies discovered directories", () => {
     const resolved = resolveInjectionSupportOptions({
       isNuxt: true,
-      excludedComponents: ["IgnoredButton"],
+      skipTestIdGenerationInsideComponents: ["IgnoredButton"],
       testIdAttribute: "  ",
     });
 
@@ -35,7 +35,7 @@ describe("resolved injection options", () => {
       wrapperSearchRoots: [],
       nativeWrappers: {},
       optionKeyAttribute: {},
-      excludedComponents: ["IgnoredButton"],
+      skipTestIdGenerationInsideComponents: ["IgnoredButton"],
       existingIdBehavior: "error",
       testIdAttribute: "data-testid",
     });
@@ -54,7 +54,7 @@ describe("resolved injection options", () => {
       wrapperSearchRoots: ["/project/shared-wrappers"],
       nativeWrappers: {},
       optionKeyAttribute: {},
-      excludedComponents: ["IgnoredButton"],
+      skipTestIdGenerationInsideComponents: ["IgnoredButton"],
       existingIdBehavior: "error",
       testIdAttribute: "data-testid",
     });

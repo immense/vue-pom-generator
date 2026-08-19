@@ -21,7 +21,7 @@ function createMetadataCollector(nativeWrappers: NativeWrappersMap = {}, options
     componentHierarchyMap,
     crossFileKeyRegistry: new Map(),
     vueFilesPathMap: new Map(),
-    excludedComponents: [],
+    skipTestIdGenerationInsideComponents: [],
     getViewsDirAbs: () => path.resolve(process.cwd(), 'src/views'),
     testIdAttribute: 'data-testid',
     accessibilityAudit: options.accessibilityAudit ?? false,

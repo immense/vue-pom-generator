@@ -183,19 +183,25 @@ export interface VuePomGeneratorPluginOptions {
      */
     optionKeyAttribute?: Record<string, string>;
 
-    /** Components to exclude from test id injection/collection. */
-    excludeComponents?: string[];
+    /**
+     * Component implementations whose templates must not receive generated test ids.
+     *
+     * This is a last-resort escape hatch for source the generator cannot safely transform.
+     * Normal Vue wrapper components do not need it: fallthrough targets are detected and
+     * suppressed at the element level while unrelated internal controls remain generated.
+     */
+    skipTestIdGenerationInsideComponents?: string[];
 
     /**
-      * Additional directories to search recursively when inferring wrapper-component roles from
-      * SFC templates.
+      * Additional directories to search recursively when inferring wrapper-component contracts
+      * from SFC templates.
       *
-      * Use this for shared wrapper libraries that live outside the configured page/component/layout
-      * directories, such as sibling packages in a monorepo.
+      * Configured page, component, and layout directories are searched automatically. Use this
+      * for shared wrapper libraries outside those directories, such as sibling packages in a
+      * monorepo.
       *
       * Behavior:
       * - Resolved relative to the Vite project root (resolved `config.root`) when not absolute.
-      * - No extra wrapper lookup is performed unless roots are explicitly provided here.
       */
     wrapperSearchRoots?: string[];
 

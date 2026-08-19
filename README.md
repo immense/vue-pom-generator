@@ -23,7 +23,7 @@ If you already use Playwright with `getByTestId`, the point is simple: this pack
 ## What this does not do
 
 - **It is not a runtime DOM crawler.** It only knows what it can learn from Vue SFC templates and router introspection.
-- **It does not fully understand arbitrary wrapper components automatically.** There is some wrapper inference for simple local SFCs and some naming conventions, but serious design-system components still need `injection.nativeWrappers`.
+- **It does not execute arbitrary wrapper data flow.** It understands Vue's normal fallthrough patterns, direct `useAttrs()` aliases, explicit configured-test-id forwarding, and simple helpers that omit named attributes. Polymorphic or third-party controls can still need `injection.nativeWrappers` overrides.
 - **It cannot infer query-value types from arbitrary route-props code.** Generated `goTo()` accepts discovered query keys as optional `string | number` values; callers still choose and supply the values appropriate for their application.
 - **It does not auto-attach every file in `pom/custom`.** Custom helpers are imported, but they only affect generated classes when you explicitly configure attachments, or when they match the built-in `Toggle` / `Checkbox` widget conventions.
 - **It does not make override classes globally replace generated classes.** `pom/overrides` only changes generated fixture instantiation. Direct imports from the generated barrel still give you the generated class unless you import your override yourself.
@@ -75,11 +75,11 @@ The generator does not use one naming trick. It layers several signals.
 - **Inputs and wrapper components** prefer `v-model`, wrapper `valueAttribute`, or related model-like bindings.
 - **Native elements** also consider `id` / `name` attributes.
 - **Router links / `:to` bindings** can contribute route-based naming and typed navigation return types when the target can be resolved.
-- **Wrapper components** can be explicit (`nativeWrappers`) or inferred from simple local SFC templates.
+- **Wrapper components** are inferred from the rendered element that actually receives Vue fallthrough attributes; `nativeWrappers` supplies exceptional overrides.
 - **Fallback naming exists, but it is intentionally conservative.** That is why `generation.nameCollisionBehavior` exists.
 - **Wrapper-action generation fails fast.** The generator blocks button-like wrapper `:handler` expressions that it cannot turn into a semantic action name.
 
-Important limit: wrapper inference is helpful, not magical. The current implementation recursively inspects simple local SFC templates for the first inferable primitive (`input`, `textarea`, `select`, `button`, `vselect`, radio/checkbox inputs, and `a` *with `href`*/`RouterLink` → `link`). It also recognizes some naming patterns like `*Button`. For anything more complex, configure `nativeWrappers` explicitly.
+Wrapper inference follows the public attribute contract instead of scanning for an arbitrary interactive descendant. It recognizes automatic single-root fallthrough, `v-bind="$attrs"`, aliases returned by `useAttrs()`, explicit forwarding such as `:data-testid="$attrs['data-testid']"`, and simple helpers that copy all attributes except named keys. The role comes from that target's explicit static ARIA role first, then its native HTML semantics. This means `<button role="tab">` is a tab, while `<div><button>...</button></div>` is not misclassified as a button wrapper because the caller's test id lands on the `<div>`. Nested wrappers are followed recursively. Polymorphic targets with different roles are deliberately left unresolved; configure `nativeWrappers` when one stable generated role is still appropriate.
 
 ## Playwright before/after examples
 
@@ -241,7 +241,7 @@ const pomConfig = defineVuePomGeneratorConfig({
       AppTextField: { role: "input" },
       AppRadioGroup: { role: "radio", requiresOptionDataTestIdPrefix: true },
     },
-    excludeComponents: ["LegacyWidget"],
+    skipTestIdGenerationInsideComponents: ["LegacyWidget"],
     existingIdBehavior: "error",
   },
   generation: {
@@ -1077,10 +1077,10 @@ The sections below follow the actual `VuePomGeneratorPluginOptions` shape from `
 
 #### `injection.nativeWrappers`
 
-- **What it does:** Describes wrapper components so the generator can treat them like native controls.
-- **Why it exists:** Many Vue apps wrap buttons, inputs, selects, radio groups, or third-party widgets behind design-system components.
+- **What it does:** Overrides or augments source-derived wrapper contracts.
+- **Why it exists:** Polymorphic controls, third-party components without local SFC source, and domain-specific option widgets cannot always expose one role/value contract through static Vue source.
 - **Benefit:** You get stable control-specific ids and methods instead of generic component-shaped names.
-- **Without it:** the generator relies on native elements, limited wrapper inference, and a few naming conventions.
+- **Without it:** ordinary local wrappers are inferred from Vue fallthrough targets and their native/ARIA semantics.
 - **Example:**
 
   ```ts
@@ -1096,10 +1096,10 @@ The sections below follow the actual `VuePomGeneratorPluginOptions` shape from `
 
 ##### `nativeWrappers[...].role`
 
-- **What it does:** Chooses the native behavior to emulate (`button`, `input`, `select`, `vselect`, `checkbox`, `toggle`, `radio`, `grid`, `link`).
+- **What it does:** Chooses the native behavior to emulate (`button`, `input`, `select`, `vselect`, `checkbox`, `toggle`, `radio`, `grid`, `link`, `tab`).
 - **Why it exists:** Role drives both test-id suffixes and generated POM method families (`click...`, `type...`, `select...`, etc.). `link` is the role for anchor-rendering wrappers (components that render an `<a>`/`RouterLink`); it produces `...Link` accessors and `-link` test-id suffixes, with `goTo...` navigation methods when a `:to` route target is resolvable.
 - **Benefit:** The generated API matches what the wrapped control actually does.
-- **Optional / inferred:** `role` may be omitted. When omitted, the generator infers it from the wrapper's rendered template — a component rendering an `<a>` *with an `href`* (or a `RouterLink`, directly or through nested wrapper components like a shared `AppLink`) infers `link`, an `<input>` infers `input`, and so on. Recursion follows `wrapperSearchRoots`. A bare `<a>` without an `href` is **not** a link (it has no implicit ARIA role) and won't be classified as `link`. If no native role can be inferred, the generator **throws** rather than guessing — declare `role` explicitly for wrappers that don't render a recognized native control. Declaring `role` explicitly always takes precedence over inference.
+- **Optional / inferred:** `role` may be omitted. The generator resolves the element that receives the configured test-id, honors a static ARIA `role` before implicit tag semantics, and follows nested wrapper contracts. A bare `<a>` without `href` is not a link. If the target is non-interactive or multiple forwarding targets have different roles, the generator throws for a configured wrapper with no role rather than guessing. Declaring `role` explicitly always takes precedence.
 - **Without it:** wrapper components may be treated as generic tags unless they can be inferred.
 
 ##### `nativeWrappers[...].valueAttribute`
@@ -1117,24 +1117,24 @@ The sections below follow the actual `VuePomGeneratorPluginOptions` shape from `
 - **Without it:** option-level ids may be incomplete or ambiguous.
 - **Caveat:** preserving an existing manual root id on these wrappers can be unsafe, and the current implementation will throw in that case.
 
-#### `injection.excludeComponents`
+#### `injection.skipTestIdGenerationInsideComponents`
 
-- **What it does:** Opts specific component names out of injection/collection.
-- **Why it exists:** Some components are better left alone, or are generated/third-party surfaces you do not want rewritten.
-- **Benefit:** Gives you a practical escape hatch without disabling the plugin globally.
-- **Without it:** all in-scope Vue components are eligible for injection.
+- **What it does:** Prevents generated test ids and POM members anywhere inside the named component implementations.
+- **Why it exists:** It is a last-resort escape hatch for generated, third-party, or otherwise untransformable SFC templates.
+- **Wrapper components usually do not need it:** When a wrapper explicitly forwards fallthrough attributes, the generator suppresses generation only on the forwarding target. Other interactive controls inside the wrapper still receive generated ids and methods.
+- **Tradeoff:** This skips the entire component implementation, so use it only when target-level fallthrough analysis cannot describe the source.
 - **Example:**
 
   ```ts
-  injection: { excludeComponents: ["LegacyWidget"] }
+  injection: { skipTestIdGenerationInsideComponents: ["LegacyWidget"] }
   ```
 
 #### `injection.wrapperSearchRoots`
 
-- **What it does:** Adds extra roots for wrapper inference outside the configured page/component/layout directories.
+- **What it does:** Adds extra roots for wrapper inference outside the page/component/layout directories, which are searched automatically.
 - **Why it exists:** wrapper components often live in sibling packages or shared UI workspaces.
 - **Benefit:** local wrapper inference can still work across package boundaries.
-- **Without it:** no extra wrapper lookup is done outside the configured app directories.
+- **Without it:** wrapper lookup is limited to the configured app directories.
 - **Example:**
 
   ```ts
