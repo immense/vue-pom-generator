@@ -605,8 +605,13 @@ export class BasePage {
     let clickTarget = locator;
     let activateWithKeyboard = false;
     if (action?.preferAssociatedLabel) {
-      const visibleControl = locator;
-      const controlId = await visibleControl.getAttribute("id");
+      // Vue components commonly consume an `id` prop while fallthrough attributes such as
+      // `data-testid` land on the component's root wrapper. Prefer the nested native control
+      // when present so generated checkbox actions activate the control instead of its wrapper.
+      const nestedControl = locator.locator('input[type="checkbox"], input[type="radio"]').first();
+      const control = (await nestedControl.count()) > 0 ? nestedControl : locator;
+      clickTarget = control;
+      const controlId = await control.getAttribute("id");
       if (controlId) {
         // Bootstrap custom controls often use an empty label whose painted ::before/::after
         // pseudo-elements intercept the pointer. Playwright's visible filter can exclude that
@@ -625,14 +630,11 @@ export class BasePage {
           }
         }
       }
-      else {
-        clickTarget = visibleControl;
-      }
     }
     const afterClick = this.getAfterPointerClick(wait);
     if (activateWithKeyboard) {
-      await this.pointer.animateCursorToElement(locator, false, 200, annotationText);
-      await locator.press("Space");
+      await this.pointer.animateCursorToElement(clickTarget, false, 200, annotationText);
+      await clickTarget.press("Space");
       if (afterClick) {
         await afterClick({ testId, instrumented: true });
       }

@@ -248,6 +248,27 @@ describe("BasePage action helpers", () => {
     expect(checkbox.presses).toEqual([]);
   });
 
+  it("clicks the label for a nested checkbox when the test id is on its wrapper", async () => {
+    const wrapper = new FakeLocator({ tagName: "DIV" }, { testId: "SelectPage-checkbox" });
+    const checkbox = new FakeLocator({ tagName: "INPUT" }, { id: "select-page" });
+    const label = new FakeLocator({ tagName: "LABEL" });
+    wrapper.descendant = checkbox;
+    const fakePage = new FakePage();
+    fakePage.locator = vi.fn((selector: string) => selector.startsWith("label[for=") ? label : wrapper);
+    const page = new ExposedBasePage(fakePage);
+
+    await page.clickTestId("SelectPage-checkbox", "", true, "Select page", {
+      componentName: "RecordListPage",
+      methodName: "clickSelectPage",
+      preferAssociatedLabel: true,
+    });
+
+    expect(label.clicks).toBe(1);
+    expect(wrapper.clicks).toBe(0);
+    expect(checkbox.clicks).toBe(0);
+    expect(checkbox.presses).toEqual([]);
+  });
+
   it("keyboard-activates a checkable input whose empty associated label has no visible box", async () => {
     const checkbox = new FakeLocator({ tagName: "INPUT" }, { id: "select-page", testId: "SelectPage-checkbox" });
     const emptyLabel = new FakeLocator({ tagName: "LABEL" }, { visible: false });
@@ -262,6 +283,27 @@ describe("BasePage action helpers", () => {
     });
 
     expect(emptyLabel.clicks).toBe(0);
+    expect(checkbox.clicks).toBe(0);
+    expect(checkbox.presses).toEqual(["Space"]);
+  });
+
+  it("keyboard-activates a nested checkbox whose associated label has no visible box", async () => {
+    const wrapper = new FakeLocator({ tagName: "DIV" }, { testId: "SelectPage-checkbox" });
+    const checkbox = new FakeLocator({ tagName: "INPUT" }, { id: "select-page" });
+    const emptyLabel = new FakeLocator({ tagName: "LABEL" }, { visible: false });
+    wrapper.descendant = checkbox;
+    const fakePage = new FakePage();
+    fakePage.locator = vi.fn((selector: string) => selector.startsWith("label[for=") ? emptyLabel : wrapper);
+    const page = new ExposedBasePage(fakePage);
+
+    await page.clickTestId("SelectPage-checkbox", "", true, "Select page", {
+      componentName: "RecordListPage",
+      methodName: "clickSelectPage",
+      preferAssociatedLabel: true,
+    });
+
+    expect(emptyLabel.clicks).toBe(0);
+    expect(wrapper.clicks).toBe(0);
     expect(checkbox.clicks).toBe(0);
     expect(checkbox.presses).toEqual(["Space"]);
   });
