@@ -38,6 +38,11 @@
       "types": "./dist/playwright/reporter.d.ts",
       "import": "./dist/playwright/reporter.mjs",
       "require": "./dist/playwright/reporter.cjs"
+    },
+    "./playwright/runtime": {
+      "types": "./dist/class-generation/base-page.d.ts",
+      "import": "./dist/playwright/runtime.mjs",
+      "require": "./dist/playwright/runtime.cjs"
     }
   },
   "files": [

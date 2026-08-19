@@ -13,6 +13,8 @@ export default defineConfig({
         "eslint/index": "./eslint/index.ts",
         // Playwright failure reporter: import "@immense/vue-pom-generator/playwright/reporter"
         "playwright/reporter": "./playwright/reporter.ts",
+        // Public BasePage runtime for handwritten POMs.
+        "playwright/runtime": "./class-generation/base-page.ts",
         // browser-safe router bridge: import "@immense/vue-pom-generator/router"
         router: "./router-bridge.ts",
       },

@@ -594,6 +594,22 @@ This is where most people need precision.
 
 Every `.ts` file in `customPoms.dir` is available for import from the generated TypeScript output.
 
+Handwritten helpers that extend the generator runtime should use its public entry point:
+
+```ts
+import { BasePage } from "@immense/vue-pom-generator/playwright/runtime";
+
+export class DataGrid extends BasePage {
+  async selectFirstRow(): Promise<void> {
+    await this.page.getByRole("row").nth(1).click();
+  }
+}
+```
+
+Do not import from a consumer's generated `_pom-runtime` directory. That directory is regenerated
+and is an implementation detail of the emitted files; the package export is the stable contract for
+handwritten POMs.
+
 - in aggregated mode, helper files become imports in the shared aggregate
 - in split mode, each generated file imports only the helpers it actually needs
 
