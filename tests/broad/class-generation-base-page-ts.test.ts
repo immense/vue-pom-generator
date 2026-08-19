@@ -248,25 +248,26 @@ describe("BasePage action helpers", () => {
     expect(checkbox.presses).toEqual([]);
   });
 
-  it("clicks the label for a nested checkbox when the test id is on its wrapper", async () => {
-    const wrapper = new FakeLocator({ tagName: "DIV" }, { testId: "SelectPage-checkbox" });
-    const checkbox = new FakeLocator({ tagName: "INPUT" }, { id: "select-page" });
+  it.each(["checkbox", "radio"] as const)("clicks the label for a nested %s when the test id is on its wrapper", async (type) => {
+    const wrapper = new FakeLocator({ tagName: "DIV" }, { testId: `ChoiceField-${type}` });
+    const control = new FakeLocator({ tagName: "INPUT" }, { id: `${type}-choice` });
     const label = new FakeLocator({ tagName: "LABEL" });
-    wrapper.descendant = checkbox;
+    wrapper.descendant = control;
     const fakePage = new FakePage();
-    fakePage.locator = vi.fn((selector: string) => selector.startsWith("label[for=") ? label : wrapper);
+    fakePage.locator = vi.fn((selector: string) => selector.startsWith("label[for=") ? label : selector.includes(":is(input[") ? control : wrapper);
     const page = new ExposedBasePage(fakePage);
 
-    await page.clickTestId("SelectPage-checkbox", "", true, "Select page", {
-      componentName: "RecordListPage",
-      methodName: "clickSelectPage",
+    await page.clickTestId(`ChoiceField-${type}`, "", true, "Choose option", {
+      componentName: "ExampleForm",
+      methodName: "chooseOption",
       preferAssociatedLabel: true,
     });
 
+    expect(fakePage.locator).toHaveBeenCalledWith(`[data-testid="ChoiceField-${type}"]:is(input[type="checkbox"], input[type="radio"]), [data-testid="ChoiceField-${type}"] :is(input[type="checkbox"], input[type="radio"])`);
     expect(label.clicks).toBe(1);
     expect(wrapper.clicks).toBe(0);
-    expect(checkbox.clicks).toBe(0);
-    expect(checkbox.presses).toEqual([]);
+    expect(control.clicks).toBe(0);
+    expect(control.presses).toEqual([]);
   });
 
   it("keyboard-activates a checkable input whose empty associated label has no visible box", async () => {
@@ -288,17 +289,17 @@ describe("BasePage action helpers", () => {
   });
 
   it("keyboard-activates a nested checkbox whose associated label has no visible box", async () => {
-    const wrapper = new FakeLocator({ tagName: "DIV" }, { testId: "SelectPage-checkbox" });
-    const checkbox = new FakeLocator({ tagName: "INPUT" }, { id: "select-page" });
+    const wrapper = new FakeLocator({ tagName: "DIV" }, { testId: "TermsField-checkbox" });
+    const checkbox = new FakeLocator({ tagName: "INPUT" }, { id: "terms" });
     const emptyLabel = new FakeLocator({ tagName: "LABEL" }, { visible: false });
     wrapper.descendant = checkbox;
     const fakePage = new FakePage();
-    fakePage.locator = vi.fn((selector: string) => selector.startsWith("label[for=") ? emptyLabel : wrapper);
+    fakePage.locator = vi.fn((selector: string) => selector.startsWith("label[for=") ? emptyLabel : selector.includes(":is(input[") ? checkbox : wrapper);
     const page = new ExposedBasePage(fakePage);
 
-    await page.clickTestId("SelectPage-checkbox", "", true, "Select page", {
-      componentName: "RecordListPage",
-      methodName: "clickSelectPage",
+    await page.clickTestId("TermsField-checkbox", "", true, "Accept terms", {
+      componentName: "ExampleForm",
+      methodName: "clickTerms",
       preferAssociatedLabel: true,
     });
 

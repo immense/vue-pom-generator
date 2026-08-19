@@ -8,6 +8,7 @@ import type { CalloutRenderer } from "./callout";
 import { Pointer, type AfterPointerClick, type AfterPointerClickInfo, type PointerRenderer } from "./pointer";
 
 const POM_ACTIVE_ACTION_REGISTRY = Symbol.for("@immense/vue-pom-generator.active-action-registry");
+const CHECKABLE_CONTROL_SELECTOR = 'input[type="checkbox"], input[type="radio"]';
 
 interface PomActiveActionRecord {
   componentName?: string;
@@ -608,8 +609,11 @@ export class BasePage {
       // Vue components commonly consume an `id` prop while fallthrough attributes such as
       // `data-testid` land on the component's root wrapper. Prefer the nested native control
       // when present so generated checkbox actions activate the control instead of its wrapper.
-      const nestedControl = locator.locator('input[type="checkbox"], input[type="radio"]').first();
-      const control = (await nestedControl.count()) > 0 ? nestedControl : locator;
+      const testIdSelector = this.selectorForTestId(testId);
+      const control = this.describeLocator(this.page.locator([
+        `${testIdSelector}:is(${CHECKABLE_CONTROL_SELECTOR})`,
+        `${testIdSelector} :is(${CHECKABLE_CONTROL_SELECTOR})`,
+      ].join(", ")), description).first();
       clickTarget = control;
       const controlId = await control.getAttribute("id");
       if (controlId) {
