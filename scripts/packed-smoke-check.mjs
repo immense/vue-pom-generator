@@ -134,6 +134,24 @@ try {
     { cwd: tempRoot },
   );
 
+  // Verify handwritten POMs can consume the supported runtime entry point from a packed install.
+  run(
+    "node",
+    [
+      "-e",
+      [
+        "(async () => {",
+        "  const runtime = await import('@immense/vue-pom-generator/playwright/runtime');",
+        "  if (typeof runtime.BasePage !== 'function' || typeof runtime.ObjectId !== 'function') {",
+        "    throw new Error('Expected public Playwright runtime exports');",
+        "  }",
+        "  console.log('[packed-smoke] ok: public Playwright runtime');",
+        "})();",
+      ].join("\n"),
+    ],
+    { cwd: tempRoot },
+  );
+
   // Cleanup tarball + temp workspace.
   fs.rmSync(tarballPath, { force: true });
   fs.rmSync(tempRoot, { recursive: true, force: true });
