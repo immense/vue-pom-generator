@@ -351,7 +351,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
       wrapperSearchRoots: injection.wrapperSearchRoots,
       nativeWrappers: injection.nativeWrappers,
       optionKeyAttribute: injection.optionKeyAttribute,
-      excludedComponents: injection.excludeComponents,
+      skipTestIdGenerationInsideComponents: injection.skipTestIdGenerationInsideComponents,
       existingIdBehavior: injection.existingIdBehavior,
       testIdAttribute: injection.attribute,
     }),
@@ -359,7 +359,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
   const resolvedInjectionOptions = resolvedInjectionOptionsRef.current;
   const nativeWrappers = resolvedInjectionOptions.nativeWrappers;
   const optionKeyAttribute = resolvedInjectionOptions.optionKeyAttribute;
-  const excludedComponents = resolvedInjectionOptions.excludedComponents;
+  const skipTestIdGenerationInsideComponents = resolvedInjectionOptions.skipTestIdGenerationInsideComponents;
   const testIdAttribute = resolvedInjectionOptions.testIdAttribute;
   const routerEntry = !isNuxt ? vueGenerationOptions?.router?.entry : undefined;
   const routerType = isNuxt ? "nuxt" : (vueGenerationOptions?.router?.type ?? "vue-router");
@@ -489,7 +489,10 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
   };
 
   const getViewsDirAbs = () => resolveFromProjectRoot(projectRootRef.current, getViewsDir());
-  const getWrapperSearchRootsAbs = () => getWrapperSearchRoots().map(root => resolveFromProjectRoot(projectRootRef.current, root));
+  const getWrapperSearchRootsAbs = () => Array.from(new Set([
+    ...getSourceDirs(),
+    ...getWrapperSearchRoots(),
+  ].map(root => resolveFromProjectRoot(projectRootRef.current, root))));
 
   const { elementMetadata, semanticNameMap, componentHierarchyMap, crossFileKeyRegistry, vueFilesPathMap } = sharedState;
 
@@ -505,7 +508,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
     componentHierarchyMap,
     crossFileKeyRegistry,
     vueFilesPathMap,
-    excludedComponents,
+    skipTestIdGenerationInsideComponents,
     getViewsDirAbs,
     testIdAttribute,
     accessibilityAudit: resolvedGenerationOptions.accessibilityAudit,
@@ -527,7 +530,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
     vueFilesPathMap,
     nativeWrappers,
     optionKeyAttribute,
-    excludedComponents,
+    skipTestIdGenerationInsideComponents,
     getPageDirs,
     getComponentDirs,
     getLayoutDirs,

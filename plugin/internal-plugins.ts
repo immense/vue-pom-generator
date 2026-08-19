@@ -18,7 +18,7 @@ interface InternalPluginFactoryOptions {
   vueFilesPathMap: Map<string, string>;
   nativeWrappers: NativeWrappersMap;
   optionKeyAttribute: Record<string, string>;
-  excludedComponents: string[];
+  skipTestIdGenerationInsideComponents: string[];
   getPageDirs: () => string[];
   getComponentDirs: () => string[];
   getLayoutDirs: () => string[];
@@ -50,7 +50,7 @@ export function createInternalPlugins(options: InternalPluginFactoryOptions): Pl
     vueFilesPathMap,
     nativeWrappers,
     optionKeyAttribute,
-    excludedComponents,
+    skipTestIdGenerationInsideComponents,
     getPageDirs,
     getComponentDirs,
     getLayoutDirs,
@@ -112,7 +112,7 @@ export function createInternalPlugins(options: InternalPluginFactoryOptions): Pl
     projectRootRef,
     nativeWrappers,
     optionKeyAttribute,
-    excludedComponents,
+    skipTestIdGenerationInsideComponents,
     getWrapperSearchRoots,
     getResolvedRouterEntry: resolveRouterEntry,
     loggerRef,
@@ -122,7 +122,7 @@ export function createInternalPlugins(options: InternalPluginFactoryOptions): Pl
     elementMetadata,
     nativeWrappers,
     optionKeyAttribute,
-    excludedComponents,
+    skipTestIdGenerationInsideComponents,
     getPageDirs,
     getComponentDirs,
     getLayoutDirs,

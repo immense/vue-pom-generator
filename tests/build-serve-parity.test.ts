@@ -112,7 +112,7 @@ function makeDevPlugin(
   return createDevProcessorPlugin({
     nativeWrappers: {},
     optionKeyAttribute: {},
-    excludedComponents: [],
+    skipTestIdGenerationInsideComponents: [],
     getPageDirs: () => ["src/views"],
     getComponentDirs: () => ["src/components"],
     getLayoutDirs: () => ["src/layouts"],

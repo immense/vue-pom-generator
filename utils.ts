@@ -140,9 +140,8 @@ export type Parent = ElementNode | null;
 export type HierarchyMap = Map<Child, Parent>
 export interface NativeWrappersMap {
   [component: string]: {
-    // `role` is optional: when omitted, the generator infers it from the component's
-    // rendered template (e.g. a component rendering an <a>/RouterLink infers `link`).
-    // If no native role can be inferred, it defaults to `button` (the generic clickable role).
+    // `role` is optional: when omitted, the generator infers it from the rendered element
+    // that receives Vue fallthrough attributes. If no single role can be proven, it errors.
     role?: NativeRole
     valueAttribute?: string
     requiresOptionDataTestIdPrefix?: boolean
@@ -1992,18 +1991,27 @@ export function getNativeWrapperTransformInfo(
     return { nativeWrappersValue: null, optionDataTestIdPrefixValue: null, semanticNameHint: null };
   }
 
+  // Source-inferred wrappers use the same semantic attributes authors already put on
+  // component invocations. Explicit valueAttribute configuration remains authoritative.
+  const inferredValueAttribute = inferred && !valueAttribute
+    ? ["aria-label", "name", "id", "title", "label"].find((attributeName) => {
+        return !!findAttributeByKey(node, attributeName) || !!findDirectiveByName(node, "bind", attributeName);
+      })
+    : undefined;
+  const resolvedValueAttribute = valueAttribute ?? inferredValueAttribute;
+
   // 1) The traditional native wrapper path (valueAttribute or v-model)
-  if (valueAttribute) {
-    const value = getDataTestIdValueFromValueAttribute(node, componentName, valueAttribute, role);
+  if (resolvedValueAttribute) {
+    const value = getDataTestIdValueFromValueAttribute(node, componentName, resolvedValueAttribute, role);
 
     // Derive a semantic name hint from the wrapper's value attribute.
     // This is intentionally based on the source expression/value, NOT by parsing the generated test id.
-    const attrStatic = findAttributeByKey(node, valueAttribute);
+    const attrStatic = findAttributeByKey(node, resolvedValueAttribute);
     if (attrStatic?.value?.content) {
       return { nativeWrappersValue: value || null, optionDataTestIdPrefixValue: null, semanticNameHint: attrStatic.value.content };
     }
 
-    const attrDynamic = findDirectiveByName(node, "bind", valueAttribute);
+    const attrDynamic = findDirectiveByName(node, "bind", resolvedValueAttribute);
     if (attrDynamic && "exp" in attrDynamic && attrDynamic.exp && "ast" in attrDynamic.exp && attrDynamic.exp.ast) {
       const { name } = getClickHandlerNameFromAst(attrDynamic.exp.ast as BabelNode);
       if (name) {

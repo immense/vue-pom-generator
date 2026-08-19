@@ -23,7 +23,7 @@ interface DevProcessorOptions {
   elementMetadata: Map<string, Map<string, ElementMetadata>>;
   nativeWrappers: NativeWrappersMap;
   optionKeyAttribute: Record<string, string>;
-  excludedComponents: string[];
+  skipTestIdGenerationInsideComponents: string[];
   getPageDirs: () => string[];
   getComponentDirs: () => string[];
   getLayoutDirs: () => string[];
@@ -45,7 +45,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     elementMetadata,
     nativeWrappers,
     optionKeyAttribute,
-    excludedComponents,
+    skipTestIdGenerationInsideComponents,
     getPageDirs,
     getComponentDirs,
     getLayoutDirs,
@@ -314,7 +314,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
               componentName,
               provisionalHierarchy,
               nativeWrappers,
-              excludedComponents,
+              skipTestIdGenerationInsideComponents,
               getViewsDirAbs(),
               {
                 existingIdBehavior: resolveExistingIdBehavior(existingIdBehavior, componentName),

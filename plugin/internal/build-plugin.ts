@@ -38,7 +38,7 @@ interface BuildProcessorOptions {
   /** Per-component option-key attribute override map. */
   optionKeyAttribute: Record<string, string>;
   /** Components excluded from test-id injection. */
-  excludedComponents: string[];
+  skipTestIdGenerationInsideComponents: string[];
   /** Getter for resolved wrapper search root directories. */
   getWrapperSearchRoots: () => string[];
   getResolvedRouterEntry: () => string | undefined;
@@ -100,7 +100,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     projectRootRef,
     nativeWrappers,
     optionKeyAttribute,
-    excludedComponents,
+    skipTestIdGenerationInsideComponents,
     getWrapperSearchRoots,
     getResolvedRouterEntry,
     loggerRef,
@@ -251,7 +251,7 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
                 componentName,
                 componentHierarchyMap,
                 nativeWrappers,
-                excludedComponents,
+                skipTestIdGenerationInsideComponents,
                 getViewsDirAbs(),
                 {
                   existingIdBehavior: resolveExistingIdBehavior(existingIdBehavior, componentName),

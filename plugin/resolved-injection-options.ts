@@ -11,7 +11,7 @@ export interface ResolvedInjectionSupportOptions {
   wrapperSearchRoots: string[];
   nativeWrappers: NativeWrappersMap;
   optionKeyAttribute: Record<string, string>;
-  excludedComponents: string[];
+  skipTestIdGenerationInsideComponents: string[];
   existingIdBehavior: ExistingIdBehaviorConfig;
   testIdAttribute: string;
 }
@@ -24,7 +24,7 @@ export interface ResolveInjectionSupportOptionsInput {
   wrapperSearchRoots?: string[];
   nativeWrappers?: NativeWrappersMap;
   optionKeyAttribute?: Record<string, string>;
-  excludedComponents?: string[];
+  skipTestIdGenerationInsideComponents?: string[];
   existingIdBehavior?: ExistingIdBehaviorConfig;
   testIdAttribute?: string;
 }
@@ -41,7 +41,7 @@ export function resolveInjectionSupportOptions(
     wrapperSearchRoots: isNuxt ? [] : (options.wrapperSearchRoots ?? []),
     nativeWrappers: options.nativeWrappers ?? {},
     optionKeyAttribute: options.optionKeyAttribute ?? {},
-    excludedComponents: options.excludedComponents ?? [],
+    skipTestIdGenerationInsideComponents: options.skipTestIdGenerationInsideComponents ?? [],
     existingIdBehavior: options.existingIdBehavior ?? "error",
     testIdAttribute: (options.testIdAttribute ?? "data-testid").trim() || "data-testid",
   };
