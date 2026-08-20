@@ -42,6 +42,27 @@ describe('wrapper contract analysis', () => {
     expect(contract?.forwardedTestIdTargetOffsets.size).toBe(1)
   })
 
+  it('uses input interaction behavior for an editable combobox target', () => {
+    const contract = analyzeWrapperContractFromSfc({
+      filePath: '/src/components/SearchBox.vue',
+      source: `
+        <template>
+          <div class="search-box">
+            <input v-bind="$attrs" type="search" role="combobox" />
+          </div>
+        </template>
+        <script setup>
+        defineOptions({ inheritAttrs: false })
+        </script>
+      `,
+      testIdAttribute: 'data-testid',
+      resolveNestedContract: () => null,
+    })
+
+    expect(contract.role).toBe('input')
+    expect(contract.targetRoles).toEqual(['input'])
+  })
+
   it('does not classify an unrelated interactive descendant as the fallthrough target', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-wrapper-panel-'))
     const filePath = writeComponent(root, 'Panel', `
