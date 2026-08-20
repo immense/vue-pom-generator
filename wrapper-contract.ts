@@ -738,7 +738,7 @@ function getStaticAttributeContent(element: ElementNode, name: string): string |
   return attribute?.value?.content?.trim() || null;
 }
 
-function mapExplicitAriaRole(role: string): NativeRole | null {
+function mapExplicitAriaRole(role: string, elementTag: string): NativeRole | null {
   switch (role.toLowerCase()) {
     case "button":
     case "checkbox":
@@ -750,6 +750,11 @@ function mapExplicitAriaRole(role: string): NativeRole | null {
     case "radiogroup":
       return "radio";
     case "combobox":
+      // NativeRole selects the generated interaction family, not just the ARIA
+      // taxonomy. An editable combobox rendered as an input must be filled;
+      // treating it as a select would emit locator.selectOption(), which only
+      // works for native <select> elements.
+      return elementTag === "input" || elementTag === "uinput" ? "input" : "select";
     case "listbox":
       return "select";
     case "searchbox":
@@ -776,12 +781,12 @@ function hasAttribute(element: ElementNode, name: string): boolean {
 }
 
 export function getElementControlRole(element: ElementNode): NativeRole | null {
+  const tag = element.tag.toLowerCase();
   const explicitRole = getStaticAttributeContent(element, "role");
   if (explicitRole) {
-    return mapExplicitAriaRole(explicitRole);
+    return mapExplicitAriaRole(explicitRole, tag);
   }
 
-  const tag = element.tag.toLowerCase();
   const type = (getStaticAttributeContent(element, "type") || "").toLowerCase();
   if (tag === "input" || tag === "uinput") {
     if (type === "radio") {

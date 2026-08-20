@@ -1716,6 +1716,35 @@ describe('createTestIdTransform', () => {
     expect(componentHierarchyMap.get('MyPage')?.generatedMethods?.has('clickRoles')).toBe(true)
   })
 
+  it('generates input behavior for an editable combobox wrapper', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-inferred-combobox-'))
+    const searchBoxPath = path.join(tempRoot, 'src', 'components', 'SearchBox.vue')
+    fs.mkdirSync(path.dirname(searchBoxPath), { recursive: true })
+    fs.writeFileSync(
+      searchBoxPath,
+      `<template><div><input v-bind="$attrs" type="search" role="combobox" /></div></template>
+       <script setup>defineOptions({ inheritAttrs: false })</script>`,
+    )
+
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const vueFilesPathMap = new Map<string, string>([['SearchBox', searchBoxPath]])
+
+    const ast = compileAndCaptureAst('<SearchBox aria-label="Search" />', {
+      filename: path.join(tempRoot, 'src', 'views', 'MyPage.vue'),
+      nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, {}, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],
+    })
+
+    expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
+    const searchBox = ast.children[0] as ElementNode
+    const testId = searchBox.props.find(
+      (prop): prop is AttributeNode => prop.type === NodeTypes.ATTRIBUTE && prop.name === 'data-testid',
+    )
+
+    expect(testId?.value?.content).toBe('MyPage-Search-input')
+    expect(componentHierarchyMap.get('MyPage')?.generatedMethods?.has('typeSearch')).toBe(true)
+    expect(componentHierarchyMap.get('MyPage')?.generatedMethods?.has('selectSearch')).toBe(false)
+  })
+
   it('uses static slot text to name an inferred wrapper with no model or semantic prop', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-inferred-link-text-'))
     const linkPath = path.join(tempRoot, 'src', 'components', 'AppLink.vue')
