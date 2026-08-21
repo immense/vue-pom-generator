@@ -75,6 +75,8 @@ export type Fluent<T extends object> = DeepFluent<T, T> & PromiseLike<T>;
 export type ValueFluent<T> = DeepValueFluent<T> & PromiseLike<T>;
 
 export interface BasePageOptions {
+  /** Locator that scopes every generated selector in this component POM. */
+  root?: PwLocator;
   renderers?: {
     callout?: CalloutRenderer;
     pointer?: PointerRenderer;
@@ -133,6 +135,7 @@ export class BasePage {
    * etc. for JS/DOM elements the generator can't key.
    */
   private readonly _page: PwPage;
+  private readonly _root?: PwLocator;
 
   /**
    * Playwright's full `Page`, exposed to subclasses. This is the single,
@@ -149,6 +152,7 @@ export class BasePage {
    */
   public constructor(page: PwPage, options?: BasePageOptions) {
     this._page = page;
+    this._root = options?.root;
     this.testIdAttribute = (options?.testIdAttribute || "data-testid").trim() || "data-testid";
 
     const pointerRenderer = options?.renderers?.pointer;
@@ -287,8 +291,20 @@ export class BasePage {
     return normalizedDescription ? locator.describe(normalizedDescription) : locator;
   }
 
+  private locatorInScope(selector: string, within?: PwLocator): Locator {
+    const root = within ?? this._root;
+    return (root ? root.locator(selector) : this._page.locator(selector)) as Locator;
+  }
+
+  /** Resolve a generated component-instance marker inside this POM's current scope. */
+  protected componentInstanceLocator(instanceId: string, within?: PwLocator): Locator {
+    return this.locatorInScope(`[data-pom-instance=${JSON.stringify(instanceId)}]`, within)
+      .filter({ visible: true })
+      .first();
+  }
+
   protected locatorByTestId(testId: string, description?: string): Locator {
-    return this.describeLocator(this.page.locator(this.selectorForTestId(testId)), description);
+    return this.describeLocator(this.locatorInScope(this.selectorForTestId(testId)), description);
   }
 
   protected async resolveVisibleTestIdLocator(
@@ -612,7 +628,7 @@ export class BasePage {
         // pseudo-elements intercept the pointer. Playwright's visible filter can exclude that
         // empty label even though its pseudo-element is the actual interaction surface, so first
         // select the associated label by DOM presence and then choose pointer or keyboard activation.
-        const associatedLabel = this.page.locator(`label[for=${JSON.stringify(controlId)}]`).first();
+        const associatedLabel = this.locatorInScope(`label[for=${JSON.stringify(controlId)}]`).first();
         if (await associatedLabel.count() > 0) {
           if (await associatedLabel.isVisible()) {
             clickTarget = associatedLabel;

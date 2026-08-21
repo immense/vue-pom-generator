@@ -2948,34 +2948,30 @@ function safeMethodNameFromParts(parts: string[]) {
 }
 
 /**
- * Replaces any `${...}` interpolation in a template string with the stable POM placeholder `${key}`.
- *
- * This is only for the generated POM selector shape. Runtime/test-id generation keeps the real
- * interpolation expressions; the POM layer just needs to know that a keyed slot exists and where
- * it sits relative to the surrounding literal text.
- */
-/**
- * Replaces any `${...}` interpolation in a template string with the stable POM placeholder `${key}`,
+ * Replaces any `${...}` interpolation in a template string with a stable POM parameter placeholder,
  * and reports the template variable names carried as metadata.
  *
  * This is only for the generated POM selector shape. Runtime/test-id generation keeps the real
  * interpolation expressions; the POM layer just needs to know that a keyed slot exists and where
- * it sits relative to the surrounding literal text. Every interpolation collapses to the single
- * `${key}` slot, so the variable name is the constant `key` — known at construction, not derived
- * from the emitted string.
+ * it sits relative to the surrounding literal text. Every interpolation collapses to the supplied
+ * parameter name (defaulting to `key`), which is known at construction rather than derived from the
+ * emitted string.
  */
-function toPomKeyPattern(templateValue: Extract<AttributeValue, { kind: "template" }>): { formatted: string; templateVariables: string[] } {
+function toPomKeyPattern(
+  templateValue: Extract<AttributeValue, { kind: "template" }>,
+  parameterName: string = "key",
+): { formatted: string; templateVariables: string[] } {
   const { templateLiteral } = templateValue.parsedTemplate;
   let out = "";
   let hasExpression = false;
   for (let i = 0; i < templateLiteral.quasis.length; i += 1) {
     out += templateLiteral.quasis[i]?.value.raw ?? "";
     if (templateLiteral.expressions[i]) {
-      out += "${key}";
+      out += `\${${parameterName}}`;
       hasExpression = true;
     }
   }
-  return { formatted: out, templateVariables: hasExpression ? ["key"] : [] };
+  return { formatted: out, templateVariables: hasExpression ? [parameterName] : [] };
 }
 
 // Internal exports for unit testing (not part of the public plugin API).
@@ -3054,6 +3050,8 @@ export function applyResolvedDataTestId(args: {
   preferredGeneratedValue: AttributeValue;
   preferredRuntimeValue?: AttributeValue;
   keyInfo: ResolvedKeyInfo | null;
+  /** Public selector parameter name. `optionKeyAttribute` uses the attribute name (for example `value`). */
+  selectorParameterName?: string;
   /** Optional enumerable key values (e.g. derived from v-for="item in ['One','Two']"). */
   keyValuesOverride?: string[] | null;
   entryOverrides?: DataTestIdEntryOverrides;
@@ -3270,7 +3268,10 @@ export function applyResolvedDataTestId(args: {
   // Parameterized selectors are represented explicitly in the POM spec: the formatted
   // pattern and its template variables are both carried as metadata from construction,
   // never re-derived from the formatted string.
-  const pomKeyPattern = dataTestId.kind === "template" ? toPomKeyPattern(dataTestId) : null;
+  const selectorParameterName = args.selectorParameterName?.trim() || "key";
+  const pomKeyPattern = dataTestId.kind === "template"
+    ? toPomKeyPattern(dataTestId, selectorParameterName)
+    : null;
   const formattedDataTestIdForPom = dataTestId.kind === "template"
     ? pomKeyPattern!.formatted
     : dataTestId.value;
@@ -3469,8 +3470,11 @@ export function applyResolvedDataTestId(args: {
       }
     }
 
-    if (selectorIsParameterized && !existingPom.parameters.some(param => param.name === "key")) {
-      existingPom.parameters = [createPomParameterSpec("key", keyTypeFromValues), ...existingPom.parameters];
+    if (selectorIsParameterized && !existingPom.parameters.some(param => param.name === selectorParameterName)) {
+      existingPom.parameters = [
+        createPomParameterSpec(selectorParameterName, keyTypeFromValues),
+        ...existingPom.parameters,
+      ];
     }
 
     return true;
@@ -3491,7 +3495,12 @@ export function applyResolvedDataTestId(args: {
       const baseWithSuffix = suffix === 1 ? base : `${base}${suffix}`;
       // Keep the ByKey segment at the end so downstream logic (and parameterized getter naming)
       // can reliably strip it when needed.
-      const candidate = selectorIsParameterized ? `${baseWithSuffix}ByKey` : baseWithSuffix;
+      const parameterizedSuffix = `By${upperFirst(selectorParameterName)}`;
+      const candidate = selectorIsParameterized
+        ? (normalizedRole === "radio" && selectorParameterName !== "key"
+            ? parameterizedSuffix
+            : `${baseWithSuffix}${parameterizedSuffix}`)
+        : baseWithSuffix;
 
       const actionName = getPrimaryActionMethodName(candidate);
 
@@ -3539,7 +3548,9 @@ export function applyResolvedDataTestId(args: {
         // Only try role-suffixing when the base name isn't already role-suffixed.
         if (!hasRoleSuffix(baseNameUpper, roleSuffix)) {
           const baseWithRoleSuffix = `${baseWithSuffix}${roleSuffix}`;
-          const candidateWithRoleSuffix = selectorIsParameterized ? `${baseWithRoleSuffix}ByKey` : baseWithRoleSuffix;
+          const candidateWithRoleSuffix = selectorIsParameterized
+            ? `${baseWithRoleSuffix}By${upperFirst(selectorParameterName)}`
+            : baseWithRoleSuffix;
           const actionNameWithRoleSuffix = getPrimaryActionMethodName(candidateWithRoleSuffix);
 
           const getterCandidatesWithRoleSuffix = getPrimaryGetterNameCandidates(candidateWithRoleSuffix);
@@ -3630,7 +3641,7 @@ export function applyResolvedDataTestId(args: {
   }
 
   let parameters: PomParameterSpec[] = selectorIsParameterized
-    ? [createPomParameterSpec("key", keyTypeFromValues)]
+    ? [createPomParameterSpec(selectorParameterName, keyTypeFromValues)]
     : [];
 
   switch (normalizedRole) {
@@ -3656,8 +3667,8 @@ export function applyResolvedDataTestId(args: {
   }
 
   const normalizedParameters = selectorIsParameterized
-    ? setPomParameter(parameters, "key", keyTypeFromValues)
-    : removePomParameter(parameters, "key");
+    ? setPomParameter(parameters, selectorParameterName, keyTypeFromValues)
+    : removePomParameter(parameters, selectorParameterName);
 
   // 3) Apply attribute (only when we generated it) and register for POM generation.
   if (addHtmlAttribute && !fromExisting) {
@@ -4194,6 +4205,37 @@ export interface PomExtraClickMethodSpec {
   parameters: PomParameterSpec[];
 }
 
+/**
+ * One component invocation that can be addressed as a scoped child POM.
+ *
+ * The transform records invocation identity rather than only the component type so
+ * codegen can expose semantic APIs such as `form.AddressFields` and keyed APIs such
+ * as `form.DynamicFormField(parameterName)` without widening selectors to the page.
+ */
+export interface PomComponentInstanceSpec {
+  /** Stable source-local identity used to connect slot outlets to invocations. */
+  sourceId: string;
+  /** Vue component tag / generated POM class name. */
+  componentName: string;
+  /** Semantic public member name inferred from the invocation's bindings. */
+  instanceName: string;
+  /** Generator-owned runtime marker used to scope the child POM. */
+  selector: PomStringPattern;
+  /** Key parameter for repeated component invocations; empty for static instances. */
+  parameters: PomParameterSpec[];
+  /** When supplied through a slot, identifies the receiving invocation and slot. */
+  suppliedSlot?: {
+    ownerSourceId: string;
+    name: string;
+  };
+}
+
+/** Connects a component's slot outlet to the child invocation that receives it. */
+export interface PomSlotOutletSpec {
+  name: string;
+  targetSourceId: string;
+}
+
 export interface IComponentDependencies {
   filePath: string;
   childrenComponentSet: Set<string>; // all child components used in this component
@@ -4205,6 +4247,10 @@ export interface IComponentDependencies {
    */
   usedComponentSet: Set<string>;
   dataTestIdSet: Set<IDataTestId>; // all data-testid values used in this component
+  /** Scoped, semantic component invocations discovered in this template. */
+  componentInstances?: PomComponentInstanceSpec[];
+  /** Slot outlets whose rendered content is nested under another component invocation. */
+  slotOutlets?: PomSlotOutletSpec[];
   /** Optional cached codegen output so buildEnd can skip re-deriving method strings. */
   methodsContent?: string;
   /**

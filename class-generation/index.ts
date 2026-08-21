@@ -26,6 +26,7 @@ import {
   isParameterizedPomPattern,
   orderPomPatternParameters,
   toCSharpPomPatternExpression,
+  toTypeScriptPomPatternExpression,
   uniquePomStringPatterns,
   type PomStringPattern,
 } from "../pom-patterns";
@@ -37,6 +38,7 @@ import {
   buildCommentBlock,
   buildFilePrefix,
   createClassConstructor,
+  createClassGetter,
   createClassMethod,
   createClassProperty,
   renderSourceFile,
@@ -49,10 +51,12 @@ import {
   type PropertyDeclarationStructure,
   type TypeScriptClassMember,
   type TypeScriptSourceFile,
+  type TypeScriptWriter,
 } from "../typescript-codegen";
 import {
   IComponentDependencies,
   IDataTestId,
+  PomComponentInstanceSpec,
   PomExtraClickMethodSpec,
   PomPrimarySpec,
   PomSelectorSpec,
@@ -69,6 +73,17 @@ import {
 } from "../route-navigation-codegen";
 
 void setPlaywrightAnimationOptions;
+
+interface ResolvedComponentInstance extends PomComponentInstanceSpec {
+  componentRef: string;
+  className: string;
+}
+
+interface ResolvedProjectedComponentInstance {
+  owner: ResolvedComponentInstance;
+  target: ResolvedComponentInstance;
+  contents: ResolvedComponentInstance[];
+}
 
 export { generateViewObjectModelMethodContent };
 
@@ -2002,28 +2017,149 @@ function prepareViewObjectModelClass(
     return Array.from(nestedRefs).some(child => hasGeneratedPomSurface(child, nextSeen));
   };
 
-  const rawComponentRefsForInstances = usedComponentSet?.size
-    ? usedComponentSet
-    : childrenComponentSet;
-  // A component may render itself recursively (e.g. a tree/list that nests same-named
-  // children). Without this guard the generator emits `this.<SelfName> = new <SelfName>(page)`
-  // in the constructor, which infinitely recurses the moment any POM transitively
-  // instantiates this class. A self-reference is never a useful child instance (it would
-  // just re-wrap the same page), so drop it before it becomes a property + ctor assignment.
+  // Recursive component invocations cannot become eager child POM instances without
+  // infinitely constructing themselves.
   const ownClassName = toPascalCaseLocal(componentName);
   const isSelfReference = (ref: string): boolean => {
     return toPascalCaseLocal(normalizeTrackedComponentRef(ref)) === ownClassName && ownClassName.length > 0;
   };
+
+  const resolveComponentInstance = (spec: PomComponentInstanceSpec): ResolvedComponentInstance | null => {
+    const componentRef = resolveTrackedComponentRef(spec.componentName);
+    if (
+      !componentRef
+      || isSelfReference(componentRef)
+      || !hasGeneratedPomSurface(componentRef, new Set([componentName]))
+    ) {
+      return null;
+    }
+
+    return {
+      ...spec,
+      componentRef,
+      className: normalizeTrackedComponentRef(componentRef),
+    };
+  };
+
+  const uniqueInstances = (
+    instances: ResolvedComponentInstance[],
+    ownerName: string,
+  ): ResolvedComponentInstance[] => {
+    const byPublicName = new Map<string, ResolvedComponentInstance>();
+    for (const instance of instances) {
+      const existing = byPublicName.get(instance.instanceName);
+      if (!existing) {
+        byPublicName.set(instance.instanceName, instance);
+        continue;
+      }
+
+      const sameInvocationShape = existing.componentRef === instance.componentRef
+        && JSON.stringify(existing.selector) === JSON.stringify(instance.selector)
+        && JSON.stringify(existing.parameters) === JSON.stringify(instance.parameters);
+      if (sameInvocationShape) {
+        continue;
+      }
+
+      throw new VuePomGeneratorError(
+        `Semantic component instance name ${JSON.stringify(instance.instanceName)} is ambiguous in ${ownerName}.\n`
+        + `It refers to both <${existing.componentName}> and <${instance.componentName}>.\n\n`
+        + "Fix: give the invocations distinct accessible names or distinct semantic model/options bindings.",
+      );
+    }
+    return Array.from(byPublicName.values());
+  };
+
+  const allInvocationSpecs = dependencies.componentInstances ?? [];
+  const directComponentInstances = uniqueInstances(
+    allInvocationSpecs
+      .filter(spec => !spec.suppliedSlot)
+      .map(resolveComponentInstance)
+      .filter((instance): instance is ResolvedComponentInstance => !!instance),
+    componentName,
+  );
+
+  const projectedComponentInstances: ResolvedProjectedComponentInstance[] = [];
+  for (const owner of directComponentInstances) {
+    const ownerDependencies = componentHierarchyMap.get(owner.componentRef);
+    if (!ownerDependencies?.slotOutlets?.length) {
+      continue;
+    }
+
+    const suppliedBySlot = new Map<string, ResolvedComponentInstance[]>();
+    for (const suppliedSpec of allInvocationSpecs) {
+      if (suppliedSpec.suppliedSlot?.ownerSourceId !== owner.sourceId) {
+        continue;
+      }
+      const supplied = resolveComponentInstance(suppliedSpec);
+      if (!supplied) {
+        continue;
+      }
+      const values = suppliedBySlot.get(suppliedSpec.suppliedSlot.name) ?? [];
+      values.push(supplied);
+      suppliedBySlot.set(suppliedSpec.suppliedSlot.name, values);
+    }
+
+    for (const [slotName, rawContents] of suppliedBySlot) {
+      const outletTargetIds = new Set(
+        ownerDependencies.slotOutlets
+          .filter(outlet => outlet.name === slotName)
+          .map(outlet => outlet.targetSourceId),
+      );
+      const targetInstances = uniqueInstances(
+        (ownerDependencies.componentInstances ?? [])
+          .filter(spec => outletTargetIds.has(spec.sourceId))
+          .map(resolveComponentInstance)
+          .filter((instance): instance is ResolvedComponentInstance => !!instance),
+        `${owner.className} slot ${JSON.stringify(slotName)}`,
+      );
+      const contents = uniqueInstances(rawContents, `${componentName} slot ${JSON.stringify(slotName)}`);
+      for (const target of targetInstances) {
+        if (owner.parameters.length > 0) {
+          throw new VuePomGeneratorError(
+            `Cannot project slot ${JSON.stringify(slotName)} through keyed component instance ${owner.instanceName} in ${componentName}.\n`
+            + "The owner and projected target require distinct key scopes, which cannot be represented by one unambiguous generated accessor.",
+          );
+        }
+        const keyedContent = contents.find(content => content.parameters.length > 0);
+        if (keyedContent) {
+          throw new VuePomGeneratorError(
+            `Cannot attach keyed slot content ${keyedContent.instanceName} as a property of ${target.instanceName} in ${componentName}.\n`
+            + "Move the repetition to the receiving component boundary so the generator can expose it as a keyed accessor.",
+          );
+        }
+        const existingProjection = projectedComponentInstances.find((projection) => {
+          return projection.owner.sourceId === owner.sourceId
+            && projection.target.instanceName === target.instanceName
+            && projection.target.componentRef === target.componentRef
+            && JSON.stringify(projection.target.selector) === JSON.stringify(target.selector);
+        });
+        if (existingProjection) {
+          existingProjection.contents = uniqueInstances(
+            [...existingProjection.contents, ...contents],
+            `${componentName} projected ${target.instanceName}`,
+          );
+          continue;
+        }
+        projectedComponentInstances.push({ owner, target, contents });
+      }
+    }
+  }
+
+  const rawComponentRefsForInstances = usedComponentSet?.size
+    ? usedComponentSet
+    : childrenComponentSet;
   const componentRefsForInstances = new Set<string>();
-  for (const ref of rawComponentRefsForInstances) {
-    const resolvedRef = resolveTrackedComponentRef(ref) ?? normalizeTrackedComponentRef(ref);
-    if (isSelfReference(resolvedRef)) {
-      continue;
+  for (const instance of directComponentInstances) {
+    if (!isSelfReference(instance.componentRef)) {
+      componentRefsForInstances.add(instance.componentRef);
     }
-    if (!hasGeneratedPomSurface(resolvedRef, new Set([componentName]))) {
-      continue;
+  }
+  for (const projection of projectedComponentInstances) {
+    for (const instance of [projection.owner, projection.target, ...projection.contents]) {
+      if (!isSelfReference(instance.componentRef)) {
+        componentRefsForInstances.add(instance.componentRef);
+      }
     }
-    componentRefsForInstances.add(resolvedRef);
   }
 
   const hasChildComponent = (needle: string) => {
@@ -2078,8 +2214,19 @@ function prepareViewObjectModelClass(
     : [];
 
   const className = toPascalCaseLocal(componentName);
-  const childInstancePropertyNames = Array.from(componentRefsForInstances)
-    .map(child => child.split(".vue")[0]);
+  const childInstancePropertyNames = [
+    ...directComponentInstances.map(instance => instance.instanceName),
+    ...projectedComponentInstances.map(projection => projection.target.instanceName),
+  ];
+  const duplicateChildInstanceName = childInstancePropertyNames.find((name, index) => {
+    return childInstancePropertyNames.indexOf(name) !== index;
+  });
+  if (duplicateChildInstanceName) {
+    throw new VuePomGeneratorError(
+      `Semantic component instance ${JSON.stringify(duplicateChildInstanceName)} would be emitted more than once in ${componentName}.\n`
+      + "Fix: give direct and slot-projected instances distinct accessible names or semantic bindings.",
+    );
+  }
   const blockedViewPassthroughMethodNames = new Set(
     attachmentsForThisClass
       .filter(a => a.flatten)
@@ -2093,24 +2240,24 @@ function prepareViewObjectModelClass(
 
   const members: TypeScriptClassMember[] = [];
   if (isView && (componentRefsForInstances.size > 0 || attachmentsForThisClass.length > 0 || widgetInstances.length > 0)) {
-    members.push(...getComponentInstances(componentRefsForInstances, componentHierarchyMap, attachmentsForThisClass, widgetInstances));
-    members.push(getConstructor(componentRefsForInstances, componentHierarchyMap, attachmentsForThisClass, widgetInstances, { testIdAttribute }));
+    members.push(...getComponentInstances(directComponentInstances, projectedComponentInstances, attachmentsForThisClass, widgetInstances));
+    members.push(getConstructor(directComponentInstances, attachmentsForThisClass, widgetInstances, { testIdAttribute }));
   }
   if (!isView && (componentRefsForInstances.size > 0 || attachmentsForThisClass.length > 0)) {
-    members.push(...getComponentInstances(componentRefsForInstances, componentHierarchyMap, attachmentsForThisClass));
-    members.push(getConstructor(componentRefsForInstances, componentHierarchyMap, attachmentsForThisClass, [], { testIdAttribute }));
+    members.push(...getComponentInstances(directComponentInstances, projectedComponentInstances, attachmentsForThisClass));
+    members.push(getConstructor(directComponentInstances, attachmentsForThisClass, [], { testIdAttribute }));
   }
 
   members.push(
     ...getAttachmentPassthroughMethods(componentName, dependencies, attachmentsForThisClass, reservedAttachmentPassthroughNames),
   );
 
-  if (isView && componentRefsForInstances.size === 1) {
+  if (isView && directComponentInstances.length === 1) {
     members.push(
       ...getViewPassthroughMethods(
         componentName,
         dependencies,
-        componentRefsForInstances,
+        directComponentInstances,
         componentHierarchyMap,
         blockedViewPassthroughMethodNames,
       ),
@@ -2128,6 +2275,8 @@ function prepareViewObjectModelClass(
   return {
     className,
     componentRefsForInstances,
+    directComponentInstances,
+    projectedComponentInstances,
     attachmentsForThisClass,
     widgetInstances,
     isView,
@@ -2235,7 +2384,10 @@ function generateViewObjectModelContent(
       addNamedImport(sourceFile, {
         moduleSpecifier: "@playwright/test",
         isTypeOnly: true,
-        namedImports: [{ name: "Page", alias: "PwPage" }],
+        namedImports: [
+          { name: "Locator", alias: "PwLocator" },
+          { name: "Page", alias: "PwPage" },
+        ],
       });
     }
 
@@ -2273,7 +2425,7 @@ function generateViewObjectModelContent(
 function getViewPassthroughMethods(
   viewName: string,
   viewDependencies: IComponentDependencies,
-  childrenComponentSet: Set<string>,
+  componentInstances: ResolvedComponentInstance[],
   componentHierarchyMap: Map<string, IComponentDependencies>,
   blockedMethodNames: Set<string> = new Set(),
 ) {
@@ -2282,8 +2434,8 @@ function getViewPassthroughMethods(
   // methodName -> candidates
   const methodToChildren = new Map<string, Array<{ childProp: string; signature: PomMethodSignature }>>();
 
-  for (const child of childrenComponentSet) {
-    const childDeps = componentHierarchyMap.get(child);
+  for (const instance of componentInstances) {
+    const childDeps = componentHierarchyMap.get(instance.componentRef);
     if (!childDeps || !childDeps.dataTestIdSet?.size)
       continue;
 
@@ -2292,7 +2444,7 @@ function getViewPassthroughMethods(
       continue;
 
     // Property name matches how we emit instance fields (strip .vue if present).
-    const childProp = child.endsWith(".vue") ? child.slice(0, -4) : child;
+    const childProp = instance.instanceName;
 
     for (const [name, sig] of methods.entries()) {
       if (!sig)
@@ -3234,8 +3386,8 @@ function getWidgetInstancesForView(
 }
 
 function getComponentInstances(
-  childrenComponent: Set<string>,
-  componentHierarchyMap: Map<string, IComponentDependencies>,
+  componentInstances: ResolvedComponentInstance[],
+  projectedComponentInstances: ResolvedProjectedComponentInstance[],
   attachmentsForThisView: Array<{ className: string; propertyName: string }> = [],
   widgetInstances: WidgetInstance[] = [],
 ) {
@@ -3255,31 +3407,83 @@ function getComponentInstances(
     }));
   }
 
-  childrenComponent.forEach((child) => {
-    if (componentHierarchyMap.has(child)) {
-      const childName = child.split(".vue")[0];
+  for (const instance of componentInstances) {
+    if (instance.parameters.length === 0) {
       declarations.push(createClassProperty({
-        name: childName,
-        type: childName,
+        name: instance.instanceName,
+        type: instance.className,
       }));
+      continue;
     }
-  });
+
+    declarations.push(createClassMethod({
+      name: instance.instanceName,
+      parameters: toTypeScriptPomParameterStructures(instance.parameters),
+      returnType: instance.className,
+      statements: (writer) => {
+        writer.writeLine(`const root = this.componentInstanceLocator(${toTypeScriptPomPatternExpression(instance.selector)});`);
+        writer.writeLine(`return new ${instance.className}(this.page, root);`);
+      },
+    }));
+  }
+
+  for (const projection of projectedComponentInstances) {
+    const projectedPropertiesType = projection.contents.length > 0
+      ? ` & { ${projection.contents.map(content => `readonly ${content.instanceName}: ${content.className}`).join("; ")} }`
+      : "";
+    const statements = (writer: TypeScriptWriter) => {
+      const ownerSelector = toTypeScriptPomPatternExpression(projection.owner.selector);
+      const targetSelector = toTypeScriptPomPatternExpression(projection.target.selector);
+      writer.writeLine(`const ownerRoot = this.componentInstanceLocator(${ownerSelector});`);
+      writer.writeLine(`const root = this.componentInstanceLocator(${targetSelector}, ownerRoot);`);
+      writer.writeLine(`const instance = new ${projection.target.className}(this.page, root);`);
+      if (projection.contents.length === 0) {
+        writer.writeLine("return instance;");
+        return;
+      }
+
+      writer.writeLine("return Object.assign(instance, {");
+      writer.indent(() => {
+        for (const content of projection.contents) {
+          const contentSelector = toTypeScriptPomPatternExpression(content.selector);
+          writer.writeLine(`${content.instanceName}: new ${content.className}(this.page, this.componentInstanceLocator(${contentSelector}, root)),`);
+        }
+      });
+      writer.writeLine("});");
+    };
+    const returnType = `${projection.target.className}${projectedPropertiesType}`;
+
+    declarations.push(projection.target.parameters.length > 0
+      ? createClassMethod({
+          name: projection.target.instanceName,
+          parameters: toTypeScriptPomParameterStructures(projection.target.parameters),
+          returnType,
+          statements,
+        })
+      : createClassGetter({
+          name: projection.target.instanceName,
+          returnType,
+          statements,
+        }));
+  }
 
   return declarations;
 }
 
 function getConstructor(
-  childrenComponent: Set<string>,
-  componentHierarchyMap: Map<string, IComponentDependencies>,
+  componentInstances: ResolvedComponentInstance[],
   attachmentsForThisView: Array<{ className: string; propertyName: string }> = [],
   widgetInstances: WidgetInstance[] = [],
   options?: { testIdAttribute?: string },
 ) {
   const attr = (options?.testIdAttribute ?? "data-testid").trim() || "data-testid";
   return createClassConstructor({
-    parameters: [{ name: "page", type: "PwPage" }],
+    parameters: [
+      { name: "page", type: "PwPage" },
+      { name: "root", type: "PwLocator", hasQuestionToken: true },
+    ],
     statements: (writer) => {
-      writer.writeLine(`super(page, { testIdAttribute: ${JSON.stringify(attr)} });`);
+      writer.writeLine(`super(page, { root, testIdAttribute: ${JSON.stringify(attr)} });`);
 
       for (const a of attachmentsForThisView) {
         // Hand-written (custom) POMs are declared against Playwright's full `Page`.
@@ -3292,12 +3496,12 @@ function getConstructor(
         writer.writeLine(`this.${w.propertyName} = new ${w.className}(this.page, ${JSON.stringify(w.testId)});`);
       }
 
-      childrenComponent.forEach((child) => {
-        if (componentHierarchyMap.has(child)) {
-          const childName = child.split(".vue")[0];
-          writer.writeLine(`this.${childName} = new ${childName}(page);`);
+      for (const instance of componentInstances) {
+        if (instance.parameters.length === 0) {
+          const selector = toTypeScriptPomPatternExpression(instance.selector);
+          writer.writeLine(`this.${instance.instanceName} = new ${instance.className}(page, this.componentInstanceLocator(${selector}));`);
         }
-      });
+      }
     },
   });
 }
