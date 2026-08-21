@@ -794,6 +794,56 @@ identifier (for example `data-value`).
 
 `data-pom-instance` is generator-owned. Do not author it in Vue templates.
 
+## Vue Test Utils component objects
+
+Enable `generation.vueTestUtils` to emit behavior-oriented component objects for mounted
+Vue unit tests alongside the Playwright output:
+
+```ts
+vuePomGenerator({
+  generation: {
+    vueTestUtils: {},
+  },
+});
+```
+
+The default output directory is `tests/unit/__generated__`. The consuming project must
+install Vue Test Utils 2.x. The test remains responsible for mounting the component and
+providing its plugins, props, stubs, and mocks:
+
+```ts
+import { mount } from "@vue/test-utils";
+import { expect, test } from "vitest";
+
+import DeploymentParametersForm from "@/components/DeploymentParametersForm.vue";
+import { DeploymentParametersForm as DeploymentParametersFormPom } from "./__generated__";
+
+test("requires an onboarding parameter", async () => {
+  const wrapper = mount(DeploymentParametersForm, { /* project-specific mount options */ });
+  const form = new DeploymentParametersFormPom(wrapper);
+
+  await form
+    .DynamicFormField(parameterName)
+    .OnboardingOption
+    .OverridePolicyOptions
+    .selectByValue(ParameterOverridePolicy.Require);
+
+  expect(form.DynamicFormField(parameterName).wrapper.text()).toContain("Required");
+});
+```
+
+The Vue templates mounted by the test must be compiled with the same
+`createVuePomGeneratorPlugins(...)` configuration (normally by sharing the Vite plugins
+with Vitest). That compilation injects the generator-owned `data-pom-instance` scoping
+markers used by semantic component chains.
+
+These generated objects reuse the same semantic instance names, keyed scopes, named-slot
+projections, and action names as the Playwright POMs. They expose actions such as
+`clickSave()`, `typeName(text)`, and `selectByValue(value)`, not a generated assertion DSL
+or the raw Vue component ancestry. Each object exposes its scoped Vue Test Utils `wrapper`
+for assertions and uncommon interactions. This keeps assertions in Vitest/VTU while
+preventing selectors in the test from escaping the intended component instance.
+
 ## Playwright fixtures: actual behavior and caveats
 
 When `generation.playwright.fixtures` is enabled, the generator emits a strongly typed Playwright fixture module.
@@ -1305,6 +1355,20 @@ If omitted, router introspection is off.
   - `string[]` for no-op exported functions
   - `Record<string, fn>` for explicit shim implementations
 - **Not supported:** wildcard `*` exports
+
+### `generation.vueTestUtils`
+
+- **What it does:** Emits behavior-oriented component objects for Vue Test Utils.
+- **Why it exists:** unit tests can use the same semantic instance names and generated actions as browser tests without copying test-id selectors.
+- **Benefit:** selectors stay compiler-derived while the test continues to own mounting and assertions.
+- **Without it:** no Vue Test Utils files are generated.
+- **Default output:** `tests/unit/__generated__`.
+- **Requirement:** the consuming project must provide Vue Test Utils 2.x.
+
+#### `generation.vueTestUtils.outDir`
+
+- **What it does:** Overrides the Vue Test Utils generated-file directory.
+- **Without it:** defaults to `tests/unit/__generated__`.
 
 ### `generation.playwright`
 

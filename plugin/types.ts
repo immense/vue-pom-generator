@@ -403,6 +403,16 @@ export interface VuePomGeneratorPluginOptions {
         }>;
       };
     };
+
+    /** Vue Test Utils-specific generation features. */
+    vueTestUtils?: {
+      /**
+       * Output directory for generated Vue Test Utils component objects.
+       *
+       * Defaults to `tests/unit/__generated__`.
+       */
+      outDir?: string;
+    };
   };
 }
 
