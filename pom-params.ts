@@ -141,7 +141,7 @@ export function createPomMethodSignature(parameters: PomParameterInput): PomMeth
   };
 }
 
-export function pomParameterSpecEquals(left: PomParameterSpec, right: PomParameterSpec): boolean {
+function pomParameterSpecEquals(left: PomParameterSpec, right: PomParameterSpec): boolean {
   return left.name === right.name
     && left.typeExpression === right.typeExpression
     && left.type === right.type

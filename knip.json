@@ -37,12 +37,6 @@
     "interface": true,
     "type": true
   },
-  "ignoreBinaries": [
-    "eslint",
-    "knip",
-    "vite",
-    "vitest"
-  ],
   "ignoreDependencies": [
     "eslint"
   ],

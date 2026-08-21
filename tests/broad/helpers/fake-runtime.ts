@@ -340,22 +340,3 @@ export class FakeLocator implements BasePageLocator {
     return tagName === "input" || tagName === "textarea" || tagName === "select" || this.element.isContentEditable === true;
   }
 }
-
-export function createVisibleElement(
-  page: FakePage,
-  id: string,
-  rect: BoundingBox,
-  options: { parent?: HTMLElement; tagName?: string; testId?: string } = {},
-) {
-  const element = page.dom.window.document.createElement(options.tagName ?? "div");
-  element.id = id;
-  if (options.testId) {
-    element.setAttribute("data-testid", options.testId);
-  }
-  element.style.display = "block";
-  element.style.visibility = "visible";
-  element.style.opacity = "1";
-  element.getBoundingClientRect = () => new page.dom.window.DOMRect(rect.x, rect.y, rect.width, rect.height);
-  (options.parent ?? page.dom.window.document.body).appendChild(element);
-  return element;
-}

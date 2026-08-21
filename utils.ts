@@ -772,7 +772,7 @@ function unwrapToBareCallbackIdentifier(node: BabelNode | null | undefined): str
  *
  * @internal
  */
-export function tryGetBareCallbackClickHandlerName(node: ElementNode): string | null {
+function tryGetBareCallbackClickHandlerName(node: ElementNode): string | null {
   const click = tryGetClickDirective(node);
   if (!click?.exp) {
     return null;
