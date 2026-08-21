@@ -190,7 +190,6 @@ describe("semantic component instances", () => {
             existingIdBehavior: "error",
             vueFilesPathMap,
             wrapperSearchRoots: [componentsDir, viewsDir],
-            optionKeyAttribute: { ImmyRadioGroup: "value" },
           }),
         ],
       });
