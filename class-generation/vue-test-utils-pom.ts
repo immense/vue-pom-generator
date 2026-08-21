@@ -1,4 +1,4 @@
-import type { DOMWrapper, VueWrapper } from "@vue/test-utils";
+import { DOMWrapper, type VueWrapper } from "@vue/test-utils";
 
 export type VueTestUtilsPomRoot = DOMWrapper<Element> | VueWrapper;
 
@@ -27,8 +27,8 @@ export class VueTestUtilsPom {
 
   protected getByAnyTestId(testIds: readonly string[]): DOMWrapper<Element> {
     for (const testId of testIds) {
-      const candidate = this.wrapper.find<Element>(this.selectorFor(this.testIdAttribute, testId));
-      if (candidate.exists()) {
+      const candidate = this.findInScope(this.wrapper, this.selectorFor(this.testIdAttribute, testId));
+      if (candidate) {
         return candidate;
       }
     }
@@ -88,7 +88,22 @@ export class VueTestUtilsPom {
   }
 
   private getInScope(root: VueTestUtilsPomRoot, selector: string): DOMWrapper<Element> {
+    const candidate = this.findInScope(root, selector);
+    if (candidate) {
+      return candidate;
+    }
+
+    // Delegate the missing-element error to VTU so callers receive its DOM snapshot.
     return root.get<Element>(selector) as DOMWrapper<Element>;
+  }
+
+  private findInScope(root: VueTestUtilsPomRoot, selector: string): DOMWrapper<Element> | null {
+    if (root.element instanceof Element && root.element.matches(selector)) {
+      return new DOMWrapper(root.element);
+    }
+
+    const candidate = root.find<Element>(selector);
+    return candidate.exists() ? candidate : null;
   }
 
   private selectorFor(attribute: string, value: string): string {

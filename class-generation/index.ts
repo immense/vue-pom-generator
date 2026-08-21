@@ -1007,7 +1007,7 @@ export async function generateFiles(
   }
 }
 
-const VUE_TEST_UTILS_OMITTED_PARAMETERS = new Set(["annotationText", "timeOut", "wait"]);
+const VUE_TEST_UTILS_OMITTED_PARAMETERS = new Set(["annotationText", "timeOut", "timeout", "wait"]);
 
 function getVueTestUtilsParameters(
   parameters: PomParameterSpec[],
@@ -1101,10 +1101,12 @@ function getVueTestUtilsComponentMembers(
 
   for (const instance of componentInstances) {
     if (instance.parameters.length === 0) {
-      members.push(createClassProperty({
+      members.push(createClassGetter({
         name: instance.instanceName,
-        type: instance.className,
-        isReadonly: true,
+        returnType: instance.className,
+        statements: [
+          `return new ${instance.className}(this.getComponentInstance(${toTypeScriptPomPatternExpression(instance.selector)}));`,
+        ],
       }));
       continue;
     }
@@ -1161,15 +1163,6 @@ function getVueTestUtilsComponentMembers(
     parameters: [{ name: "wrapper", type: "VueTestUtilsPomRoot" }],
     statements: (writer) => {
       writer.writeLine(`super(wrapper, { testIdAttribute: ${JSON.stringify(testIdAttribute)} });`);
-      for (const instance of componentInstances) {
-        if (instance.parameters.length > 0) {
-          continue;
-        }
-        writer.writeLine(
-          `this.${instance.instanceName} = new ${instance.className}(`
-          + `this.getComponentInstance(${toTypeScriptPomPatternExpression(instance.selector)}));`,
-        );
-      }
     },
   }));
 

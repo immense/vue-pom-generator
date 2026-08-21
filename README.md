@@ -832,6 +832,11 @@ test("requires an onboarding parameter", async () => {
 });
 ```
 
+The Vue templates mounted by the test must be compiled with the same
+`createVuePomGeneratorPlugins(...)` configuration (normally by sharing the Vite plugins
+with Vitest). That compilation injects the generator-owned `data-pom-instance` scoping
+markers used by semantic component chains.
+
 These generated objects reuse the same semantic instance names, keyed scopes, named-slot
 projections, and action names as the Playwright POMs. They expose actions such as
 `clickSave()`, `typeName(text)`, and `selectByValue(value)`, not a generated assertion DSL

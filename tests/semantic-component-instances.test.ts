@@ -1,4 +1,4 @@
-// @vitest-environment node
+// @vitest-environment jsdom
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,6 +8,8 @@ import { createRequire } from "node:module";
 
 import { compile } from "@vue/compiler-dom";
 import { parse as parseSfc } from "@vue/compiler-sfc";
+import { mount } from "@vue/test-utils";
+import { defineComponent, h, reactive } from "vue";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { generateFiles } from "../class-generation";
@@ -235,8 +237,9 @@ describe("semantic component instances", () => {
     expect(formVtuPom).toContain("const ownerRoot = this.getComponentInstance(\"DeploymentParametersForm-BaseDynamicForm-component\")");
     expect(formVtuPom).toContain("const root = this.getComponentInstance(`BaseDynamicForm-${key}-DynamicFormField-component`, ownerRoot)");
     expect(formVtuPom).toContain("OnboardingOption: new OnboardingOption(this.getComponentInstance(\"DeploymentParametersForm-OnboardingOption-component\", root))");
-    expect(onboardingVtuPom).toContain("readonly OverridePolicyOptions: ImmyRadioGroup");
-    expect(onboardingVtuPom).toContain("this.OverridePolicyOptions = new ImmyRadioGroup(this.getComponentInstance(\"OnboardingOption-OverridePolicyOptions-component\"))");
+    expect(onboardingVtuPom).toContain("get OverridePolicyOptions(): ImmyRadioGroup");
+    expect(onboardingVtuPom).toContain("return new ImmyRadioGroup(this.getComponentInstance(\"OnboardingOption-OverridePolicyOptions-component\"))");
+    expect(onboardingVtuPom).not.toContain("this.OverridePolicyOptions =");
     expect(radioVtuPom).toContain("async selectByValue(value: string)");
     expect(radioVtuPom).toContain("await this.getByTestId(`ImmyRadioGroup-${value}-OptionValue-radio`).setValue()");
     expect(radioVtuPom).not.toContain("annotationText");
@@ -245,5 +248,51 @@ describe("semantic component instances", () => {
 
     const typecheck = typecheckGeneratedVueTestUtilsFiles(projectRoot, vueTestUtilsOutDir);
     expect(typecheck.status, `${typecheck.stdout}\n${typecheck.stderr}`).toBe(0);
+
+    const runtimeBundlePath = path.join(projectRoot, "generated-vtu.cjs");
+    const require = createRequire(import.meta.url);
+    const bundle = spawnSync(require.resolve("esbuild/bin/esbuild"), [
+      path.join(vueTestUtilsOutDir, "index.ts"),
+      "--bundle",
+      "--format=cjs",
+      "--platform=node",
+      "--target=node20",
+      "--external:@vue/test-utils",
+      `--outfile=${runtimeBundlePath}`,
+    ], { encoding: "utf8" });
+    expect(bundle.status, `${bundle.stdout}\n${bundle.stderr}`).toBe(0);
+    const generated = require(runtimeBundlePath);
+    const wrapper = mount(defineComponent({
+      setup() {
+        const selected = reactive({ server: "Allow" });
+        return () => h("form", [
+          h("div", { "data-pom-instance": "DeploymentParametersForm-BaseDynamicForm-component" }, [
+            h("section", { "data-pom-instance": "BaseDynamicForm-server-DynamicFormField-component" }, [
+              h("div", { "data-pom-instance": "DeploymentParametersForm-OnboardingOption-component" }, [
+                h("div", { "data-pom-instance": "OnboardingOption-OverridePolicyOptions-component" }, [
+                  ...["Allow", "Require"].map(value => h("input", {
+                    type: "radio",
+                    value,
+                    checked: selected.server === value,
+                    "data-testid": `ImmyRadioGroup-${value}-OptionValue-radio`,
+                    onChange: () => selected.server = value,
+                  })),
+                ]),
+              ]),
+            ]),
+          ]),
+          h("output", { "data-testid": "selected-server" }, selected.server),
+        ]);
+      },
+    }));
+    const form = new generated.DeploymentParametersForm(wrapper);
+
+    await form
+      .DynamicFormField("server")
+      .OnboardingOption
+      .OverridePolicyOptions
+      .selectByValue("Require");
+
+    expect(wrapper.get('[data-testid="selected-server"]').text()).toBe("Require");
   });
 });

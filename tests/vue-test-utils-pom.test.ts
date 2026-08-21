@@ -3,7 +3,7 @@ import { mount } from "@vue/test-utils";
 import { defineComponent, h, reactive } from "vue";
 import { describe, expect, it } from "vitest";
 
-import { VueTestUtilsPom, type VueTestUtilsPomRoot } from "../class-generation/vue-test-utils-pom";
+import { VueTestUtilsPom } from "../class-generation/vue-test-utils-pom";
 
 class ImmyRadioGroup extends VueTestUtilsPom {
   public async selectByValue(value: string): Promise<void> {
@@ -12,11 +12,8 @@ class ImmyRadioGroup extends VueTestUtilsPom {
 }
 
 class OnboardingOption extends VueTestUtilsPom {
-  public readonly OverridePolicyOptions: ImmyRadioGroup;
-
-  public constructor(wrapper: VueTestUtilsPomRoot) {
-    super(wrapper);
-    this.OverridePolicyOptions = new ImmyRadioGroup(
+  public get OverridePolicyOptions(): ImmyRadioGroup {
+    return new ImmyRadioGroup(
       this.getComponentInstance("OnboardingOption-OverridePolicyOptions-component"),
     );
   }
@@ -39,6 +36,18 @@ class DeploymentParametersForm extends VueTestUtilsPom {
 class SearchableSelect extends VueTestUtilsPom {
   public async selectOwner(value: string): Promise<void> {
     await this.selectVSelectByTestId("Owner-vselect", value);
+  }
+}
+
+class RootButton extends VueTestUtilsPom {
+  public async clickSave(): Promise<void> {
+    await this.clickByTestId("Save-button");
+  }
+}
+
+class RootInput extends VueTestUtilsPom {
+  public async typeValue(text: string): Promise<void> {
+    await this.getByTestId("Value-input").setValue(text);
   }
 }
 
@@ -88,6 +97,22 @@ const SearchableSelectHarness = defineComponent({
   },
 });
 
+const RootButtonHarness = defineComponent({
+  setup() {
+    const state = reactive({ clicks: 0 });
+    return () => h("button", {
+      "data-testid": "Save-button",
+      onClick: () => state.clicks += 1,
+    }, `Saved ${state.clicks}`);
+  },
+});
+
+const RootInputHarness = defineComponent({
+  setup() {
+    return () => h("input", { "data-testid": "Value-input" });
+  },
+});
+
 describe("VueTestUtilsPom", () => {
   it("drives a semantically named action within the selected component instance", async () => {
     const wrapper = mount(Harness);
@@ -110,5 +135,23 @@ describe("VueTestUtilsPom", () => {
     await select.selectOwner("Taylor");
 
     expect(wrapper.get('[data-testid="selected-owner"]').text()).toBe("Taylor");
+  });
+
+  it("finds an action selector on the scoped wrapper root", async () => {
+    const wrapper = mount(RootButtonHarness);
+    const button = new RootButton(wrapper);
+
+    await button.clickSave();
+
+    expect(wrapper.text()).toBe("Saved 1");
+  });
+
+  it("uses DOM input semantics when the mounted component root is the action target", async () => {
+    const wrapper = mount(RootInputHarness);
+    const input = new RootInput(wrapper);
+
+    await input.typeValue("Taylor");
+
+    expect((wrapper.element as HTMLInputElement).value).toBe("Taylor");
   });
 });
