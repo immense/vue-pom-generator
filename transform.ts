@@ -217,6 +217,30 @@ function getNativeHtmlControlRole(element: ElementNode): NativeRole | null {
   return getElementControlRole(element);
 }
 
+function getConventionalOptionIdentityAttribute(element: ElementNode): "data-value" | "value" | null {
+  const explicitRole = getStaticAttributeContent(element, "role")?.toLowerCase();
+  if (explicitRole === "option") {
+    return "data-value";
+  }
+  if (explicitRole === "radio") {
+    return "value";
+  }
+
+  const tag = element.tag.toLowerCase();
+  const type = getStaticAttributeContent(element, "type")?.toLowerCase();
+  if ((tag === "input" || tag === "uinput") && type === "radio") {
+    return "value";
+  }
+
+  return null;
+}
+
+function describeConventionalOption(element: ElementNode): string {
+  return getConventionalOptionIdentityAttribute(element) === "value"
+    ? "radio"
+    : `<${element.tag} role="option">`;
+}
+
 /**
  * Normalizes label text into the stable string used for generated control names.
  *
@@ -657,9 +681,8 @@ export function createTestIdTransform(
     /** Shared registry for cross-file keyed slot context. */
     crossFileKeyRegistry?: CrossFileKeyRegistry;
     /**
-     * Per-component map of SFC component name -> attribute/binding name to derive the
-     * keyed accessor's key fragment from (e.g. `{ MyRadioGroup: "value" }`).
-     * When a component is absent, the default `:key` directive resolution applies.
+     * Per-component map of SFC component name -> attribute/binding name that overrides
+     * the conventional identity for repeated option controls.
      */
     optionKeyAttribute?: Record<string, string>;
   } = {},
@@ -1023,12 +1046,28 @@ export function createTestIdTransform(
       const getBestAvailableKeyInfo = (): ResolvedKeyInfo | null => {
         const parentNode = (context.parent && typeof context.parent === "object") ? context.parent as { type?: number } : null;
         const isDirectVForChild = parentNode?.type === NodeTypes.FOR;
+        const isInVForScope = isDirectVForChild || context.scopes.vFor > 0;
+        const vForKeyInfo = (isDirectVForChild ? getKeyDirectiveInfo(element) : null)
+          || getContainedInVForDirectiveKeyInfo(context, element, hierarchyMap);
+        const conventionalIdentityAttribute = getConventionalOptionIdentityAttribute(element);
 
-        // Per-component optionKeyAttribute: when configured for this SFC, derive the keyed
-        // fragment from the named :bind directive (e.g. :value) on the option element
-        // BEFORE the default :key resolution. The default ":key" directive name is a no-op
-        // here (it would duplicate the existing path below), so only non-"key" names apply.
-        const configuredAttrName = optionKeyAttribute[componentName];
+        // Explicit component configuration wins over semantic inference. `key` opts a
+        // component back into its authored Vue reconciliation key; any other override
+        // must exist on a repeated option control or generation fails immediately.
+        const configuredAttrName = optionKeyAttribute[componentName]?.trim();
+        if (configuredAttrName === "key") {
+          if (vForKeyInfo) {
+            return vForKeyInfo;
+          }
+          if (isInVForScope && conventionalIdentityAttribute) {
+            const loc = element.loc.start;
+            throw new Error(
+              `[vue-pom-generator] optionKeyAttribute maps ${componentName} to "key", but repeated ${describeConventionalOption(element)} has no resolvable v-for :key.\n`
+              + `File: ${context.filename ?? "unknown"}:${loc.line}:${loc.column}\n\n`
+              + `Fix: bind :key on the repeated option or remove the override to use the conventional :${conventionalIdentityAttribute} identity.`,
+            );
+          }
+        }
         if (configuredAttrName && configuredAttrName !== "key") {
           const bindingKeyInfo = getBindingKeyInfo(element, configuredAttrName);
           if (bindingKeyInfo) {
@@ -1039,10 +1078,35 @@ export function createTestIdTransform(
             selectorParameterName = configuredAttrName === "value" ? "value" : "key";
             return bindingKeyInfo;
           }
+          if (isInVForScope && conventionalIdentityAttribute) {
+            const loc = element.loc.start;
+            throw new Error(
+              `[vue-pom-generator] optionKeyAttribute maps ${componentName} to "${configuredAttrName}", but repeated ${describeConventionalOption(element)} does not bind :${configuredAttrName}.\n`
+              + `File: ${context.filename ?? "unknown"}:${loc.line}:${loc.column}\n\n`
+              + `Fix: bind :${configuredAttrName} on the option element or remove the override to use the conventional :${conventionalIdentityAttribute} identity.`,
+            );
+          }
         }
 
-        const vForKeyInfo = (isDirectVForChild ? getKeyDirectiveInfo(element) : null)
-          || getContainedInVForDirectiveKeyInfo(context, element, hierarchyMap);
+        // Standard selection controls own a domain identity distinct from Vue's
+        // reconciliation key. Require that identity so generated option accessors are
+        // predictable: radios bind :value and ARIA options bind :data-value.
+        if (conventionalIdentityAttribute) {
+          const bindingKeyInfo = getBindingKeyInfo(element, conventionalIdentityAttribute);
+          if (bindingKeyInfo) {
+            selectorParameterName = conventionalIdentityAttribute === "value" ? "value" : "key";
+            return bindingKeyInfo;
+          }
+          if (isInVForScope) {
+            const loc = element.loc.start;
+            throw new Error(
+              `[vue-pom-generator] Repeated ${describeConventionalOption(element)} must bind :${conventionalIdentityAttribute} for generated option selection.\n`
+              + `Component: ${componentName}\n`
+              + `File: ${context.filename ?? "unknown"}:${loc.line}:${loc.column}`,
+            );
+          }
+        }
+
         if (vForKeyInfo) {
           return vForKeyInfo;
         }

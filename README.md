@@ -787,12 +787,20 @@ misleading API. Components that do not forward the marker to a DOM root are omit
 component-instance composition rather than falling back to page-wide selectors; their
 own standalone fixture is still generated normally.
 
-When `injection.optionKeyAttribute` maps a radio component to `"value"`, its generated
-selection API uses the domain term directly: `selectByValue(value)`. Other configured
-attribute names retain `key` when the HTML attribute name is not a valid public TypeScript
-identifier (for example `data-value`). When the template does not expose a finite set of
-values, the generated parameter accepts primitive HTML values (`string | number | boolean |
-bigint`) so domain enums can be passed without string conversion.
+Repeated option controls use their semantic identity automatically:
+
+- radio inputs require `:value` and generate `selectByValue(value)`;
+- elements with `role="option"` require `:data-value` and generate a keyed option action;
+- other repeated controls continue to use their Vue `:key` identity.
+
+When the template does not expose a finite set of values, the generated option parameter
+accepts primitive HTML values (`string | number | boolean | bigint`) so domain enums can be
+passed without string conversion.
+
+Use `injection.optionKeyAttribute` only to override those conventions for a component.
+Map the component to `"key"` to explicitly use Vue's reconciliation key, or to another
+bound attribute such as `"data-option-id"`. A configured binding is required on recognized
+option controls; generation fails instead of silently choosing a different identity.
 
 `data-pom-instance` is generator-owned. Do not author it in Vue templates.
 

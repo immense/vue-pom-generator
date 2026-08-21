@@ -1928,7 +1928,7 @@ describe('createTestIdTransform', () => {
   })
 })
 
-describe('option-keying: per-component optionKeyAttribute config', () => {
+describe('option-keying: semantic inference and explicit overrides', () => {
   // Resolves the single keyed IDataTestId entry produced for the radio <input> in a
   // radiogroup v-for fixture, and asserts both the injected selector template
   // (selectorValue — what becomes data-testid in the DOM) and the keyed accessor's
@@ -1966,17 +1966,14 @@ describe('option-keying: per-component optionKeyAttribute config', () => {
     return { deps, keyed }
   }
 
-  it('keys off configured :value binding when :key is the non-meaningful v-for index', () => {
-    // config: optionKeyAttribute = { MyRadioGroup: "value" }
-    const { keyed } = compileRadioFixture('MyRadioGroup_OptionValue.vue', 'MyRadioGroup', {
-      optionKeyAttribute: { MyRadioGroup: 'value' },
-    })
+  it('uses a repeated radio value without component configuration', () => {
+    const { keyed } = compileRadioFixture('MyRadioGroup_OptionValue.vue', 'MyRadioGroup')
 
     // The injected data-testid template interpolates option.value, NOT the v-for index.
     expect((keyed!.selectorValue as { formatted: string }).formatted)
       .toBe('MyRadioGroup-${option.value}-option-radio')
 
-    // A configured `value` identity becomes the public parameter name, so generated
+    // A semantic `value` identity becomes the public parameter name, so generated
     // consumers can say selectByValue(value) rather than selectOptionValueByKey(key).
     expect(keyed!.pom?.selector).toEqual(createPomStringPattern('MyRadioGroup-${value}-option-radio', 'parameterized', ['value']))
 
@@ -1989,11 +1986,12 @@ describe('option-keying: per-component optionKeyAttribute config', () => {
     expect(keyed!.pom?.generatedActionName).toBe('selectByValue')
   })
 
-  it('default (no optionKeyAttribute config) keys off the non-meaningful :key=index — the gap', () => {
-    // config: (none)
-    const { keyed } = compileRadioFixture('MyRadioGroup_OptionValue.vue', 'MyRadioGroup')
+  it('allows explicit configuration to override the semantic radio value', () => {
+    const { keyed } = compileRadioFixture('MyRadioGroup_OptionValue.vue', 'MyRadioGroup', {
+      optionKeyAttribute: { MyRadioGroup: 'key' },
+    })
 
-    // Without the config, the keyed fragment comes from the enclosing v-for :key="index".
+    // An explicit `key` override uses the enclosing v-for :key="index".
     expect((keyed!.selectorValue as { formatted: string }).formatted)
       .toBe('MyRadioGroup-${index}-option-radio')
 
@@ -2001,20 +1999,21 @@ describe('option-keying: per-component optionKeyAttribute config', () => {
     expect(keyed!.pom?.parameters).toEqual(createPomParameters(['key', 'string'], ['annotationText', 'string = ""']))
   })
 
-  it('configured binding absent on the element falls back to the existing :key resolution', () => {
-    // config: optionKeyAttribute = { MyRadioGroup: "label" } but <input> has NO :label binding;
-    // the fixture's v-for :key is option.id, so the fall-through path keys by option.id.
-    const { keyed } = compileRadioFixture('MyRadioGroup_OptionId.vue', 'MyRadioGroup', {
+  it('rejects an explicit option identity override that is absent from a repeated radio', () => {
+    expect(() => compileRadioFixture('MyRadioGroup_OptionId.vue', 'MyRadioGroup', {
       optionKeyAttribute: { MyRadioGroup: 'label' },
-    })
+    })).toThrow(/optionKeyAttribute.*label.*does not bind :label/)
+  })
 
-    // getBindingKeyInfo(element, "label") returns null (no :label on <input>), so
-    // getBestAvailableKeyInfo falls through to the existing :key resolution -> option.id.
-    expect((keyed!.selectorValue as { formatted: string }).formatted)
-      .toBe('MyRadioGroup-${option.id}-option-radio')
+  it('rejects an explicit key override when the repeated radio has no Vue key', () => {
+    expect(() => compileRadioFixture('MyRadioGroup_OptionValueMissingKey.vue', 'MyRadioGroup', {
+      optionKeyAttribute: { MyRadioGroup: 'key' },
+    })).toThrow(/optionKeyAttribute.*"key".*no resolvable v-for :key/)
+  })
 
-    expect(keyed!.pom?.selector).toEqual(createPomStringPattern('MyRadioGroup-${key}-option-radio', 'parameterized', ['key']))
-    expect(keyed!.pom?.parameters).toEqual(createPomParameters(['key', 'string'], ['annotationText', 'string = ""']))
+  it('rejects a repeated radio without a bound value identity through structural wrappers', () => {
+    expect(() => compileRadioFixture('MyRadioGroup_OptionChangeMissingValue.vue', 'MyRadioGroup'))
+      .toThrow(/Repeated radio must bind :value/)
   })
 })
 
@@ -2059,11 +2058,9 @@ describe('action-event recognition: option-selection events beyond @click', () =
     // The fixture uses @change="modelValue = option.value" — the Vue idiom for radio
     // selection — instead of @click. Before action-event widening this produced an
     // EMPTY POM (no recognized handler); it must emit a keyed Option[key] accessor.
-    const { keyed } = compileOptionFixture('MyRadioGroup_OptionChange.vue', 'MyRadioGroup', {
-      optionKeyAttribute: { MyRadioGroup: 'value' },
-    })
+    const { keyed } = compileOptionFixture('MyRadioGroup_OptionChange.vue', 'MyRadioGroup')
 
-    // The keyed accessor is parameterized by the configured :value binding, collapsing
+    // The keyed accessor is parameterized by the inferred :value binding, collapsing
     // option.value -> ${value}, regardless of whether the radio is driven by @click or @change.
     // The fixture mirrors the real component-library radio pattern: a <template v-for>
     // wrapping v-if/v-else <input> branches with `:value` + `:checked` + `@change` (no
@@ -2081,17 +2078,20 @@ describe('action-event recognition: option-selection events beyond @click', () =
   it('emits a keyed accessor for a v-for <li role="option"> driven by @mousedown', () => {
     // Combobox/listbox option elements commonly use @mousedown (often .prevent) to
     // select on pointer-down for responsive UX. The fixture keys off :data-value
-    // (the meaningful option value) via optionKeyAttribute.
-    const { keyed } = compileOptionFixture('MyList_OptionMousedown.vue', 'MyList', {
-      optionKeyAttribute: { MyList: 'data-value' },
-    })
+    // (the meaningful option value) by convention.
+    const { keyed } = compileOptionFixture('MyList_OptionMousedown.vue', 'MyList')
 
-    // The keyed accessor is parameterized by the configured :data-value binding,
+    // The keyed accessor is parameterized by the conventional :data-value binding,
     // collapsing option.value -> ${key}. The suffix derives from the handler name
     // (select) + tag (li), matching the generator's accessor-naming convention.
     expect((keyed!.selectorValue as { formatted: string }).formatted)
       .toBe('MyList-${option.value}-Select-li')
     expect(keyed!.pom?.selector).toEqual(createPomStringPattern('MyList-${key}-Select-li', 'parameterized', ['key']))
     expect(keyed!.pom?.parameters.map((p: { name: string }) => p.name)).toContain('key')
+  })
+
+  it('rejects a repeated role=option without a bound data-value identity', () => {
+    expect(() => compileOptionFixture('MyList_OptionMousedownMissingValue.vue', 'MyList'))
+      .toThrow(/role="option".*must bind :data-value/)
   })
 })

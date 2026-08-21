@@ -170,16 +170,19 @@ export interface VuePomGeneratorPluginOptions {
     nativeWrappers?: NativeWrappersMap;
 
     /**
-     * Per-component option-key attribute override.
+     * Per-component option identity override.
      *
-     * Maps an SFC component name to the attribute/binding name the keyed accessor should
-     * derive its key fragment from, instead of the default `:key` directive. A component
-     * absent from the map keeps the current `:key`-based behavior.
+     * Repeated radios use `:value` and repeated elements with `role="option"` use
+     * `:data-value` automatically. Map an SFC component name to another bound attribute
+     * when its option controls intentionally use a different identity. Use `"key"` to
+     * explicitly select Vue's reconciliation `:key` instead.
      *
-     * Example: `{ MyRadioGroup: "value" }` keys `page.Option[...]` off the `:value` binding
-     * on each option element rather than Vue's reconciliation `:key`.
+     * The configured binding is required on recognized option controls; a missing binding
+     * fails generation instead of silently changing selector identity.
      *
-     * Default: `{}` (every component uses `:key`).
+     * Example: `{ CustomOptionList: "data-option-id" }`.
+     *
+     * Default: `{}`.
      */
     optionKeyAttribute?: Record<string, string>;
 
