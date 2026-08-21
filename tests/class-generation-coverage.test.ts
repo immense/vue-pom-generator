@@ -36,8 +36,11 @@ function writeMinimalBasePage(filePath: string) {
       "export type Fluent<T extends object> = T & PromiseLike<T>;",
       "export class BasePage {",
       "  public page: any;",
-      "  public constructor(page?: any, _options?: { testIdAttribute?: string }) {",
+      "  public constructor(page?: any, _options?: { root?: any; testIdAttribute?: string }) {",
       "    this.page = page;",
+      "  }",
+      "  protected componentInstanceLocator(_instanceId: string, _within?: any): any {",
+      "    return null as any;",
       "  }",
       "  protected describeLocator<T>(_locator: T, _description?: string): T {",
       "    return _locator;",
@@ -70,6 +73,8 @@ function makeDeps(options: Partial<IComponentDependencies> & { filePath: string 
     dataTestIdSet: options.dataTestIdSet ?? new Set(),
     methodsContent: options.methodsContent ?? "\n",
     generatedMethods: options.generatedMethods,
+    componentInstances: options.componentInstances,
+    slotOutlets: options.slotOutlets,
     isView: options.isView,
   };
 }
@@ -351,6 +356,13 @@ describe("class-generation coverage", () => {
         isView: true,
         usedComponentSet: new Set(["TenantDetailsEditForm"]),
         dataTestIdSet: new Set([navigationEntry]),
+        componentInstances: [{
+          sourceId: "tenant-form",
+          componentName: "TenantDetailsEditForm",
+          instanceName: "TenantDetailsEditForm",
+          selector: createPomStringPattern("TenantListPage-TenantDetailsEditForm-component", "static", []),
+          parameters: [],
+        }],
       });
 
       const depsForm = makeDeps({
@@ -427,6 +439,13 @@ describe("class-generation coverage", () => {
         filePath: path.join(tempRoot, "src", "views", "DeploymentDetailsPage.vue"),
         isView: true,
         usedComponentSet: new Set(["MaintenanceItemConfiguration"]),
+        componentInstances: [{
+          sourceId: "configuration",
+          componentName: "MaintenanceItemConfiguration",
+          instanceName: "MaintenanceItemConfiguration",
+          selector: createPomStringPattern("DeploymentDetailsPage-MaintenanceItemConfiguration-component", "static", []),
+          parameters: [],
+        }],
       });
 
       const depsNestedComponent = makeDeps({
@@ -460,10 +479,10 @@ describe("class-generation coverage", () => {
 
       const pageContent = readFile(path.join(outDir, "DeploymentDetailsPage.g.ts"));
       expect(pageContent).toContain('import { MaintenanceItemsMaintenanceItemConfiguration }');
-      expect(pageContent).toContain('MaintenanceItemsMaintenanceItemConfiguration: MaintenanceItemsMaintenanceItemConfiguration;');
-      expect(pageContent).toContain('this.MaintenanceItemsMaintenanceItemConfiguration = new MaintenanceItemsMaintenanceItemConfiguration(page);');
+      expect(pageContent).toContain('MaintenanceItemConfiguration: MaintenanceItemsMaintenanceItemConfiguration;');
+      expect(pageContent).toContain('this.MaintenanceItemConfiguration = new MaintenanceItemsMaintenanceItemConfiguration(page, this.componentInstanceLocator("DeploymentDetailsPage-MaintenanceItemConfiguration-component"));');
       expect(pageContent).toContain('async clickSave(');
-      expect(pageContent).toContain('return await this.MaintenanceItemsMaintenanceItemConfiguration.clickSave(wait, annotationText)');
+      expect(pageContent).toContain('return await this.MaintenanceItemConfiguration.clickSave(wait, annotationText)');
     }
     finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -481,6 +500,13 @@ describe("class-generation coverage", () => {
         filePath: path.join(tempRoot, "src", "components", "MaintenanceItems", "MaintenanceItemConfiguration.vue"),
         isView: false,
         childrenComponentSet: new Set(["MaintenanceItemsMaintenanceItemSelector"]),
+        componentInstances: [{
+          sourceId: "selector",
+          componentName: "MaintenanceItemsMaintenanceItemSelector",
+          instanceName: "MaintenanceItemSelector",
+          selector: createPomStringPattern("MaintenanceItemConfiguration-MaintenanceItemSelector-component", "static", []),
+          parameters: [],
+        }],
       });
 
       const depsChildComponent = makeDeps({
@@ -513,10 +539,10 @@ describe("class-generation coverage", () => {
       });
 
       const componentContent = readFile(path.join(outDir, "MaintenanceItemsMaintenanceItemConfiguration.g.ts"));
-      expect(componentContent).toContain('import type { Page as PwPage } from "@playwright/test";');
+      expect(componentContent).toContain('import type { Locator as PwLocator, Page as PwPage } from "@playwright/test";');
       expect(componentContent).toContain('import { MaintenanceItemsMaintenanceItemSelector }');
-      expect(componentContent).toContain('MaintenanceItemsMaintenanceItemSelector: MaintenanceItemsMaintenanceItemSelector;');
-      expect(componentContent).toContain('this.MaintenanceItemsMaintenanceItemSelector = new MaintenanceItemsMaintenanceItemSelector(page);');
+      expect(componentContent).toContain('MaintenanceItemSelector: MaintenanceItemsMaintenanceItemSelector;');
+      expect(componentContent).toContain('this.MaintenanceItemSelector = new MaintenanceItemsMaintenanceItemSelector(page, this.componentInstanceLocator("MaintenanceItemConfiguration-MaintenanceItemSelector-component"));');
     }
     finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -534,6 +560,13 @@ describe("class-generation coverage", () => {
         filePath: path.join(tempRoot, "src", "components", "RecordDialog.vue"),
         isView: false,
         childrenComponentSet: new Set(["ActionWrapper"]),
+        componentInstances: [{
+          sourceId: "action-wrapper",
+          componentName: "ActionWrapper",
+          instanceName: "ActionWrapper",
+          selector: createPomStringPattern("RecordDialog-ActionWrapper-component", "static", []),
+          parameters: [],
+        }],
         dataTestIdSet: new Set([{
           selectorValue: createPomStringPattern("RecordDialog-Name-input", "static", []),
           pom: {
@@ -548,6 +581,13 @@ describe("class-generation coverage", () => {
         filePath: path.join(tempRoot, "src", "components", "ActionWrapper.vue"),
         isView: false,
         childrenComponentSet: new Set(["ActionButton"]),
+        componentInstances: [{
+          sourceId: "action-button",
+          componentName: "ActionButton",
+          instanceName: "ActionButton",
+          selector: createPomStringPattern("ActionWrapper-ActionButton-component", "static", []),
+          parameters: [],
+        }],
       });
       const actionButton = makeDeps({
         filePath: path.join(tempRoot, "src", "components", "ActionButton.vue"),
@@ -579,12 +619,12 @@ describe("class-generation coverage", () => {
       const dialogContent = readFile(path.join(outDir, "RecordDialog.g.ts"));
       expect(dialogContent).toContain('import { ActionWrapper }');
       expect(dialogContent).toContain('ActionWrapper: ActionWrapper;');
-      expect(dialogContent).toContain('this.ActionWrapper = new ActionWrapper(page);');
+      expect(dialogContent).toContain('this.ActionWrapper = new ActionWrapper(page, this.componentInstanceLocator("RecordDialog-ActionWrapper-component"));');
 
       const wrapperContent = readFile(path.join(outDir, "ActionWrapper.g.ts"));
       expect(wrapperContent).toContain('import { ActionButton }');
       expect(wrapperContent).toContain('ActionButton: ActionButton;');
-      expect(wrapperContent).toContain('this.ActionButton = new ActionButton(page);');
+      expect(wrapperContent).toContain('this.ActionButton = new ActionButton(page, this.componentInstanceLocator("ActionWrapper-ActionButton-component"));');
     }
     finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -668,7 +708,7 @@ describe("class-generation coverage", () => {
       expect(content).toContain("await this.page.evaluate(({ name, params })");
 
       // Trim + propagate testIdAttribute into BasePage super call.
-      expect(content).toContain("super(page, { testIdAttribute: \"data-qa\" });");
+      expect(content).toContain("super(page, { root, testIdAttribute: \"data-qa\" });");
 
       // ToggleWidget instance generated. `this.page` surfaces the full `Page`
       // (BasePage widens it for subclasses), so custom-POM attachments take it directly.

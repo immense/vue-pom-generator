@@ -323,6 +323,13 @@ describe("generated output", () => {
       childrenComponentSet: new Set(["TenantDetailsEditForm"]),
       usedComponentSet: new Set(["TenantDetailsEditForm"]),
       dataTestIdSet: new Set([navigationEntry]),
+      componentInstances: [{
+        sourceId: "tenant-form",
+        componentName: "TenantDetailsEditForm",
+        instanceName: "TenantDetailsEditForm",
+        selector: createPomStringPattern("TenantListPage-TenantDetailsEditForm-component", "static", []),
+        parameters: [],
+      }],
       generatedMethods: new Map(),
       isView: true,
     };
@@ -407,6 +414,22 @@ describe("generated output", () => {
       childrenComponentSet: new Set([componentName, "TreeViewItemValue"]),
       usedComponentSet: new Set([componentName, "TreeViewItemValue"]),
       dataTestIdSet: new Set([toggleEntry]),
+      componentInstances: [
+        {
+          sourceId: "self",
+          componentName,
+          instanceName: componentName,
+          selector: createPomStringPattern("TreeViewItem-TreeViewItem-component", "static", []),
+          parameters: [],
+        },
+        {
+          sourceId: "value",
+          componentName: "TreeViewItemValue",
+          instanceName: "TreeViewItemValue",
+          selector: createPomStringPattern("TreeViewItem-TreeViewItemValue-component", "static", []),
+          parameters: [],
+        },
+      ],
       generatedMethods: new Map(),
       isView: false,
     };
@@ -440,7 +463,7 @@ describe("generated output", () => {
     // ...and so must the matching property declaration.
     expect(generatedContent).not.toMatch(new RegExp(`^\\s*${componentName}:\\s*${componentName};`, "m"));
     // The genuine child instance is still emitted.
-    expect(generatedContent).toContain("this.TreeViewItemValue = new TreeViewItemValue(page)");
+    expect(generatedContent).toContain("this.TreeViewItemValue = new TreeViewItemValue(page, this.componentInstanceLocator(\"TreeViewItem-TreeViewItemValue-component\"))");
 
     // The generated barrel must typecheck — proving the class is constructible (no recursion).
     const result = runTscNoEmit([path.join(outDir, "index.ts")], { cwd: tempRoot });
@@ -563,7 +586,7 @@ describe("generated output", () => {
       [
         "export type Fluent<T extends object> = T & PromiseLike<T>;",
         "export class BasePage {",
-        "  constructor(public page?: any, _options?: { testIdAttribute?: string }) {}",
+        "  constructor(public page?: any, _options?: { root?: any; testIdAttribute?: string }) {}",
         "}",
       ].join("\n"),
     );
@@ -621,7 +644,7 @@ describe("generated output", () => {
       [
         "export type Fluent<T extends object> = T & PromiseLike<T>;",
         "export class BasePage {",
-        "  constructor(public page?: any, _options?: { testIdAttribute?: string }) {}",
+        "  constructor(public page?: any, _options?: { root?: any; testIdAttribute?: string }) {}",
         "}",
       ].join("\n"),
     );
@@ -709,7 +732,7 @@ describe("generated output", () => {
       [
         "export type Fluent<T extends object> = T & PromiseLike<T>;",
         "export class BasePage {",
-        "  constructor(public page?: any, _options?: { testIdAttribute?: string }) {}",
+        "  constructor(public page?: any, _options?: { root?: any; testIdAttribute?: string }) {}",
         "}",
       ].join("\n"),
     );
@@ -770,8 +793,11 @@ describe("generated output", () => {
         "export type Fluent<T extends object> = T & PromiseLike<T>;",
         "export class BasePage {",
         "  public page: any;",
-        "  public constructor(page?: any, _options?: { testIdAttribute?: string }) {",
+        "  public constructor(page?: any, _options?: { root?: any; testIdAttribute?: string }) {",
         "    this.page = page;",
+        "  }",
+        "  protected componentInstanceLocator(_instanceId: string, _within?: any): any {",
+        "    return null as any;",
         "  }",
         "  protected fluent<T extends object>(_factory: () => Promise<T>): Fluent<T> {",
         "    throw new Error('not implemented');",
@@ -842,6 +868,22 @@ describe("generated output", () => {
       childrenComponentSet: new Set(),
       usedComponentSet: new Set([childA, childB]),
       dataTestIdSet: new Set(),
+      componentInstances: [
+        {
+          sourceId: "child-a",
+          componentName: childA,
+          instanceName: childA,
+          selector: createPomStringPattern("TestViewPage-ChildA-component", "static", []),
+          parameters: [],
+        },
+        {
+          sourceId: "child-b",
+          componentName: childB,
+          instanceName: childB,
+          selector: createPomStringPattern("TestViewPage-ChildB-component", "static", []),
+          parameters: [],
+        },
+      ],
       generatedMethods: new Map(),
       isView: true,
     };
@@ -889,6 +931,13 @@ describe("generated output", () => {
       ...depsViewWithTwoChildren,
       filePath: path.join(tempRoot, `${viewName}Single.vue`),
       usedComponentSet: new Set([childA]),
+      componentInstances: [{
+        sourceId: "child-a",
+        componentName: childA,
+        instanceName: childA,
+        selector: createPomStringPattern("TestViewPageSingle-ChildA-component", "static", []),
+        parameters: [],
+      }],
     };
     const componentHierarchyMapOne = new Map<string, IComponentDependencies>([
       ["TestViewPageSingle", depsViewSingleChild],

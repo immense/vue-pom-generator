@@ -1976,13 +1976,14 @@ describe('option-keying: per-component optionKeyAttribute config', () => {
     expect((keyed!.selectorValue as { formatted: string }).formatted)
       .toBe('MyRadioGroup-${option.value}-option-radio')
 
-    // The keyed accessor's selector pattern is parameterized by `key` (the generated
-    // parameter name), collapsing option.value -> ${key}.
-    expect(keyed!.pom?.selector).toEqual(createPomStringPattern('MyRadioGroup-${key}-option-radio', 'parameterized', ['key']))
+    // A configured `value` identity becomes the public parameter name, so generated
+    // consumers can say selectByValue(value) rather than selectOptionValueByKey(key).
+    expect(keyed!.pom?.selector).toEqual(createPomStringPattern('MyRadioGroup-${value}-option-radio', 'parameterized', ['value']))
 
-    // The accessor's parameter list carries the `key` parameter (plus the standard
+    // The accessor's parameter list carries the `value` parameter (plus the standard
     // annotationText argument that radio select methods accept).
-    expect(keyed!.pom?.parameters).toEqual(createPomParameters(['key', 'string'], ['annotationText', 'string = ""']))
+    expect(keyed!.pom?.parameters).toEqual(createPomParameters(['value', 'string'], ['annotationText', 'string = ""']))
+    expect(keyed!.pom?.generatedActionName).toBe('selectByValue')
   })
 
   it('default (no optionKeyAttribute config) keys off the non-meaningful :key=index — the gap', () => {
@@ -2060,7 +2061,7 @@ describe('action-event recognition: option-selection events beyond @click', () =
     })
 
     // The keyed accessor is parameterized by the configured :value binding, collapsing
-    // option.value -> ${key}, regardless of whether the radio is driven by @click or @change.
+    // option.value -> ${value}, regardless of whether the radio is driven by @click or @change.
     // The fixture mirrors the real component-library radio pattern: a <template v-for>
     // wrapping v-if/v-else <input> branches with `:value` + `:checked` + `@change` (no
     // v-model, to preserve typed values). The `:value` fallback yields the identifier
@@ -2068,9 +2069,10 @@ describe('action-event recognition: option-selection events beyond @click', () =
     // a role-based keyed accessor rather than the @change handler-name path.
     expect((keyed!.selectorValue as { formatted: string }).formatted)
       .toBe('MyRadioGroup-${option.value}-OptionValue-radio')
-    expect(keyed!.pom?.selector).toEqual(createPomStringPattern('MyRadioGroup-${key}-OptionValue-radio', 'parameterized', ['key']))
-    // The accessor carries a `key` parameter (the option value the test selects by).
-    expect(keyed!.pom?.parameters.map((p: { name: string }) => p.name)).toContain('key')
+    expect(keyed!.pom?.selector).toEqual(createPomStringPattern('MyRadioGroup-${value}-OptionValue-radio', 'parameterized', ['value']))
+    // The accessor carries a `value` parameter (the option value the test selects by).
+    expect(keyed!.pom?.parameters.map((p: { name: string }) => p.name)).toContain('value')
+    expect(keyed!.pom?.generatedActionName).toBe('selectByValue')
   })
 
   it('emits a keyed accessor for a v-for <li role="option"> driven by @mousedown', () => {

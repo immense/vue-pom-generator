@@ -734,6 +734,66 @@ Actual current rules:
 
 Without `flatten`, helper composition still works; you just call through the helper property explicitly.
 
+## Semantic, scoped component instances
+
+Generated TypeScript POMs model component **invocations**, not only component types. Each
+addressable invocation receives a generator-owned `data-pom-instance` marker on the DOM
+root that accepts Vue fallthrough attributes. The child POM is rooted at that marker, so
+identical controls in two component instances cannot accidentally select each other.
+
+Instance names come from author-visible semantics, in this order:
+
+1. a static accessible name (`aria-label`, `label`, `title`, or `name`)
+2. the identifier bound to `:options`
+3. the `v-model` / `:model-value` identifier
+4. the component tag as the fallback
+
+The generator tries those candidates in order. If an earlier invocation already owns a
+semantic candidate, the later invocation uses its next candidate instead. For example, a
+dialog titled `RDP Password` can own `RdpPassword` while its nested copy-input falls back
+to `CopyToClipboardInput`. Repeated structural wrappers with no unique candidate are
+omitted from composition; their ordinary generated controls are unaffected.
+
+Static invocations become properties. Repeated invocations with a stable `:key` become
+methods whose argument selects the instance:
+
+```vue
+<DynamicFormField
+  v-for="parameter in parameters"
+  :key="parameter.name"
+  :parameter="parameter"
+/>
+
+<ImmyRadioGroup
+  aria-label="Override policy options"
+  :options="overridePolicyOptions"
+/>
+```
+
+```ts
+form
+  .DynamicFormField(parameterName)
+  .OnboardingOption
+  .OverridePolicyOptions
+  .selectByValue(ParameterOverridePolicy.Require);
+```
+
+Named slot content is projected onto the component instance that receives the slot. That
+is why the example can expose `OnboardingOption` beneath `DynamicFormField` even when an
+intermediate form component forwards the slot. The generator only emits this projection
+when the receiving boundary and every attached child have one statically provable scope.
+Keyed slot owners and keyed projected content fail generation instead of producing a
+misleading API. Components that do not forward the marker to a DOM root are omitted from
+component-instance composition rather than falling back to page-wide selectors; their
+own standalone fixture is still generated normally.
+
+When `injection.optionKeyAttribute` maps a radio component to `"value"`, its generated
+selection API uses the domain term directly: `selectByValue(value)`. Other configured
+attribute names retain `key` when the HTML attribute name is not a valid public TypeScript
+identifier (for example `data-value`).
+
+`data-pom-instance` is generator-owned. Do not author it in Vue templates.
+
 ## Playwright fixtures: actual behavior and caveats
 
 When `generation.playwright.fixtures` is enabled, the generator emits a strongly typed Playwright fixture module.

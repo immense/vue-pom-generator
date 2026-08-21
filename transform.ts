@@ -17,6 +17,8 @@ import { parseExpression } from "@babel/parser";
 import path from "node:path";
 import fs from "node:fs";
 import { TESTID_CLICK_EVENT_NAME } from "./click-instrumentation";
+import { createPomParameterSpec } from "./pom-params";
+import { createPomStringPattern } from "./pom-patterns";
 import {
   buildVueSfcPathIndex,
   getElementControlRole,
@@ -69,6 +71,139 @@ import {
 } from "./utils";
 
 const CLICK_EVENT_NAME = TESTID_CLICK_EVENT_NAME;
+const POM_INSTANCE_ATTRIBUTE = "data-pom-instance";
+
+interface SemanticExpressionNode {
+  type?: string;
+  name?: string;
+  value?: string;
+  computed?: boolean;
+  property?: SemanticExpressionNode;
+  object?: SemanticExpressionNode;
+  expression?: SemanticExpressionNode;
+  callee?: SemanticExpressionNode;
+}
+
+function getLastSemanticIdentifier(node: SemanticExpressionNode | null | undefined): string | null {
+  if (!node) {
+    return null;
+  }
+
+  if (node.type === "Identifier") {
+    return node.name?.trim() || null;
+  }
+
+  if (node.type === "MemberExpression" || node.type === "OptionalMemberExpression") {
+    if (!node.computed && node.property?.type === "Identifier") {
+      return node.property.name?.trim() || null;
+    }
+    if (node.computed && node.property?.type === "StringLiteral") {
+      return node.property.value?.trim() || null;
+    }
+    return getLastSemanticIdentifier(node.object);
+  }
+
+  if (node.type === "CallExpression" || node.type === "OptionalCallExpression") {
+    return getLastSemanticIdentifier(node.callee);
+  }
+
+  if (
+    node.type === "TSAsExpression"
+    || node.type === "TSTypeAssertion"
+    || node.type === "TSNonNullExpression"
+    || node.type === "ChainExpression"
+  ) {
+    return getLastSemanticIdentifier(node.expression);
+  }
+
+  return null;
+}
+
+function getBoundSemanticName(element: ElementNode, attributeName: string): string | null {
+  const directive = element.props.find((prop): prop is DirectiveNode => {
+    return prop.type === NodeTypes.DIRECTIVE
+      && prop.name === "bind"
+      && prop.arg?.type === NodeTypes.SIMPLE_EXPRESSION
+      && prop.arg.content === attributeName
+      && !!prop.exp;
+  });
+  if (!directive?.exp) {
+    return null;
+  }
+
+  const source = getVueExpressionSource(
+    directive.exp as SimpleExpressionNode | CompoundExpressionNode,
+    "loc",
+    "content",
+    "compiled",
+  );
+  if (!source) {
+    return null;
+  }
+
+  try {
+    const identifier = getLastSemanticIdentifier(parseExpression(source, { plugins: ["typescript"] }) as SemanticExpressionNode);
+    return identifier ? toPascalCase(identifier) : null;
+  }
+  catch {
+    return null;
+  }
+}
+
+function getComponentInstanceNameCandidates(element: ElementNode): string[] {
+  const explicitAccessibleNames = ["aria-label", "label", "title", "name"]
+    .map(attributeName => getStaticAttributeContent(element, attributeName))
+    .filter((value): value is string => !!value)
+    .map(toPascalCase);
+
+  const optionsName = getBoundSemanticName(element, "options");
+  const { vModel, modelValue } = getModelBindingValues(element);
+  const modelName = modelValue || vModel;
+  const candidates = [
+    ...explicitAccessibleNames,
+    optionsName && optionsName !== "Options" ? optionsName : null,
+    modelName && !new Set(["Data", "Item", "ModelValue", "Value"]).has(modelName)
+      ? toPascalCase(modelName)
+      : null,
+    toPascalCase(element.tag),
+  ].filter((value): value is string => !!value);
+
+  return Array.from(new Set(candidates));
+}
+
+function getElementSourceId(element: ElementNode): string {
+  return `${element.tag}:${element.loc.start.offset}:${element.loc.end.offset}`;
+}
+
+function getNearestComponentAncestor(
+  element: ElementNode,
+  hierarchyMap: HierarchyMap,
+  isComponentLikeTag: (tag: string) => boolean,
+): ElementNode | null {
+  let parent = hierarchyMap.get(element) ?? null;
+  while (parent) {
+    if (isComponentLikeTag(parent.tag)) {
+      return parent;
+    }
+    parent = hierarchyMap.get(parent) ?? null;
+  }
+  return null;
+}
+
+function getSlotNameFromTemplate(element: ElementNode): string | null {
+  const directive = element.props.find((prop): prop is DirectiveNode => {
+    return prop.type === NodeTypes.DIRECTIVE && prop.name === "slot";
+  });
+  if (!directive) {
+    return null;
+  }
+  if (!directive.arg) {
+    return "default";
+  }
+  return directive.arg.type === NodeTypes.SIMPLE_EXPRESSION
+    ? directive.arg.content.trim() || "default"
+    : null;
+}
 
 function getStaticAttributeContent(element: ElementNode, name: string): string | null {
   const attr = element.props.find((prop): prop is AttributeNode => {
@@ -543,6 +678,7 @@ export function createTestIdTransform(
     Object.entries(nativeWrappers).map(([tag, config]) => [tag, { ...config }]),
   );
   const wrapperContractByTag = new Map<string, ReturnType<typeof resolveWrapperContractForTag>>();
+  const instanceWrapperContractByTag = new Map<string, ReturnType<typeof resolveWrapperContractForTag>>();
   const getWrapperContract = (tag: string) => {
     if (!wrapperContractByTag.has(tag)) {
       wrapperContractByTag.set(tag, resolveWrapperContractForTag({
@@ -553,6 +689,17 @@ export function createTestIdTransform(
       }));
     }
     return wrapperContractByTag.get(tag) ?? null;
+  };
+  const getInstanceWrapperContract = (tag: string) => {
+    if (!instanceWrapperContractByTag.has(tag)) {
+      instanceWrapperContractByTag.set(tag, resolveWrapperContractForTag({
+        tag,
+        vueFilesPathMap,
+        wrapperSearchRoots,
+        testIdAttribute: POM_INSTANCE_ATTRIBUTE,
+      }));
+    }
+    return instanceWrapperContractByTag.get(tag) ?? null;
   };
 
   // Some projects (and dev environments) use symlinks. We want viewsDir containment checks
@@ -595,6 +742,11 @@ export function createTestIdTransform(
   const conditionalMergeGroupByElement = new WeakMap<ElementNode, string>();
   const conditionalMergeGroupByElementLoc = new Map<string, string>();
   const conditionalMergeGroupByIfBranch = new WeakMap<IfBranchNode, string>();
+  const componentInstanceNameOwnerByName = new Map<string, {
+    componentName: string;
+    keyed: boolean;
+    sourceId: string;
+  }>();
   let conditionalMergeGroupCounter = 0;
 
   const getElementLocationKey = (element: ElementNode): string | null => {
@@ -728,6 +880,8 @@ export function createTestIdTransform(
           childrenComponentSet: new Set<string>(),
           usedComponentSet: new Set<string>(),
           dataTestIdSet: new Set(),
+          componentInstances: [],
+          slotOutlets: [],
           isView,
           methodsContent: "",
         };
@@ -746,6 +900,18 @@ export function createTestIdTransform(
       const isUpper = isAsciiUppercaseLetterCode(first);
       return isUpper || tag.includes("-");
     };
+
+    if (element.tag === "slot") {
+      const slotName = getStaticAttributeContent(element, "name") ?? "default";
+      const target = getNearestComponentAncestor(element, hierarchyMap, isComponentLikeTag);
+      if (target) {
+        dependencies.slotOutlets ??= [];
+        const outlet = { name: slotName, targetSourceId: getElementSourceId(target) };
+        if (!dependencies.slotOutlets.some(existing => existing.name === outlet.name && existing.targetSourceId === outlet.targetSourceId)) {
+          dependencies.slotOutlets.push(outlet);
+        }
+      }
+    }
 
     // Track all component-like tags used in the template, even when we do not emit a data-testid.
     // This supports per-view helper attachment (e.g. Grid) based on component usage.
@@ -853,6 +1019,7 @@ export function createTestIdTransform(
       };
     }
 
+      let selectorParameterName = "key";
       const getBestAvailableKeyInfo = (): ResolvedKeyInfo | null => {
         const parentNode = (context.parent && typeof context.parent === "object") ? context.parent as { type?: number } : null;
         const isDirectVForChild = parentNode?.type === NodeTypes.FOR;
@@ -865,6 +1032,11 @@ export function createTestIdTransform(
         if (configuredAttrName && configuredAttrName !== "key") {
           const bindingKeyInfo = getBindingKeyInfo(element, configuredAttrName);
           if (bindingKeyInfo) {
+            // `value` is the author-facing identity for option controls and produces
+            // APIs such as selectByValue(value). Attribute names such as `data-value`
+            // are selector implementation details rather than valid TS identifiers,
+            // so they retain the generic `key` parameter.
+            selectorParameterName = configuredAttrName === "value" ? "value" : "key";
             return bindingKeyInfo;
           }
         }
@@ -917,6 +1089,80 @@ export function createTestIdTransform(
 
       // Runtime click wrappers use the same normalization, but only need the runtime fragment itself.
       const bestRuntimeKeyPlaceholder = bestKeyInfo?.runtimeFragment ?? null;
+
+    // Component composition needs invocation identity, not merely the child type. A
+    // generator-owned marker falls through to the child's DOM root and becomes the
+    // scope for its generated POM. Slot-scope keys are deliberately excluded here:
+    // supplied slot content is already scoped by the keyed component receiving the
+    // slot, and requiring the same key again would produce `Field(key).Option(key)`.
+    if (isComponentLikeTag(element.tag)) {
+      const componentInstanceKeyInfo = getKeyDirectiveInfo(element)
+        || getContainedInVForDirectiveKeyInfo(context, element, hierarchyMap);
+      const instanceContract = getInstanceWrapperContract(element.tag);
+
+      if ((instanceContract?.forwardedTestIdTargetOffsets.size ?? 0) > 0) {
+        if (tryGetExistingElementDataTestId(element, POM_INSTANCE_ATTRIBUTE)) {
+          const loc = element.loc.start;
+          throw new Error(
+            `[vue-pom-generator] ${POM_INSTANCE_ATTRIBUTE} is generator-owned and cannot be authored manually.\n`
+            + `Component: ${componentName}\n`
+            + `File: ${context.filename ?? "unknown"}:${loc.line}:${loc.column}`,
+          );
+        }
+
+        const sourceId = getElementSourceId(element);
+        const semanticNameCandidates = getComponentInstanceNameCandidates(element);
+        const componentTypeName = toPascalCase(element.tag);
+        const instanceNameCandidates = componentInstanceKeyInfo
+          ? [componentTypeName, ...semanticNameCandidates.filter(candidate => candidate !== componentTypeName)]
+          : semanticNameCandidates;
+        const instanceName = instanceNameCandidates
+          .find((candidate) => {
+            const owner = componentInstanceNameOwnerByName.get(candidate);
+            return !owner || (
+              !!componentInstanceKeyInfo
+              && owner.keyed
+              && owner.componentName === element.tag
+            );
+          });
+        // Repeated structural wrappers often have no semantic signal beyond their tag.
+        // Once every candidate is already claimed, omit only this composition edge;
+        // normal control/test-id generation for the invocation still runs below.
+        if (instanceName) {
+          componentInstanceNameOwnerByName.set(instanceName, {
+            componentName: element.tag,
+            keyed: !!componentInstanceKeyInfo,
+            sourceId,
+          });
+          const runtimeMarker = componentInstanceKeyInfo
+            ? templateAttributeValue(`${componentName}-${componentInstanceKeyInfo.runtimeFragment}-${instanceName}-component`)
+            : staticAttributeValue(`${componentName}-${instanceName}-component`);
+          const selector = componentInstanceKeyInfo
+            ? createPomStringPattern(`${componentName}-\${key}-${instanceName}-component`, "parameterized", ["key"])
+            : createPomStringPattern(`${componentName}-${instanceName}-component`, "static", []);
+
+          upsertAttribute(element, POM_INSTANCE_ATTRIBUTE, runtimeMarker);
+
+          const slotTemplate = getContainedInSlotTemplateNode(element, hierarchyMap);
+          const slotName = slotTemplate ? getSlotNameFromTemplate(slotTemplate) : null;
+          const slotOwner = slotTemplate
+            ? getNearestComponentAncestor(slotTemplate, hierarchyMap, isComponentLikeTag)
+            : null;
+
+          dependencies.componentInstances ??= [];
+          dependencies.componentInstances.push({
+            sourceId,
+            componentName: element.tag,
+            instanceName,
+            selector,
+            parameters: componentInstanceKeyInfo ? [createPomParameterSpec("key", "string")] : [],
+            suppliedSlot: slotName && slotOwner
+              ? { ownerSourceId: getElementSourceId(slotOwner), name: slotName }
+              : undefined,
+          });
+        }
+      }
+    }
 
     // If we can prove the v-for iterable is a static literal list, capture the concrete
     // values (e.g. ['One', 'Two']). Downstream codegen can use this to:
@@ -1078,6 +1324,7 @@ export function createTestIdTransform(
         preferredGeneratedValue: args.preferredGeneratedValue,
         preferredRuntimeValue: args.preferredRuntimeValue,
         keyInfo: bestKeyInfo,
+        selectorParameterName,
         keyValuesOverride,
         entryOverrides: args.entryOverrides,
         semanticNameHint: args.semanticNameHint,
