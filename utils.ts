@@ -11,6 +11,7 @@ import {
   createSimpleExpression,
   ConstantTypes,
   NodeTypes,
+  processExpression,
   stringifyExpression,
 } from "@vue/compiler-core";
 import type {
@@ -2688,6 +2689,7 @@ export function upsertAttribute(
   element: ElementNode,
   attributeName: string,
   value: AttributeValue,
+  context?: TransformContext | null,
 ): void {
   element.props = element.props.filter((prop) => {
     // Remove static attribute: data-testid="..."
@@ -2710,6 +2712,7 @@ export function upsertAttribute(
 
   if (value.kind === "template") {
     // Dynamic binding: :data-testid="`ComponentName_tag_${key}`"
+    const expression = createSimpleExpression(`\`${value.template}\``, false, element.loc);
     element.props.push({
       type: NodeTypes.DIRECTIVE,
       name: "bind",
@@ -2720,7 +2723,12 @@ export function upsertAttribute(
         constType: 0,
         loc: element.loc,
       },
-      exp: createSimpleExpression(`\`${value.template}\``, false, element.loc),
+      // Custom node transforms run after Vue's built-in expression transform.
+      // Process generator-owned bindings explicitly so setup bindings, props,
+      // and v-for/slot locals retain the same runtime scope as authored bindings.
+      exp: context?.prefixIdentifiers
+        ? processExpression(expression, context)
+        : expression,
       modifiers: [],
       loc: element.loc,
     } as DirectiveNode);
@@ -3674,7 +3682,12 @@ export function applyResolvedDataTestId(args: {
 
   // 3) Apply attribute (only when we generated it) and register for POM generation.
   if (addHtmlAttribute && !fromExisting) {
-    upsertAttribute(args.element, testIdAttribute, dataTestId);
+    upsertAttribute(
+      args.element,
+      testIdAttribute,
+      runtimeDataTestId,
+      args.preferredRuntimeValue ? args.context : undefined,
+    );
   }
 
   const childComponentName = args.element.tag;
@@ -3720,13 +3733,18 @@ export function applyResolvedDataTestId(args: {
     }
 
     const metadataAttributePrefix = args.annotatorMetadata.metadataAttributePrefix;
-    upsertAttribute(args.element, args.annotatorMetadata.sourceAttribute, staticAttributeValue(`${filename}:${sourceLocation.line}:${sourceLocation.column}`));
-    upsertAttribute(args.element, `${metadataAttributePrefix}-component`, staticAttributeValue(args.componentName));
-    upsertAttribute(args.element, `${metadataAttributePrefix}-tag`, staticAttributeValue(args.element.tag));
-    upsertAttribute(args.element, `${metadataAttributePrefix}-testid`, runtimeDataTestId);
-    upsertAttribute(args.element, `${metadataAttributePrefix}-action`, staticAttributeValue(buildPomGeneratedActionName(dataTestIdEntry.pom)));
-    upsertAttribute(args.element, `${metadataAttributePrefix}-property`, staticAttributeValue(buildPomGeneratedPropertyName(dataTestIdEntry.pom)));
-    upsertAttribute(args.element, `${metadataAttributePrefix}-role`, staticAttributeValue(normalizedRole));
+    upsertAttribute(args.element, args.annotatorMetadata.sourceAttribute, staticAttributeValue(`${filename}:${sourceLocation.line}:${sourceLocation.column}`), args.context);
+    upsertAttribute(args.element, `${metadataAttributePrefix}-component`, staticAttributeValue(args.componentName), args.context);
+    upsertAttribute(args.element, `${metadataAttributePrefix}-tag`, staticAttributeValue(args.element.tag), args.context);
+    upsertAttribute(
+      args.element,
+      `${metadataAttributePrefix}-testid`,
+      runtimeDataTestId,
+      args.preferredRuntimeValue ? args.context : undefined,
+    );
+    upsertAttribute(args.element, `${metadataAttributePrefix}-action`, staticAttributeValue(buildPomGeneratedActionName(dataTestIdEntry.pom)), args.context);
+    upsertAttribute(args.element, `${metadataAttributePrefix}-property`, staticAttributeValue(buildPomGeneratedPropertyName(dataTestIdEntry.pom)), args.context);
+    upsertAttribute(args.element, `${metadataAttributePrefix}-role`, staticAttributeValue(normalizedRole), args.context);
   }
 
   args.dependencies.childrenComponentSet.add(childComponentName);
