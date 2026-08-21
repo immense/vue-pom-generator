@@ -22,6 +22,7 @@ export interface ResolvedGenerationSupportOptions {
     namespace?: string;
   };
   generateFixtures?: boolean | string | { outDir?: string };
+  vueTestUtilsOutDir?: string;
   customPomAttachments: ResolvedCustomPomAttachmentConfig[];
   customPomDir: string;
   requireCustomPomDir: boolean;
@@ -47,6 +48,7 @@ export function resolveGenerationSupportOptions(
     typescriptOutputStructure: options.typescriptOutputStructure ?? "aggregated",
     csharp: options.csharp,
     generateFixtures: options.generateFixtures,
+    vueTestUtilsOutDir: options.vueTestUtilsOutDir?.trim() || undefined,
     customPomAttachments: options.customPomAttachments ?? [],
     customPomDir: options.customPomDir ?? "tests/playwright/pom/custom",
     requireCustomPomDir: options.requireCustomPomDir ?? false,

@@ -2,6 +2,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import process from "node:process";
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 
 import { compile } from "@vue/compiler-dom";
 import { parse as parseSfc } from "@vue/compiler-sfc";
@@ -11,6 +14,43 @@ import { generateFiles } from "../class-generation";
 import { createTestIdTransform } from "../transform";
 import type { IComponentDependencies } from "../utils";
 import { resetWrapperContractCaches } from "../wrapper-contract";
+
+function typecheckGeneratedVueTestUtilsFiles(projectRoot: string, outputDir: string) {
+  const require = createRequire(import.meta.url);
+  const tscPath = require.resolve("typescript/bin/tsc");
+  fs.symlinkSync(
+    path.resolve("node_modules"),
+    path.join(projectRoot, "node_modules"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  const files = fs.readdirSync(outputDir)
+    .filter(file => file.endsWith(".ts"))
+    .map(file => path.join(outputDir, file));
+  files.push(path.join(outputDir, "_pom-runtime", "vue-test-utils-pom.ts"));
+
+  return spawnSync(process.execPath, [
+    tscPath,
+    "--noEmit",
+    "--pretty",
+    "false",
+    "--target",
+    "ES2022",
+    "--module",
+    "ESNext",
+    "--moduleResolution",
+    "Bundler",
+    "--lib",
+    "ES2022,DOM",
+    "--skipLibCheck",
+    "true",
+    "--verbatimModuleSyntax",
+    "true",
+    ...files,
+  ], {
+    cwd: projectRoot,
+    encoding: "utf8",
+  });
+}
 
 describe("semantic component instances", () => {
   const temporaryDirectories: string[] = [];
@@ -156,6 +196,7 @@ describe("semantic component instances", () => {
     }
 
     const outDir = path.join(projectRoot, "generated");
+    const vueTestUtilsOutDir = path.join(projectRoot, "generated-vtu");
     await generateFiles(
       componentHierarchyMap,
       vueFilesPathMap,
@@ -164,12 +205,16 @@ describe("semantic component instances", () => {
         outDir,
         projectRoot,
         typescriptOutputStructure: "split",
+        vueTestUtilsOutDir,
       },
     );
 
     const formPom = fs.readFileSync(path.join(outDir, "DeploymentParametersForm.g.ts"), "utf8");
     const onboardingPom = fs.readFileSync(path.join(outDir, "OnboardingOption.g.ts"), "utf8");
     const radioPom = fs.readFileSync(path.join(outDir, "ImmyRadioGroup.g.ts"), "utf8");
+    const formVtuPom = fs.readFileSync(path.join(vueTestUtilsOutDir, "DeploymentParametersForm.vtu.g.ts"), "utf8");
+    const onboardingVtuPom = fs.readFileSync(path.join(vueTestUtilsOutDir, "OnboardingOption.vtu.g.ts"), "utf8");
+    const radioVtuPom = fs.readFileSync(path.join(vueTestUtilsOutDir, "ImmyRadioGroup.vtu.g.ts"), "utf8");
 
     expect(formPom).toContain("DynamicFormField(key: string): DynamicFormField & { readonly OnboardingOption: OnboardingOption }");
     expect(formPom).toContain("const ownerRoot = this.componentInstanceLocator(\"DeploymentParametersForm-BaseDynamicForm-component\")");
@@ -185,5 +230,20 @@ describe("semantic component instances", () => {
 
     expect(radioPom).toContain("async selectByValue(value: string, annotationText: string = \"\")");
     expect(radioPom).toContain("`ImmyRadioGroup-${value}-OptionValue-radio`");
+
+    expect(formVtuPom).toContain("DynamicFormField(key: string): DynamicFormField & { readonly OnboardingOption: OnboardingOption }");
+    expect(formVtuPom).toContain("const ownerRoot = this.getComponentInstance(\"DeploymentParametersForm-BaseDynamicForm-component\")");
+    expect(formVtuPom).toContain("const root = this.getComponentInstance(`BaseDynamicForm-${key}-DynamicFormField-component`, ownerRoot)");
+    expect(formVtuPom).toContain("OnboardingOption: new OnboardingOption(this.getComponentInstance(\"DeploymentParametersForm-OnboardingOption-component\", root))");
+    expect(onboardingVtuPom).toContain("readonly OverridePolicyOptions: ImmyRadioGroup");
+    expect(onboardingVtuPom).toContain("this.OverridePolicyOptions = new ImmyRadioGroup(this.getComponentInstance(\"OnboardingOption-OverridePolicyOptions-component\"))");
+    expect(radioVtuPom).toContain("async selectByValue(value: string)");
+    expect(radioVtuPom).toContain("await this.getByTestId(`ImmyRadioGroup-${value}-OptionValue-radio`).setValue()");
+    expect(radioVtuPom).not.toContain("annotationText");
+    expect(fs.readFileSync(path.join(vueTestUtilsOutDir, "index.ts"), "utf8"))
+      .toContain("export * from \"./DeploymentParametersForm.vtu.g\"");
+
+    const typecheck = typecheckGeneratedVueTestUtilsFiles(projectRoot, vueTestUtilsOutDir);
+    expect(typecheck.status, `${typecheck.stdout}\n${typecheck.stderr}`).toBe(0);
   });
 });

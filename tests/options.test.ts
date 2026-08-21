@@ -233,6 +233,38 @@ describe("createVuePomGeneratorPlugins options", () => {
 
     await expect(runConfigResolved(plugins)).resolves.toBeUndefined();
   });
+
+  it("accepts Vue Test Utils generation with its default output directory", async () => {
+    const plugins = createVuePomGeneratorPlugins({
+      generation: {
+        vueTestUtils: {},
+      },
+    });
+
+    await expect(runConfigResolved(plugins)).resolves.toBeUndefined();
+  });
+
+  it("fails fast for an empty Vue Test Utils output directory", async () => {
+    const plugins = createVuePomGeneratorPlugins({
+      generation: {
+        vueTestUtils: { outDir: "   " },
+      },
+    });
+
+    await expect(runConfigResolved(plugins)).rejects.toThrow("generation.vueTestUtils.outDir");
+  });
+
+  it("fails fast when Vue Test Utils and Playwright share an output directory", async () => {
+    const plugins = createVuePomGeneratorPlugins({
+      generation: {
+        outDir: "tests/generated",
+        vueTestUtils: { outDir: "tests/generated" },
+      },
+    });
+
+    await expect(runConfigResolved(plugins)).rejects.toThrow("must differ from generation.outDir");
+  });
+
   it("fails fast for invalid injection.viewsDir", async () => {
     const plugins = createVuePomGeneratorPlugins({
       injection: { viewsDir: "   " },

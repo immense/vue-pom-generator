@@ -26,6 +26,8 @@ const peerVite = "7.3.1";
 const peerVue = "3.5.22";
 const peerPluginVue = "6.0.1";
 const consumerPlaywrightTest = "1.61.0";
+const consumerVueTestUtils = "2.4.11";
+const consumerTypeScript = "5.9.2";
 
 function lastNonEmptyLine(value) {
   // Avoid regex and split/replace/match-style parsing (repo lint rule).
@@ -93,6 +95,8 @@ try {
       `vite@${peerVite}`,
       `vue@${peerVue}`,
       `@vitejs/plugin-vue@${peerPluginVue}`,
+      `@vue/test-utils@${consumerVueTestUtils}`,
+      `typescript@${consumerTypeScript}`,
     ],
     { cwd: tempRoot },
   );
@@ -151,6 +155,73 @@ try {
     ],
     { cwd: tempRoot },
   );
+
+  // Exercise Vue Test Utils generation through the packed Vite plugin, including the
+  // package-owned runtime source copied into the consumer's generated directory.
+  fs.mkdirSync(path.join(tempRoot, "src"), { recursive: true });
+  fs.writeFileSync(
+    path.join(tempRoot, "index.html"),
+    '<div id="app"></div><script type="module" src="/src/main.js"></script>\n',
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(tempRoot, "src", "main.js"),
+    'import { createApp } from "vue";\nimport App from "./App.vue";\ncreateApp(App).mount("#app");\n',
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(tempRoot, "src", "App.vue"),
+    '<script setup>\nfunction save() {}\n</script>\n<template><button @click="save">Save</button></template>\n',
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(tempRoot, "vite.config.mjs"),
+    [
+      'import { defineConfig } from "vite";',
+      'import { createVuePomGeneratorPlugins } from "@immense/vue-pom-generator";',
+      "export default defineConfig({",
+      "  plugins: createVuePomGeneratorPlugins({",
+      '    injection: { viewsDir: "src", componentDirs: ["src"], layoutDirs: ["src"] },',
+      '    generation: { outDir: "tests/playwright/__generated__", vueTestUtils: {} },',
+      "  }),",
+      "});",
+    ].join("\n"),
+    "utf8",
+  );
+  run("npx", ["vite", "build"], { cwd: tempRoot });
+
+  const vueTestUtilsOutputDir = path.join(tempRoot, "tests", "unit", "__generated__");
+  const generatedComponentObject = fs.readFileSync(
+    path.join(vueTestUtilsOutputDir, "App.vtu.g.ts"),
+    "utf8",
+  );
+  if (!generatedComponentObject.includes("async clickSave()")) {
+    throw new Error("Packed plugin did not emit the expected Vue Test Utils action.");
+  }
+  const vueTestUtilsTypeScriptFiles = fs.readdirSync(vueTestUtilsOutputDir)
+    .filter(file => file.endsWith(".ts"))
+    .map(file => path.join(vueTestUtilsOutputDir, file));
+  vueTestUtilsTypeScriptFiles.push(
+    path.join(vueTestUtilsOutputDir, "_pom-runtime", "vue-test-utils-pom.ts"),
+  );
+  run("npx", [
+    "tsc",
+    "--noEmit",
+    "--target",
+    "ES2022",
+    "--module",
+    "ESNext",
+    "--moduleResolution",
+    "Bundler",
+    "--lib",
+    "ES2022,DOM",
+    "--skipLibCheck",
+    "true",
+    "--verbatimModuleSyntax",
+    "true",
+    ...vueTestUtilsTypeScriptFiles,
+  ], { cwd: tempRoot });
+  console.log("[packed-smoke] ok: Vue Test Utils generation");
 
   // Cleanup tarball + temp workspace.
   fs.rmSync(tarballPath, { force: true });

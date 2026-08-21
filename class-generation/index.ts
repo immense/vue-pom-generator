@@ -60,6 +60,7 @@ import {
   PomExtraClickMethodSpec,
   PomPrimarySpec,
   PomSelectorSpec,
+  buildPomGeneratedActionName,
   toPascalCase,
   upperFirst,
 } from "../utils";
@@ -684,7 +685,9 @@ function generateMethodMembersFromPom(
   );
 }
 
-function generateMethodsContentForDependencies(componentName: string, dependencies: IComponentDependencies): TypeScriptClassMember[] {
+function getUniquePrimaryPomSpecs(
+  dependencies: IComponentDependencies,
+): Array<{ pom: PomPrimarySpec; target: string | undefined }> {
   const entries = Array.from(dependencies.dataTestIdSet ?? []);
   const primarySpecsAll = entries
     .map(e => ({ pom: e.pom, target: e.targetPageObjectModelClass }))
@@ -696,7 +699,7 @@ function generateMethodsContentForDependencies(componentName: string, dependenci
   // It's possible to end up with multiple IDataTestId entries that carry identical `pom` specs.
   // When we emit from IR, we must de-dupe here to avoid duplicate getters/methods.
   const seenPrimaryKeys = new Set<string>();
-  const primarySpecs = primarySpecsAll.filter(({ pom, target }) => {
+  return primarySpecsAll.filter(({ pom, target }) => {
     const alternates = (pom.alternateSelectors ?? [])
       .slice()
       .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
@@ -716,6 +719,10 @@ function generateMethodsContentForDependencies(componentName: string, dependenci
     seenPrimaryKeys.add(key);
     return true;
   });
+}
+
+function generateMethodsContentForDependencies(componentName: string, dependencies: IComponentDependencies): TypeScriptClassMember[] {
+  const primarySpecs = getUniquePrimaryPomSpecs(dependencies);
 
   const extras = (dependencies.pomExtraMethods ?? [])
     .slice()
@@ -758,6 +765,9 @@ export interface GenerateFilesOptions {
    * - `{ outDir }`: enable and override where fixture files are written (resolved relative to projectRoot)
    */
   generateFixtures?: boolean | string | { outDir?: string };
+
+  /** Generate Vue Test Utils component objects in this directory when set. */
+  vueTestUtilsOutDir?: string;
 
   /**
    * Project root used for resolving conventional paths (e.g. src/views, tests/playwright/pom/custom).
@@ -881,6 +891,7 @@ export async function generateFiles(
   const {
     outDir: outDirOverride,
     generateFixtures,
+    vueTestUtilsOutDir,
     customPomAttachments = [],
     projectRoot,
     customPomDir,
@@ -906,6 +917,9 @@ export async function generateFiles(
     : ["ts"];
 
   const outDir = outDirOverride ?? "./pom";
+  if (vueTestUtilsOutDir && path.resolve(vueTestUtilsOutDir) === path.resolve(outDir)) {
+    throw new Error("[vue-pom-generator] generation.vueTestUtils.outDir must differ from generation.outDir.");
+  }
 
   const routeMetaByComponent = routeMetaByComponentOverride
     ?? (vueRouterFluentChaining
@@ -976,10 +990,315 @@ export async function generateFiles(
     }
   }
 
+  if (vueTestUtilsOutDir) {
+    const vueTestUtilsFiles = generateVueTestUtilsFiles(
+      emittableComponentHierarchyMap,
+      vueTestUtilsOutDir,
+      { testIdAttribute },
+    );
+    for (const file of vueTestUtilsFiles) {
+      writeGeneratedFile(file);
+    }
+  }
+
   const gitattributesFiles = buildGeneratedGitAttributesFiles(generatedFilePaths);
   for (const file of gitattributesFiles) {
     createFile(file.filePath, file.content);
   }
+}
+
+const VUE_TEST_UTILS_OMITTED_PARAMETERS = new Set(["annotationText", "timeOut", "wait"]);
+
+function getVueTestUtilsParameters(
+  parameters: PomParameterSpec[],
+  patterns: PomStringPattern[],
+  options: { omit?: string[] } = {},
+) {
+  return orderPomPatternParameters(parameters, patterns, options)
+    .filter(parameter => !VUE_TEST_UTILS_OMITTED_PARAMETERS.has(parameter.name));
+}
+
+function getVueTestUtilsPrimaryMembers(primary: PomPrimarySpec): TypeScriptClassMember[] {
+  if (primary.emitPrimary === false) {
+    return [];
+  }
+
+  const selectors = uniquePomStringPatterns(primary.selector, primary.alternateSelectors);
+  const parameters = getVueTestUtilsParameters(primary.parameters, selectors);
+  const actionName = buildPomGeneratedActionName(primary);
+  const selectorExpressions = selectors.map(selector => toTypeScriptPomPatternExpression(selector));
+  const targetExpression = selectorExpressions.length === 1
+    ? `this.getByTestId(${selectorExpressions[0]})`
+    : `this.getByAnyTestId([${selectorExpressions.join(", ")}])`;
+
+  let actionStatement: string;
+  switch (primary.nativeRole) {
+    case "input":
+      actionStatement = `await ${targetExpression}.setValue(text);`;
+      break;
+    case "select":
+      actionStatement = `await ${targetExpression}.setValue(value);`;
+      break;
+    case "vselect":
+      actionStatement = selectors.length === 1
+        ? `await this.selectVSelectByTestId(${selectorExpressions[0]}, value);`
+        : `await this.selectVSelectByAnyTestId([${selectorExpressions.join(", ")}], value);`;
+      break;
+    case "radio":
+      actionStatement = `await ${targetExpression}.setValue();`;
+      break;
+    default:
+      actionStatement = `await ${targetExpression}.trigger("click");`;
+      break;
+  }
+
+  return [createClassMethod({
+    name: actionName,
+    isAsync: true,
+    parameters: toTypeScriptPomParameterStructures(parameters),
+    statements: [actionStatement],
+  })];
+}
+
+function getVueTestUtilsExtraMembers(extra: PomExtraClickMethodSpec): TypeScriptClassMember[] {
+  if (extra.kind !== "click") {
+    return [];
+  }
+
+  const patterns = extra.selector.kind === "testId"
+    ? [extra.selector.testId]
+    : [extra.selector.rootTestId, extra.selector.label];
+  const parameters = getVueTestUtilsParameters(extra.parameters, patterns, {
+    omit: extra.keyLiteral === undefined ? [] : ["key"],
+  });
+
+  return [createClassMethod({
+    name: extra.name,
+    isAsync: true,
+    parameters: toTypeScriptPomParameterStructures(parameters),
+    statements: (writer) => {
+      if (extra.keyLiteral !== undefined) {
+        writer.writeLine(`const key = ${JSON.stringify(extra.keyLiteral)};`);
+      }
+      if (extra.selector.kind === "testId") {
+        writer.writeLine(`await this.clickByTestId(${toTypeScriptPomPatternExpression(extra.selector.testId)});`);
+        return;
+      }
+      writer.writeLine(
+        `await this.clickWithinTestIdByLabel(${toTypeScriptPomPatternExpression(extra.selector.rootTestId)}, `
+        + `${toTypeScriptPomPatternExpression(extra.selector.label)}, ${extra.selector.exact ?? false});`,
+      );
+    },
+  })];
+}
+
+function getVueTestUtilsComponentMembers(
+  componentInstances: ResolvedComponentInstance[],
+  projectedComponentInstances: ResolvedProjectedComponentInstance[],
+  testIdAttribute: string,
+): TypeScriptClassMember[] {
+  const members: TypeScriptClassMember[] = [];
+
+  for (const instance of componentInstances) {
+    if (instance.parameters.length === 0) {
+      members.push(createClassProperty({
+        name: instance.instanceName,
+        type: instance.className,
+        isReadonly: true,
+      }));
+      continue;
+    }
+
+    members.push(createClassMethod({
+      name: instance.instanceName,
+      parameters: toTypeScriptPomParameterStructures(instance.parameters),
+      returnType: instance.className,
+      statements: [
+        `return new ${instance.className}(this.getComponentInstance(${toTypeScriptPomPatternExpression(instance.selector)}));`,
+      ],
+    }));
+  }
+
+  for (const projection of projectedComponentInstances) {
+    const projectedPropertiesType = projection.contents.length > 0
+      ? ` & { ${projection.contents.map(content => `readonly ${content.instanceName}: ${content.className}`).join("; ")} }`
+      : "";
+    const statements = (writer: TypeScriptWriter) => {
+      writer.writeLine(`const ownerRoot = this.getComponentInstance(${toTypeScriptPomPatternExpression(projection.owner.selector)});`);
+      writer.writeLine(`const root = this.getComponentInstance(${toTypeScriptPomPatternExpression(projection.target.selector)}, ownerRoot);`);
+      writer.writeLine(`const instance = new ${projection.target.className}(root);`);
+      if (projection.contents.length === 0) {
+        writer.writeLine("return instance;");
+        return;
+      }
+      writer.writeLine("return Object.assign(instance, {");
+      writer.indent(() => {
+        for (const content of projection.contents) {
+          writer.writeLine(
+            `${content.instanceName}: new ${content.className}(this.getComponentInstance(`
+            + `${toTypeScriptPomPatternExpression(content.selector)}, root)),`,
+          );
+        }
+      });
+      writer.writeLine("});");
+    };
+    const returnType = `${projection.target.className}${projectedPropertiesType}`;
+    members.push(projection.target.parameters.length > 0
+      ? createClassMethod({
+          name: projection.target.instanceName,
+          parameters: toTypeScriptPomParameterStructures(projection.target.parameters),
+          returnType,
+          statements,
+        })
+      : createClassGetter({
+          name: projection.target.instanceName,
+          returnType,
+          statements,
+        }));
+  }
+
+  members.push(createClassConstructor({
+    parameters: [{ name: "wrapper", type: "VueTestUtilsPomRoot" }],
+    statements: (writer) => {
+      writer.writeLine(`super(wrapper, { testIdAttribute: ${JSON.stringify(testIdAttribute)} });`);
+      for (const instance of componentInstances) {
+        if (instance.parameters.length > 0) {
+          continue;
+        }
+        writer.writeLine(
+          `this.${instance.instanceName} = new ${instance.className}(`
+          + `this.getComponentInstance(${toTypeScriptPomPatternExpression(instance.selector)}));`,
+        );
+      }
+    },
+  }));
+
+  return members;
+}
+
+function generateVueTestUtilsContent(
+  componentName: string,
+  dependencies: IComponentDependencies,
+  componentHierarchyMap: Map<string, IComponentDependencies>,
+  outputDir: string,
+  runtimePath: string,
+  generatedFilePathByComponent: Map<string, string>,
+  testIdAttribute: string,
+): string {
+  const prepared = prepareViewObjectModelClass(componentName, dependencies, componentHierarchyMap, {
+    outputStructure: "split",
+    outputDir,
+    testIdAttribute,
+  });
+  const runtimeImport = stripExtension(toPosixRelativePath(outputDir, runtimePath));
+  const sourceRel = toPosixRelativePath(outputDir, dependencies.filePath);
+  const componentImports = Array.from(prepared.componentRefsForInstances)
+    .map((componentRef) => {
+      const className = componentRef.endsWith(".vue") ? componentRef.slice(0, -4) : componentRef;
+      const filePath = generatedFilePathByComponent.get(className);
+      return filePath ? { className, moduleSpecifier: stripExtension(toPosixRelativePath(outputDir, filePath)) } : null;
+    })
+    .filter((value): value is { className: string; moduleSpecifier: string } => !!value)
+    .sort((left, right) => left.className.localeCompare(right.className));
+
+  const members = [
+    ...getVueTestUtilsComponentMembers(
+      prepared.directComponentInstances,
+      prepared.projectedComponentInstances,
+      testIdAttribute,
+    ),
+    ...getUniquePrimaryPomSpecs(dependencies)
+      .flatMap(({ pom }) => getVueTestUtilsPrimaryMembers(pom)),
+    ...(dependencies.pomExtraMethods ?? []).flatMap(getVueTestUtilsExtraMembers),
+  ];
+
+  return renderSourceFile(`${componentName}.vtu.g.ts`, (sourceFile) => {
+    addNamedImport(sourceFile, {
+      moduleSpecifier: runtimeImport,
+      namedImports: ["VueTestUtilsPom"],
+    });
+    addNamedImport(sourceFile, {
+      moduleSpecifier: runtimeImport,
+      namedImports: ["VueTestUtilsPomRoot"],
+      isTypeOnly: true,
+    });
+    for (const componentImport of componentImports) {
+      addNamedImport(sourceFile, {
+        moduleSpecifier: componentImport.moduleSpecifier,
+        namedImports: [componentImport.className],
+      });
+    }
+
+    const declaration = sourceFile.addClass({
+      name: prepared.className,
+      isExported: true,
+      extends: "VueTestUtilsPom",
+      docs: [`Vue Test Utils object for ${componentName} (source: ${sourceRel}).`],
+    });
+    for (const member of members) {
+      addClassMember(declaration, member);
+    }
+  }, {
+    prefixText: buildFilePrefix({ eslintDisableSortImports: true }),
+  });
+}
+
+function generateVueTestUtilsFiles(
+  componentHierarchyMap: Map<string, IComponentDependencies>,
+  outDir: string,
+  options: { testIdAttribute?: string } = {},
+): GeneratedFileOutput[] {
+  const base = ensureDir(outDir);
+  const testIdAttribute = options.testIdAttribute?.trim() || "data-testid";
+  const entries = Array.from(componentHierarchyMap.entries())
+    .sort((left, right) => left[0].localeCompare(right[0]));
+  const generatedFilePathByComponent = new Map(
+    entries.map(([componentName]) => [componentName, path.join(base, `${componentName}.vtu.g.ts`)]),
+  );
+  const runtimePath = path.join(base, "_pom-runtime", "vue-test-utils-pom.ts");
+  const files: GeneratedFileOutput[] = entries.map(([componentName, dependencies]) => {
+    const filePath = generatedFilePathByComponent.get(componentName)!;
+    return {
+      filePath,
+      content: generateVueTestUtilsContent(
+        componentName,
+        dependencies,
+        componentHierarchyMap,
+        path.dirname(filePath),
+        runtimePath,
+        generatedFilePathByComponent,
+        testIdAttribute,
+      ),
+    };
+  });
+  const [runtimeFile] = buildRuntimeGeneratedFilesFromSpecs([{
+    absolutePath: resolvePluginAsset("../class-generation/vue-test-utils-pom.ts"),
+    description: "vue-test-utils-pom.ts",
+    outputPath: runtimePath,
+  }]);
+  if (!runtimeFile) {
+    throw new Error("[vue-pom-generator] Failed to generate the Vue Test Utils runtime.");
+  }
+  const indexContent = renderSourceFile("index.ts", (sourceFile) => {
+    addExportAll(sourceFile, stripExtension(toPosixRelativePath(base, runtimePath)));
+    for (const [, filePath] of generatedFilePathByComponent) {
+      addExportAll(sourceFile, `./${stripExtension(path.basename(filePath))}`);
+    }
+  }, {
+    prefixText: buildFilePrefix({
+      eslintDisableSortImports: true,
+      commentLines: [
+        "Vue Test Utils POM exports",
+        "DO NOT MODIFY BY HAND",
+      ],
+    }),
+  });
+
+  return [
+    ...files,
+    { filePath: path.join(base, "index.ts"), content: indexContent },
+    runtimeFile,
+  ];
 }
 
 async function generateSplitTypeScriptFiles(
@@ -2819,7 +3138,7 @@ function getRuntimeGeneratedAssetSpecs(baseDir: string, basePageClassPath: strin
   const runtimeClassGenSourceDir = resolvePluginAsset("../class-generation");
   const runtimeClassGenFiles = fs.readdirSync(runtimeClassGenSourceDir)
     .filter(file => file.endsWith(".ts"))
-    .filter(file => file !== "base-page.ts" && file !== "diagnostics.ts" && file !== "index.ts")
+    .filter(file => !["base-page.ts", "diagnostics.ts", "index.ts", "vue-test-utils-pom.ts"].includes(file))
     .sort((left, right) => left.localeCompare(right));
 
   return [

@@ -383,6 +383,9 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
     typescriptOutputStructure: generationOptions?.playwright?.outputStructure,
     csharp: generationOptions?.csharp,
     generateFixtures,
+    vueTestUtilsOutDir: generationOptions?.vueTestUtils
+      ? (generationOptions.vueTestUtils.outDir ?? "tests/unit/__generated__")
+      : undefined,
     customPomAttachments: resolvedCustomPomAttachments,
     customPomDir: customPoms?.dir,
     requireCustomPomDir,
@@ -418,6 +421,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
     layoutDirs: isNuxt ? null : getLayoutDirs(),
     wrapperSearchRoots: isNuxt ? null : getWrapperSearchRoots(),
     outDir: resolvedGenerationOptions.outDir,
+    vueTestUtilsOutDir: resolvedGenerationOptions.vueTestUtilsOutDir,
     testIdAttribute,
     routerType: resolvedGenerationOptions.routerType,
     vuePluginOwnership,
@@ -463,6 +467,13 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
       }
       if (generationEnabled) {
         assertNonEmptyString(resolvedGenerationOptions.outDir, "[vue-pom-generator] generation.outDir");
+        if (generationOptions?.vueTestUtils) {
+          assertNonEmptyString(resolvedGenerationOptions.vueTestUtilsOutDir, "[vue-pom-generator] generation.vueTestUtils.outDir");
+          if (path.resolve(projectRootRef.current, resolvedGenerationOptions.vueTestUtilsOutDir)
+            === path.resolve(projectRootRef.current, resolvedGenerationOptions.outDir)) {
+            throw new Error("[vue-pom-generator] generation.vueTestUtils.outDir must differ from generation.outDir.");
+          }
+        }
         assertOneOf(resolvedGenerationOptions.typescriptOutputStructure, ["aggregated", "split"], "[vue-pom-generator] generation.playwright.outputStructure");
         assertRouterModuleShims(resolvedGenerationOptions.routerModuleShims, "[vue-pom-generator] generation.router.moduleShims");
 
