@@ -3231,9 +3231,12 @@ export function applyResolvedDataTestId(args: {
   // POM *shape* (method names, params) comes from semantic hints + Vue/Babel AST-derived
   // signals collected during the transform phase.
 
+  const selectorParameterName = args.selectorParameterName?.trim() || "key";
   const getKeyTypeFromValues = (values: string[] | null | undefined) => {
     if (!values || values.length === 0) {
-      return "string";
+      return selectorParameterName === "key"
+        ? "string"
+        : "string | number | boolean | bigint";
     }
     return values.map(v => JSON.stringify(v)).join(" | ");
   };
@@ -3268,7 +3271,6 @@ export function applyResolvedDataTestId(args: {
   // Parameterized selectors are represented explicitly in the POM spec: the formatted
   // pattern and its template variables are both carried as metadata from construction,
   // never re-derived from the formatted string.
-  const selectorParameterName = args.selectorParameterName?.trim() || "key";
   const pomKeyPattern = dataTestId.kind === "template"
     ? toPomKeyPattern(dataTestId, selectorParameterName)
     : null;

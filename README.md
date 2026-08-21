@@ -790,7 +790,9 @@ own standalone fixture is still generated normally.
 When `injection.optionKeyAttribute` maps a radio component to `"value"`, its generated
 selection API uses the domain term directly: `selectByValue(value)`. Other configured
 attribute names retain `key` when the HTML attribute name is not a valid public TypeScript
-identifier (for example `data-value`).
+identifier (for example `data-value`). When the template does not expose a finite set of
+values, the generated parameter accepts primitive HTML values (`string | number | boolean |
+bigint`) so domain enums can be passed without string conversion.
 
 `data-pom-instance` is generator-owned. Do not author it in Vue templates.
 
