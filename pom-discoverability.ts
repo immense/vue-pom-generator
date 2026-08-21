@@ -88,10 +88,6 @@ export function humanizePomMethodName(methodName: string): string {
   return joinWords(splitWords(methodName));
 }
 
-export function humanizePomComponentName(componentName: string): string {
-  return joinWords(splitWords(stripComponentKindSuffix(componentName)));
-}
-
 export function stripPomActionPrefix(actionName: string): string {
   for (const prefix of ["click", "select", "type", "goTo"]) {
     if (actionName.startsWith(prefix) && actionName.length > prefix.length) {

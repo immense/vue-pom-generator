@@ -666,7 +666,7 @@ export function toResolvedKeyInfo(selectorSource: string | null, runtimeSource: 
   };
 }
 
-export function tryGetTemplateSlotScopeKeyInfo(expression: VueExpressionNode): ResolvedKeyInfo | null {
+function tryGetTemplateSlotScopeKeyInfo(expression: VueExpressionNode): ResolvedKeyInfo | null {
   const bindingNode = tryGetTemplateSlotScopeBindingNode(expression);
   const candidateExpression = bindingNode ? tryGetSlotScopeKeyCandidate(bindingNode)?.expression ?? null : null;
   return candidateExpression ? toResolvedKeyInfo(candidateExpression) : null;

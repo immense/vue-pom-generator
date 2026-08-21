@@ -44,7 +44,7 @@ export function createPomStringPattern(
   };
 }
 
-export function getPomPatternVariables(
+function getPomPatternVariables(
   patterns: readonly PomStringPattern[],
   options: { omit?: readonly string[] } = {},
 ): string[] {

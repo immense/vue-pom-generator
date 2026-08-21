@@ -31,27 +31,8 @@ const floatingUiLicenseNotice = `/*
  * SOFTWARE.
  */`;
 
-const entrySource = [
-  "export {",
-  "  arrow,",
-  "  autoPlacement,",
-  "  computePosition,",
-  "  detectOverflow,",
-  "  flip,",
-  "  limitShift,",
-  "  offset,",
-  "  shift,",
-  "} from \"@floating-ui/core\";",
-  "",
-].join("\n");
-
 const result = await build({
-  stdin: {
-    contents: entrySource,
-    loader: "ts",
-    resolveDir: packageDir,
-    sourcefile: "floating-ui-runtime-entry.ts",
-  },
+  entryPoints: [path.join(scriptDir, "floating-ui-runtime-entry.ts")],
   bundle: true,
   charset: "utf8",
   format: "esm",

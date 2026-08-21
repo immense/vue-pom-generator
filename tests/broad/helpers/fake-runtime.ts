@@ -16,7 +16,7 @@ export interface BoundingBox {
  * assert on them, and no-ops the remaining members so it satisfies the full
  * `Keyboard` interface that {@link BasePagePage.keyboard} requires.
  */
-export class FakeKeyboard {
+class FakeKeyboard {
   public readonly typed: Array<{ text: string; delay: number }> = [];
   public async type(text: string, options: { delay: number }) {
     this.typed.push({ text, delay: options.delay });

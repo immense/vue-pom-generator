@@ -21,10 +21,13 @@
     "class-generation/**/*.ts",
     "compiler-*.ts",
     "playwright/**/*.ts",
+    "scripts/**/*.mjs",
+    "scripts/**/*.ts",
     "tests/**/*.test.ts"
   ],
   "project": [
     "**/*.ts",
+    "scripts/**/*.mjs",
     "!dist/**",
     "!coverage/**",
     "!tests/fixtures/**",

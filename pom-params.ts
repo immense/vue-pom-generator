@@ -15,7 +15,7 @@ export interface PomMethodSignature {
 
 export type PomParameterInput = readonly PomParameterSpec[] | undefined;
 
-export function splitPomParameterTypeExpression(typeExpression: string): { type: string; initializer?: string } {
+function splitPomParameterTypeExpression(typeExpression: string): { type: string; initializer?: string } {
   const trimmed = typeExpression.trim();
   const initializerIndex = trimmed.lastIndexOf("=");
   if (initializerIndex < 0) {
