@@ -1035,7 +1035,7 @@ function templateFragmentContainsSingleExpression(container: ParsedTemplateFragm
  * hasTemplateInterpolationExpressions("item.id")
  * // => false
  */
-export function hasTemplateInterpolationExpressions(fragment: string): boolean {
+function hasTemplateInterpolationExpressions(fragment: string): boolean {
   return (tryParseTemplateFragment(fragment)?.templateLiteral.expressions.length ?? 0) > 0;
 }
 

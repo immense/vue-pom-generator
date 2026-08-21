@@ -150,7 +150,7 @@ function pomParameterSpecEquals(left: PomParameterSpec, right: PomParameterSpec)
     && left.isRestParameter === right.isRestParameter;
 }
 
-export function pomParameterListEquals(left: PomParameterInput, right: PomParameterInput): boolean {
+function pomParameterListEquals(left: PomParameterInput, right: PomParameterInput): boolean {
   const leftParams = normalizePomParameters(left);
   const rightParams = normalizePomParameters(right);
   if (leftParams.length !== rightParams.length) {
