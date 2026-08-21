@@ -12,7 +12,7 @@ import type {
   ForNode,
 } from "@vue/compiler-core";
 import type { AttributeValue, DataTestIdEntryOverrides, HierarchyMap, ResolvedKeyInfo } from "./utils";
-import { NodeTypes } from "@vue/compiler-core";
+import { createSimpleExpression, NodeTypes, processExpression } from "@vue/compiler-core";
 import { parseExpression } from "@babel/parser";
 import path from "node:path";
 import fs from "node:fs";
@@ -1132,7 +1132,12 @@ export function createTestIdTransform(
           const propName = crossFileKeyRegistry.get(componentName);
           if (propName) {
             const fallbackExpr = buildSlotScopeFallbackKeyExpression(propName);
-            return toResolvedKeyInfo(fallbackExpr, fallbackExpr);
+            const runtimeExpression = createSimpleExpression(fallbackExpr, false, element.loc);
+            const selectorExpression = context.prefixIdentifiers
+              ? processExpression(runtimeExpression, context)
+              : runtimeExpression;
+            const selectorSource = getVueExpressionSource(selectorExpression, "compiled", "content");
+            return toResolvedKeyInfo(selectorSource, fallbackExpr);
           }
         }
 
@@ -1205,7 +1210,7 @@ export function createTestIdTransform(
             ? createPomStringPattern(`${componentName}-\${key}-${instanceName}-component`, "parameterized", ["key"])
             : createPomStringPattern(`${componentName}-${instanceName}-component`, "static", []);
 
-          upsertAttribute(element, POM_INSTANCE_ATTRIBUTE, runtimeMarker);
+          upsertAttribute(element, POM_INSTANCE_ATTRIBUTE, runtimeMarker, context);
 
           const slotTemplate = getContainedInSlotTemplateNode(element, hierarchyMap);
           const slotName = slotTemplate ? getSlotNameFromTemplate(slotTemplate) : null;
@@ -1452,7 +1457,7 @@ export function createTestIdTransform(
           );
         }
 
-        upsertAttribute(element, "option-data-testid-prefix", optionDataTestIdPrefixValue);
+        upsertAttribute(element, "option-data-testid-prefix", optionDataTestIdPrefixValue, context);
       }
 
       const nativeRole = resolvedNativeWrappers[element.tag]?.role ?? element.tag;

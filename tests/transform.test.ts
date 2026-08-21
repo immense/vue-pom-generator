@@ -83,6 +83,10 @@ function compileWithRuntimeTemplateOptions(
   options: {
     nativeWrappers?: NativeWrappersMap
     bindingMetadata?: BindingMetadata
+    inline?: boolean
+    crossFileKeyRegistry?: Map<string, string>
+    vueFilesPathMap?: Map<string, string>
+    wrapperSearchRoots?: string[]
     annotatorMetadata?: {
       sourceAttribute: string
       metadataAttributePrefix: string
@@ -98,8 +102,8 @@ function compileWithRuntimeTemplateOptions(
     elementMetadata: new Map(),
     semanticNameMap: new Map(),
     componentHierarchyMap,
-    crossFileKeyRegistry: new Map(),
-    vueFilesPathMap: new Map(),
+    crossFileKeyRegistry: options.crossFileKeyRegistry ?? new Map(),
+    vueFilesPathMap: options.vueFilesPathMap ?? new Map(),
     skipTestIdGenerationInsideComponents: [],
     getViewsDirAbs: () => '/src/views',
     testIdAttribute: 'data-testid',
@@ -112,7 +116,7 @@ function compileWithRuntimeTemplateOptions(
       },
     },
     getSourceDirs: () => ['/src/views', '/src/components'],
-    getWrapperSearchRoots: () => [],
+    getWrapperSearchRoots: () => options.wrapperSearchRoots ?? [],
     getProjectRoot: () => '/',
     annotatorMetadata: options.annotatorMetadata ?? null,
   })
@@ -120,7 +124,7 @@ function compileWithRuntimeTemplateOptions(
   return compileDom(source, {
     ...templateCompilerOptions,
     filename: '/src/views/MyComp.vue',
-    inline: true,
+    inline: options.inline ?? true,
     cacheHandlers: true,
     bindingMetadata: options.bindingMetadata,
     mode: 'module',
@@ -569,6 +573,50 @@ describe('createTestIdTransform', () => {
     expect(code).not.toContain('${`${item.name}-${item.url}`}')
   })
 
+  it('rewrites injected cross-file key expressions using runtime prop bindings', () => {
+    const code = compileWithRuntimeTemplateOptions(
+      '<button @click="selectAll">Select All</button>',
+      {
+        bindingMetadata: {
+          selectAll: BindingTypes.SETUP_CONST,
+          subject: BindingTypes.PROPS,
+        },
+        crossFileKeyRegistry: new Map([['MyComp', 'subject']]),
+        inline: false,
+      },
+    )
+
+    expect(code).toContain('$props.subject.id')
+    expect(code).not.toMatch(/\$\{subject\?\./)
+  })
+
+  it('rewrites keyed component-instance markers using runtime setup bindings', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-runtime-scope-'))
+    const childPath = path.join(directory, 'ForwardingPanel.vue')
+    fs.writeFileSync(childPath, '<template><section v-bind="$attrs" /></template>')
+
+    try {
+      const code = compileWithRuntimeTemplateOptions(
+        '<ForwardingPanel :key="getPanelKey(state)" />',
+        {
+          bindingMetadata: {
+            getPanelKey: BindingTypes.SETUP_CONST,
+            state: BindingTypes.SETUP_REACTIVE_CONST,
+          },
+          inline: false,
+          vueFilesPathMap: new Map([['ForwardingPanel', childPath]]),
+          wrapperSearchRoots: [directory],
+        },
+      )
+
+      expect(code).toContain('$setup.getPanelKey($setup.state)')
+      expect(code).not.toContain('${getPanelKey(state)}')
+    }
+    finally {
+      fs.rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('ignores singleton :key values when generating click test ids', () => {
     const componentHierarchyMap = new Map()
 
@@ -774,7 +822,7 @@ describe('createTestIdTransform', () => {
     )
 
     const testId = findFirstDataTestId(childAst)
-    expect(testId).toBe('`RolePermissionSubject-${subject.key ?? subject.data?.id ?? subject.id ?? subject.value ?? subject.url ?? subject}-SelectAll-button`')
+    expect(testId).toBe('`RolePermissionSubject-${_ctx.subject.key ?? _ctx.subject.data?.id ?? _ctx.subject.id ?? _ctx.subject.value ?? _ctx.subject.url ?? _ctx.subject}-SelectAll-button`')
   })
 
   it('does not key child component testids when not in a keyed slot', () => {
