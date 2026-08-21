@@ -666,7 +666,7 @@ export function toResolvedKeyInfo(selectorSource: string | null, runtimeSource: 
   };
 }
 
-export function tryGetTemplateSlotScopeKeyInfo(expression: VueExpressionNode): ResolvedKeyInfo | null {
+function tryGetTemplateSlotScopeKeyInfo(expression: VueExpressionNode): ResolvedKeyInfo | null {
   const bindingNode = tryGetTemplateSlotScopeBindingNode(expression);
   const candidateExpression = bindingNode ? tryGetSlotScopeKeyCandidate(bindingNode)?.expression ?? null : null;
   return candidateExpression ? toResolvedKeyInfo(candidateExpression) : null;
@@ -772,7 +772,7 @@ function unwrapToBareCallbackIdentifier(node: BabelNode | null | undefined): str
  *
  * @internal
  */
-export function tryGetBareCallbackClickHandlerName(node: ElementNode): string | null {
+function tryGetBareCallbackClickHandlerName(node: ElementNode): string | null {
   const click = tryGetClickDirective(node);
   if (!click?.exp) {
     return null;
@@ -1035,7 +1035,7 @@ function templateFragmentContainsSingleExpression(container: ParsedTemplateFragm
  * hasTemplateInterpolationExpressions("item.id")
  * // => false
  */
-export function hasTemplateInterpolationExpressions(fragment: string): boolean {
+function hasTemplateInterpolationExpressions(fragment: string): boolean {
   return (tryParseTemplateFragment(fragment)?.templateLiteral.expressions.length ?? 0) > 0;
 }
 

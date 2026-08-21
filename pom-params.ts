@@ -15,7 +15,7 @@ export interface PomMethodSignature {
 
 export type PomParameterInput = readonly PomParameterSpec[] | undefined;
 
-export function splitPomParameterTypeExpression(typeExpression: string): { type: string; initializer?: string } {
+function splitPomParameterTypeExpression(typeExpression: string): { type: string; initializer?: string } {
   const trimmed = typeExpression.trim();
   const initializerIndex = trimmed.lastIndexOf("=");
   if (initializerIndex < 0) {
@@ -141,7 +141,7 @@ export function createPomMethodSignature(parameters: PomParameterInput): PomMeth
   };
 }
 
-export function pomParameterSpecEquals(left: PomParameterSpec, right: PomParameterSpec): boolean {
+function pomParameterSpecEquals(left: PomParameterSpec, right: PomParameterSpec): boolean {
   return left.name === right.name
     && left.typeExpression === right.typeExpression
     && left.type === right.type
@@ -150,7 +150,7 @@ export function pomParameterSpecEquals(left: PomParameterSpec, right: PomParamet
     && left.isRestParameter === right.isRestParameter;
 }
 
-export function pomParameterListEquals(left: PomParameterInput, right: PomParameterInput): boolean {
+function pomParameterListEquals(left: PomParameterInput, right: PomParameterInput): boolean {
   const leftParams = normalizePomParameters(left);
   const rightParams = normalizePomParameters(right);
   if (leftParams.length !== rightParams.length) {

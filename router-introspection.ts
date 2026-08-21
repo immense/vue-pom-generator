@@ -433,7 +433,7 @@ type RoutePropsFunction = (route: RouteLocationNormalizedLoaded) => Record<strin
 type RoutePropsValue = boolean | Record<string, RoutePropPrimitive> | RoutePropsFunction;
 type RoutePropsContainer = RoutePropsValue | { default?: RoutePropsValue };
 
-export const PARAM_TOKEN_PREFIX = "__VUE_TESTID_PARAM__";
+const PARAM_TOKEN_PREFIX = "__VUE_TESTID_PARAM__";
 
 /** Builds the opaque placeholder token substituted into a route template for a named param. */
 export function getParamToken(name: string) {

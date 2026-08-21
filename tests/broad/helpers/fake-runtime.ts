@@ -16,7 +16,7 @@ export interface BoundingBox {
  * assert on them, and no-ops the remaining members so it satisfies the full
  * `Keyboard` interface that {@link BasePagePage.keyboard} requires.
  */
-export class FakeKeyboard {
+class FakeKeyboard {
   public readonly typed: Array<{ text: string; delay: number }> = [];
   public async type(text: string, options: { delay: number }) {
     this.typed.push({ text, delay: options.delay });
@@ -339,23 +339,4 @@ export class FakeLocator implements BasePageLocator {
     const tagName = this.element.tagName.toLowerCase();
     return tagName === "input" || tagName === "textarea" || tagName === "select" || this.element.isContentEditable === true;
   }
-}
-
-export function createVisibleElement(
-  page: FakePage,
-  id: string,
-  rect: BoundingBox,
-  options: { parent?: HTMLElement; tagName?: string; testId?: string } = {},
-) {
-  const element = page.dom.window.document.createElement(options.tagName ?? "div");
-  element.id = id;
-  if (options.testId) {
-    element.setAttribute("data-testid", options.testId);
-  }
-  element.style.display = "block";
-  element.style.visibility = "visible";
-  element.style.opacity = "1";
-  element.getBoundingClientRect = () => new page.dom.window.DOMRect(rect.x, rect.y, rect.width, rect.height);
-  (options.parent ?? page.dom.window.document.body).appendChild(element);
-  return element;
 }
