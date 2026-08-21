@@ -230,7 +230,7 @@ describe("semantic component instances", () => {
     expect(onboardingPom).toContain("OverridePolicyOptions: ImmyRadioGroup");
     expect(onboardingPom).toContain("this.OverridePolicyOptions = new ImmyRadioGroup(page, this.componentInstanceLocator(\"OnboardingOption-OverridePolicyOptions-component\"))");
 
-    expect(radioPom).toContain("async selectByValue(value: string, annotationText: string = \"\")");
+    expect(radioPom).toContain("async selectByValue(value: string | number | boolean | bigint, annotationText: string = \"\")");
     expect(radioPom).toContain("`ImmyRadioGroup-${value}-OptionValue-radio`");
 
     expect(formVtuPom).toContain("DynamicFormField(key: string): DynamicFormField & { readonly OnboardingOption: OnboardingOption }");
@@ -240,12 +240,25 @@ describe("semantic component instances", () => {
     expect(onboardingVtuPom).toContain("get OverridePolicyOptions(): ImmyRadioGroup");
     expect(onboardingVtuPom).toContain("return new ImmyRadioGroup(this.getComponentInstance(\"OnboardingOption-OverridePolicyOptions-component\"))");
     expect(onboardingVtuPom).not.toContain("this.OverridePolicyOptions =");
-    expect(radioVtuPom).toContain("async selectByValue(value: string)");
+    expect(radioVtuPom).toContain("async selectByValue(value: string | number | boolean | bigint)");
     expect(radioVtuPom).toContain("await this.getByTestId(`ImmyRadioGroup-${value}-OptionValue-radio`).setValue()");
     expect(radioVtuPom).not.toContain("annotationText");
     expect(fs.readFileSync(path.join(vueTestUtilsOutDir, "index.ts"), "utf8"))
       .toContain("export * from \"./DeploymentParametersForm.vtu.g\"");
 
+    fs.writeFileSync(
+      path.join(vueTestUtilsOutDir, "numeric-radio-consumer.ts"),
+      `
+        import type { DeploymentParametersForm } from "./DeploymentParametersForm.vtu.g";
+
+        declare const form: DeploymentParametersForm;
+        void form
+          .DynamicFormField("server")
+          .OnboardingOption
+          .OverridePolicyOptions
+          .selectByValue(3);
+      `,
+    );
     const typecheck = typecheckGeneratedVueTestUtilsFiles(projectRoot, vueTestUtilsOutDir);
     expect(typecheck.status, `${typecheck.stdout}\n${typecheck.stderr}`).toBe(0);
 
@@ -264,13 +277,13 @@ describe("semantic component instances", () => {
     const generated = require(runtimeBundlePath);
     const wrapper = mount(defineComponent({
       setup() {
-        const selected = reactive({ server: "Allow" });
+        const selected = reactive({ server: 2 });
         return () => h("form", [
           h("div", { "data-pom-instance": "DeploymentParametersForm-BaseDynamicForm-component" }, [
             h("section", { "data-pom-instance": "BaseDynamicForm-server-DynamicFormField-component" }, [
               h("div", { "data-pom-instance": "DeploymentParametersForm-OnboardingOption-component" }, [
                 h("div", { "data-pom-instance": "OnboardingOption-OverridePolicyOptions-component" }, [
-                  ...["Allow", "Require"].map(value => h("input", {
+                  ...[2, 3].map(value => h("input", {
                     type: "radio",
                     value,
                     checked: selected.server === value,
@@ -291,8 +304,8 @@ describe("semantic component instances", () => {
       .DynamicFormField("server")
       .OnboardingOption
       .OverridePolicyOptions
-      .selectByValue("Require");
+      .selectByValue(3);
 
-    expect(wrapper.get('[data-testid="selected-server"]').text()).toBe("Require");
+    expect(wrapper.get('[data-testid="selected-server"]').text()).toBe("3");
   });
 });

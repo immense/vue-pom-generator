@@ -1982,7 +1982,10 @@ describe('option-keying: per-component optionKeyAttribute config', () => {
 
     // The accessor's parameter list carries the `value` parameter (plus the standard
     // annotationText argument that radio select methods accept).
-    expect(keyed!.pom?.parameters).toEqual(createPomParameters(['value', 'string'], ['annotationText', 'string = ""']))
+    expect(keyed!.pom?.parameters).toEqual(createPomParameters(
+      ['value', 'string | number | boolean | bigint'],
+      ['annotationText', 'string = ""'],
+    ))
     expect(keyed!.pom?.generatedActionName).toBe('selectByValue')
   })
 
