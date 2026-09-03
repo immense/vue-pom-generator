@@ -298,6 +298,32 @@ if (import.meta.env.DEV) {
 }
 ```
 
+### Annotator overlay
+
+The generator can inject its floating annotator overlay into either a Vite dev server
+or a built application. Keep the environment decision in the Vite config and enable
+the metadata and UI together:
+
+```ts
+const pomConfig = defineVuePomGeneratorConfig({
+  runtime: {
+    annotator: {
+      enabled: true,
+      ui: {
+        enabled: true,
+        outputDetail: "forensic",
+        copyToClipboard: false,
+        showComponentTree: true,
+      },
+    },
+  },
+});
+```
+
+When `runtime.annotator.ui.enabled` is true, the same browser-only client is injected
+for both `vite serve` and `vite build`. Disable it for production in your conditional
+Vite config when the overlay is intended only for development or preview artifacts.
+
 ## Basic Nuxt setup
 
 ```ts

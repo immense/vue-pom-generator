@@ -72,7 +72,9 @@ export function createAnnotatorUiPlugin(options: ResolvedAnnotatorUiOptions): Pl
 
   return {
     name: "vue-pom-generator:annotator-ui",
-    apply: "serve",
+    apply(config, { command }) {
+      return command === "serve" || !config.build?.ssr;
+    },
     resolveId(id) {
       if (id === ANNOTATOR_CLIENT_VIRTUAL_ID) {
         return ANNOTATOR_CLIENT_RESOLVED_ID;
@@ -89,8 +91,8 @@ export function createAnnotatorUiPlugin(options: ResolvedAnnotatorUiOptions): Pl
         "",
       ].join("\n");
     },
-    transform(code, id) {
-      if (!options.enabled) {
+    transform(code, id, transformOptions) {
+      if (!options.enabled || transformOptions?.ssr) {
         return null;
       }
 
