@@ -27,10 +27,11 @@ export type RouterModuleShimDefinition = string[] | Record<string, RouterModuleS
 
 export interface VuePomGeneratorRuntimeAnnotatorUiOptions {
   /**
-   * Enables the dev-only floating annotator overlay that consumes the generated runtime metadata.
+   * Enables the floating annotator overlay that consumes the generated runtime metadata.
    *
-   * When enabled during `vite serve`, this package injects a browser-side overlay with element
-   * selection, floating popovers, preview/copy tooling, and source-aware Vue component detection.
+   * When enabled during `vite serve` or `vite build`, this package injects a browser-side overlay
+   * with element selection, floating popovers, preview/copy tooling, and source-aware Vue component
+   * detection.
    */
   enabled?: boolean;
 
@@ -78,7 +79,7 @@ export interface VuePomGeneratorRuntimeAnnotatorOptions {
    */
   metadataAttributePrefix?: string;
 
-  /** Optional dev-only annotator UI configuration. */
+  /** Optional annotator UI configuration. */
   ui?: VuePomGeneratorRuntimeAnnotatorUiOptions;
 }
 

@@ -183,12 +183,46 @@ try {
       "  plugins: createVuePomGeneratorPlugins({",
       '    injection: { viewsDir: "src", componentDirs: ["src"], layoutDirs: ["src"] },',
       '    generation: { outDir: "tests/playwright/__generated__", vueTestUtils: {} },',
+      "    runtime: { annotator: { enabled: true, ui: { enabled: true } } },",
       "  }),",
       "});",
     ].join("\n"),
     "utf8",
   );
   run("npx", ["vite", "build"], { cwd: tempRoot });
+
+  const builtAssetDir = path.join(tempRoot, "dist", "assets");
+  const browserBundle = fs.readdirSync(builtAssetDir)
+    .filter(file => file.endsWith(".js"))
+    .map(file => fs.readFileSync(path.join(builtAssetDir, file), "utf8"))
+    .join("\n");
+  if (!browserBundle.includes("vpg-annotator-toolbar")) {
+    throw new Error("Packed browser build did not include the configured annotator client.");
+  }
+  if (browserBundle.includes("createRequire")) {
+    throw new Error("Packed browser build pulled Node-only generator code into the annotator client.");
+  }
+  console.log("[packed-smoke] ok: annotator client in built application");
+
+  // The configured overlay is browser-only. An SSR build whose recognized entry
+  // path is src/main.js must neither include nor evaluate the annotator client.
+  fs.writeFileSync(
+    path.join(tempRoot, "src", "main.js"),
+    'import { createSSRApp } from "vue";\nimport App from "./App.vue";\nexport function createApp() { return createSSRApp(App); }\n',
+    "utf8",
+  );
+  run("npx", ["vite", "build", "--ssr", "src/main.js", "--outDir", "dist-ssr"], { cwd: tempRoot });
+  const serverEntry = fs.readdirSync(path.join(tempRoot, "dist-ssr"))
+    .find(file => file.startsWith("main.") && (file.endsWith(".js") || file.endsWith(".mjs")));
+  if (!serverEntry) {
+    throw new Error("Packed SSR build did not emit its expected main entry.");
+  }
+  const serverBundle = fs.readFileSync(path.join(tempRoot, "dist-ssr", serverEntry), "utf8");
+  if (serverBundle.includes("vpg-annotator-toolbar")) {
+    throw new Error("Packed SSR build included the browser-only annotator client.");
+  }
+  run("node", ["-e", `import(${JSON.stringify(`./dist-ssr/${serverEntry}`)})`], { cwd: tempRoot });
+  console.log("[packed-smoke] ok: annotator excluded from SSR build");
 
   const vueTestUtilsOutputDir = path.join(tempRoot, "tests", "unit", "__generated__");
   const generatedComponentObject = fs.readFileSync(
