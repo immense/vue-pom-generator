@@ -191,6 +191,10 @@ try {
   );
   run("npx", ["vite", "build"], { cwd: tempRoot });
 
+  const builtIndexHtml = fs.readFileSync(path.join(tempRoot, "dist", "index.html"), "utf8");
+  if (builtIndexHtml.includes("virtual:vue-pom-generator/annotator-client")) {
+    throw new Error("Packed browser build left the annotator virtual import unresolved in index.html.");
+  }
   const builtAssetDir = path.join(tempRoot, "dist", "assets");
   const browserBundle = fs.readdirSync(builtAssetDir)
     .filter(file => file.endsWith(".js"))

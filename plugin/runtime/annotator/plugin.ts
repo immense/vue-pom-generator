@@ -110,19 +110,22 @@ export function createAnnotatorUiPlugin(options: ResolvedAnnotatorUiOptions): Pl
         map: null,
       };
     },
-    transformIndexHtml() {
-      if (!options.enabled) {
-        return undefined;
-      }
+    transformIndexHtml: {
+      order: "pre",
+      handler() {
+        if (!options.enabled) {
+          return undefined;
+        }
 
-      const tag: HtmlTagDescriptor = {
-        tag: "script",
-        attrs: { type: "module" },
-        children: `import ${JSON.stringify(ANNOTATOR_CLIENT_VIRTUAL_ID)};`,
-        injectTo: "body",
-      };
+        const tag: HtmlTagDescriptor = {
+          tag: "script",
+          attrs: { type: "module" },
+          children: `import ${JSON.stringify(ANNOTATOR_CLIENT_VIRTUAL_ID)};`,
+          injectTo: "body",
+        };
 
-      return [tag];
+        return [tag];
+      },
     },
   };
 }
