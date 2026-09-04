@@ -231,6 +231,8 @@ describe("semantic component instances", () => {
 
     expect(radioPom).toContain("async selectByValue(value: string | number | boolean | bigint, annotationText: string = \"\")");
     expect(radioPom).toContain("`ImmyRadioGroup-${value}-OptionValue-radio`");
+    expect(radioPom).toContain("constructor(page: PwPage, root?: PwLocator)");
+    expect(radioPom).toContain("super(page, { root, testIdAttribute: \"data-testid\" })");
 
     expect(formVtuPom).toContain("DynamicFormField(key: string): DynamicFormField & { readonly OnboardingOption: OnboardingOption }");
     expect(formVtuPom).toContain("const ownerRoot = this.getComponentInstance(\"DeploymentParametersForm-BaseDynamicForm-component\")");

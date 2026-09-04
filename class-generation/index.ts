@@ -2553,12 +2553,20 @@ function prepareViewObjectModelClass(
   const members: TypeScriptClassMember[] = [];
   if (isView && (componentRefsForInstances.size > 0 || attachmentsForThisClass.length > 0 || widgetInstances.length > 0)) {
     members.push(...getComponentInstances(directComponentInstances, projectedComponentInstances, attachmentsForThisClass, widgetInstances));
-    members.push(getConstructor(directComponentInstances, attachmentsForThisClass, widgetInstances, { testIdAttribute }));
   }
   if (!isView && (componentRefsForInstances.size > 0 || attachmentsForThisClass.length > 0)) {
     members.push(...getComponentInstances(directComponentInstances, projectedComponentInstances, attachmentsForThisClass));
-    members.push(getConstructor(directComponentInstances, attachmentsForThisClass, [], { testIdAttribute }));
   }
+  // Every generated POM can be nested and therefore must accept the locator
+  // passed by its parent's semantic component-instance accessor. Leaf POMs have
+  // no child declarations, but omitting their constructor makes them inherit
+  // BasePage's (page, BasePageOptions) signature and rejects (page, Locator).
+  members.push(getConstructor(
+    directComponentInstances,
+    attachmentsForThisClass,
+    isView ? widgetInstances : [],
+    { testIdAttribute },
+  ));
 
   members.push(
     ...getAttachmentPassthroughMethods(componentName, dependencies, attachmentsForThisClass, reservedAttachmentPassthroughNames),
@@ -2618,15 +2626,12 @@ function generateViewObjectModelContent(
   const basePageImport = path.relative(fromAbs, toAbs).replace(/\\/g, "/");
   const basePageImportNoExt = stripExtension(basePageImport).replace(/\\/g, "/");
   const basePageImportSpecifier = basePageImportNoExt.startsWith(".") ? basePageImportNoExt : `./${basePageImportNoExt}`;
-  // Generated POM constructors take Playwright's full `Page` (not the narrowed `PwPage`):
+  // Every generated POM constructor takes Playwright's full `Page` (not the narrowed `PwPage`)
+  // and an optional root locator so any POM, including a leaf, can be nested safely:
   // `BasePage` widens `page` to the full `Page` for subclasses, so generated POMs construct
   // each other with `new Child(this.page)` where `this.page` is `Page`. Importing the
   // standard `Page` from `@playwright/test` keeps the narrowed types internal to the vendored
   // runtime — they never surface in generated output.
-  const needsPlaywrightPageImport = prepared.isView
-    || prepared.attachmentsForThisClass.length > 0
-    || prepared.componentRefsForInstances.size > 0
-    || prepared.widgetInstances.length > 0;
   const customPomImportSpecifiersByClass = options.customPomImportSpecifiersByClass ?? {};
 
   const customImports = Array.from(
@@ -2692,16 +2697,14 @@ function generateViewObjectModelContent(
 
   const prefixText = `${buildFilePrefix({ eslintDisableSortImports: true })}${doc}\n`;
   return renderSourceFile(`${prepared.className}.ts`, (sourceFile) => {
-    if (needsPlaywrightPageImport) {
-      addNamedImport(sourceFile, {
-        moduleSpecifier: "@playwright/test",
-        isTypeOnly: true,
-        namedImports: [
-          { name: "Locator", alias: "PwLocator" },
-          { name: "Page", alias: "PwPage" },
-        ],
-      });
-    }
+    addNamedImport(sourceFile, {
+      moduleSpecifier: "@playwright/test",
+      isTypeOnly: true,
+      namedImports: [
+        { name: "Locator", alias: "PwLocator" },
+        { name: "Page", alias: "PwPage" },
+      ],
+    });
 
     addNamedImport(sourceFile, {
       moduleSpecifier: basePageImportSpecifier,
