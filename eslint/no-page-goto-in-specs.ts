@@ -1,7 +1,22 @@
 import type { Rule } from "eslint";
 import type { CallExpression, MemberExpression } from "estree";
 
-const SPEC_FILE_SUFFIXES = [".spec.ts", ".spec.tsx", ".spec.js", ".spec.jsx"];
+// Same module-suffix set as no-page-fixture-in-specs so both rules gate the identical
+// spec-file forms (including the cts/mts variants the flat/recommended config targets).
+const SPEC_FILE_SUFFIXES = [
+	".spec.ts",
+	".spec.tsx",
+	".spec.js",
+	".spec.jsx",
+	".spec.cts",
+	".spec.ctsx",
+	".spec.cjs",
+	".spec.cjsx",
+	".spec.mts",
+	".spec.mtsx",
+	".spec.mjs",
+	".spec.mjsx",
+];
 
 function isSpecFile(filename: string): boolean {
 	return SPEC_FILE_SUFFIXES.some((suffix) => filename.endsWith(suffix));
@@ -27,8 +42,8 @@ function resolveMemberPropertyName(callee: MemberExpression): string | undefined
 
 /**
  * True when `node` is a member expression whose receiver is literally named
- * `page` or `playwrightPage` (possibly through narrow `.screencast`-style
- * property chains are NOT followed — only the direct receiver is inspected).
+ * `page` or `playwrightPage`. Property chains are not followed: only the direct
+ * receiver identifier is inspected, so `page.screencast.goto()` is not flagged.
  */
 function receiverIsRawPage(node: MemberExpression): boolean {
 	const object = node.object;
