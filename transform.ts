@@ -68,6 +68,8 @@ import {
   tryExtractSlotScopeVariableNames,
   getContainedInSlotTemplateNode,
   isSlotScopeCallbackClickHandler,
+  getDegenerateSlotScopeFallbackKeyVariable,
+  getSlotScopeVariablesUsedAsBareCallbackHandlers,
 } from "./utils";
 
 const CLICK_EVENT_NAME = TESTID_CLICK_EVENT_NAME;
@@ -772,6 +774,14 @@ export function createTestIdTransform(
   }>();
   let conditionalMergeGroupCounter = 0;
 
+  // Slot-scope variables used as bare callback click handlers, captured per slot
+  // template element the first time the compiler visits it. The transform
+  // instruments @click handlers in document order, so by the time a later sibling
+  // is processed, earlier siblings' original handler expressions are already
+  // rewritten away — the snapshot must be taken at the template node itself,
+  // before any descendant is mutated.
+  const slotScopeCallbackVariablesByTemplate = new WeakMap<ElementNode, Set<string>>();
+
   const getElementLocationKey = (element: ElementNode): string | null => {
     const startOffset = element.loc?.start.offset;
     const endOffset = element.loc?.end.offset;
@@ -865,6 +875,16 @@ export function createTestIdTransform(
 
     const element = node as ElementNode;
     const parentIsRoot = context?.parent?.type === NodeTypes.ROOT;
+
+    // Snapshot slot-scope callback usage before descendants are processed (and
+    // their @click handlers instrumented). Template nodes are entered before any
+    // of their children, so this runs at the right time.
+    if (element.tag === "template" && !slotScopeCallbackVariablesByTemplate.has(element)) {
+      const callbackVariables = getSlotScopeVariablesUsedAsBareCallbackHandlers(element);
+      if (callbackVariables.length > 0) {
+        slotScopeCallbackVariablesByTemplate.set(element, new Set(callbackVariables));
+      }
+    }
 
     // When the immediate parent is a non-element wrapper (IF_BRANCH, FOR, IF),
     // fall back to context.grandParent to maintain the element-to-element chain
@@ -1121,6 +1141,27 @@ export function createTestIdTransform(
           // always one element. Method-call handlers (`remove(item)`) and member
           // access (`data.action()`) pass row data and stay keyed.
           if (isSlotScopeCallbackClickHandler(element, hierarchyMap)) {
+            return null;
+          }
+          // The fallback key chain ends in the bare slot-scope variable
+          // (`v.key ?? v.data?.id ?? ... ?? v`). When the prop is a callback
+          // function (e.g. ImmyPopup's `cancelAction` handed to
+          // `#popup-footer="{ cancel }"`), none of the probed members exist, so
+          // the terminal fallback stringifies the entire function source into
+          // the emitted data-testid. Sibling elements in the same slot can prove
+          // the variable is a callback: a bare-identifier click handler naming it
+          // (e.g. @click="cancel" beside @click="save") means the slot props are
+          // callback-shaped rather than row data, so the chain must not be
+          // interpolated into the selector. The callback set was snapshotted when
+          // the compiler entered the slot template, before sibling handlers were
+          // instrumented.
+          const slotTemplateNode = getContainedInSlotTemplateNode(element, hierarchyMap);
+          const degenerateKeyVariable = getDegenerateSlotScopeFallbackKeyVariable(slotKeyInfo.rawExpression);
+          if (
+            degenerateKeyVariable
+            && slotTemplateNode
+            && slotScopeCallbackVariablesByTemplate.get(slotTemplateNode)?.has(degenerateKeyVariable)
+          ) {
             return null;
           }
           return slotKeyInfo;

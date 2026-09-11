@@ -3,7 +3,9 @@ import type {
   CompoundExpressionNode,
   DirectiveNode,
   ElementNode,
+  RootNode,
   SimpleExpressionNode,
+  TemplateChildNode,
   TextNode,
   TransformContext,
 } from "@vue/compiler-core";
@@ -463,6 +465,152 @@ function isSimpleScopeIdentifier(value: string): boolean {
 
 export function buildSlotScopeFallbackKeyExpression(identifier: string): string {
   return `${identifier}.key ?? ${identifier}.data?.id ?? ${identifier}.id ?? ${identifier}.value ?? ${identifier}.url ?? ${identifier}`;
+}
+
+/**
+ * Detects the degenerate form of a slot-scope fallback key chain and returns the
+ * slot-scope variable it terminates in, or `null` when the expression is not that
+ * degenerate chain.
+ *
+ * The chain built by {@link buildSlotScopeFallbackKeyExpression} assumes the slot
+ * prop is row data with identity-bearing fields (`v.key ?? v.data?.id ?? ... ?? v`).
+ * When the prop is a callback function (e.g. ImmyPopup's `cancelAction` handed to
+ * `#popup-footer="{ cancel }"`), none of the `.key/.data/.id/.value/.url` members
+ * exist, so the terminal `?? v` fallback stringifies the entire function source into
+ * the emitted data-testid — unusable as a selector key and harmful in the DOM.
+ *
+ * A hand-written, meaningful chain like `item.key ?? item.data?.id` (without the
+ * bare-variable terminal) is not degenerate, nor are chains over non-identifier
+ * operands.
+ *
+ * @internal
+ */
+export function getDegenerateSlotScopeFallbackKeyVariable(expression: string | null | undefined): string | null {
+  if (!expression) {
+    return null;
+  }
+
+  const trimmed = expression.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const parts = splitNullishCoalescingExpression(trimmed);
+  if (parts.length < 2) {
+    return null;
+  }
+
+  const variableName = parts[parts.length - 1].trim();
+  if (!variableName) {
+    return null;
+  }
+
+  // The terminal operand must be a bare identifier (the slot-scope variable itself).
+  let terminalIsIdentifier: boolean;
+  try {
+    terminalIsIdentifier = isIdentifier(parseExpression(variableName, { plugins: ["typescript"] }) as BabelNode);
+  }
+  catch {
+    terminalIsIdentifier = false;
+  }
+  if (!terminalIsIdentifier) {
+    return null;
+  }
+
+  // Every other operand must be a (possibly optional-chained) member-access chain
+  // rooted at that same variable, e.g. `cancel.data?.id` is
+  // OptionalMember(Member(cancel.data, "data"), "id"), so walk to the base object.
+  const toMemberChainBase = (node: BabelNode): BabelNode => {
+    let current = node;
+    while (isMemberExpression(current) || isOptionalMemberExpression(current)) {
+      current = current.object as BabelNode;
+    }
+    return current;
+  };
+
+  const allMembersOfVariable = parts.slice(0, -1).every((part) => {
+    try {
+      const memberAst = parseExpression(part, { plugins: ["typescript"] }) as BabelNode;
+      const base = toMemberChainBase(memberAst);
+      return isIdentifier(base) && base.name === variableName;
+    }
+    catch {
+      return false;
+    }
+  });
+
+  return allMembersOfVariable ? variableName : null;
+}
+
+/**
+ * Collects the slot-scope variables of a scoped slot template that are used as
+ * bare callback click handlers anywhere in the template's content.
+ *
+ * This must be called when the compiler first visits the template element, BEFORE
+ * the transform instruments any descendant's @click handler: the click
+ * instrumentation rewrites handler expressions in document order, so a sibling
+ * processed later can no longer observe the original handler from the live AST.
+ *
+ * @internal
+ */
+export function getSlotScopeVariablesUsedAsBareCallbackHandlers(templateNode: ElementNode): string[] {
+  const scopeExpression = findTemplateSlotScopeExpression(templateNode);
+  if (!scopeExpression) {
+    return [];
+  }
+
+  const scopeVariables = new Set(tryExtractSlotScopeVariableNames(scopeExpression));
+  if (scopeVariables.size === 0) {
+    return [];
+  }
+
+  const used = new Set<string>();
+
+  type ScopedSlotChild = RootNode | TemplateChildNode;
+
+  const visit = (current: ScopedSlotChild): void => {
+    if (!current || typeof current !== "object" || !("type" in current)) {
+      return;
+    }
+
+    if (current.type === NodeTypes.ELEMENT) {
+      const element = current as ElementNode;
+      const handlerName = tryGetBareCallbackClickHandlerName(element);
+      if (handlerName && scopeVariables.has(handlerName)) {
+        used.add(handlerName);
+      }
+      for (const child of element.children ?? []) {
+        visit(child);
+      }
+      return;
+    }
+
+    if (current.type === NodeTypes.ROOT) {
+      for (const child of (current as RootNode).children ?? []) {
+        visit(child);
+      }
+      return;
+    }
+
+    if (current.type === NodeTypes.IF) {
+      for (const branch of (current as { branches?: TemplateChildNode[] }).branches ?? []) {
+        visit(branch);
+      }
+      return;
+    }
+
+    if (current.type === NodeTypes.IF_BRANCH || current.type === NodeTypes.FOR) {
+      for (const child of (current as { children?: TemplateChildNode[] }).children ?? []) {
+        visit(child);
+      }
+    }
+  };
+
+  for (const child of templateNode.children ?? []) {
+    visit(child);
+  }
+
+  return [...used];
 }
 
 function tryGetBindingIdentifierName(node: BabelNode | null | undefined): string | null {
@@ -3011,6 +3159,8 @@ export const __internal = {
   unwrapToBareCallbackIdentifier,
   tryGetBareCallbackClickHandlerName,
   isSlotScopeCallbackClickHandler,
+  getDegenerateSlotScopeFallbackKeyVariable,
+  getSlotScopeVariablesUsedAsBareCallbackHandlers,
   nodeHasForDirective,
   getKeyDirective,
   tryUnwrapTemplateLiteralSource,

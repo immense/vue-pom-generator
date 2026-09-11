@@ -37,5 +37,34 @@ describe("utils", () => {
       "data",
     ]);
   });
+
+  it("getDegenerateSlotScopeFallbackKeyVariable detects the bare-variable-terminal chain", () => {
+    // The generated fallback chain: terminal operand is the bare slot-scope variable.
+    expect(
+      __internal.getDegenerateSlotScopeFallbackKeyVariable(
+        "cancel.key ?? cancel.data?.id ?? cancel.id ?? cancel.value ?? cancel.url ?? cancel",
+      ),
+    ).toBe("cancel");
+
+    // Renaming the destructured prop renames the chain but stays degenerate.
+    expect(
+      __internal.getDegenerateSlotScopeFallbackKeyVariable(
+        "cancelAction.key ?? cancelAction.data?.id ?? cancelAction.id ?? cancelAction.value ?? cancelAction.url ?? cancelAction",
+      ),
+    ).toBe("cancelAction");
+  });
+
+  it("getDegenerateSlotScopeFallbackKeyVariable rejects meaningful chains and non-chains", () => {
+    // Hand-written chain without the bare-variable terminal is meaningful row data.
+    expect(__internal.getDegenerateSlotScopeFallbackKeyVariable("item.key ?? item.data?.id")).toBeNull();
+    // Terminal doesn't match the member base.
+    expect(__internal.getDegenerateSlotScopeFallbackKeyVariable("item.key ?? other")).toBeNull();
+    // A call operand is not a member chain.
+    expect(__internal.getDegenerateSlotScopeFallbackKeyVariable("item.key ?? getKey(item) ?? item")).toBeNull();
+    // Not a nullish chain at all.
+    expect(__internal.getDegenerateSlotScopeFallbackKeyVariable("item.id")).toBeNull();
+    expect(__internal.getDegenerateSlotScopeFallbackKeyVariable(null)).toBeNull();
+    expect(__internal.getDegenerateSlotScopeFallbackKeyVariable("")).toBeNull();
+  });
 });
 
