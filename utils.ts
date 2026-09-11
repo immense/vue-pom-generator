@@ -30,6 +30,7 @@ import type {
 import {
   VISITOR_KEYS,
   isArrayExpression,
+  isArrayPattern,
   isAssignmentPattern,
   isArrowFunctionExpression,
   isAssignmentExpression,
@@ -551,6 +552,14 @@ export function getDegenerateSlotScopeFallbackKeyVariable(expression: string | n
  * instrumentation rewrites handler expressions in document order, so a sibling
  * processed later can no longer observe the original handler from the live AST.
  *
+ * The descent tracks the bindings that nested template scopes introduce — nested
+ * `v-slot` destructure/identifier aliases and `v-for` value/key/index aliases —
+ * and skips handlers that resolve to a shadowed binding rather than this slot's
+ * own scope variable. Without that, an inner `#row="{ item }"` whose button uses
+ * `@click="item"` would be misattributed to an identically-named outer slot
+ * variable, and a genuinely-callback outer handler would wrongly lose its keyed
+ * (or gain an unkeyed) test id.
+ *
  * @internal
  */
 export function getSlotScopeVariablesUsedAsBareCallbackHandlers(templateNode: ElementNode): string[] {
@@ -568,46 +577,119 @@ export function getSlotScopeVariablesUsedAsBareCallbackHandlers(templateNode: El
 
   type ScopedSlotChild = RootNode | TemplateChildNode;
 
-  const visit = (current: ScopedSlotChild): void => {
+  /**
+   * Names bound by a `v-slot` scope expression ("item", "{ item, row }",
+   * "{ item: row }", "{ ...rest }") or a `v-for` alias
+   * (`v-for="row in rows"`, `v-for="(row, i) in rows"`,
+   * `v-for="(value, key, index) in obj"`).
+   */
+  const collectScopeBindings = (node: ElementNode): string[] => {
+    const names: string[] = [];
+
+    const slotScope = findTemplateSlotScopeExpression(node);
+    if (slotScope) {
+      names.push(...tryExtractSlotScopeVariableNames(slotScope));
+    }
+
+    const vFor = node.props.find(
+      (prop): prop is DirectiveNode =>
+        prop.type === NodeTypes.DIRECTIVE && prop.name === "for",
+    );
+    if (vFor?.exp) {
+      const forSource = getVueExpressionSource(vFor.exp as SimpleExpressionNode | CompoundExpressionNode, "content", "compiled");
+      if (forSource) {
+        // Vue's parseFor splits the alias segment off at the first top-level
+        // `in`/`of`; the alias is everything left of it.
+        const aliasMatch = /^\s*([\s\S]+?)\s+(?:in|of)\s+[\s\S]+$/.exec(forSource);
+        const aliasSource = aliasMatch?.[1];
+        if (aliasSource) {
+          try {
+            const aliasAst = parseExpression(aliasSource, { plugins: ["typescript"] }) as BabelNode;
+            if (isSequenceExpression(aliasAst)) {
+              // (value, key, index) in source — every position is a binding.
+              for (const part of aliasAst.expressions) {
+                names.push(...collectBindingPatternNames(part as BabelNode));
+              }
+            }
+            else {
+              names.push(...collectBindingPatternNames(aliasAst));
+            }
+          }
+          catch {
+            // Unparseable alias — leave it untracked; a bare handler naming it
+            // would fail to resolve at runtime anyway.
+          }
+        }
+      }
+    }
+
+    return names;
+  };
+
+  const visit = (current: ScopedSlotChild, shadowed: ReadonlySet<string>): void => {
     if (!current || typeof current !== "object" || !("type" in current)) {
       return;
     }
 
     if (current.type === NodeTypes.ELEMENT) {
       const element = current as ElementNode;
-      const handlerName = tryGetBareCallbackClickHandlerName(element);
-      if (handlerName && scopeVariables.has(handlerName)) {
-        used.add(handlerName);
+
+      const isSlotTemplate = element.tag === "template" && findTemplateSlotScopeExpression(element) !== null;
+      const isForElement = element.props.some(
+        (prop): prop is DirectiveNode => prop.type === NodeTypes.DIRECTIVE && prop.name === "for",
+      );
+
+      // A handler on the element that INTRODUCES the scope still resolves to the
+      // outer scope (the alias binds its children, not the element itself).
+      if (!isSlotTemplate && !isForElement) {
+        const handlerName = tryGetBareCallbackClickHandlerName(element);
+        if (handlerName && !shadowed.has(handlerName) && scopeVariables.has(handlerName)) {
+          used.add(handlerName);
+        }
       }
+
+      // Descend with the bindings this element introduces added to the shadow set.
+      const introduced = collectScopeBindings(element);
+      if (introduced.length > 0) {
+        const innerShadowed = new Set(shadowed);
+        for (const name of introduced) {
+          innerShadowed.add(name);
+        }
+        for (const child of element.children ?? []) {
+          visit(child, innerShadowed);
+        }
+        return;
+      }
+
       for (const child of element.children ?? []) {
-        visit(child);
+        visit(child, shadowed);
       }
       return;
     }
 
     if (current.type === NodeTypes.ROOT) {
       for (const child of (current as RootNode).children ?? []) {
-        visit(child);
+        visit(child, shadowed);
       }
       return;
     }
 
     if (current.type === NodeTypes.IF) {
       for (const branch of (current as { branches?: TemplateChildNode[] }).branches ?? []) {
-        visit(branch);
+        visit(branch, shadowed);
       }
       return;
     }
 
     if (current.type === NodeTypes.IF_BRANCH || current.type === NodeTypes.FOR) {
       for (const child of (current as { children?: TemplateChildNode[] }).children ?? []) {
-        visit(child);
+        visit(child, shadowed);
       }
     }
   };
 
   for (const child of templateNode.children ?? []) {
-    visit(child);
+    visit(child, new Set());
   }
 
   return [...used];
@@ -827,6 +909,56 @@ function tryGetTemplateSlotScopeKeyInfo(expression: VueExpressionNode): Resolved
  *      `{ data: maintenanceItem }` → `["maintenanceItem"]`
  *      `item` → `["item"]`
  */
+/**
+ * Collects every identifier bound by a binding pattern — plain identifiers,
+ * object destructuring (`{ a, b: c, ...rest }`), nested patterns, and array
+ * patterns. Unlike {@link tryGetBindingIdentifierName} (which only accepts
+ * simple identifiers), this walks the full pattern tree, so it can enumerate
+ * the names a `v-for` or `v-slot` alias introduces.
+ *
+ * @internal
+ */
+function collectBindingPatternNames(node: BabelNode | null | undefined): string[] {
+  if (!node) {
+    return [];
+  }
+
+  if (isIdentifier(node)) {
+    return [node.name];
+  }
+
+  if (isAssignmentPattern(node)) {
+    return collectBindingPatternNames(node.left as BabelNode);
+  }
+
+  if (isRestElement(node)) {
+    return collectBindingPatternNames(node.argument as BabelNode);
+  }
+
+  if (isObjectPattern(node)) {
+    const names: string[] = [];
+    for (const property of node.properties) {
+      if (isRestElement(property)) {
+        names.push(...collectBindingPatternNames(property.argument as BabelNode));
+      }
+      else if (isObjectProperty(property)) {
+        names.push(...collectBindingPatternNames(property.value as BabelNode));
+      }
+    }
+    return names;
+  }
+
+  if (isArrayPattern(node)) {
+    const names: string[] = [];
+    for (const element of node.elements) {
+      names.push(...collectBindingPatternNames(element as BabelNode));
+    }
+    return names;
+  }
+
+  return [];
+}
+
 export function tryExtractSlotScopeVariableNames(expression: VueExpressionNode): string[] {
   const bindingNode = tryGetTemplateSlotScopeBindingNode(expression);
   if (!bindingNode) {

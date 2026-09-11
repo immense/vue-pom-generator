@@ -919,6 +919,113 @@ describe('createTestIdTransform', () => {
     expect(testIds).toContain('MonitorConfigureDialog-Save-button')
   })
 
+  it('does not misattribute a bare handler to an outer slot variable shadowed by a nested slot scope', () => {
+    // Copilot review (PR #68): with an outer #row="{ item }" and an inner
+    // v-slot="{ item }" whose button uses @click="item", the inner callback must
+    // resolve to the INNER binding. If the scan counts it against the outer
+    // slot's `item`, the outer slot is treated as callback-shaped and a sibling
+    // keyed selector keyed off the outer `item` incorrectly loses its key.
+    const componentHierarchyMap = new Map()
+
+    const ast = compileAndCaptureAst(
+      `
+        <MyList :items="rows">
+          <template #row="{ item }">
+            <div class="outer-row" :data-row="item.id">
+              <MyPopover>
+                <template #trigger="{ item: inner }">
+                  <button @click="item">Outer callback</button>
+                </template>
+              </MyPopover>
+            </div>
+          </template>
+        </MyList>
+      `,
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+      },
+    )
+
+    // The inner @click="item" names the inner scope's own binding — the scan must
+    // not record it as usage of the OUTER slot's `item`, so the outer slot's keyed
+    // handling stays intact for its real row content.
+    const testIds = findAllDataTestIds(ast)
+    for (const testId of testIds) {
+      expect(testId).not.toContain('Outer-callback')
+    }
+  })
+
+  it('keeps a genuine outer-slot callback handler keyed/unkeyed correctly beside a shadowing inner slot', () => {
+    // Same nesting shape as the shadowing test, but the OUTER slot has the bare
+    // callback and the INNER slot merely shadows the name without using it. The
+    // outer usage must still be detected.
+    const componentHierarchyMap = new Map()
+
+    const ast = compileAndCaptureAst(
+      `
+        <ImmyPopup>
+          <template #popup-footer="{ cancel }">
+            <MyPopover>
+              <template #trigger="{ cancel: noop }">
+                <button @click="noop">Inner</button>
+              </template>
+            </MyPopover>
+            <ImmyButton roboto variant="primary" @click="cancel">
+              {{ saving ? "Saving..." : "Save Monitor" }}
+            </ImmyButton>
+          </template>
+        </ImmyPopup>
+      `,
+      {
+        filename: '/src/components/MonitorConfigureDialog.vue',
+        nodeTransforms: [createTestIdTransform('MonitorConfigureDialog', componentHierarchyMap, {}, [], '/src/views')],
+      },
+    )
+
+    const testIds = findAllDataTestIds(ast)
+    // The outer `cancel` handler is still detected as a genuine callback usage
+    // (the inner slot's `cancel: noop` rename shadows the name without using it),
+    // so the button's fallback semantic name comes from the handler and nothing
+    // stringifies the callback function into a keyed chain.
+    expect(testIds).toContain('MonitorConfigureDialog-Cancel-button')
+    for (const testId of testIds) {
+      expect(testId).not.toContain('function')
+      expect(testId).not.toContain('??')
+    }
+  })
+
+  it('does not treat a v-for alias as the enclosing slot scope variable', () => {
+    // v-for introduces its own scope: a bare @click="item" inside
+    // <div v-for="item in rows"> under <template #row="{ item }"> names the LOOP
+    // binding, not the slot prop. The scan must not count it for the slot.
+    const componentHierarchyMap = new Map()
+
+    const ast = compileAndCaptureAst(
+      `
+        <MyList :items="rows">
+          <template #row="{ item }">
+            <div>
+              <span v-for="item in item.children" :key="item.id">
+                <button @click="item">Select</button>
+              </span>
+            </div>
+          </template>
+        </MyList>
+      `,
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
+      },
+    )
+
+    // Whatever ids are emitted, the loop's @click="item" must not cause the
+    // outer slot's `item` to be recorded as a callback (which would strip the
+    // keyed selector from genuine row content).
+    const testIds = findAllDataTestIds(ast)
+    expect(testIds.length).toBeGreaterThan(0)
+  })
+
   it('keys child component testids via cross-file key registry', () => {
     // Simulate two-pass compilation: parent records key context, child consumes it.
     const componentHierarchyMap = new Map()
