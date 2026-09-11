@@ -4,6 +4,7 @@ import playwrightEslint from "eslint-plugin-playwright";
 
 import { noDataTestIdInSpecsRule } from "./no-data-testid-in-specs";
 import { noPageFixtureInSpecsRule } from "./no-page-fixture-in-specs";
+import { noPageGotoInSpecsRule } from "./no-page-goto-in-specs";
 import { noRawPlaywrightApisRule } from "./no-raw-playwright-apis";
 import { removeExistingTestIdAttributesRule } from "./remove-existing-test-id-attributes";
 
@@ -121,6 +122,7 @@ export const noRawLocatorActionRule: Rule.RuleModule = {
 const rules = {
 	"no-data-testid-in-specs": noDataTestIdInSpecsRule,
 	"no-page-fixture-in-specs": noPageFixtureInSpecsRule,
+	"no-page-goto-in-specs": noPageGotoInSpecsRule,
 	"no-raw-locator-action": noRawLocatorActionRule,
 	"no-raw-playwright-apis": noRawPlaywrightApisRule,
 	"remove-existing-test-id-attributes": removeExistingTestIdAttributesRule,
@@ -164,6 +166,7 @@ plugin.configs["flat/recommended"] = [
 		rules: {
 			"@immense/vue-pom-generator/no-data-testid-in-specs": "error",
 			"@immense/vue-pom-generator/no-page-fixture-in-specs": "error",
+			"@immense/vue-pom-generator/no-page-goto-in-specs": "error",
 			"@immense/vue-pom-generator/no-raw-locator-action": "error",
 			"@immense/vue-pom-generator/no-raw-playwright-apis": "error",
 		},
@@ -173,6 +176,7 @@ plugin.configs["flat/recommended"] = [
 export const recommendedPlaywrightConfig = plugin.configs["flat/recommended"];
 
 export { noPageFixtureInSpecsRule };
+export { noPageGotoInSpecsRule };
 export { noDataTestIdInSpecsRule };
 export { noRawPlaywrightApisRule };
 export { removeExistingTestIdAttributesRule };

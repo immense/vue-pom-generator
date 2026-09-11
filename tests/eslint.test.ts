@@ -2,7 +2,7 @@
 import { RuleTester } from "eslint";
 import { describe, it } from "vitest";
 
-import { noDataTestIdInSpecsRule, noPageFixtureInSpecsRule, noRawLocatorActionRule, noRawPlaywrightApisRule, plugin, recommendedPlaywrightConfig } from "../eslint/index";
+import { noDataTestIdInSpecsRule, noPageFixtureInSpecsRule, noPageGotoInSpecsRule, noRawLocatorActionRule, noRawPlaywrightApisRule, plugin, recommendedPlaywrightConfig } from "../eslint/index";
 
 const tester = new RuleTester({
 	languageOptions: { ecmaVersion: 2022, sourceType: "module" },
@@ -330,6 +330,62 @@ describe("no-raw-playwright-apis", () => {
 					// so it is never reported — it could be anything at runtime.
 					code: "obj[dynamicKey]();",
 					filename: "/tmp/example.spec.ts",
+				},
+			],
+			invalid: [],
+		});
+	});
+});
+
+describe("no-page-goto-in-specs", () => {
+	it("flags raw page.goto in spec files, allows POM goTo", () => {
+		tester.run("no-page-goto-in-specs", noPageGotoInSpecsRule, {
+			valid: [
+				{
+					code: "test('uses POM navigation', async ({ dashboardPage }) => { await dashboardPage.goTo(); });",
+					filename: "/tmp/dashboard.spec.ts",
+				},
+				{
+					// A POM property holding a page object is not the raw fixture.
+					code: "test('uses a POM page property', async ({ dashboardPage }) => { await dashboardPage.page.goto('/dashboard'); });",
+					filename: "/tmp/dashboard.spec.ts",
+				},
+				{
+					code: "test('other navigation APIs are fine', async ({ playwrightPage }) => { await playwrightPage.goBack(); await playwrightPage.reload(); });",
+					filename: "/tmp/example.spec.ts",
+				},
+			],
+			invalid: [
+				{
+					code: "test('raw goto', async ({ page }) => { await page.goto('/'); });",
+					filename: "/tmp/dashboard.spec.ts",
+					errors: [{ messageId: "rawPageGoto" }],
+				},
+				{
+					code: "test('raw escape-hatch goto', async ({ playwrightPage }) => { await playwrightPage.goto('/computers'); });",
+					filename: "/tmp/example.spec.ts",
+					errors: [{ messageId: "rawPageGoto" }],
+				},
+				{
+					code: "test.beforeEach(async ({ page }) => { await page.goto('/'); });",
+					filename: "/tmp/example.spec.ts",
+					errors: [{ messageId: "rawPageGoto" }],
+				},
+				{
+					code: "page['goto']('/x');",
+					filename: "/tmp/example.spec.ts",
+					errors: [{ messageId: "rawPageGoto" }],
+				},
+			],
+		});
+	});
+
+	it("ignores non-spec files", () => {
+		tester.run("no-page-goto-in-specs", noPageGotoInSpecsRule, {
+			valid: [
+				{
+					code: "export async function bootstrap(page) { await page.goto('/'); }",
+					filename: "/tmp/helpers.ts",
 				},
 			],
 			invalid: [],
