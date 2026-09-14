@@ -5,6 +5,8 @@ import type { Options as VuePluginOptions } from "@vitejs/plugin-vue";
 import vue from "@vitejs/plugin-vue";
 import type { PluginOption } from "vite";
 import type { ElementNode, NodeTransform, RootNode, TemplateChildNode, TransformContext } from "@vue/compiler-core";
+import type { CompilerOptions } from "@vue/compiler-dom";
+import type { SFCTemplateCompileOptions } from "@vue/compiler-sfc";
 import { NodeTypes } from "@vue/compiler-core";
 
 import { collectAccessibilityReviewWarnings } from "../accessibility-audit";
@@ -122,9 +124,7 @@ function extractMetadataAfterTransform(
   }
 
   traverseNode(ast);
-  if (componentMetadata.size > 0) {
-    elementMetadata.set(componentName, componentMetadata);
-  }
+  elementMetadata.set(componentName, componentMetadata);
   return componentMetadata;
 }
 
@@ -133,6 +133,7 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
   internalVuePlugin: PluginOption;
   nuxtVueBridgePlugin: PluginOption;
   templateCompilerOptions: Record<string, unknown>;
+  collectSource: (code: string, filename: string) => Promise<void>;
 } {
   const {
     vueOptions,
@@ -191,7 +192,9 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     return matched;
   };
 
-  const userTemplate = vueOptions?.template ?? {};
+  // plugin-vue can resolve a different Vue peer installation. Normalize its public
+  // options at this boundary to the compiler used by this package's source scan.
+  const userTemplate = (vueOptions?.template ?? {}) as Partial<SFCTemplateCompileOptions>;
   const userCompilerOptions = userTemplate.compilerOptions ?? {};
   const userNodeTransforms = userCompilerOptions.nodeTransforms ?? [];
 
@@ -334,50 +337,72 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     ],
   };
 
+  const collectSource = async (code: string, cleanPath: string): Promise<void> => {
+    const componentName = getComponentNameFromPath(cleanPath);
+    loggerRef.current.debug(`Collecting metadata for ${cleanPath} (component: ${componentName})`);
+
+    const compilerSfc = await import("@vue/compiler-sfc");
+    const parse = resolveCompilerSfcParse(compilerSfc);
+    const { descriptor, errors } = parse(code, { filename: cleanPath });
+    if (errors.length) {
+      throw new Error(`[vue-pom-generator] Cannot parse ${cleanPath}: ${errors.map(String).join("\n")}`);
+    }
+    const script = descriptor.script || descriptor.scriptSetup
+      ? compilerSfc.compileScript(descriptor, { ...vueOptions?.script, id: cleanPath })
+      : undefined;
+    if (descriptor.template) {
+      // Run the template compiler with our transforms.
+      // We don't care about the result, only the side effects on our shared maps.
+      // Merge TS into `expressionPlugins` so template expressions with TS
+      // type annotations (e.g. `(row: RowType) => ...`) parse. User-supplied
+      // plugins from `userCompilerOptions` are preserved and de-duped.
+      const mergedExpressionPlugins = Array.from(
+        new Set<NonNullable<CompilerOptions["expressionPlugins"]>[number]>([
+          "typescript",
+          ...(userCompilerOptions.expressionPlugins ?? []),
+        ]),
+      );
+      const compiled = compilerSfc.compileTemplate({
+        ...userTemplate,
+        id: cleanPath,
+        filename: cleanPath,
+        source: descriptor.template.content,
+        ast: descriptor.template.ast,
+        preprocessLang: descriptor.template.lang,
+        compilerOptions: {
+          ...userCompilerOptions,
+          prefixIdentifiers: true,
+          inline: !!descriptor.scriptSetup,
+          bindingMetadata: script?.bindings,
+          expressionPlugins: mergedExpressionPlugins,
+          nodeTransforms: getNodeTransforms(cleanPath, componentName),
+        },
+      });
+      if (compiled.errors.length) {
+        throw new Error(`[vue-pom-generator] Cannot compile ${cleanPath}: ${compiled.errors.map(String).join("\n")}`);
+      }
+      loggerRef.current.debug(`Metadata collected for ${cleanPath}`);
+    }
+    else {
+      vueFilesPathMap.set(componentName, cleanPath);
+      elementMetadata.delete(componentName);
+      componentHierarchyMap.set(componentName, {
+        filePath: cleanPath,
+        childrenComponentSet: new Set(),
+        usedComponentSet: new Set(),
+        dataTestIdSet: new Set(),
+        isView: false,
+        methodsContent: "",
+      });
+    }
+  };
+
   const metadataCollectorPlugin: PluginOption = {
     name: "vue-pom-generator-metadata-collector",
     enforce: "pre",
     async transform(code, id) {
-      const cleanPath = id.includes("?") ? id.substring(0, id.indexOf("?")) : id;
-      if (!cleanPath.endsWith(".vue") || !isFileInScope(id)) {
-        return null;
-      }
-
-      // If we've already processed this file in this build pass, skip the duplicates
-      // caused by Vite query parameters (?macro=true, ?vue&type=template, etc).
-      if (id !== cleanPath) {
-          return null;
-      }
-
-      const componentName = getComponentNameFromPath(cleanPath);
-      loggerRef.current.debug(`Collecting metadata for ${cleanPath} (component: ${componentName})`);
-
-      const compilerSfc = await import("@vue/compiler-sfc");
-      const parse = resolveCompilerSfcParse(compilerSfc);
-      const compilerDom = await import("@vue/compiler-dom");
-      const compile = compilerDom.compile as (template: string, options: object) => object;
-      const { descriptor } = parse(code, { filename: cleanPath });
-      if (descriptor.template) {
-        // Run the template compiler with our transforms.
-        // We don't care about the result, only the side effects on our shared maps.
-        // Merge TS into `expressionPlugins` so template expressions with TS
-        // type annotations (e.g. `(row: RowType) => ...`) parse. User-supplied
-        // plugins from `userCompilerOptions` are preserved and de-duped.
-        const mergedExpressionPlugins = Array.from(
-          new Set<string>([
-            "typescript",
-            ...(((userCompilerOptions as { expressionPlugins?: string[] }).expressionPlugins) ?? []),
-          ]),
-        );
-        compile(descriptor.template.content, {
-          ...userCompilerOptions,
-          filename: cleanPath,
-          expressionPlugins: mergedExpressionPlugins,
-          nodeTransforms: getNodeTransforms(cleanPath, componentName),
-        });
-        loggerRef.current.debug(`Metadata collected for ${cleanPath}`);
-      }
-
+      if (!id.endsWith(".vue") || !isFileInScope(id)) return null;
+      await collectSource(code, id);
       return null;
     },
   };
@@ -445,5 +470,5 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     },
   };
 
-  return { metadataCollectorPlugin, internalVuePlugin, nuxtVueBridgePlugin, templateCompilerOptions };
+  return { metadataCollectorPlugin, internalVuePlugin, nuxtVueBridgePlugin, templateCompilerOptions, collectSource };
 }

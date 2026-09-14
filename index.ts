@@ -10,6 +10,8 @@ export { createVuePomGeneratorPlugins };
 export { createVuePomGeneratorPlugins as vuePomGenerator };
 export default createVuePomGeneratorPlugins;
 
+export { generateVuePoms, type VuePomGenerationViteOptions } from "./plugin/generate-vue-poms";
+
 export { mountAnnotatorClient };
 export type { AnnotatorClientOptions };
 

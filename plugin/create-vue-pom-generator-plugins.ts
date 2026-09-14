@@ -227,16 +227,20 @@ function toArray<T>(value: T[] | undefined): T[] {
   return Array.isArray(value) ? value : [];
 }
 
+function createGeneratorState(): SharedGeneratorState {
+  return {
+    elementMetadata: new Map<string, Map<string, ElementMetadata>>(),
+    semanticNameMap: new Map<string, string>(),
+    componentHierarchyMap: new Map<string, IComponentDependencies>(),
+    crossFileKeyRegistry: new Map<string, string>(),
+    vueFilesPathMap: new Map<string, string>(),
+  };
+}
+
 function getSharedGeneratorState(key: string): SharedGeneratorState {
   let state = sharedGeneratorStateRegistry.get(key);
   if (!state) {
-    state = {
-      elementMetadata: new Map<string, Map<string, ElementMetadata>>(),
-      semanticNameMap: new Map<string, string>(),
-      componentHierarchyMap: new Map<string, IComponentDependencies>(),
-      crossFileKeyRegistry: new Map<string, string>(),
-      vueFilesPathMap: new Map<string, string>(),
-    };
+    state = createGeneratorState();
     sharedGeneratorStateRegistry.set(key, state);
   }
   return state;
@@ -314,11 +318,19 @@ function assertNotVitePluginInstance(options: PomGeneratorPluginOptions): void {
 }
 
 export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions = {}): PluginOption[] {
+  return createGeneratorPlugins(options, false);
+}
+
+/** Internal factory shared by the app plugin and the one-shot generation API. */
+export function createGeneratorPlugins(options: PomGeneratorPluginOptions, generationOnly: boolean, projectRoot = process.cwd()): PluginOption[] {
   assertNotVitePluginInstance(options);
 
   const injection = options.injection ?? {};
   type GenerationConfig = NonNullable<Exclude<PomGeneratorPluginOptions["generation"], false>>;
-  const isNuxt = detectNuxtProject(options, process.cwd());
+  const isNuxt = detectNuxtProject(options, projectRoot);
+  if (generationOnly && isNuxt) {
+    throw new Error("[vue-pom-generator] generateVuePoms does not run Nuxt project preparation. Use the Nuxt Vite integration.");
+  }
 
   const generationSetting = options.generation;
   const generationOptions: GenerationConfig | null = generationSetting === false ? null : (generationSetting ?? {});
@@ -414,7 +426,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
   ]));
   const getWrapperSearchRoots = () => resolvedInjectionOptionsRef.current.wrapperSearchRoots;
   const sharedStateKey = JSON.stringify({
-    cwd: process.cwd(),
+    cwd: projectRoot,
     mode: isNuxt ? "nuxt" : "vue",
     pageDirs: isNuxt ? null : getPageDirs(),
     componentDirs: isNuxt ? null : getComponentDirs(),
@@ -426,11 +438,14 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
     routerType: resolvedGenerationOptions.routerType,
     vuePluginOwnership,
   });
-  const sharedState = getSharedGeneratorState(sharedStateKey);
+  const sharedState = generationOnly
+    ? createGeneratorState()
+    : getSharedGeneratorState(sharedStateKey);
   let templateCompilerOptionsForResolvedPlugin: ReturnType<typeof createVuePluginWithTestIds>["templateCompilerOptions"];
 
-  // Shared state: initialized with process.cwd(), then updated in configResolved.
-  const projectRootRef = { current: process.cwd() };
+  // The application plugin resolves its root in configResolved; one-shot calls
+  // provide it up front so project detection and source analysis agree.
+  const projectRootRef = { current: projectRoot };
   const loggerRef: { current: VuePomGeneratorLogger } = {
     current: createLogger({ verbosity }),
   };
@@ -507,7 +522,7 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
 
   const { elementMetadata, semanticNameMap, componentHierarchyMap, crossFileKeyRegistry, vueFilesPathMap } = sharedState;
 
-  const { metadataCollectorPlugin, internalVuePlugin, templateCompilerOptions } = createVuePluginWithTestIds({
+  const { metadataCollectorPlugin, internalVuePlugin, templateCompilerOptions, collectSource } = createVuePluginWithTestIds({
     vueOptions,
     existingIdBehavior: resolvedGenerationOptions.existingIdBehavior,
     nameCollisionBehavior: resolvedGenerationOptions.nameCollisionBehavior,
@@ -536,7 +551,6 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
 
   const internalPlugins = createInternalPlugins({
     componentHierarchyMap,
-    crossFileKeyRegistry,
     elementMetadata,
     vueFilesPathMap,
     nativeWrappers,
@@ -549,6 +563,8 @@ export function createVuePomGeneratorPlugins(options: PomGeneratorPluginOptions 
     getSourceDirs,
     getWrapperSearchRoots: getWrapperSearchRootsAbs,
     generation: resolvedGenerationOptions,
+    collectSource,
+    generationOnly,
     projectRootRef,
     basePageClassPath: basePageClassPathOverride,
     loggerRef,

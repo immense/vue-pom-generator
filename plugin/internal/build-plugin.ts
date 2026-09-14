@@ -2,26 +2,20 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
-import type { BindingMetadata } from "@vue/compiler-core";
-import * as compilerDom from "@vue/compiler-dom";
-import { compileScript, parse as parseSfc } from "@vue/compiler-sfc";
 import type { PluginOption } from "vite";
 
 import { generateFiles } from "../../class-generation";
 import type { ElementMetadata } from "../../metadata-collector";
 import { introspectNuxtPages, parseRouterFileFromCwd } from "../../router-introspection";
-import { createTestIdTransform } from "../../transform";
-import type { IComponentDependencies, NativeWrappersMap, RouterIntrospectionResult } from "../../utils";
+import type { IComponentDependencies, RouterIntrospectionResult } from "../../utils";
 import { setResolveToComponentNameFn, setRouteNameToComponentNameMap, toPascalCase } from "../../utils";
 import type { VuePomGeneratorLogger } from "../logger";
 import { resolveComponentNameFromPath } from "../path-utils";
 import type { ResolvedGenerationSupportOptions } from "../resolved-generation-options";
-import { resolveExistingIdBehavior } from "../vue-plugin";
 
 interface BuildProcessorOptions {
   componentHierarchyMap: Map<string, IComponentDependencies>;
   elementMetadata: Map<string, Map<string, ElementMetadata>>;
-  crossFileKeyRegistry: Map<string, string>;
   vueFilesPathMap: Map<string, string>;
   getPageDirs: () => string[];
   getComponentDirs: () => string[];
@@ -33,14 +27,8 @@ interface BuildProcessorOptions {
   normalizedBasePagePath: string;
   generation: ResolvedGenerationSupportOptions;
   projectRootRef: { current: string };
-  /** Native wrapper component config. */
-  nativeWrappers: NativeWrappersMap;
-  /** Per-component option-key attribute override map. */
-  optionKeyAttribute: Record<string, string>;
-  /** Components excluded from test-id injection. */
-  skipTestIdGenerationInsideComponents: string[];
-  /** Getter for resolved wrapper search root directories. */
-  getWrapperSearchRoots: () => string[];
+  collectSource: (code: string, filename: string) => Promise<void>;
+  generationOnly: boolean;
   getResolvedRouterEntry: () => string | undefined;
 
   loggerRef: { current: VuePomGeneratorLogger };
@@ -87,7 +75,6 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
   const {
     componentHierarchyMap,
     elementMetadata,
-    crossFileKeyRegistry,
     vueFilesPathMap,
     getPageDirs,
     getComponentDirs,
@@ -98,10 +85,8 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     normalizedBasePagePath,
     generation,
     projectRootRef,
-    nativeWrappers,
-    optionKeyAttribute,
-    skipTestIdGenerationInsideComponents,
-    getWrapperSearchRoots,
+    collectSource,
+    generationOnly,
     getResolvedRouterEntry,
     loggerRef,
   } = options;
@@ -118,9 +103,6 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     customPomImportAliases,
     customPomImportNameCollisionBehavior,
     testIdAttribute,
-    nameCollisionBehavior,
-    missingSemanticNameBehavior,
-    existingIdBehavior,
     routerAwarePoms,
     routerType,
     routerModuleShims,
@@ -142,38 +124,19 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     path.isAbsolute(getViewsDir()) ? getViewsDir() : path.resolve(projectRootRef.current, getViewsDir());
   const getPageDirsAbs = () => getPageDirs().map(dir => path.isAbsolute(dir) ? dir : path.resolve(projectRootRef.current, dir));
 
-  const getScriptInfo = (source: string, filename: string): { bindings?: BindingMetadata; isScriptSetup: boolean } => {
-    try {
-      const { descriptor } = parseSfc(source, { filename });
-      if (!descriptor.script && !descriptor.scriptSetup)
-        return { bindings: undefined, isScriptSetup: false };
-      const scriptBlock = compileScript(descriptor, { id: filename });
-      return { bindings: scriptBlock.bindings, isScriptSetup: !!descriptor.scriptSetup };
-    }
-    catch {
-      return { bindings: undefined, isScriptSetup: false };
-    }
-  };
-
   /**
    * Walk configured source directories and compile any .vue files not already in the hierarchy map.
    * This ensures build output includes all configured pages/components/layouts, matching the
    * dev-server behavior (which does its own filesystem walk).
    */
-  const supplementHierarchyFromFilesystem = () => {
+  const supplementHierarchyFromFilesystem = async () => {
     const walkFilesRecursive = (rootDir: string): string[] => {
       const out: string[] = [];
       const stack: string[] = [rootDir];
       while (stack.length) {
         const dir = stack.pop();
         if (!dir) continue;
-        let entries: Array<fs.Dirent> = [];
-        try {
-          entries = fs.readdirSync(dir, { withFileTypes: true });
-        }
-        catch {
-          continue;
-        }
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
         for (const ent of entries) {
           if (ent.isDirectory()) {
             if (ent.name === "node_modules" || ent.name === ".git" || ent.name === "dist")
@@ -190,10 +153,12 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
     };
 
     let supplemented = 0;
+    let sourceDirectories = 0;
     for (const dir of getSourceDirs()) {
       const absDir = path.resolve(projectRootRef.current, dir);
       if (!fs.existsSync(absDir))
         continue;
+      sourceDirectories++;
 
       for (const filePath of walkFilesRecursive(absDir)) {
         const absolutePath = path.resolve(filePath);
@@ -209,72 +174,14 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
         if (componentHierarchyMap.has(componentName))
           continue;
 
-        let sfc = "";
-        try {
-          sfc = fs.readFileSync(absolutePath, "utf8");
-        }
-        catch {
-          continue;
-        }
-
-        const { descriptor } = parseSfc(sfc, { filename: absolutePath });
-        const template = descriptor.template?.content ?? "";
-        if (!template.trim()) {
-          // Even template-less components get an entry so they appear in the
-          // generated output (matching the dev-server filesystem walk).
-          vueFilesPathMap.set(componentName, absolutePath);
-          componentHierarchyMap.set(componentName, {
-            filePath: absolutePath,
-            childrenComponentSet: new Set(),
-            usedComponentSet: new Set(),
-            dataTestIdSet: new Set(),
-            isView: false,
-            methodsContent: "",
-          });
-          supplemented++;
-          continue;
-        }
-
-        const { bindings: bindingMetadata, isScriptSetup } = getScriptInfo(sfc, absolutePath);
-        vueFilesPathMap.set(componentName, absolutePath);
-
-        try {
-          compilerDom.compile(template, {
-            filename: absolutePath,
-            prefixIdentifiers: true,
-            inline: isScriptSetup,
-            bindingMetadata,
-            // See dev-plugin.ts — same rationale: enable TS in template
-            // expressions so `(row: RowType) => ...` handlers parse.
-            expressionPlugins: ["typescript"],
-            nodeTransforms: [
-              createTestIdTransform(
-                componentName,
-                componentHierarchyMap,
-                nativeWrappers,
-                skipTestIdGenerationInsideComponents,
-                getViewsDirAbs(),
-                {
-                  existingIdBehavior: resolveExistingIdBehavior(existingIdBehavior, componentName),
-                  testIdAttribute,
-                  nameCollisionBehavior,
-                  missingSemanticNameBehavior,
-                  warn: (message: string) => loggerRef.current.warn(message),
-                  vueFilesPathMap,
-                  wrapperSearchRoots: getWrapperSearchRoots(),
-                  crossFileKeyRegistry,
-                  optionKeyAttribute,
-                },
-              ),
-            ],
-          });
-        }
-        catch {
-          // Compilation failures are not fatal; omit the component from POM output.
-        }
+        await collectSource(fs.readFileSync(absolutePath, "utf8"), absolutePath);
 
         supplemented++;
       }
+    }
+
+    if (generationOnly && sourceDirectories === 0) {
+      throw new Error("[vue-pom-generator] No configured source directories exist. Check the Vite root and injection directories.");
     }
 
     if (supplemented > 0) {
@@ -366,15 +273,15 @@ export function createBuildProcessorPlugin(options: BuildProcessorOptions): Plug
 
       // Supplement the hierarchy with any .vue files in configured source dirs that were not
       // part of the Vite build graph (e.g. unused components, dynamic-only imports).
-      supplementHierarchyFromFilesystem();
+      await supplementHierarchyFromFilesystem();
 
       const metrics = summarizeHierarchyMap(componentHierarchyMap);
-      if (metrics.dataTestIdCount <= 0) {
+      if (!generationOnly && metrics.dataTestIdCount <= 0) {
         // Skip generation rather than overwriting an existing aggregated file with selector-less output.
         return;
       }
 
-      if (isLessRich(metrics, lastGeneratedMetrics)) {
+      if (!generationOnly && isLessRich(metrics, lastGeneratedMetrics)) {
         // If we already generated from a richer pass, do not clobber it with a smaller/partial pass.
         return;
       }
