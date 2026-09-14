@@ -189,7 +189,33 @@ try {
     ].join("\n"),
     "utf8",
   );
+  // The public one-shot API must work from the packed package, without a runtime
+  // asset-path override. Exercise both supported module formats before app build.
+  for (const moduleFormat of ["import", "require"]) {
+    run("node", ["-e", [
+      "(async () => {",
+      moduleFormat === "import"
+        ? "  const { generateVuePoms } = await import('@immense/vue-pom-generator');"
+        : "  const { generateVuePoms } = require('@immense/vue-pom-generator');",
+      "  await generateVuePoms({",
+      '    injection: { viewsDir: "src", componentDirs: ["src"], layoutDirs: [] },',
+      '    generation: { playwright: { outputStructure: "split", fixtures: true }, vueTestUtils: {} },',
+      '  }, { logLevel: "silent" });',
+      "})();",
+    ].join("\n")], { cwd: tempRoot });
+  }
+  if (!fs.existsSync(path.join(tempRoot, "tests/playwright/__generated__/App.g.ts"))) {
+    throw new Error("Packed one-shot generation did not create the Playwright POM.");
+  }
+  if (fs.existsSync(path.join(tempRoot, "dist"))) {
+    throw new Error("Packed one-shot generation unexpectedly wrote application assets.");
+  }
+  console.log("[packed-smoke] ok: one-shot generation (ESM and CJS)");
+
   run("npx", ["vite", "build"], { cwd: tempRoot });
+  if (fs.existsSync(path.join(tempRoot, "tests/playwright/__generated__/App.g.ts"))) {
+    throw new Error("Packed application build did not prune the obsolete split POM.");
+  }
 
   const builtIndexHtml = fs.readFileSync(path.join(tempRoot, "dist", "index.html"), "utf8");
   if (builtIndexHtml.includes("virtual:vue-pom-generator/annotator-client")) {

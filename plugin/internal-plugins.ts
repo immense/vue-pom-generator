@@ -13,7 +13,6 @@ import { createAnnotatorUiPlugin } from "./runtime/annotator/plugin";
 
 interface InternalPluginFactoryOptions {
   componentHierarchyMap: Map<string, IComponentDependencies>;
-  crossFileKeyRegistry: Map<string, string>;
   elementMetadata: Map<string, Map<string, ElementMetadata>>;
   vueFilesPathMap: Map<string, string>;
   nativeWrappers: NativeWrappersMap;
@@ -28,6 +27,8 @@ interface InternalPluginFactoryOptions {
   generation: ResolvedGenerationSupportOptions;
   projectRootRef: { current: string };
   basePageClassPath?: string;
+  collectSource: (code: string, filename: string) => Promise<void>;
+  generationOnly: boolean;
   loggerRef: { current: VuePomGeneratorLogger };
   annotatorRuntime: {
     enabled: boolean;
@@ -45,7 +46,6 @@ interface InternalPluginFactoryOptions {
 export function createInternalPlugins(options: InternalPluginFactoryOptions): PluginOption[] {
   const {
     componentHierarchyMap,
-    crossFileKeyRegistry,
     elementMetadata,
     vueFilesPathMap,
     nativeWrappers,
@@ -62,6 +62,8 @@ export function createInternalPlugins(options: InternalPluginFactoryOptions): Pl
     basePageClassPath: basePageClassPathOverride,
     loggerRef,
     annotatorRuntime,
+    collectSource,
+    generationOnly,
   } = options;
   const {
     routerAwarePoms,
@@ -99,7 +101,6 @@ export function createInternalPlugins(options: InternalPluginFactoryOptions): Pl
   const tsProcessor = createBuildProcessorPlugin({
     componentHierarchyMap,
     elementMetadata,
-    crossFileKeyRegistry,
     vueFilesPathMap,
     getPageDirs,
     getComponentDirs,
@@ -110,10 +111,8 @@ export function createInternalPlugins(options: InternalPluginFactoryOptions): Pl
     normalizedBasePagePath,
     generation,
     projectRootRef,
-    nativeWrappers,
-    optionKeyAttribute,
-    skipTestIdGenerationInsideComponents,
-    getWrapperSearchRoots,
+    collectSource,
+    generationOnly,
     getResolvedRouterEntry: resolveRouterEntry,
     loggerRef,
   });

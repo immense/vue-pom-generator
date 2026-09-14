@@ -298,6 +298,60 @@ if (import.meta.env.DEV) {
 }
 ```
 
+### Generate before typechecking
+
+Use the one-shot API when a typechecker needs generated imports before the application
+starts. Share the same generator options with your application's Vite configuration:
+
+```ts
+// scripts/generate-poms.ts
+import { generateVuePoms } from "@immense/vue-pom-generator";
+import { pomConfig } from "../pom.config";
+
+await generateVuePoms(pomConfig);
+```
+
+Run this script with your TypeScript runner, then run `vue-tsc --noEmit` using `&&`
+so generation errors stop the typecheck. `generateVuePoms` always scans the configured
+source directories; there is no timestamp cache. It returns only after generation
+finishes and rejects on invalid source or output errors. An empty source directory is
+valid and removes its previous component outputs; no existing source directories is
+an error.
+
+The optional second argument accepts Vite `root`, `mode`, `resolve`, `plugins`, and
+`logLevel`. Relative output paths resolve against `root`. The application Vite config
+is **not** loaded implicitly: pass only companion plugins needed for generation. For
+`vuePluginOwnership: "external"`, include your app-owned `vue()` plugin there. Other
+generated declarations, such as those from a component auto-import plugin, remain that
+plugin's responsibility.
+
+Internally this uses a generation-only Vite build with no application entry, asset
+output, public-directory copy, or application server. It shares source analysis,
+compiler metadata, router introspection, and emitters with the regular generator.
+It is a Vue entry point, not a replacement for Nuxt's project preparation lifecycle.
+
+### Generated output ownership
+
+Each successful generation records its outputs in
+`<generation.outDir>/.vue-pom-generator-outputs.json`. Later runs remove only unchanged
+files recorded there that are no longer emitted. This covers renamed/deleted components,
+split/aggregate switches, disabled languages, and moved/disabled VTU or fixture outputs.
+Handwritten neighbors and files absent from the ownership manifest are never pruned.
+An obsolete generated file edited by hand causes an error naming that file; move or
+remove it explicitly before regenerating. Output-file/directory symlinks are rejected.
+
+All outputs are rendered and validated before publication. Pruning happens only after
+the new files are written. A failed source compilation or emission leaves the previous
+files and manifest intact; a filesystem write failure can leave some new files, but
+does not prune old ones. Shared `.gitattributes` files remain consumer-owned.
+
+Keep the ownership manifest with its generated output (commit or ignore both together).
+The first run does not guess ownership of files produced by older releases. Changing
+the primary `generation.outDir` starts a new ownership set; clean the old directory
+explicitly. Do not run multiple generation processes against the same output directory.
+Calls to `generateVuePoms` in one process must also be awaited sequentially because
+router introspection uses process-wide state; overlapping calls fail explicitly.
+
 ### Annotator overlay
 
 The generator can inject its floating annotator overlay into either a Vite dev server

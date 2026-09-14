@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { generateViewObjectModelMembers, generateViewObjectModelMethodContent } from "../method-generation";
 import { generatePomManifestModule } from "../manifest-generator";
 import type { ElementMetadata } from "../metadata-collector";
+import { writeGeneratedOutputs, type GeneratedFileOutput } from "../plugin/generated-outputs";
 import {
   createPomMethodSignature,
   createPomParameterSpec,
@@ -877,11 +878,6 @@ type GenerateContentOptions
     | { outputStructure?: "split" }
   );
 
-interface GeneratedFileOutput {
-  filePath: string;
-  content: string;
-}
-
 export async function generateFiles(
   componentHierarchyMap: Map<string, IComponentDependencies>,
   vueFilesPathMap: Map<string, string>,
@@ -891,7 +887,7 @@ export async function generateFiles(
   const {
     outDir: outDirOverride,
     generateFixtures,
-    vueTestUtilsOutDir,
+    vueTestUtilsOutDir: vueTestUtilsOutDirOverride,
     customPomAttachments = [],
     projectRoot,
     customPomDir,
@@ -916,7 +912,9 @@ export async function generateFiles(
     ? emitLanguagesOverride
     : ["ts"];
 
-  const outDir = outDirOverride ?? "./pom";
+  const root = projectRoot ?? process.cwd();
+  const outDir = path.resolve(root, outDirOverride ?? "./pom");
+  const vueTestUtilsOutDir = vueTestUtilsOutDirOverride ? path.resolve(root, vueTestUtilsOutDirOverride) : undefined;
   if (vueTestUtilsOutDir && path.resolve(vueTestUtilsOutDir) === path.resolve(outDir)) {
     throw new Error("[vue-pom-generator] generation.vueTestUtils.outDir must differ from generation.outDir.");
   }
@@ -930,12 +928,7 @@ export async function generateFiles(
       })
       : undefined);
   const emittableComponentHierarchyMap = componentHierarchyMap;
-  const generatedFilePaths: string[] = [];
-  const writeGeneratedFile = (file: GeneratedFileOutput) => {
-    const resolvedFilePath = path.resolve(file.filePath);
-    createFile(resolvedFilePath, file.content);
-    generatedFilePaths.push(resolvedFilePath);
-  };
+  const generatedFiles: GeneratedFileOutput[] = [];
 
   if (emitLanguages.includes("ts")) {
     const files = typescriptOutputStructure === "split"
@@ -962,9 +955,7 @@ export async function generateFiles(
         routeMetaByComponent,
         vueRouterFluentChaining,
       });
-    for (const file of files) {
-      writeGeneratedFile(file);
-    }
+    generatedFiles.push(...files);
 
     const fixtureRegistryFiles = maybeGenerateFixtureRegistry(emittableComponentHierarchyMap, {
       generateFixtures,
@@ -974,9 +965,7 @@ export async function generateFiles(
       elementMetadata,
       testIdAttribute,
     });
-    for (const fixtureRegistryFile of fixtureRegistryFiles) {
-      writeGeneratedFile(fixtureRegistryFile);
-    }
+    generatedFiles.push(...fixtureRegistryFiles);
   }
 
   if (emitLanguages.includes("csharp")) {
@@ -985,9 +974,7 @@ export async function generateFiles(
       testIdAttribute,
       csharp,
     });
-    for (const file of csFiles) {
-      writeGeneratedFile(file);
-    }
+    generatedFiles.push(...csFiles);
   }
 
   if (vueTestUtilsOutDir) {
@@ -996,15 +983,11 @@ export async function generateFiles(
       vueTestUtilsOutDir,
       { testIdAttribute },
     );
-    for (const file of vueTestUtilsFiles) {
-      writeGeneratedFile(file);
-    }
+    generatedFiles.push(...vueTestUtilsFiles);
   }
 
-  const gitattributesFiles = buildGeneratedGitAttributesFiles(generatedFilePaths);
-  for (const file of gitattributesFiles) {
-    createFile(file.filePath, file.content);
-  }
+  const gitattributesFiles = buildGeneratedGitAttributesFiles(generatedFiles.map(file => file.filePath));
+  writeGeneratedOutputs(outDir, generatedFiles, gitattributesFiles, path.resolve(root));
 }
 
 const VUE_TEST_UTILS_OMITTED_PARAMETERS = new Set(["annotationText", "timeOut", "timeout", "wait"]);
@@ -3568,17 +3551,6 @@ async function generateAggregatedFiles(
     { filePath: indexFile, content: indexContent },
     ...runtimeFiles,
   ];
-}
-
-function createFile(filePath: string, content: string) {
-  const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  if (fs.existsSync(filePath)) {
-    fs.unlinkSync(filePath);
-  }
-  fs.writeFileSync(filePath, content);
 }
 
 function lowerFirst(value: string): string {
