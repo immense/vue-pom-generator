@@ -34,7 +34,6 @@ import {
 import { buildPomLocatorDescription, stripPomActionPrefix } from "../pom-discoverability";
 import { introspectNuxtPages, parseRouterFileFromCwd } from "../router-introspection";
 import {
-  addExportAll,
   addNamedImport,
   buildCommentBlock,
   buildFilePrefix,
@@ -42,17 +41,14 @@ import {
   createClassGetter,
   createClassMethod,
   createClassProperty,
+  createClassDeclaration,
   renderSourceFile,
+  renderStructuredSourceFile,
   StructureKind,
   VariableDeclarationKind,
-  type ConstructorDeclarationStructure,
-  type GetAccessorDeclarationStructure,
-  type MethodDeclarationStructure,
-  type OptionalKind,
-  type PropertyDeclarationStructure,
   type TypeScriptClassMember,
-  type TypeScriptSourceFile,
   type TypeScriptWriter,
+  type TypeScriptRenderCache,
 } from "../typescript-codegen";
 import {
   IComponentDependencies,
@@ -742,6 +738,8 @@ function generateMethodsContentForDependencies(componentName: string, dependenci
 }
 
 export interface GenerateFilesOptions {
+  /** Per-dev-server rendering cache. Omitted for stateless one-shot/build generation. */
+  renderCache?: TypeScriptRenderCache;
   /**
    * Output directory for generated files.
    *
@@ -848,6 +846,7 @@ export interface GenerateFilesOptions {
 }
 
 interface BaseGenerateContentOptions {
+  renderCache?: TypeScriptRenderCache;
   /** Directory the generated .g.ts file will live in (used for relative imports). Defaults to the Vue file's directory. */
   outputDir?: string;
 
@@ -906,6 +905,7 @@ export async function generateFiles(
     layoutDirs,
     routeMetaByComponent: routeMetaByComponentOverride,
     elementMetadata = new Map<string, Map<string, ElementMetadata>>(),
+    renderCache,
   } = options;
 
   const emitLanguages: Array<"ts" | "csharp"> = emitLanguagesOverride?.length
@@ -933,6 +933,7 @@ export async function generateFiles(
   if (emitLanguages.includes("ts")) {
     const files = typescriptOutputStructure === "split"
       ? await generateSplitTypeScriptFiles(emittableComponentHierarchyMap, vueFilesPathMap, basePageClassPath, outDir, {
+        renderCache,
         customPomAttachments,
         projectRoot,
         customPomDir,
@@ -944,6 +945,7 @@ export async function generateFiles(
         vueRouterFluentChaining,
       })
       : await generateAggregatedFiles(emittableComponentHierarchyMap, vueFilesPathMap, basePageClassPath, outDir, {
+        renderCache,
         customPomAttachments,
         projectRoot,
         customPomDir,
@@ -958,6 +960,7 @@ export async function generateFiles(
     generatedFiles.push(...files);
 
     const fixtureRegistryFiles = maybeGenerateFixtureRegistry(emittableComponentHierarchyMap, {
+      renderCache,
       generateFixtures,
       pomOutDir: outDir,
       projectRoot,
@@ -981,13 +984,14 @@ export async function generateFiles(
     const vueTestUtilsFiles = generateVueTestUtilsFiles(
       emittableComponentHierarchyMap,
       vueTestUtilsOutDir,
-      { testIdAttribute },
+      { testIdAttribute, renderCache },
     );
     generatedFiles.push(...vueTestUtilsFiles);
   }
 
   const gitattributesFiles = buildGeneratedGitAttributesFiles(generatedFiles.map(file => file.filePath));
   writeGeneratedOutputs(outDir, generatedFiles, gitattributesFiles, path.resolve(root));
+  renderCache?.retain(new Set(generatedFiles.map(file => file.filePath)));
 }
 
 const VUE_TEST_UTILS_OMITTED_PARAMETERS = new Set(["annotationText", "timeOut", "timeout", "wait"]);
@@ -1160,6 +1164,7 @@ function generateVueTestUtilsContent(
   runtimePath: string,
   generatedFilePathByComponent: Map<string, string>,
   testIdAttribute: string,
+  renderCache?: TypeScriptRenderCache,
 ): string {
   const prepared = prepareViewObjectModelClass(componentName, dependencies, componentHierarchyMap, {
     outputStructure: "split",
@@ -1188,41 +1193,36 @@ function generateVueTestUtilsContent(
     ...(dependencies.pomExtraMethods ?? []).flatMap(getVueTestUtilsExtraMembers),
   ];
 
-  return renderSourceFile(`${componentName}.vtu.g.ts`, (sourceFile) => {
-    addNamedImport(sourceFile, {
+  return renderStructuredSourceFile(path.join(outputDir, `${componentName}.vtu.g.ts`), {
+    statements: [{
+      kind: StructureKind.ImportDeclaration,
       moduleSpecifier: runtimeImport,
       namedImports: ["VueTestUtilsPom"],
-    });
-    addNamedImport(sourceFile, {
+    }, {
+      kind: StructureKind.ImportDeclaration,
       moduleSpecifier: runtimeImport,
       namedImports: ["VueTestUtilsPomRoot"],
       isTypeOnly: true,
-    });
-    for (const componentImport of componentImports) {
-      addNamedImport(sourceFile, {
-        moduleSpecifier: componentImport.moduleSpecifier,
-        namedImports: [componentImport.className],
-      });
-    }
-
-    const declaration = sourceFile.addClass({
+    }, ...componentImports.map(componentImport => ({
+      kind: StructureKind.ImportDeclaration as const,
+      moduleSpecifier: componentImport.moduleSpecifier,
+      namedImports: [componentImport.className],
+    })), createClassDeclaration({
       name: prepared.className,
       isExported: true,
       extends: "VueTestUtilsPom",
       docs: [`Vue Test Utils object for ${componentName} (source: ${sourceRel}).`],
-    });
-    for (const member of members) {
-      addClassMember(declaration, member);
-    }
+    }, members)],
   }, {
     prefixText: buildFilePrefix({ eslintDisableSortImports: true }),
+    cache: renderCache,
   });
 }
 
 function generateVueTestUtilsFiles(
   componentHierarchyMap: Map<string, IComponentDependencies>,
   outDir: string,
-  options: { testIdAttribute?: string } = {},
+  options: { testIdAttribute?: string; renderCache?: TypeScriptRenderCache } = {},
 ): GeneratedFileOutput[] {
   const base = ensureDir(outDir);
   const testIdAttribute = options.testIdAttribute?.trim() || "data-testid";
@@ -1244,6 +1244,7 @@ function generateVueTestUtilsFiles(
         runtimePath,
         generatedFilePathByComponent,
         testIdAttribute,
+        options.renderCache,
       ),
     };
   });
@@ -1255,12 +1256,13 @@ function generateVueTestUtilsFiles(
   if (!runtimeFile) {
     throw new Error("[vue-pom-generator] Failed to generate the Vue Test Utils runtime.");
   }
-  const indexContent = renderSourceFile("index.ts", (sourceFile) => {
-    addExportAll(sourceFile, stripExtension(toPosixRelativePath(base, runtimePath)));
-    for (const [, filePath] of generatedFilePathByComponent) {
-      addExportAll(sourceFile, `./${stripExtension(path.basename(filePath))}`);
-    }
+  const indexContent = renderStructuredSourceFile(path.join(base, "index.ts"), {
+    statements: [
+      stripExtension(toPosixRelativePath(base, runtimePath)),
+      ...Array.from(generatedFilePathByComponent.values(), filePath => `./${stripExtension(path.basename(filePath))}`),
+    ].map(moduleSpecifier => ({ kind: StructureKind.ExportDeclaration, moduleSpecifier })),
   }, {
+    cache: options.renderCache,
     prefixText: buildFilePrefix({
       eslintDisableSortImports: true,
       commentLines: [
@@ -1283,6 +1285,7 @@ async function generateSplitTypeScriptFiles(
   basePageClassPath: string,
   outDir: string,
   options: {
+    renderCache?: TypeScriptRenderCache;
     customPomAttachments?: GenerateFilesOptions["customPomAttachments"];
     projectRoot?: GenerateFilesOptions["projectRoot"];
     customPomDir?: GenerateFilesOptions["customPomDir"];
@@ -1342,6 +1345,7 @@ async function generateSplitTypeScriptFiles(
     }
 
     const content = generateViewObjectModelContent(name, deps, componentHierarchyMap, vueFilesPathMap, runtimeBasePagePath, {
+      renderCache: options.renderCache,
       outputDir: path.dirname(filePath),
       outputStructure: "split",
       customPomAttachments: options.customPomAttachments ?? [],
@@ -1373,6 +1377,8 @@ async function generateSplitTypeScriptFiles(
     const members = composed?.members ?? getDefaultStubMembers();
 
     const content = renderSplitStubPomContent({
+      filePath,
+      renderCache: options.renderCache,
       className: targetClassName,
       basePageImportSpecifier,
       childImports,
@@ -1384,14 +1390,15 @@ async function generateSplitTypeScriptFiles(
 
   const runtimeAssetSpecs = getRuntimeGeneratedAssetSpecs(base, basePageClassPath);
   const runtimeFiles = buildRuntimeGeneratedFilesFromSpecs(runtimeAssetSpecs);
-  const indexContent = renderSourceFile("index.ts", (sourceFile) => {
-    for (const spec of runtimeAssetSpecs) {
-      addExportAll(sourceFile, stripExtension(toPosixRelativePath(base, spec.outputPath)));
-    }
-    for (const [, filePath] of Array.from(generatedTsFilePathByComponent.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
-      addExportAll(sourceFile, `./${stripExtension(path.basename(filePath))}`);
-    }
+  const indexContent = renderStructuredSourceFile(path.join(base, "index.ts"), {
+    statements: [
+      ...runtimeAssetSpecs.map(spec => stripExtension(toPosixRelativePath(base, spec.outputPath))),
+      ...Array.from(generatedTsFilePathByComponent.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([, filePath]) => `./${stripExtension(path.basename(filePath))}`),
+    ].map(moduleSpecifier => ({ kind: StructureKind.ExportDeclaration, moduleSpecifier })),
   }, {
+    cache: options.renderCache,
     prefixText: buildFilePrefix({
       eslintDisableSortImports: true,
       commentLines: [
@@ -1860,6 +1867,7 @@ function generateAggregatedCSharpFiles(
 function maybeGenerateFixtureRegistry(
   componentHierarchyMap: Map<string, IComponentDependencies>,
   options: {
+    renderCache?: TypeScriptRenderCache;
     generateFixtures: GenerateFilesOptions["generateFixtures"];
     pomOutDir: string;
     projectRoot?: string;
@@ -2219,7 +2227,8 @@ function maybeGenerateFixtureRegistry(
   const manifestContent = generatePomManifestModule(
     componentHierarchyMap,
     options.elementMetadata,
-    manifestFileName,
+    path.resolve(fixtureOutDirAbs, manifestFileName),
+    options.renderCache,
   );
   const [diagnosticsRuntimeFile] = buildRuntimeGeneratedFilesFromSpecs([{
     absolutePath: resolvePluginAsset("../class-generation/diagnostics.ts"),
@@ -2679,45 +2688,33 @@ function generateViewObjectModelContent(
   generatedImports.sort((a, b) => a.className.localeCompare(b.className));
 
   const prefixText = `${buildFilePrefix({ eslintDisableSortImports: true })}${doc}\n`;
-  return renderSourceFile(`${prepared.className}.ts`, (sourceFile) => {
-    addNamedImport(sourceFile, {
+  return renderStructuredSourceFile(path.join(outputDir, `${componentName}.g.ts`), {
+    statements: [{
+      kind: StructureKind.ImportDeclaration,
       moduleSpecifier: "@playwright/test",
       isTypeOnly: true,
       namedImports: [
         { name: "Locator", alias: "PwLocator" },
         { name: "Page", alias: "PwPage" },
       ],
-    });
-
-    addNamedImport(sourceFile, {
+    }, {
+      kind: StructureKind.ImportDeclaration,
       moduleSpecifier: basePageImportSpecifier,
       namedImports: ["BasePage", "Fluent"],
-    });
-
-    for (const customImport of customImports) {
-      addNamedImport(sourceFile, {
-        moduleSpecifier: customImport.moduleSpecifier,
-        namedImports: [{ name: customImport.name, alias: customImport.alias }],
-      });
-    }
-
-    for (const generatedImport of generatedImports) {
-      addNamedImport(sourceFile, {
-        moduleSpecifier: generatedImport.moduleSpecifier,
-        namedImports: [generatedImport.className],
-      });
-    }
-
-    const classDeclaration = sourceFile.addClass({
+    }, ...customImports.map(customImport => ({
+      kind: StructureKind.ImportDeclaration as const,
+      moduleSpecifier: customImport.moduleSpecifier,
+      namedImports: [{ name: customImport.name, alias: customImport.alias }],
+    })), ...generatedImports.map(generatedImport => ({
+      kind: StructureKind.ImportDeclaration as const,
+      moduleSpecifier: generatedImport.moduleSpecifier,
+      namedImports: [generatedImport.className],
+    })), createClassDeclaration({
       name: prepared.className,
       isExported: true,
       extends: "BasePage",
-    });
-
-    for (const member of prepared.members) {
-      addClassMember(classDeclaration, member);
-    }
-  }, { prefixText });
+    }, prepared.members)],
+  }, { prefixText, cache: options.renderCache });
 }
 
 function getViewPassthroughMethods(
@@ -3000,6 +2997,8 @@ function getDefaultStubMembers(): TypeScriptClassMember[] {
 }
 
 function renderSplitStubPomContent(options: {
+  filePath: string;
+  renderCache?: TypeScriptRenderCache;
   className: string;
   basePageImportSpecifier: string;
   childImports: Array<{ className: string; importPath: string }>;
@@ -3016,37 +3015,32 @@ function renderSplitStubPomContent(options: {
     ],
   });
 
-  return renderSourceFile(`${options.className}.ts`, (sourceFile) => {
+  return renderStructuredSourceFile(options.filePath, {
     // Stub ctors take Playwright's full `Page` (aliased `PwPage`), matching non-stub generated
     // POMs — stubs are constructed with `new Stub(this.page)` where `this.page` is `Page`.
-    addNamedImport(sourceFile, {
+    statements: [{
+      kind: StructureKind.ImportDeclaration,
       moduleSpecifier: "@playwright/test",
       isTypeOnly: true,
       namedImports: [{ name: "Page", alias: "PwPage" }],
-    });
-    addNamedImport(sourceFile, {
+    }, {
+      kind: StructureKind.ImportDeclaration,
       moduleSpecifier: options.basePageImportSpecifier,
       namedImports: ["BasePage"],
-    });
-    for (const childImport of options.childImports) {
-      addNamedImport(sourceFile, {
-        moduleSpecifier: childImport.importPath,
-        namedImports: [childImport.className],
-      });
-    }
-    sourceFile.addStatements(buildCommentBlock([
-      "Stub POM generated because it is referenced as a navigation target but",
-      "did not have any generated test ids in this build.",
-    ]).trimEnd());
-    const classDeclaration = sourceFile.addClass({
+    }, ...options.childImports.map(childImport => ({
+      kind: StructureKind.ImportDeclaration as const,
+      moduleSpecifier: childImport.importPath,
+      namedImports: [childImport.className],
+    })), createClassDeclaration({
       name: options.className,
       isExported: true,
       extends: "BasePage",
-    });
-    for (const member of options.members) {
-      addClassMember(classDeclaration, member);
-    }
-  }, { prefixText });
+      leadingTrivia: buildCommentBlock([
+        "Stub POM generated because it is referenced as a navigation target but",
+        "did not have any generated test ids in this build.",
+      ]),
+    }, options.members)],
+  }, { prefixText, cache: options.renderCache });
 }
 
 function getChildImportSpecifiers(
@@ -3067,42 +3061,6 @@ function getChildImportSpecifiers(
     })
     .filter((entry): entry is { className: string; importPath: string } => !!entry)
     .sort((a, b) => a.className.localeCompare(b.className));
-}
-
-function isConstructorMember(member: TypeScriptClassMember): member is OptionalKind<ConstructorDeclarationStructure> {
-  return member.kind === StructureKind.Constructor;
-}
-
-function isGetterMember(member: TypeScriptClassMember): member is OptionalKind<GetAccessorDeclarationStructure> {
-  return member.kind === StructureKind.GetAccessor;
-}
-
-function isMethodMember(member: TypeScriptClassMember): member is OptionalKind<MethodDeclarationStructure> {
-  return member.kind === StructureKind.Method;
-}
-
-function isPropertyMember(member: TypeScriptClassMember): member is OptionalKind<PropertyDeclarationStructure> {
-  return member.kind === StructureKind.Property;
-}
-
-function addClassMember(classDeclaration: ReturnType<TypeScriptSourceFile["addClass"]>, member: TypeScriptClassMember): void {
-  if (isConstructorMember(member)) {
-    classDeclaration.addConstructor(member);
-    return;
-  }
-  if (isGetterMember(member)) {
-    classDeclaration.addGetAccessor(member);
-    return;
-  }
-  if (isMethodMember(member)) {
-    classDeclaration.addMethod(member);
-    return;
-  }
-  if (isPropertyMember(member)) {
-    classDeclaration.addProperty(member);
-    return;
-  }
-  throw new Error(`Unsupported class member structure: ${String(member)}`);
 }
 
 interface RuntimeGeneratedAssetSpec {
@@ -3360,6 +3318,7 @@ async function generateAggregatedFiles(
   basePageClassPath: string,
   outDir: string,
   options: {
+    renderCache?: TypeScriptRenderCache;
     customPomAttachments?: GenerateFilesOptions["customPomAttachments"];
     projectRoot?: GenerateFilesOptions["projectRoot"];
     customPomDir?: GenerateFilesOptions["customPomDir"];
@@ -3496,33 +3455,22 @@ async function generateAggregatedFiles(
       ],
     });
 
-    return renderSourceFile("page-object-models.g.ts", (sourceFile) => {
-      for (const line of imports) {
-        sourceFile.addStatements(line);
-      }
-
-      for (const entry of [...classes, ...stubs]) {
-        if (entry.isStub) {
-          sourceFile.addStatements(buildCommentBlock([
-            "Stub POM generated because it is referenced as a navigation target but",
-            "did not have any generated test ids in this build.",
-          ]).trimEnd());
-        }
-        else {
-          sourceFile.addStatements(entry.doc);
-        }
-
-        const classDeclaration = sourceFile.addClass({
+    return renderStructuredSourceFile(path.join(outputDir, "page-object-models.g.ts"), {
+      statements: [
+        ...imports,
+        ...[...classes, ...stubs].map(entry => createClassDeclaration({
           name: entry.className,
           isExported: true,
           extends: "BasePage",
-        });
-
-        for (const member of entry.members) {
-          addClassMember(classDeclaration, member);
-        }
-      }
-    }, { prefixText });
+          leadingTrivia: entry.isStub
+            ? buildCommentBlock([
+                "Stub POM generated because it is referenced as a navigation target but",
+                "did not have any generated test ids in this build.",
+              ])
+            : `${entry.doc}\n`,
+        }, entry.members)),
+      ],
+    }, { prefixText, cache: options.renderCache });
   };
 
   const base = ensureDir(outDir);
@@ -3530,9 +3478,10 @@ async function generateAggregatedFiles(
   const content = makeAggregatedContent(path.dirname(outputFile), [...views, ...components]);
 
   const indexFile = path.join(base, "index.ts");
-  const indexContent = renderSourceFile("index.ts", (sourceFile) => {
-    addExportAll(sourceFile, "./page-object-models.g");
+  const indexContent = renderStructuredSourceFile(indexFile, {
+    statements: [{ kind: StructureKind.ExportDeclaration, moduleSpecifier: "./page-object-models.g" }],
   }, {
+    cache: options.renderCache,
     prefixText: buildFilePrefix({
       eslintDisableSortImports: true,
       commentLines: [

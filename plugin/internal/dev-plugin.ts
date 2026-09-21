@@ -12,6 +12,7 @@ import { generateFiles } from "../../class-generation";
 import type { ElementMetadata } from "../../metadata-collector";
 import { introspectNuxtPages, parseRouterFileFromCwd } from "../../router-introspection";
 import { createTestIdTransform } from "../../transform";
+import { TypeScriptRenderCache } from "../../typescript-codegen";
 import type { IComponentDependencies, NativeWrappersMap, RouterIntrospectionResult } from "../../utils";
 import { setResolveToComponentNameFn, setRouteNameToComponentNameMap, toPascalCase } from "../../utils";
 import type { VuePomGeneratorLogger } from "../logger";
@@ -120,6 +121,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
     },
 
     async configureServer(server: ViteDevServer) {
+      const renderCache = new TypeScriptRenderCache();
       const getViewsDirAbs = () => resolveProjectPath(getViewsDir());
       const getPageDirsAbs = () => getPageDirs().map(dir => resolveProjectPath(dir));
 
@@ -375,6 +377,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
       const generateAggregatedFromSnapshot = async (logLabel: string) => {
         const t0 = performance.now();
         await generateFiles(snapshotHierarchy, snapshotVuePathMap, normalizedBasePagePath, {
+          renderCache,
           outDir,
           emitLanguages,
           typescriptOutputStructure,

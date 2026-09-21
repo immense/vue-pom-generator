@@ -10,7 +10,7 @@ import { buildPomLocatorDescription, humanizePomMethodName } from "./pom-discove
 import type { PomParameterSpec } from "./pom-params";
 import type { IComponentDependencies, IDataTestId, PomExtraClickMethodSpec, PomPrimarySpec } from "./utils";
 import { buildPomGeneratedActionName, buildPomGeneratedPropertyName } from "./utils";
-import { renderSourceFile, VariableDeclarationKind, type WriterFunction } from "./typescript-codegen";
+import { renderSourceFile, renderStructuredSourceFile, StructureKind, VariableDeclarationKind, type TypeScriptRenderCache, type WriterFunction } from "./typescript-codegen";
 
 export type PomManifestEntry = {
   testId: string;
@@ -236,28 +236,30 @@ export function generatePomManifestModule(
   componentHierarchyMap: Map<string, IComponentDependencies>,
   elementMetadata: Map<string, Map<string, ElementMetadata>>,
   fileName: string = "virtual-pom-manifest.ts",
+  renderCache?: TypeScriptRenderCache,
 ): string {
   const pomManifest = buildPomManifest(componentHierarchyMap, elementMetadata);
 
-  return renderSourceFile(fileName, (sourceFile) => {
-    sourceFile.addStatements("// Rich POM discoverability manifest.");
-    sourceFile.addVariableStatement({
+  return renderStructuredSourceFile(fileName, {
+    statements: [{
+      kind: StructureKind.VariableStatement,
+      leadingTrivia: "// Rich POM discoverability manifest.\n",
       declarationKind: VariableDeclarationKind.Const,
       isExported: true,
       declarations: [{
         name: "pomManifest",
         initializer: writeConstJson(pomManifest),
       }],
-    });
-    sourceFile.addTypeAlias({
+    }, {
+      kind: StructureKind.TypeAlias,
       isExported: true,
       name: "PomManifest",
       type: "typeof pomManifest",
-    });
-    sourceFile.addTypeAlias({
+    }, {
+      kind: StructureKind.TypeAlias,
       isExported: true,
       name: "PomManifestComponentName",
       type: "keyof PomManifest",
-    });
-  });
+    }],
+  }, { cache: renderCache });
 }

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { writeGeneratedOutputs } from "../plugin/generated-outputs";
 
 describe("generated output ownership", () => {
@@ -11,9 +11,31 @@ describe("generated output ownership", () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "pom-ownership-"));
     outDir = path.join(root, "poms");
   });
-  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
 
   const file = (filePath: string, content = "generated") => ({ filePath, content });
+
+  it("preserves files and the ownership manifest when all emitted bytes are unchanged", () => {
+    const output = path.join(outDir, "Current.g.ts");
+    const shared = path.join(outDir, ".gitattributes");
+    const manifest = path.join(outDir, ".vue-pom-generator-outputs.json");
+    writeGeneratedOutputs(outDir, [file(output)], [file(shared)]);
+    const oldTime = new Date("2020-01-01T00:00:00Z");
+    for (const name of [output, shared, manifest]) fs.utimesSync(name, oldTime, oldTime);
+    const writes = vi.spyOn(fs, "writeFileSync");
+    const renames = vi.spyOn(fs, "renameSync");
+    writeGeneratedOutputs(outDir, [file(output)], [file(shared)]);
+    expect(writes).not.toHaveBeenCalled();
+    expect(renames).not.toHaveBeenCalled();
+    for (const name of [output, shared, manifest]) expect(fs.statSync(name).mtime).toEqual(oldTime);
+
+    writeGeneratedOutputs(outDir, [file(output, "updated")], [file(shared)]);
+    expect(renames.mock.calls.map(([, destination]) => destination)).toEqual([output, manifest]);
+    expect(fs.statSync(shared).mtime).toEqual(oldTime);
+  });
 
   it("prunes previous outputs across directories, never unknown neighbors or shared files", () => {
     const stale = path.join(outDir, "Old.g.ts");

@@ -16,6 +16,7 @@ import {
   type ParameterDeclarationStructure,
   type PropertyDeclarationStructure,
   type SourceFile,
+  type SourceFileStructure,
   type WriterFunction,
 } from "ts-morph";
 
@@ -36,11 +37,72 @@ export {
 
 export type TypeScriptWriter = CodeBlockWriter;
 export type TypeScriptSourceFile = SourceFile;
+export type TypeScriptSourceStructure = OptionalKind<SourceFileStructure>;
 export type TypeScriptClassMember =
   | OptionalKind<ConstructorDeclarationStructure>
   | OptionalKind<GetAccessorDeclarationStructure>
   | OptionalKind<MethodDeclarationStructure>
   | OptionalKind<PropertyDeclarationStructure>;
+
+/** One latest rendered value per output, owned by a single dev server. Never retains ASTs. */
+export class TypeScriptRenderCache {
+  private readonly entries = new Map<string, { input: string; content: string }>();
+
+  render(filePath: string, input: string, build: () => string): string {
+    const previous = this.entries.get(filePath);
+    if (previous?.input === input) return previous.content;
+    const content = build();
+    this.entries.set(filePath, { input, content });
+    return content;
+  }
+
+  retain(filePaths: ReadonlySet<string>): void {
+    for (const filePath of this.entries.keys()) {
+      if (!filePaths.has(filePath)) this.entries.delete(filePath);
+    }
+  }
+}
+
+export function createClassDeclaration(
+  declaration: OptionalKind<ClassDeclarationStructure>,
+  members: TypeScriptClassMember[],
+): ClassDeclarationStructure {
+  const result: ClassDeclarationStructure = { ...declaration, kind: StructureKind.Class };
+  for (const member of members) {
+    switch (member.kind) {
+      case StructureKind.Constructor: (result.ctors ??= []).push(member); break;
+      case StructureKind.GetAccessor: (result.getAccessors ??= []).push(member); break;
+      case StructureKind.Method: (result.methods ??= []).push(member); break;
+      case StructureKind.Property: (result.properties ??= []).push(member); break;
+      default: throw new Error(`Unsupported class member kind: ${String(member.kind)}`);
+    }
+  }
+  return result;
+}
+
+/** Resolve writer closures before comparing input, including their captured values. */
+export function renderStructuredSourceFile(
+  filePath: string,
+  structure: TypeScriptSourceStructure,
+  options: { prefixText?: string; cache?: TypeScriptRenderCache } = {},
+): string {
+  const build = () => {
+    const project = createTypeScriptProject();
+    const sourceFile = project.createSourceFile(filePath, structure);
+    return ensureTrailingNewline(`${options.prefixText ?? ""}${sourceFile.getFullText()}`);
+  };
+  if (!options.cache) return build();
+
+  // Writer callbacks in generated structures are pure emitters. Their text, rather
+  // than Function.toString(), captures changed selectors, routes and child methods.
+  const input = JSON.stringify([options.prefixText, structure], (_key, value: object | WriterFunction) => {
+    if (typeof value !== "function") return value;
+    const writer = createTypeScriptWriter();
+    value(writer);
+    return writer.toString();
+  });
+  return options.cache.render(filePath, input, build);
+}
 
 function createTypeScriptProject(): Project {
   return new Project({

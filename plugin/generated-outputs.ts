@@ -76,6 +76,9 @@ function assertNoSymlinkParents(filePath: string, outDir: string, projectRoot: s
 }
 
 function writeFile(filePath: string, content: string): void {
+  // Keep mtimes and watcher state intact when the emitted bytes did not change.
+  // Compare the file itself so removed or externally modified outputs are repaired.
+  if (fs.existsSync(filePath) && fs.readFileSync(filePath, "utf8") === content) return;
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
   try {
