@@ -8,7 +8,7 @@
           :name="name"
           :checked="Object.is(modelValue, option.value)"
           @change="modelValue = option.value"
-        />
+        >
         {{ option.text }}
       </label>
       <div v-else>
@@ -18,7 +18,7 @@
           :name="name"
           :checked="Object.is(modelValue, option.value)"
           @change="modelValue = option.value"
-        />
+        >
         <label>{{ option.text }}</label>
       </div>
     </template>

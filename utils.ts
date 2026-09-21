@@ -595,30 +595,11 @@ export function getSlotScopeVariablesUsedAsBareCallbackHandlers(templateNode: El
       (prop): prop is DirectiveNode =>
         prop.type === NodeTypes.DIRECTIVE && prop.name === "for",
     );
-    if (vFor?.exp) {
-      const forSource = getVueExpressionSource(vFor.exp as SimpleExpressionNode | CompoundExpressionNode, "content", "compiled");
-      if (forSource) {
-        // Vue's parseFor splits the alias segment off at the first top-level
-        // `in`/`of`; the alias is everything left of it.
-        const aliasMatch = /^\s*([\s\S]+?)\s+(?:in|of)\s+[\s\S]+$/.exec(forSource);
-        const aliasSource = aliasMatch?.[1];
-        if (aliasSource) {
-          try {
-            const aliasAst = parseExpression(aliasSource, { plugins: ["typescript"] }) as BabelNode;
-            if (isSequenceExpression(aliasAst)) {
-              // (value, key, index) in source — every position is a binding.
-              for (const part of aliasAst.expressions) {
-                names.push(...collectBindingPatternNames(part as BabelNode));
-              }
-            }
-            else {
-              names.push(...collectBindingPatternNames(aliasAst));
-            }
-          }
-          catch {
-            // Unparseable alias — leave it untracked; a bare handler naming it
-            // would fail to resolve at runtime anyway.
-          }
+    if (vFor?.forParseResult) {
+      const { value, key, index } = vFor.forParseResult;
+      for (const alias of [value, key, index]) {
+        if (alias) {
+          names.push(...collectBindingPatternNames(tryGetTemplateSlotScopeBindingNode(alias)));
         }
       }
     }
@@ -845,14 +826,9 @@ function tryGetTemplateSlotScopeBindingNode(expression: VueExpressionNode): Babe
   }
 
   try {
-    return parseExpression(rawSource, { plugins: ["typescript"] }) as BabelNode;
-  }
-  catch {
-    // Slot-scope destructuring like `{ data }` is not a standalone expression, so parse it as
-    // the parameter list of a synthetic arrow function to recover the binding pattern AST.
-  }
-
-  try {
+    // Vue parses v-slot props and v-for aliases as function parameters. Match
+    // those semantics so object/array destructuring produces binding-pattern
+    // nodes rather than object/array expression nodes.
     const parsed = parse(`(${rawSource}) => {}`, {
       sourceType: "module",
       plugins: ["typescript"],
