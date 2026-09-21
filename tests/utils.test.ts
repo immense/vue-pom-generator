@@ -1,7 +1,20 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
+import type { ElementNode } from "@vue/compiler-core";
+import { parse } from "@vue/compiler-dom";
 
-import { __internal, collapseWhitespace, toPascalCase } from "../utils";
+import {
+  __internal,
+  collapseWhitespace,
+  getSlotScopeVariablesUsedAsBareCallbackHandlers,
+  toPascalCase,
+} from "../utils";
+
+function parseSlotTemplate(source: string): ElementNode {
+  const root = parse(source);
+  const component = root.children[0] as ElementNode;
+  return component.children[0] as ElementNode;
+}
 
 describe("utils", () => {
   it("toPascalCase converts separators into PascalCase", () => {
@@ -66,5 +79,58 @@ describe("utils", () => {
     expect(__internal.getDegenerateSlotScopeFallbackKeyVariable(null)).toBeNull();
     expect(__internal.getDegenerateSlotScopeFallbackKeyVariable("")).toBeNull();
   });
-});
 
+  it("uses Vue's parsed v-for value, key, and index aliases when tracking shadowed callbacks", () => {
+    const template = parseSlotTemplate(`
+      <MyList>
+        <template #row="{ item, key, index, outer }">
+          <div v-for="(item, key, index) in rows">
+            <button @click="item">Item</button>
+            <button @click="key">Key</button>
+            <button @click="index">Index</button>
+          </div>
+          <button @click="outer">Outer</button>
+        </template>
+      </MyList>
+    `);
+
+    expect(getSlotScopeVariablesUsedAsBareCallbackHandlers(template)).toEqual(["outer"]);
+  });
+
+  it("tracks nested, defaulted, renamed, and rest bindings in a v-for object pattern", () => {
+    const template = parseSlotTemplate(`
+      <MyList>
+        <template #row="{ item, handler, rest, key, index, outer }">
+          <div v-for="({ action: item, nested: { handler = fallback }, ...rest }, key, index) in rows">
+            <button @click="item">Item</button>
+            <button @click="handler">Handler</button>
+            <button @click="rest">Rest</button>
+            <button @click="key">Key</button>
+            <button @click="index">Index</button>
+          </div>
+          <button @click="outer">Outer</button>
+        </template>
+      </MyList>
+    `);
+
+    expect(getSlotScopeVariablesUsedAsBareCallbackHandlers(template)).toEqual(["outer"]);
+  });
+
+  it("tracks defaulted and rest bindings in a v-for array pattern using of", () => {
+    const template = parseSlotTemplate(`
+      <MyList>
+        <template #row="{ item, handler, rest, index, outer }">
+          <div v-for="([item, , handler = fallback, ...rest], index) of rows">
+            <button @click="item">Item</button>
+            <button @click="handler">Handler</button>
+            <button @click="rest">Rest</button>
+            <button @click="index">Index</button>
+          </div>
+          <button @click="outer">Outer</button>
+        </template>
+      </MyList>
+    `);
+
+    expect(getSlotScopeVariablesUsedAsBareCallbackHandlers(template)).toEqual(["outer"]);
+  });
+});
