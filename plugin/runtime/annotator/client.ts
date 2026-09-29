@@ -41,47 +41,23 @@ interface ButtonOptions {
   primary?: boolean;
   pressed?: boolean;
   disabled?: boolean;
-  shortcut?: string;
 }
 
 type ToolbarIconName = "drag" | "inspect" | "preview" | "copy" | "clear" | "settings";
 
 const TOOLBAR_ICON_MARKUP: Record<ToolbarIconName, string> = {
   drag: '<svg viewBox="0 0 16 16"><path d="M5 3h1v1H5zM10 3h1v1h-1zM5 7h1v1H5zM10 7h1v1h-1zM5 11h1v1H5zM10 11h1v1h-1z" fill="currentColor" stroke="none" /></svg>',
-  inspect: '<svg viewBox="0 0 16 16"><path d="M8 2v3M8 11v3M2 8h3M11 8h3M4 4l2 2M10 10l2 2M12 4l-2 2M6 10l-2 2"/><circle cx="8" cy="8" r="2.5"/></svg>',
+  inspect: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="4.5"/><path d="M8 1v2.5M8 12.5v2.5M1 8h2.5M12.5 8h2.5"/><circle cx="8" cy="8" r="0.9" fill="currentColor" stroke="none"/></svg>',
   preview: '<svg viewBox="0 0 16 16"><path d="M1.5 8s2.4-4 6.5-4 6.5 4 6.5 4-2.4 4-6.5 4-6.5-4-6.5-4Z"/><circle cx="8" cy="8" r="1.8"/></svg>',
   copy: '<svg viewBox="0 0 16 16"><path d="M6 2.5h6.5v9H6z"/><path d="M3.5 5.5H5v6.5h5.5v1.5h-7z"/></svg>',
   clear: '<svg viewBox="0 0 16 16"><path d="M2.5 4.5h11"/><path d="M6 2.5h4"/><path d="M5 4.5v8"/><path d="M8 4.5v8"/><path d="M11 4.5v8"/><path d="M4 4.5h8l-.6 9H4.6z"/></svg>',
   settings: '<svg viewBox="0 0 16 16"><path d="M8 2.2l1 .6 1.2-.2.8 1 .9.7-.3 1.2.5 1-.5 1 .3 1.2-.9.7-.8 1-1.2-.2-1 .6-1-.6-1.2.2-.8-1-.9-.7.3-1.2-.5-1 .5-1-.3-1.2.9-.7.8-1 1.2.2z"/><circle cx="8" cy="8" r="2.2"/></svg>',
 };
 
-const SHORTCUT_LABELS = {
-  select: "S",
-  preview: "P",
-  copy: "C",
-  clear: "X",
-  settings: ",",
-  cancel: "Esc",
-} as const;
 
-function formatShortcutTitle(label: string, shortcut: string | undefined): string {
-  return shortcut ? `${label} (${shortcut})` : label;
-}
 
 function isInsideAnnotatorTree(node: EventTarget | null): boolean {
   return node instanceof Element && !!node.closest(`[${ANNOTATOR_ROOT_ATTR}]`);
-}
-
-function isEditableTarget(node: EventTarget | null): boolean {
-  if (!(node instanceof Element)) {
-    return false;
-  }
-
-  if (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement) {
-    return true;
-  }
-
-  return node.closest('[contenteditable=""], [contenteditable="true"]') !== null;
 }
 
 function getElementSummary(element: Element): string {
@@ -178,10 +154,7 @@ function createButtonBase(label: string, onClick: () => void, options: ButtonOpt
   button.className = `vpg-annotator-btn${options.primary ? " vpg-annotator-btn--primary" : ""}`;
   button.setAttribute(ANNOTATOR_ROOT_ATTR, "");
   button.setAttribute("aria-label", label);
-  button.title = formatShortcutTitle(label, options.shortcut);
-  if (options.shortcut) {
-    button.setAttribute("aria-keyshortcuts", options.shortcut);
-  }
+  button.title = label;
   if (options.pressed) {
     button.setAttribute("aria-pressed", "true");
   }
@@ -282,8 +255,7 @@ class AnnotatorRuntime {
   constructor(options: AnnotatorClientOptions) {
     this.options = options;
     this.settings = this.loadSettings();
-    this.annotations = this.loadAnnotations();
-    this.toolbarPosition = this.loadToolbarPosition();
+    this.annotations = this.loadAnnotations();    this.toolbarPosition = this.loadToolbarPosition();
   }
 
   mount() {
@@ -349,27 +321,22 @@ class AnnotatorRuntime {
 
     const selectButton = createIconButton(this.inspectMode ? "Stop selecting" : "Select element", "inspect", () => {
       this.setInspectMode(!this.inspectMode);
-    }, { primary: this.inspectMode, pressed: this.inspectMode, shortcut: SHORTCUT_LABELS.select });
+    }, { primary: this.inspectMode, pressed: this.inspectMode });
 
     const previewButton = createIconButton("Preview annotations", "preview", () => this.openPreview(), {
       disabled: this.annotations.length === 0,
-      shortcut: SHORTCUT_LABELS.preview,
     });
     this.previewButton = previewButton;
 
     const copyButton = createIconButton("Copy annotations", "copy", () => this.copyAnnotations(), {
       disabled: this.annotations.length === 0,
-      shortcut: SHORTCUT_LABELS.copy,
     });
 
     const clearButton = createIconButton("Clear annotations", "clear", () => this.clearAnnotations(), {
       disabled: this.annotations.length === 0,
-      shortcut: SHORTCUT_LABELS.clear,
     });
 
-    const settingsButton = createIconButton("Annotator settings", "settings", () => this.openSettings(), {
-      shortcut: SHORTCUT_LABELS.settings,
-    });
+    const settingsButton = createIconButton("Annotator settings", "settings", () => this.openSettings());
     this.settingsButton = settingsButton;
 
     this.toolbarEl.append(handle, selectButton, previewButton, copyButton, clearButton, settingsButton, count);
@@ -403,7 +370,6 @@ class AnnotatorRuntime {
       this.renderMarkers();
       this.applyToolbarPosition();
     });
-    window.addEventListener("keydown", (event) => this.onWindowKeyDown(event), true);
   }
 
   private loadSettings(): AnnotatorSettings {
@@ -550,69 +516,6 @@ class AnnotatorRuntime {
       window.addEventListener("pointerup", onPointerUp);
       window.addEventListener("pointercancel", onPointerUp);
     });
-  }
-
-  private onWindowKeyDown(event: KeyboardEvent) {
-    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) {
-      return;
-    }
-
-    if (event.key === "Escape") {
-      if (!this.inspectMode && !this.currentPanelEl) {
-        return;
-      }
-      event.preventDefault();
-      if (this.inspectMode) {
-        this.setInspectMode(false);
-      }
-      else {
-        this.closePanel();
-      }
-      return;
-    }
-
-    if (isEditableTarget(event.target)) {
-      return;
-    }
-
-    const key = event.key.toLowerCase();
-    if (key === SHORTCUT_LABELS.select.toLowerCase()) {
-      event.preventDefault();
-      this.setInspectMode(!this.inspectMode);
-      return;
-    }
-
-    if (key === SHORTCUT_LABELS.preview.toLowerCase()) {
-      if (!this.annotations.length) {
-        return;
-      }
-      event.preventDefault();
-      this.openPreview();
-      return;
-    }
-
-    if (key === SHORTCUT_LABELS.copy.toLowerCase()) {
-      if (!this.annotations.length) {
-        return;
-      }
-      event.preventDefault();
-      void this.copyAnnotations();
-      return;
-    }
-
-    if (key === SHORTCUT_LABELS.clear.toLowerCase()) {
-      if (!this.annotations.length) {
-        return;
-      }
-      event.preventDefault();
-      this.clearAnnotations();
-      return;
-    }
-
-    if (event.key === SHORTCUT_LABELS.settings) {
-      event.preventDefault();
-      this.openSettings();
-    }
   }
 
   private setInspectMode(next: boolean) {
@@ -826,12 +729,23 @@ class AnnotatorRuntime {
     this.openInputForDraft(reference);
   }
 
+  private createPanelCloseButton(ariaLabel: string) {
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.className = "vpg-annotator-panel-close";
+    closeButton.setAttribute(ANNOTATOR_ROOT_ATTR, "");
+    closeButton.setAttribute("aria-label", ariaLabel);
+    closeButton.textContent = "\u00D7";
+    closeButton.addEventListener("click", () => this.closePanel());
+    return closeButton;
+  }
+
   private openPreview() {
     if (!this.previewButton || this.annotations.length === 0) {
       return;
     }
 
-    const { panel, body, arrowEl } = this.createPanelBase("vpg-annotator-panel");
+    const { panel, body, arrowEl } = this.createPanelBase("vpg-annotator-panel vpg-annotator-panel--preview");
     const title = document.createElement("div");
     title.className = "vpg-annotator-heading";
     title.textContent = "Annotation preview";
@@ -842,7 +756,10 @@ class AnnotatorRuntime {
     textarea.className = "vpg-annotator-textarea";
     textarea.readOnly = true;
     textarea.value = formatAnnotations(this.annotations, this.settings.outputDetail, window.location.href);
-    body.append(title, subtitle, textarea);
+    const headerRow = document.createElement("div");
+    headerRow.className = "vpg-annotator-heading-row";
+    headerRow.append(title, this.createPanelCloseButton("Close preview"));
+    body.append(headerRow, subtitle, textarea);
 
     this.showPanel(panel, () => this.attachFloating(this.previewButton!, panel, arrowEl, "top-start", ["top-start", "left-start", "top-end", "left-end"]));
   }
@@ -887,38 +804,7 @@ class AnnotatorRuntime {
     });
     showComponentField.append(showComponentCopy, showComponentCheckbox);
 
-    const shortcutsField = document.createElement("div");
-    shortcutsField.className = "vpg-annotator-field";
-    const shortcutsLabel = document.createElement("div");
-    shortcutsLabel.className = "vpg-annotator-label";
-    shortcutsLabel.textContent = "Keyboard shortcuts";
-    const shortcutsList = document.createElement("div");
-    shortcutsList.className = "vpg-annotator-shortcuts";
-
-    for (const [shortcut, description] of [
-      [SHORTCUT_LABELS.select, "Toggle selection mode"],
-      [SHORTCUT_LABELS.preview, "Open preview"],
-      [SHORTCUT_LABELS.copy, "Copy annotations"],
-      [SHORTCUT_LABELS.clear, "Clear annotations"],
-      [SHORTCUT_LABELS.settings, "Open settings"],
-      [SHORTCUT_LABELS.cancel, "Close panel / cancel selection"],
-    ] as const) {
-      const row = document.createElement("div");
-      row.className = "vpg-annotator-shortcut-row";
-      const text = document.createElement("span");
-      text.className = "vpg-annotator-subtle";
-      text.textContent = description;
-      const kbd = document.createElement("kbd");
-      kbd.className = "vpg-annotator-kbd";
-      kbd.setAttribute(ANNOTATOR_ROOT_ATTR, "");
-      kbd.textContent = shortcut;
-      row.append(text, kbd);
-      shortcutsList.appendChild(row);
-    }
-
-    shortcutsField.append(shortcutsLabel, shortcutsList);
-
-    body.append(title, detailField, showComponentField, shortcutsField);
+    body.append(title, detailField, showComponentField);
     this.showPanel(panel, () => this.attachFloating(this.settingsButton!, panel, arrowEl, "top-start", ["top-start", "left-start", "top-end", "left-end"]));
   }
 

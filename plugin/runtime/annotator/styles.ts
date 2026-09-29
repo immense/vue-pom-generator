@@ -158,6 +158,20 @@ export const ANNOTATOR_STYLES = `
   max-width: min(320px, calc(100vw - 24px));
 }
 
+.vpg-annotator-panel--preview {
+  min-width: min(720px, calc(100vw - 24px));
+  max-width: min(940px, calc(100vw - 24px));
+}
+
+.vpg-annotator-panel--preview .vpg-annotator-textarea {
+  height: min(52vh, 440px);
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre;
+  overflow: auto;
+}
+
+
 .vpg-annotator-arrow {
   position: absolute;
   z-index: 0;
@@ -272,18 +286,6 @@ export const ANNOTATOR_STYLES = `
   margin-top: 12px;
 }
 
-.vpg-annotator-shortcuts {
-  display: grid;
-  gap: 8px;
-}
-
-.vpg-annotator-shortcut-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
 .vpg-annotator-label {
   font-size: 12px;
   font-weight: 600;
@@ -297,20 +299,6 @@ export const ANNOTATOR_STYLES = `
 
 .vpg-annotator-select {
   padding: 8px 10px;
-}
-
-.vpg-annotator-kbd {
-  min-width: 32px;
-  padding: 4px 8px;
-  border: 1px solid var(--vpg-annotator-border);
-  border-radius: var(--vpg-annotator-radius);
-  background: rgba(15, 23, 42, 0.72);
-  color: var(--vpg-annotator-text);
-  font: inherit;
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1;
-  text-align: center;
 }
 
 .vpg-annotator-highlight {
@@ -344,6 +332,7 @@ export const ANNOTATOR_STYLES = `
   inset: 0;
   z-index: 2147483645;
   background: transparent;
+  cursor: crosshair;
 }
 
 .vpg-annotator-marker {
@@ -375,5 +364,33 @@ export const ANNOTATOR_STYLES = `
   color: var(--vpg-annotator-text);
   font-size: 12px;
   font-weight: 600;
+}
+
+.vpg-annotator-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.vpg-annotator-heading-row .vpg-annotator-heading {
+  margin-bottom: 4px;
+}
+
+.vpg-annotator-panel-close {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--vpg-annotator-text-soft);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+  border-radius: var(--vpg-annotator-radius);
+}
+
+.vpg-annotator-panel-close:hover {
+  color: var(--vpg-annotator-text);
+  background: var(--vpg-annotator-bg-soft);
 }
 `;
