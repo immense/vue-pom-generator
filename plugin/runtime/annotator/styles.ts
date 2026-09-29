@@ -63,6 +63,7 @@ export const ANNOTATOR_STYLES = `
 
 .vpg-annotator-toolbar-handle,
 .vpg-annotator-btn {
+  position: relative;
   appearance: none;
   display: inline-flex;
   align-items: center;
@@ -156,6 +157,36 @@ export const ANNOTATOR_STYLES = `
 .vpg-annotator-settings {
   min-width: 260px;
   max-width: min(320px, calc(100vw - 24px));
+}
+
+.vpg-annotator-panel--preview {
+  min-width: min(720px, calc(100vw - 24px));
+  max-width: min(940px, calc(100vw - 24px));
+}
+
+.vpg-annotator-panel--preview .vpg-annotator-textarea {
+  height: min(52vh, 440px);
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre;
+  overflow: auto;
+}
+
+.vpg-annotator-badge {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--vpg-annotator-accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  pointer-events: none;
 }
 
 .vpg-annotator-arrow {
@@ -318,6 +349,7 @@ export const ANNOTATOR_STYLES = `
   inset: 0;
   z-index: 2147483645;
   background: transparent;
+  cursor: crosshair;
 }
 
 .vpg-annotator-marker {

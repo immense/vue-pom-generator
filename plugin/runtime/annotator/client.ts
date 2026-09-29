@@ -267,8 +267,7 @@ class AnnotatorRuntime {
   constructor(options: AnnotatorClientOptions) {
     this.options = options;
     this.settings = this.loadSettings();
-    this.annotations = this.loadAnnotations();
-    this.toolbarPosition = this.loadToolbarPosition();
+    this.annotations = this.loadAnnotations();    this.toolbarPosition = this.loadToolbarPosition();
   }
 
   mount() {
@@ -339,6 +338,13 @@ class AnnotatorRuntime {
     const previewButton = createIconButton("Preview annotations", "preview", () => this.openPreview(), {
       disabled: this.annotations.length === 0,
     });
+    if (this.annotations.length > 0) {
+      const badge = document.createElement("span");
+      badge.className = "vpg-annotator-badge";
+      badge.setAttribute(ANNOTATOR_ROOT_ATTR, "");
+      badge.textContent = String(this.annotations.length);
+      previewButton.appendChild(badge);
+    }
     this.previewButton = previewButton;
 
     const copyButton = createIconButton("Copy annotations", "copy", () => this.copyAnnotations(), {
@@ -747,7 +753,7 @@ class AnnotatorRuntime {
       return;
     }
 
-    const { panel, body, arrowEl } = this.createPanelBase("vpg-annotator-panel");
+    const { panel, body, arrowEl } = this.createPanelBase("vpg-annotator-panel vpg-annotator-panel--preview");
     const title = document.createElement("div");
     title.className = "vpg-annotator-heading";
     title.textContent = "Annotation preview";
