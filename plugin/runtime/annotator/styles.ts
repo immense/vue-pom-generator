@@ -365,4 +365,32 @@ export const ANNOTATOR_STYLES = `
   font-size: 12px;
   font-weight: 600;
 }
+
+.vpg-annotator-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.vpg-annotator-heading-row .vpg-annotator-heading {
+  margin-bottom: 4px;
+}
+
+.vpg-annotator-panel-close {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--vpg-annotator-text-soft);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+  border-radius: var(--vpg-annotator-radius);
+}
+
+.vpg-annotator-panel-close:hover {
+  color: var(--vpg-annotator-text);
+  background: var(--vpg-annotator-bg-soft);
+}
 `;

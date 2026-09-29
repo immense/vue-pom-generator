@@ -729,6 +729,17 @@ class AnnotatorRuntime {
     this.openInputForDraft(reference);
   }
 
+  private createPanelCloseButton(ariaLabel: string) {
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.className = "vpg-annotator-panel-close";
+    closeButton.setAttribute(ANNOTATOR_ROOT_ATTR, "");
+    closeButton.setAttribute("aria-label", ariaLabel);
+    closeButton.textContent = "\u00D7";
+    closeButton.addEventListener("click", () => this.closePanel());
+    return closeButton;
+  }
+
   private openPreview() {
     if (!this.previewButton || this.annotations.length === 0) {
       return;
@@ -745,7 +756,10 @@ class AnnotatorRuntime {
     textarea.className = "vpg-annotator-textarea";
     textarea.readOnly = true;
     textarea.value = formatAnnotations(this.annotations, this.settings.outputDetail, window.location.href);
-    body.append(title, subtitle, textarea);
+    const headerRow = document.createElement("div");
+    headerRow.className = "vpg-annotator-heading-row";
+    headerRow.append(title, this.createPanelCloseButton("Close preview"));
+    body.append(headerRow, subtitle, textarea);
 
     this.showPanel(panel, () => this.attachFloating(this.previewButton!, panel, arrowEl, "top-start", ["top-start", "left-start", "top-end", "left-end"]));
   }
