@@ -16,7 +16,8 @@ const SHORTCUT_KEYS = ["s", "p", "c", "x", ",", "Escape"];
 describe("annotator keyboard policy", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
-    delete (window as unknown as Record<string, unknown>).__VUE_POM_GENERATOR_ANNOTATOR_RUNTIME__;
+    const runtimeWindow = window as Window & { __VUE_POM_GENERATOR_ANNOTATOR_RUNTIME__?: object };
+    delete runtimeWindow.__VUE_POM_GENERATOR_ANNOTATOR_RUNTIME__;
   });
 
   it("binds no window keydown listener at mount", () => {

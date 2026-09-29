@@ -40,7 +40,8 @@ describe("annotator preview affordances", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
     sessionStorage.clear();
-    delete (window as unknown as Record<string, unknown>).__VUE_POM_GENERATOR_ANNOTATOR_RUNTIME__;
+    const runtimeWindow = window as Window & { __VUE_POM_GENERATOR_ANNOTATOR_RUNTIME__?: object };
+    delete runtimeWindow.__VUE_POM_GENERATOR_ANNOTATOR_RUNTIME__;
   });
 
   it("opens a preview panel sized to read everything together", () => {
