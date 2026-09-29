@@ -47,7 +47,7 @@ type ToolbarIconName = "drag" | "inspect" | "preview" | "copy" | "clear" | "sett
 
 const TOOLBAR_ICON_MARKUP: Record<ToolbarIconName, string> = {
   drag: '<svg viewBox="0 0 16 16"><path d="M5 3h1v1H5zM10 3h1v1h-1zM5 7h1v1H5zM10 7h1v1h-1zM5 11h1v1H5zM10 11h1v1h-1z" fill="currentColor" stroke="none" /></svg>',
-  inspect: '<svg viewBox="0 0 16 16"><path d="M9 9h5.5v5.5H9z"/><path d="M2.5 2.5L6 11l1.8-4.2L12 5z" fill="currentColor" stroke="none"/></svg>',
+  inspect: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="4.5"/><path d="M8 1v2.5M8 12.5v2.5M1 8h2.5M12.5 8h2.5"/><circle cx="8" cy="8" r="0.9" fill="currentColor" stroke="none"/></svg>',
   preview: '<svg viewBox="0 0 16 16"><path d="M1.5 8s2.4-4 6.5-4 6.5 4 6.5 4-2.4 4-6.5 4-6.5-4-6.5-4Z"/><circle cx="8" cy="8" r="1.8"/></svg>',
   copy: '<svg viewBox="0 0 16 16"><path d="M6 2.5h6.5v9H6z"/><path d="M3.5 5.5H5v6.5h5.5v1.5h-7z"/></svg>',
   clear: '<svg viewBox="0 0 16 16"><path d="M2.5 4.5h11"/><path d="M6 2.5h4"/><path d="M5 4.5v8"/><path d="M8 4.5v8"/><path d="M11 4.5v8"/><path d="M4 4.5h8l-.6 9H4.6z"/></svg>',
