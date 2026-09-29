@@ -60,18 +60,6 @@ function isInsideAnnotatorTree(node: EventTarget | null): boolean {
   return node instanceof Element && !!node.closest(`[${ANNOTATOR_ROOT_ATTR}]`);
 }
 
-function isEditableTarget(node: EventTarget | null): boolean {
-  if (!(node instanceof Element)) {
-    return false;
-  }
-
-  if (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement) {
-    return true;
-  }
-
-  return node.closest('[contenteditable=""], [contenteditable="true"]') !== null;
-}
-
 function getElementSummary(element: Element): string {
   const testId = element.getAttribute("data-testid");
   if (testId) {
