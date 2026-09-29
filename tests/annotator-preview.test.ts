@@ -43,15 +43,6 @@ describe("annotator preview affordances", () => {
     delete (window as unknown as Record<string, unknown>).__VUE_POM_GENERATOR_ANNOTATOR_RUNTIME__;
   });
 
-  it("overlays the preview button with the number of feedback pieces", () => {
-    seedAnnotations(2);
-    mount();
-
-    const badge = previewButton().querySelector(".vpg-annotator-badge");
-    expect(badge).not.toBeNull();
-    expect(badge!.textContent).toBe("2");
-  });
-
   it("opens a preview panel sized to read everything together", () => {
     seedAnnotations(2);
     mount();

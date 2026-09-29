@@ -63,7 +63,6 @@ export const ANNOTATOR_STYLES = `
 
 .vpg-annotator-toolbar-handle,
 .vpg-annotator-btn {
-  position: relative;
   appearance: none;
   display: inline-flex;
   align-items: center;
@@ -172,22 +171,6 @@ export const ANNOTATOR_STYLES = `
   overflow: auto;
 }
 
-.vpg-annotator-badge {
-  position: absolute;
-  top: -7px;
-  right: -7px;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: var(--vpg-annotator-accent);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 18px;
-  text-align: center;
-  pointer-events: none;
-}
 
 .vpg-annotator-arrow {
   position: absolute;
