@@ -153,7 +153,7 @@ Validates whether an element needs a test ID by checking:
 - v-for loops
 - Input elements with v-model
 - Radio groups and selects
-- Handler attributes (`:handler`)
+- Handler attributes (`:loadAction`, kebab-case `:load-action`, legacy `:handler`, or a wrapper-declared `actionProp`)
 - Tab items
 
 ### 3. **Test ID Generators**

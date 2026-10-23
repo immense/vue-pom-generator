@@ -16,6 +16,7 @@ import {
   processExpression,
   stringifyExpression,
 } from "@vue/compiler-core";
+import { camelize } from "@vue/shared";
 import type {
   ArrayExpression,
   File,
@@ -151,6 +152,11 @@ export interface NativeWrappersMap {
     valueAttribute?: string
     requiresOptionDataTestIdPrefix?: boolean
     inferred?: boolean
+    // Name of the prop that binds the component's click action (e.g. "loadAction").
+    // Declaring it replaces the built-in LoadButton-style prop names for this wrapper,
+    // so semantic POM action names survive prop renames without generator changes.
+    // Usages that bind neither this prop (in either spelling) nor @click fail generation.
+    actionProp?: string
   }
 }
 
@@ -415,6 +421,25 @@ export function tryGetClickDirective(node: ElementNode): DirectiveNode | undefin
  */
 export function nodeHasClickDirective(node: ElementNode): boolean {
   return tryGetClickDirective(node) !== undefined;
+}
+
+/**
+ * Checks if a node has a static @click / v-on:click directive. Unlike
+ * nodeHasClickDirective, this does not accept @change or @mousedown, and it
+ * ignores dynamic event names (`@[event]`) whose target cannot be proven.
+ */
+export function nodeHasStaticClickDirective(node: ElementNode): boolean {
+  return node.props.some((prop): prop is DirectiveNode => {
+    if (prop.type !== NodeTypes.DIRECTIVE) {
+      return false;
+    }
+    const directive = prop as DirectiveNode;
+    const arg = directive.arg;
+    return directive.name === "on"
+      && arg?.type === NodeTypes.SIMPLE_EXPRESSION
+      && (arg as SimpleExpressionNode).isStatic
+      && (arg as SimpleExpressionNode).content === "click";
+  });
 }
 
 export function findTemplateSlotScopeExpression(node: ElementNode): VueExpressionNode | null {
@@ -1733,8 +1758,8 @@ function getParent(hierarchyMap: HierarchyMap, node: ElementNode): ElementNode |
  *
  * @internal
  */
-export function nodeHandlerAttributeValue(node: ElementNode): string | null {
-  return nodeHandlerAttributeInfo(node)?.semanticNameHint ?? null;
+export function nodeHandlerAttributeValue(node: ElementNode, actionPropNames?: readonly string[]): string | null {
+  return nodeHandlerAttributeInfo(node, actionPropNames)?.semanticNameHint ?? null;
 }
 
 export interface HandlerAttributeInfo {
@@ -1745,13 +1770,71 @@ export interface HandlerAttributeInfo {
 }
 
 /**
- * Extracts semantic naming and merge identity from a :handler binding.
+ * Prop names that bind a LoadButton-style click action. `loadAction` is the current name;
+ * `handler` is the legacy name, still accepted so POMs generated for older components keep
+ * working. Spelling variants (kebab-case) are handled at match time by
+ * findLoadActionDirective, using the same normalization the Vue runtime applies.
+ */
+export const LOAD_ACTION_PROP_NAMES = ["loadAction", "handler"] as const;
+
+/**
+ * Resolves the action-prop names a wrapper's usages are matched against. A declared
+ * `actionProp` replaces the built-in set for that wrapper; undeclared wrappers (and
+ * elements outside any declared wrapper) use the built-in LoadButton-style names.
+ */
+export function resolveActionPropNames(wrapperConfig?: NativeWrappersMap[string]): readonly string[] {
+  if (!wrapperConfig || wrapperConfig.actionProp === undefined) {
+    return LOAD_ACTION_PROP_NAMES;
+  }
+  const declared = wrapperConfig.actionProp.trim();
+  if (!declared) {
+    throw new Error(
+      `[vue-pom-generator] nativeWrappers actionProp must name the component's click-action prop (e.g. "loadAction"); got an empty value.`,
+    );
+  }
+  return [declared];
+}
+
+/**
+ * Finds the directive binding a LoadButton-style click action (`:loadAction`, legacy
+ * `:handler`, or a wrapper-declared `actionProp`) on the element, or null when none
+/**
+ * Finds the directive binding a LoadButton-style click action (`:loadAction`, legacy
+ * `:handler`, or a wrapper-declared `actionProp`) on the element, or null when none
+ * carries an expression. Attribute spellings are compared in normalized form, so the
+ * kebab-case spelling of each name matches as well: the compiler AST keeps attribute
+ * names exactly as authored, and Vue's runtime applies camelize when matching them
+ * against a component's declared props. Only static arguments qualify — a dynamic
+ * argument (`:[name]`) resolves to a prop only at runtime, so it cannot prove which
+ * prop the usage binds.
+ */
+export function findLoadActionDirective(node: ElementNode, actionPropNames: readonly string[] = LOAD_ACTION_PROP_NAMES): DirectiveNode | null {
+  const normalizedNames = new Set(actionPropNames.map((name) => camelize(name)));
+  const directive = node.props.find((prop): prop is DirectiveNode => {
+    if (prop.type !== NodeTypes.DIRECTIVE) {
+      return false;
+    }
+    const candidate = prop as DirectiveNode;
+    if (candidate.name !== "bind" || !candidate.exp) {
+      return false;
+    }
+    const arg = candidate.arg;
+    return arg?.type === NodeTypes.SIMPLE_EXPRESSION
+      && (arg as SimpleExpressionNode).isStatic
+      && normalizedNames.has(camelize((arg as SimpleExpressionNode).content));
+  });
+  return directive ?? null;
+}
+
+/**
+ * Extracts semantic naming and merge identity from a :loadAction (kebab-case
+ * `:load-action`, legacy `:handler`, or wrapper-declared `actionProp`) binding.
  *
  * IMPORTANT: This never parses/derives from the generated/author-provided data-testid.
  */
-export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInfo | null {
-  const handlerDirective = findDirectiveByName(node, "bind", "handler");
-  if (!handlerDirective?.exp) {
+export function nodeHandlerAttributeInfo(node: ElementNode, actionPropNames?: readonly string[]): HandlerAttributeInfo | null {
+  const handlerDirective = findLoadActionDirective(node, actionPropNames);
+  if (!handlerDirective) {
     return null;
   }
 

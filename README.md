@@ -77,7 +77,7 @@ The generator does not use one naming trick. It layers several signals.
 - **Router links / `:to` bindings** can contribute route-based naming and typed navigation return types when the target can be resolved.
 - **Wrapper components** are inferred from the rendered element that actually receives Vue fallthrough attributes; `nativeWrappers` supplies exceptional overrides.
 - **Fallback naming exists, but it is intentionally conservative.** That is why `generation.nameCollisionBehavior` exists.
-- **Wrapper-action generation fails fast.** The generator blocks button-like wrapper `:handler` expressions that it cannot turn into a semantic action name.
+- **Wrapper-action generation fails fast.** The generator blocks button-like wrapper `:loadAction` (legacy `:handler`, or a wrapper-declared `actionProp`) expressions that it cannot turn into a semantic action name, and fails when a wrapper that declares `actionProp` is used without that binding (or `@click`).
 
 Wrapper inference follows the public attribute contract instead of scanning for an arbitrary interactive descendant. It recognizes automatic single-root fallthrough, `v-bind="$attrs"`, aliases returned by `useAttrs()`, explicit forwarding such as `:data-testid="$attrs['data-testid']"`, and simple helpers that copy all attributes except named keys. The role comes from that target's explicit static ARIA role first, then its native HTML semantics. This means `<button role="tab">` is a tab, while an editable `<input role="combobox">` retains input behavior so generated actions fill it instead of calling native `selectOption()`. A `<div><button>...</button></div>` is not misclassified as a button wrapper because the caller's test id lands on the `<div>`. Nested wrappers are followed recursively. Polymorphic targets with different roles are deliberately left unresolved; configure `nativeWrappers` when one stable generated role is still appropriate.
 
@@ -1308,6 +1308,15 @@ The sections below follow the actual `VuePomGeneratorPluginOptions` shape from `
 - **Why it exists:** Some wrappers do not use `v-model`, but still have a stable value prop such as `name`, `value`, or `field`.
 - **Benefit:** You get meaningful ids and method names from wrapper props instead of fallback names.
 - **Without it:** wrapper naming falls back to model bindings or other weaker signals.
+
+##### `nativeWrappers[...].actionProp`
+
+- **What it does:** Names the wrapper prop that triggers the component's click action (for example `"loadAction"`), so semantic POM action methods (`clickSave()`, `clickResolveFailuresForAgent()`, ...) are derived from that binding.
+- **Why it exists:** Without it, the generator matches a built-in set of LoadButton-style prop names (`loadAction`, kebab-case `load-action`, legacy `handler`). A consumer that renames its action prop would otherwise silently lose semantic action names until the generator learns the new name.
+- **Benefit:** Prop renames become a one-line config change in the same PR as the rename; the contract lives with the consumer that owns the component.
+- **Matching:** The declared name matches any attribute spelling that normalizes to it — Vue accepts both `:loadAction` and `:load-action` for the same prop.
+- **Without it:** the built-in `loadAction` and legacy `handler` names are matched, in either spelling.
+- **Fail-fast:** a usage of a wrapper that declares `actionProp` must bind that prop (either spelling) or `@click`; anything else fails generation instead of emitting a POM member with no actionable behavior.
 
 ##### `nativeWrappers[...].requiresOptionDataTestIdPrefix`
 

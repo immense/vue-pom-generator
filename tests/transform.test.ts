@@ -1332,6 +1332,182 @@ describe('createTestIdTransform', () => {
     expect(deps?.generatedMethods?.has('clickRefreshOauthAccessToken')).toBe(true)
   })
 
+  it('derives the same semantic action from :load-action as from :loadAction', () => {
+    const compileWith = (template: string) => {
+      const componentHierarchyMap = new Map<string, IComponentDependencies>()
+      const nativeWrappers: NativeWrappersMap = {
+        ImmyLoadButton: { role: 'button' },
+      }
+      compileAndCaptureAst(template, {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, nativeWrappers, [], '/src/views')],
+      })
+      return componentHierarchyMap.get('MyComp')
+    }
+
+    const camel = compileWith(`<ImmyLoadButton :loadAction="() => createTenants('selected')">Selected</ImmyLoadButton>`)
+    const kebab = compileWith(`<ImmyLoadButton :load-action="() => createTenants('selected')">Selected</ImmyLoadButton>`)
+
+    expect(kebab?.generatedMethods?.has('clickCreateTenantsSelected')).toBe(true)
+    expect([...(kebab?.generatedMethods?.keys() ?? [])].sort()).toEqual([...(camel?.generatedMethods?.keys() ?? [])].sort())
+  })
+
+  it('echoes the matched action prop in the unnameable-handler error', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const nativeWrappers: NativeWrappersMap = {
+      LoadButton: { role: 'button' },
+    }
+
+    expect(() => {
+      compileAndCaptureAst(
+        `
+          <LoadButton :handler="() => isEdit ? update() : create()">
+            Go
+          </LoadButton>
+        `,
+        {
+          filename: '/src/components/MyComp.vue',
+          nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, nativeWrappers, [], '/src/views')],
+        },
+      )
+    }).toThrow(/:handler="onAction"/)
+  })
+
+  it('fails fast when a declared-actionProp wrapper usage binds neither the action nor @click', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const nativeWrappers: NativeWrappersMap = {
+      ImmyLoadButton: { role: 'button', actionProp: 'loadAction' },
+    }
+
+    expect(() => {
+      compileAndCaptureAst(
+        `
+          <ImmyLoadButton>
+            Save
+          </ImmyLoadButton>
+        `,
+        {
+          filename: '/src/components/MyComp.vue',
+          nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, nativeWrappers, [], '/src/views')],
+        },
+      )
+    }).toThrow(/declares actionProp "loadAction"/)
+  })
+
+  it('allows a declared-actionProp wrapper usage that binds @click instead', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const nativeWrappers: NativeWrappersMap = {
+      ImmyLoadButton: { role: 'button', actionProp: 'loadAction' },
+    }
+
+    compileAndCaptureAst(
+      `
+        <ImmyLoadButton @click="save">
+          Save
+        </ImmyLoadButton>
+      `,
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, nativeWrappers, [], '/src/views')],
+      },
+    )
+
+    const deps = componentHierarchyMap.get('MyComp') as IComponentDependencies | undefined
+    expect(deps?.generatedMethods?.has('clickSave')).toBe(true)
+  })
+
+  it('rejects a declared-actionProp wrapper usage that binds only @change', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const nativeWrappers: NativeWrappersMap = {
+      ImmyLoadButton: { role: 'button', actionProp: 'loadAction' },
+    }
+
+    expect(() => {
+      compileAndCaptureAst(
+        `
+          <ImmyLoadButton @change="save">
+            Save
+          </ImmyLoadButton>
+        `,
+        {
+          filename: '/src/components/MyComp.vue',
+          nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, nativeWrappers, [], '/src/views')],
+        },
+      )
+    }).toThrow(/declares actionProp "loadAction"/)
+  })
+
+  it('rejects a declared-actionProp wrapper usage whose action binding uses a dynamic argument', () => {
+    expect(() => {
+      compileWithRuntimeTemplateOptions(
+        `
+          <ImmyLoadButton :[action]="save">
+            Save
+          </ImmyLoadButton>
+        `,
+        { nativeWrappers: { ImmyLoadButton: { role: 'button', actionProp: 'action' } } },
+      )
+    }).toThrow(/declares actionProp "action"/)
+  })
+
+  it('still allows a declared-actionProp wrapper usage with a dynamic argument plus @click', () => {
+    const code = compileWithRuntimeTemplateOptions(
+      `
+        <ImmyLoadButton :[action]="save" @click="save">
+          Save
+        </ImmyLoadButton>
+      `,
+      { nativeWrappers: { ImmyLoadButton: { role: 'button', actionProp: 'action' } } },
+    )
+
+    expect(code).toContain('"data-testid": "MyComp-Save-button"')
+  })
+
+  it('accepts Vue same-name shorthand for a declared actionProp in both spellings', () => {
+    for (const binding of [':loadAction', ':load-action']) {
+      const componentHierarchyMap = new Map<string, IComponentDependencies>()
+      const nativeWrappers: NativeWrappersMap = {
+        ImmyLoadButton: { role: 'button', actionProp: 'loadAction' },
+      }
+
+      compileAndCaptureAst(
+        `
+          <ImmyLoadButton ${binding}>
+            Save
+          </ImmyLoadButton>
+        `,
+        {
+          filename: '/src/components/MyComp.vue',
+          nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, nativeWrappers, [], '/src/views')],
+        },
+      )
+
+      const deps = componentHierarchyMap.get('MyComp') as IComponentDependencies | undefined
+      expect(deps?.generatedMethods?.has('clickLoadAction')).toBe(true)
+    }
+  })
+
+  it('does not enforce the action-prop contract for wrappers without a declared actionProp', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const nativeWrappers: NativeWrappersMap = {
+      ImmyLoadButton: { role: 'button' },
+    }
+
+    expect(() => {
+      compileAndCaptureAst(
+        `
+          <ImmyLoadButton>
+            Save
+          </ImmyLoadButton>
+        `,
+        {
+          filename: '/src/components/MyComp.vue',
+          nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, nativeWrappers, [], '/src/views')],
+        },
+      )
+    }).not.toThrow()
+  })
+
   it('derives semantic names for button-like wrapper handlers guarded by simple null checks', () => {
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
     const nativeWrappers: NativeWrappersMap = {

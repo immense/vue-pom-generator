@@ -30,9 +30,12 @@ import {
   toKebabCaseTag,
 } from "./wrapper-contract";
 import {
+  findLoadActionDirective,
   isAsciiDigitCode,
   isAsciiLetterCode,
   isAsciiUppercaseLetterCode,
+  nodeHasStaticClickDirective,
+  resolveActionPropNames,
   upsertAttribute,
   formatTagName,
   getComposedClickHandlerContent,
@@ -70,8 +73,8 @@ import {
   getContainedInSlotTemplateNode,
   isSlotScopeCallbackClickHandler,
   getDegenerateSlotScopeFallbackKeyVariable,
-  getSlotScopeVariablesUsedAsBareCallbackHandlers,
-} from "./utils";
+  getSlotScopeVariablesUsedAsBareCallbackHandlers } from "./utils";
+
 
 const CLICK_EVENT_NAME = TESTID_CLICK_EVENT_NAME;
 const POM_INSTANCE_ATTRIBUTE = "data-pom-instance";
@@ -1443,26 +1446,34 @@ export function createTestIdTransform(
     // Inline the old nodeShouldBeIgnored gating logic, but compute signals incrementally.
     // Native wrapper detection + option-prefix needs are computed in one place to avoid duplicate checks.
     const { nativeWrappersValue, optionDataTestIdPrefixValue, semanticNameHint } = getNativeWrapperTransformInfo(element, componentName, resolvedNativeWrappers);
-    const handlerDirective = element.props.find((p): p is DirectiveNode => {
-      return p.type === NodeTypes.DIRECTIVE
-        && p.name === "bind"
-        && p.arg?.type === NodeTypes.SIMPLE_EXPRESSION
-        && p.arg.content === "handler"
-        && !!p.exp;
-    }) ?? null;
-    const handlerInfo = handlerDirective ? nodeHandlerAttributeInfo(element) : null;
+    const wrapperConfig = resolvedNativeWrappers[element.tag];
+    const actionPropNames = resolveActionPropNames(wrapperConfig);
+    const handlerDirective = findLoadActionDirective(element, actionPropNames);
+    const handlerInfo = handlerDirective ? nodeHandlerAttributeInfo(element, actionPropNames) : null;
 
-    if (resolvedNativeWrappers[element.tag]?.role === "button" && handlerDirective && !handlerInfo) {
+    if (wrapperConfig?.role === "button" && handlerDirective && !handlerInfo) {
       const loc = element.loc?.start;
       const locationHint = loc ? `${loc.line}:${loc.column}` : "unknown";
       const handlerSource = (handlerDirective.exp?.loc?.source ?? "").trim() || "<unknown>";
+      const actionArgName = (handlerDirective.arg as SimpleExpressionNode).content;
 
       throw new Error(
         `[vue-pom-generator] Could not derive a semantic POM action name for button-like wrapper in ${componentName} (${context.filename ?? "unknown"}:${locationHint}).\n`
         + `Element: <${element.tag}>\n`
         + `Handler: ${handlerSource}\n\n`
-        + `Fix: move complex inline logic into a named function (for example, const onAction = () => ...; then bind :handler="onAction"), `
+        + `Fix: move complex inline logic into a named function (for example, const onAction = () => ...; then bind :${actionArgName}="onAction"), `
         + `or simplify the handler to a direct identifier/call the generator can name.`,
+      );
+    }
+
+    if (wrapperConfig?.actionProp && !handlerDirective && !nodeHasStaticClickDirective(element)) {
+      const loc = element.loc?.start;
+      const locationHint = loc ? `${loc.line}:${loc.column}` : "unknown";
+
+      throw new Error(
+        `[vue-pom-generator] Wrapper <${element.tag}> declares actionProp "${wrapperConfig.actionProp}" but this usage in ${componentName} (${context.filename ?? "unknown"}:${locationHint}) binds neither :${wrapperConfig.actionProp} nor @click.\n`
+        + `Fix: bind :${wrapperConfig.actionProp}="onAction" (or @click="...") so the usage exposes an actionable POM member, `
+        + `or remove actionProp from the wrapper config if this component is not action-driven.`,
       );
     }
 
@@ -1749,7 +1760,7 @@ export function createTestIdTransform(
       // 3) inner text (labels)
       // 4) the data-testid value itself (last resort hint)
       const identifierHint = getStaticIdOrNameHint(element)
-        || nodeHandlerAttributeValue(element)
+        || nodeHandlerAttributeValue(element, actionPropNames)
         || innerText
         || existingElementDataTestId.value
         || conditionalHint

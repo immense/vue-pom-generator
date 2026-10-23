@@ -40,11 +40,13 @@ import {
   getInnerText,
   isNodeContainedInTemplateWithData,
   isSimpleExpressionNode,
+  LOAD_ACTION_PROP_NAMES,
   nodeHandlerAttributeInfo,
   nodeHandlerAttributeValue,
   nodeHasClickDirective,
   nodeHasToDirective,
   renderTemplateLiteralExpression,
+  resolveActionPropNames,
   setResolveToComponentNameFn,
   setRouteNameToComponentNameMap,
   staticAttributeValue,
@@ -431,6 +433,56 @@ describe("utils.ts coverage", () => {
     const info2 = nodeHandlerAttributeInfo(el2);
     expect(info2).toBeTruthy();
     expect(info2?.semanticNameHint).toBe("CreateTenantsAll");
+  });
+
+  it("derives :loadAction semanticNameHint the same way as the legacy :handler", () => {
+    const root = parseTemplate(`
+      <ImmyLoadButton :loadAction="() => createTenants('selected')">Selected</ImmyLoadButton>
+    `);
+    const el = firstElement(root);
+
+    const info = nodeHandlerAttributeInfo(el);
+    expect(info).toBeTruthy();
+    expect(info?.semanticNameHint).toBe("CreateTenantsSelected");
+
+    const root2 = parseTemplate(`
+      <ImmyLoadButton :loadAction="() => createTenants('all')">All</ImmyLoadButton>
+    `);
+    const el2 = firstElement(root2);
+
+    const info2 = nodeHandlerAttributeInfo(el2);
+    expect(info2).toBeTruthy();
+    expect(info2?.semanticNameHint).toBe("CreateTenantsAll");
+  });
+
+  it("derives :load-action (kebab-case) semanticNameHint identically to :loadAction", () => {
+    const kebab = firstElement(parseTemplate(`
+      <ImmyLoadButton :load-action="() => createTenants('selected')">Selected</ImmyLoadButton>
+    `));
+    const camel = firstElement(parseTemplate(`
+      <ImmyLoadButton :loadAction="() => createTenants('selected')">Selected</ImmyLoadButton>
+    `));
+
+    expect(nodeHandlerAttributeInfo(kebab)).toEqual(nodeHandlerAttributeInfo(camel));
+    expect(nodeHandlerAttributeInfo(kebab)?.mergeKey).toBe("handler:expr:() => createTenants('selected')");
+  });
+
+  it("resolves a declared actionProp and replaces the built-in set", () => {
+    expect(resolveActionPropNames({ role: "button", actionProp: "loadAction" })).toEqual(["loadAction"]);
+    expect(resolveActionPropNames({ role: "button", actionProp: "load-action" })).toEqual(["load-action"]);
+    expect(resolveActionPropNames({ role: "button", actionProp: "handler" })).toEqual(["handler"]);
+    expect(resolveActionPropNames({ role: "button" })).toEqual(LOAD_ACTION_PROP_NAMES);
+    expect(resolveActionPropNames(undefined)).toEqual(LOAD_ACTION_PROP_NAMES);
+    expect(() => resolveActionPropNames({ role: "button", actionProp: "   " })).toThrow(/actionProp/);
+  });
+
+  it("derives semanticNameHint from a wrapper-declared actionProp binding", () => {
+    const el = firstElement(parseTemplate(`
+      <ImmyLoadButton :action="() => createTenants('selected')">Selected</ImmyLoadButton>
+    `));
+
+    expect(nodeHandlerAttributeInfo(el, resolveActionPropNames({ role: "button", actionProp: "action" }))?.semanticNameHint).toBe("CreateTenantsSelected");
+    expect(nodeHandlerAttributeInfo(el)).toBeNull();
   });
 
   it("derives :handler semanticNameHint from member-expression arguments", () => {
