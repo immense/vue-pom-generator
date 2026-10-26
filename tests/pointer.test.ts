@@ -224,6 +224,31 @@ function createVisibleElement(
   return element;
 }
 
+function calloutElement(page: FakePage): HTMLDivElement | null {
+  return page.dom.window.document.getElementById("__pw_pointer_callout__") as HTMLDivElement | null;
+}
+
+function calloutArrowElement(page: FakePage): HTMLDivElement | null {
+  return page.dom.window.document.getElementById("__pw_pointer_callout_arrow__") as HTMLDivElement | null;
+}
+
+/**
+ * Point a floating-ui-callout Pointer at a BUTTON with the given box and text
+ * (the standard callout placement setup).
+ */
+async function showFloatingUiCallout(page: FakePage, boundingBox: BoundingBox, text: string) {
+  const target = new FakeLocator(
+    { tagName: "BUTTON" },
+    { boundingBox, testId: "CalloutTarget-button" },
+  );
+
+  const callout = new Callout(page as never, {
+    renderer: createFloatingUiCalloutRenderer(),
+  });
+  const pointer = new Pointer(page as never, "data-testid", callout);
+  await pointer.animateCursorToElement(target as never, false, 0, text);
+}
+
 describe("pointer", () => {
   beforeEach(() => {
     setPlaywrightAnimationOptions({
@@ -326,8 +351,8 @@ describe("pointer", () => {
       "Choose the Motion to Set Divorce Trial saved answer set",
     );
 
-    const annotation = page.dom.window.document.getElementById("__pw_pointer_callout__") as HTMLDivElement | null;
-    const arrowEl = page.dom.window.document.getElementById("__pw_pointer_callout_arrow__") as HTMLDivElement | null;
+    const annotation = calloutElement(page);
+    const arrowEl = calloutArrowElement(page);
     const annotationStyle = annotation?.getAttribute("style") ?? "";
 
     expect(annotation).not.toBeNull();
@@ -342,27 +367,15 @@ describe("pointer", () => {
 
   it("renders a floating-ui callout with an arrow when configured", async () => {
     const page = new FakePage();
-    const target = new FakeLocator(
-      { tagName: "BUTTON" },
-      {
-        boundingBox: { x: 0, y: 0, width: 10, height: 10 },
-        testId: "AdministrationTemplatesIndex-521-TogglePreview-button",
-      },
-    );
 
-    const callout = new Callout(page as never, {
-      renderer: createFloatingUiCalloutRenderer(),
-    });
-    const pointer = new Pointer(page as never, "data-testid", callout);
-    await pointer.animateCursorToElement(
-      target as never,
-      false,
-      0,
+    await showFloatingUiCallout(
+      page,
+      { x: 0, y: 0, width: 10, height: 10 },
       "Choose the Motion to Set Divorce Trial saved answer set",
     );
 
-    const annotation = page.dom.window.document.getElementById("__pw_pointer_callout__") as HTMLDivElement | null;
-    const arrowEl = page.dom.window.document.getElementById("__pw_pointer_callout_arrow__") as HTMLDivElement | null;
+    const annotation = calloutElement(page);
+    const arrowEl = calloutArrowElement(page);
 
     expect(annotation?.style.opacity).toBe("1");
     expect(annotation?.getAttribute("data-placement")).toBeTruthy();
@@ -384,7 +397,7 @@ describe("pointer", () => {
     const callout = new Callout(page as never);
     await callout.showForElement(target as never, "Keep the nearby controls visible while pointing here");
 
-    const annotation = page.dom.window.document.getElementById("__pw_pointer_callout__") as HTMLDivElement | null;
+    const annotation = calloutElement(page);
     const pointerOverlay = page.dom.window.document.getElementById("__pw_pointer__");
 
     expect(annotation?.style.opacity).toBe("1");
@@ -405,21 +418,13 @@ describe("pointer", () => {
     createAvoidElement(page, "south-east-card", { x: 610, y: 360, width: 210, height: 120 });
     createAvoidElement(page, "south-west-card", { x: 280, y: 360, width: 210, height: 120 });
 
-    const target = new FakeLocator(
-      { tagName: "BUTTON" },
-      {
-        boundingBox: { x: 470, y: 295, width: 80, height: 36 },
-        testId: "CalloutTarget-button",
-      },
+    await showFloatingUiCallout(
+      page,
+      { x: 470, y: 295, width: 80, height: 36 },
+      "Keep the nearby controls visible while pointing here",
     );
 
-    const callout = new Callout(page as never, {
-      renderer: createFloatingUiCalloutRenderer(),
-    });
-    const pointer = new Pointer(page as never, "data-testid", callout);
-    await pointer.animateCursorToElement(target as never, false, 0, "Keep the nearby controls visible while pointing here");
-
-    const annotation = page.dom.window.document.getElementById("__pw_pointer_callout__") as HTMLDivElement | null;
+    const annotation = calloutElement(page);
     const annotationBox = {
       x: Number.parseFloat(annotation?.style.left ?? "0"),
       y: Number.parseFloat(annotation?.style.top ?? "0"),
@@ -456,22 +461,10 @@ describe("pointer", () => {
       return page.dom.window.document.body;
     }) as typeof page.dom.window.document.elementFromPoint;
 
-    const target = new FakeLocator(
-      { tagName: "BUTTON" },
-      {
-        boundingBox: { x: 500, y: 395, width: 140, height: 48 },
-        testId: "CalloutTarget-button",
-      },
-    );
-
-    const callout = new Callout(page as never, {
-      renderer: createFloatingUiCalloutRenderer(),
-    });
-    const pointer = new Pointer(page as never, "data-testid", callout);
-    await pointer.animateCursorToElement(target as never, false, 0, "Keep the nearby controls visible while pointing here");
-
-    const annotation = page.dom.window.document.getElementById("__pw_pointer_callout__") as HTMLDivElement | null;
     const annotationText = "Keep the nearby controls visible while pointing here";
+    await showFloatingUiCallout(page, { x: 500, y: 395, width: 140, height: 48 }, annotationText);
+
+    const annotation = calloutElement(page);
     const annotationLeft = Number.parseFloat(annotation?.style.left ?? "0");
     const annotationTop = Number.parseFloat(annotation?.style.top ?? "0");
     const annotationWidth = Number.parseFloat(annotation?.style.width ?? "0");

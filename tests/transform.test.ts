@@ -15,7 +15,7 @@ import { parse as parseSfc } from '@vue/compiler-sfc'
 
 
 import { describe, expect, it } from 'vitest'
-import { findBindDirective, findStaticAttr } from './helpers/ast-queries'
+import { findBindDirective, findStaticAttr, firstElement } from './helpers/ast-queries'
 import { createPomMethodSignature, createPomParameters } from '../pom-params'
 import { createPomStringPattern } from '../pom-patterns'
 import { createVuePluginWithTestIds } from '../plugin/vue-plugin'
@@ -143,6 +143,101 @@ function requireDeps(map: Map<string, IComponentDependencies>, component: string
     throw new Error(`expected dependencies for ${component}`)
   }
   return deps
+}
+
+/** The static `data-testid` attributes injected on the root's element children. */
+function rootStaticTestIds(ast: RootNode): string[] {
+  return (ast.children as ElementNode[])
+    .filter((node): node is ElementNode => node.type === NodeTypes.ELEMENT)
+    .flatMap(element => element.props.filter((prop): prop is AttributeNode => prop.type === NodeTypes.ATTRIBUTE && prop.name === 'data-testid'))
+    .map(attribute => attribute.value?.content ?? '')
+}
+
+/**
+ * Write a wrapper component SFC under <tempRoot>/src/components and return its path.
+ */
+function writeComponentSfc(tempRoot: string, name: string, source: string): string {
+  const componentPath = path.join(tempRoot, 'src', 'components', `${name}.vue`)
+  fs.mkdirSync(path.dirname(componentPath), { recursive: true })
+  fs.writeFileSync(componentPath, source)
+  return componentPath
+}
+
+/**
+ * Write the shared radio component pair used by the sibling-wrapper inference
+ * tests: SharedRadio.vue + SharedRadioGroup.vue under a monorepo-style layout.
+ */
+function writeMonorepoRadioComponents(tempRoot: string): { frontendRoot: string, sharedComponentsRoot: string } {
+  const frontendRoot = path.join(tempRoot, 'frontend')
+  const sharedComponentsRoot = path.join(tempRoot, 'shared', 'ui', 'src', 'components')
+  fs.mkdirSync(path.join(sharedComponentsRoot), { recursive: true })
+  fs.mkdirSync(path.join(frontendRoot, 'src', 'views'), { recursive: true })
+  fs.writeFileSync(path.join(sharedComponentsRoot, 'SharedRadio.vue'), '<template><div><input type="radio" /></div></template>')
+  fs.writeFileSync(
+    path.join(sharedComponentsRoot, 'SharedRadioGroup.vue'),
+    '<template><div role="radiogroup"><SharedRadio v-for="option in props.options" :key="option.value" :text="option.text" :modelValue="option.value" /></div></template>',
+  )
+  return { frontendRoot, sharedComponentsRoot }
+}
+
+/**
+ * Seed a component whose click method name is already reserved, to exercise
+ * strict-mode collision fallbacks.
+ */
+function seedReservedClickDeps(
+  componentHierarchyMap: Map<string, IComponentDependencies>,
+  component: string,
+  clickMethod: string,
+) {
+  componentHierarchyMap.set(component, {
+    filePath: `/src/components/${component}.vue`,
+    childrenComponentSet: new Set(),
+    usedComponentSet: new Set(),
+    dataTestIdSet: new Set(),
+    generatedMethods: new Map([[clickMethod, createPomMethodSignature(createPomParameters(['wait', 'boolean = true'], ['annotationText', 'string = ""']))]]),
+    reservedPomMemberNames: new Set([`${clickMethod.replace(/^click/, '')}Button`, clickMethod]),
+    isView: false,
+  })
+}
+
+/**
+ * Compiles a keyed-option fixture (shared by the option-keying and action-event
+ * describes) and resolves the single keyed IDataTestId entry produced for the
+ * repeated option element. Asserts both the injected selector template
+ * (selectorValue — what becomes data-testid in the DOM) and the keyed accessor's
+ * PomStringPattern (pom.selector — what generateGetElementByDataTestId feeds into
+ * `this.keyedLocators((key) => this.locatorByTestId(...))`).
+ */
+function compileKeyedFixture(
+  fixtureName: string,
+  componentName: string,
+  options?: { optionKeyAttribute?: Record<string, string> },
+) {
+  const componentHierarchyMap = new Map<string, IComponentDependencies>()
+
+  const transformOptions: Record<string, unknown> = { existingIdBehavior: 'preserve' }
+  if (options?.optionKeyAttribute) {
+    transformOptions.optionKeyAttribute = options.optionKeyAttribute
+  }
+
+  compileAndCaptureAst(
+    readFixtureTemplate(fixtureName),
+    {
+      filename: `/src/components/${componentName}.vue`,
+      nodeTransforms: [
+        createTestIdTransform(componentName, componentHierarchyMap, {}, [], '/src/views', transformOptions as Parameters<typeof createTestIdTransform>[5]),
+      ],
+    },
+  )
+
+  const deps = componentHierarchyMap.get(componentName) as IComponentDependencies | undefined
+  expect(deps).toBeTruthy()
+
+  const entries = Array.from(deps?.dataTestIdSet ?? [])
+  const keyed = entries.find(e => e.pom?.selector && (e.pom.selector as { patternKind?: string }).patternKind === 'parameterized')
+    ?? entries.find(e => e.selectorValue && (e.selectorValue as { patternKind?: string }).patternKind === 'parameterized')
+  expect(keyed).toBeTruthy()
+  return { deps, keyed }
 }
 
 function compileAndCaptureCode(source: string, options: CompilerOptions & { filename: string }): string {
@@ -1204,15 +1299,7 @@ describe('createTestIdTransform', () => {
 
   it('falls back to click label hints when strict mode sees a click-name collision', () => {
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
-    componentHierarchyMap.set('MediaSelector', {
-      filePath: '/src/components/MediaSelector.vue',
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
-      dataTestIdSet: new Set(),
-      generatedMethods: new Map([['clickShowMediaLibrary', createPomMethodSignature(createPomParameters(['wait', 'boolean = true'], ['annotationText', 'string = ""']))]]),
-      reservedPomMemberNames: new Set(['ShowMediaLibraryButton', 'clickShowMediaLibrary']),
-      isView: false,
-    })
+    seedReservedClickDeps(componentHierarchyMap, 'MediaSelector', 'clickShowMediaLibrary')
 
     expect(() => {
       compileAndCaptureAst(
@@ -1240,15 +1327,7 @@ describe('createTestIdTransform', () => {
 
   it('falls back to wrapper title hints when strict mode sees a wrapper-name collision', () => {
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
-    componentHierarchyMap.set('MediaSelector', {
-      filePath: '/src/components/MediaSelector.vue',
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
-      dataTestIdSet: new Set(),
-      generatedMethods: new Map([['clickShowMediaLibrary', createPomMethodSignature(createPomParameters(['wait', 'boolean = true'], ['annotationText', 'string = ""']))]]),
-      reservedPomMemberNames: new Set(['ShowMediaLibraryButton', 'clickShowMediaLibrary']),
-      isView: false,
-    })
+    seedReservedClickDeps(componentHierarchyMap, 'MediaSelector', 'clickShowMediaLibrary')
 
     const nativeWrappers: NativeWrappersMap = {
       MyModal: { role: 'button' },
@@ -1280,15 +1359,7 @@ describe('createTestIdTransform', () => {
 
   it('derives handler-based suffixes from later stable args to avoid strict-mode collisions', () => {
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
-    componentHierarchyMap.set('UnifiedSoftwareDetailsDataRow', {
-      filePath: '/src/components/UnifiedSoftwareDetailsDataRow.vue',
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
-      dataTestIdSet: new Set(),
-      generatedMethods: new Map([['clickRunDeploymentAction', createPomMethodSignature(createPomParameters(['wait', 'boolean = true'], ['annotationText', 'string = ""']))]]),
-      reservedPomMemberNames: new Set(['RunDeploymentActionButton', 'clickRunDeploymentAction']),
-      isView: false,
-    })
+    seedReservedClickDeps(componentHierarchyMap, 'UnifiedSoftwareDetailsDataRow', 'clickRunDeploymentAction')
 
     expect(() => {
       compileAndCaptureAst(
@@ -1693,11 +1764,8 @@ describe('createTestIdTransform', () => {
       },
     )
 
-    // Sanity: ensure the compiler produced the expected element/tag.
-    expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
-    expect((ast.children[0] as ElementNode).tag).toBe('v-select')
-
-    const selectEl = ast.children[0] as ElementNode
+    const selectEl = firstElement(ast)
+    expect(selectEl.tag).toBe('v-select')
 
     const optionPrefixAttr = findStaticAttr(selectEl, 'option-data-testid-prefix')
     expect(optionPrefixAttr?.value?.content).toBe('MyComp-SelectedGroup')
@@ -1749,8 +1817,7 @@ describe('createTestIdTransform', () => {
       ],
     )
 
-    expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
-    const radioGroupEl = ast.children[0] as ElementNode
+    const radioGroupEl = firstElement(ast)
 
     const dataTestIdAttr = findStaticAttr(radioGroupEl, 'data-testid')
     expect(dataTestIdAttr?.value?.content).toBe('MyPage-DatabaseType-radio')
@@ -1778,17 +1845,7 @@ describe('createTestIdTransform', () => {
 
   it('does not infer sibling wrapper radios without configured search roots', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-monorepo-'))
-    const frontendRoot = path.join(tempRoot, 'frontend')
-    const sharedComponentsRoot = path.join(tempRoot, 'shared', 'ui', 'src', 'components')
-    const radioPath = path.join(sharedComponentsRoot, 'SharedRadio.vue')
-    const radioGroupPath = path.join(sharedComponentsRoot, 'SharedRadioGroup.vue')
-    fs.mkdirSync(path.dirname(radioPath), { recursive: true })
-    fs.mkdirSync(path.join(frontendRoot, 'src', 'views'), { recursive: true })
-    fs.writeFileSync(radioPath, '<template><div><input type="radio" /></div></template>')
-    fs.writeFileSync(
-      radioGroupPath,
-      '<template><div role="radiogroup"><SharedRadio v-for="option in props.options" :key="option.value" :text="option.text" :modelValue="option.value" /></div></template>',
-    )
+    const { frontendRoot } = writeMonorepoRadioComponents(tempRoot)
 
     const { ast, componentHierarchyMap } = compileWithTestIdTransform(
       '<SharedRadioGroup :options="[\'Cloud\', \'Local\']" v-model="databaseType" />',
@@ -1799,8 +1856,7 @@ describe('createTestIdTransform', () => {
     },
     )
 
-    expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
-    const radioGroupEl = ast.children[0] as ElementNode
+    const radioGroupEl = firstElement(ast)
 
     const dataTestIdAttr = findStaticAttr(radioGroupEl, 'data-testid')
     expect(dataTestIdAttr).toBeUndefined()
@@ -1811,17 +1867,7 @@ describe('createTestIdTransform', () => {
 
   it('infers sibling wrapper radios from configured search roots without vueFilesPathMap', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-monorepo-'))
-    const frontendRoot = path.join(tempRoot, 'frontend')
-    const sharedComponentsRoot = path.join(tempRoot, 'shared', 'ui', 'src', 'components')
-    const radioPath = path.join(sharedComponentsRoot, 'SharedRadio.vue')
-    const radioGroupPath = path.join(sharedComponentsRoot, 'SharedRadioGroup.vue')
-    fs.mkdirSync(path.dirname(radioPath), { recursive: true })
-    fs.mkdirSync(path.join(frontendRoot, 'src', 'views'), { recursive: true })
-    fs.writeFileSync(radioPath, '<template><div><input type="radio" /></div></template>')
-    fs.writeFileSync(
-      radioGroupPath,
-      '<template><div role="radiogroup"><SharedRadio v-for="option in props.options" :key="option.value" :text="option.text" :modelValue="option.value" /></div></template>',
-    )
+    const { frontendRoot, sharedComponentsRoot } = writeMonorepoRadioComponents(tempRoot)
 
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
     const ast = compileAndCaptureAst(
@@ -1834,8 +1880,7 @@ describe('createTestIdTransform', () => {
       },
     )
 
-    expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
-    const radioGroupEl = ast.children[0] as ElementNode
+    const radioGroupEl = firstElement(ast)
 
     const dataTestIdAttr = findStaticAttr(radioGroupEl, 'data-testid')
     expect(dataTestIdAttr?.value?.content).toBe('MyPage-DatabaseType-radio')
@@ -1866,8 +1911,7 @@ describe('createTestIdTransform', () => {
       { nativeWrappers: { MyAnchor: { valueAttribute: 'label' } } },
     )
 
-    expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
-    const linkEl = ast.children[0] as ElementNode
+    const linkEl = firstElement(ast)
     const dataTestIdAttr = findStaticAttr(linkEl, 'data-testid')
     // Inferred role "link" drives the testid suffix, aligning with the rendered element.
     expect(dataTestIdAttr?.value?.content).toBe('MyPage-Click me-link')
@@ -1889,8 +1933,7 @@ describe('createTestIdTransform', () => {
       { nativeWrappers: { DashboardStatLink: { valueAttribute: 'label' } } },
     )
 
-    expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
-    const statEl = ast.children[0] as ElementNode
+    const statEl = firstElement(ast)
     const dataTestIdAttr = findStaticAttr(statEl, 'data-testid')
     expect(dataTestIdAttr?.value?.content).toBe('MyPage-Computers missing critical-link')
   })
@@ -1905,8 +1948,7 @@ describe('createTestIdTransform', () => {
       { pageComponent: 'RecordPage' },
     )
 
-    expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
-    const fragmentButton = ast.children[0] as ElementNode
+    const fragmentButton = firstElement(ast)
     expect(fragmentButton.props.some(
       prop => prop.type === NodeTypes.ATTRIBUTE && prop.name === 'data-testid',
     )).toBe(false)
@@ -1961,10 +2003,7 @@ describe('createTestIdTransform', () => {
     )
 
     // Each literal title produces a distinct per-usage data-testid with the `-tab` suffix.
-    const testIds = (ast.children as ElementNode[])
-      .filter((n): n is ElementNode => n.type === NodeTypes.ELEMENT)
-      .flatMap((el) => el.props.filter((p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === 'data-testid'))
-      .map((attr) => attr.value?.content ?? '')
+    const testIds = rootStaticTestIds(ast)
     expect(testIds).toEqual(expect.arrayContaining(['MyPage-Users-tab', 'MyPage-Roles-tab']))
 
     // And a distinct click accessor per tab, named from the title hint.
@@ -1982,10 +2021,9 @@ describe('createTestIdTransform', () => {
 
   it('infers a forwarded tab contract and semantic title without nativeWrappers config', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-inferred-tab-'))
-    const tabItemPath = path.join(tempRoot, 'src', 'components', 'TabItem.vue')
-    fs.mkdirSync(path.dirname(tabItemPath), { recursive: true })
-    fs.writeFileSync(
-      tabItemPath,
+    const tabItemPath = writeComponentSfc(
+      tempRoot,
+      'TabItem',
       `<template><li role="presentation"><button v-bind="$attrs" role="tab"><slot /></button></li></template>
        <script setup>defineOptions({ inheritAttrs: false })</script>`,
     )
@@ -2001,10 +2039,7 @@ describe('createTestIdTransform', () => {
       },
     )
 
-    const testIds = (ast.children as ElementNode[])
-      .filter((node): node is ElementNode => node.type === NodeTypes.ELEMENT)
-      .flatMap(element => element.props.filter((prop): prop is AttributeNode => prop.type === NodeTypes.ATTRIBUTE && prop.name === 'data-testid'))
-      .map(attribute => attribute.value?.content ?? '')
+    const testIds = rootStaticTestIds(ast)
 
     expect(testIds).toEqual(expect.arrayContaining(['MyPage-Users-tab', 'MyPage-Roles-tab']))
     expect(componentHierarchyMap.get('MyPage')?.generatedMethods?.has('clickUsers')).toBe(true)
@@ -2013,10 +2048,9 @@ describe('createTestIdTransform', () => {
 
   it('generates input behavior for an editable combobox wrapper', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-inferred-combobox-'))
-    const searchBoxPath = path.join(tempRoot, 'src', 'components', 'SearchBox.vue')
-    fs.mkdirSync(path.dirname(searchBoxPath), { recursive: true })
-    fs.writeFileSync(
-      searchBoxPath,
+    const searchBoxPath = writeComponentSfc(
+      tempRoot,
+      'SearchBox',
       `<template><div><input v-bind="$attrs" type="search" role="combobox" /></div></template>
        <script setup>defineOptions({ inheritAttrs: false })</script>`,
     )
@@ -2029,8 +2063,7 @@ describe('createTestIdTransform', () => {
       nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, {}, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],
     })
 
-    expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
-    const searchBox = ast.children[0] as ElementNode
+    const searchBox = firstElement(ast)
     const testId = findStaticAttr(searchBox, 'data-testid')
 
     expect(testId?.value?.content).toBe('MyPage-Search-input')
@@ -2040,9 +2073,7 @@ describe('createTestIdTransform', () => {
 
   it('uses static slot text to name an inferred wrapper with no model or semantic prop', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-inferred-link-text-'))
-    const linkPath = path.join(tempRoot, 'src', 'components', 'AppLink.vue')
-    fs.mkdirSync(path.dirname(linkPath), { recursive: true })
-    fs.writeFileSync(linkPath, '<template><a :href="href"><slot /></a></template>')
+    const linkPath = writeComponentSfc(tempRoot, 'AppLink', '<template><a :href="href"><slot /></a></template>')
 
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
     const vueFilesPathMap = new Map<string, string>([['AppLink', linkPath]])
@@ -2051,8 +2082,7 @@ describe('createTestIdTransform', () => {
       nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, {}, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],
     })
 
-    expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
-    const link = ast.children[0] as ElementNode
+    const link = firstElement(ast)
     const testId = findStaticAttr(link, 'data-testid')
     expect(testId?.value?.content).toBe('MyPage-Documentation-link')
     expect(componentHierarchyMap.get('MyPage')?.generatedMethods?.has('clickDocumentation')).toBe(true)
@@ -2060,9 +2090,7 @@ describe('createTestIdTransform', () => {
 
   it('does not persist source-inferred roles into the caller nativeWrappers config', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-wrapper-config-'))
-    const linkPath = path.join(tempRoot, 'src', 'components', 'AppLink.vue')
-    fs.mkdirSync(path.dirname(linkPath), { recursive: true })
-    fs.writeFileSync(linkPath, '<template><a :href="href"><slot /></a></template>')
+    const linkPath = writeComponentSfc(tempRoot, 'AppLink', '<template><a :href="href"><slot /></a></template>')
 
     const nativeWrappers: NativeWrappersMap = {}
     compileAndCaptureAst('<AppLink href="/docs">Documentation</AppLink>', {
@@ -2077,14 +2105,12 @@ describe('createTestIdTransform', () => {
 
   it('suppresses generation only on a component own fallthrough target', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-forward-target-'))
-    const componentPath = path.join(tempRoot, 'src', 'components', 'ActionWithHelp.vue')
     const source = `<template>
       <button v-bind="$attrs" type="button" @click="submit">Submit</button>
       <button type="button" @click="showHelp">Help</button>
     </template>
     <script setup>defineOptions({ inheritAttrs: false })</script>`
-    fs.mkdirSync(path.dirname(componentPath), { recursive: true })
-    fs.writeFileSync(componentPath, source)
+    const componentPath = writeComponentSfc(tempRoot, 'ActionWithHelp', source)
     const { descriptor } = parseSfc(source, { filename: componentPath })
 
     const componentHierarchyMap = new Map<string, IComponentDependencies>()
@@ -2113,7 +2139,6 @@ describe('createTestIdTransform', () => {
 
   it('suppresses explicit test-id forwarding targets inside conditional fragments', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-conditional-forward-target-'))
-    const componentPath = path.join(tempRoot, 'src', 'components', 'ActionMenuItem.vue')
     const source = `<template>
       <li v-if="asListItem" role="presentation">
         <a v-if="href" :href="href" :data-testid="$attrs['data-testid']"><slot /></a>
@@ -2125,8 +2150,7 @@ describe('createTestIdTransform', () => {
       <button v-else v-bind="$attrs"><slot /></button>
     </template>
     <script setup>defineOptions({ inheritAttrs: false })</script>`
-    fs.mkdirSync(path.dirname(componentPath), { recursive: true })
-    fs.writeFileSync(componentPath, source)
+    const componentPath = writeComponentSfc(tempRoot, 'ActionMenuItem', source)
     const { descriptor } = parseSfc(source, { filename: componentPath })
 
     expect(() => compileAndCaptureAst(descriptor.template?.content ?? '', {
@@ -2220,45 +2244,8 @@ describe('createTestIdTransform', () => {
 })
 
 describe('option-keying: semantic inference and explicit overrides', () => {
-  // Resolves the single keyed IDataTestId entry produced for the radio <input> in a
-  // radiogroup v-for fixture, and asserts both the injected selector template
-  // (selectorValue — what becomes data-testid in the DOM) and the keyed accessor's
-  // PomStringPattern (pom.selector — what generateGetElementByDataTestId feeds into
-  // `this.keyedLocators((key) => this.locatorByTestId(...))`).
-  function compileRadioFixture(
-    fixtureName: string,
-    componentName: string,
-    options?: { optionKeyAttribute?: Record<string, string> },
-  ) {
-    const componentHierarchyMap = new Map<string, IComponentDependencies>()
-
-    const transformOptions: Record<string, unknown> = { existingIdBehavior: 'preserve' }
-    if (options?.optionKeyAttribute) {
-      transformOptions.optionKeyAttribute = options.optionKeyAttribute
-    }
-
-    compileAndCaptureAst(
-      readFixtureTemplate(fixtureName),
-      {
-        filename: `/src/components/${componentName}.vue`,
-        nodeTransforms: [
-          createTestIdTransform(componentName, componentHierarchyMap, {}, [], '/src/views', transformOptions as Parameters<typeof createTestIdTransform>[5]),
-        ],
-      },
-    )
-
-    const deps = componentHierarchyMap.get(componentName) as IComponentDependencies | undefined
-    expect(deps).toBeTruthy()
-
-    const entries = Array.from(deps?.dataTestIdSet ?? [])
-    const keyed = entries.find(e => e.pom?.selector && (e.pom.selector as { patternKind?: string }).patternKind === 'parameterized')
-      ?? entries.find(e => e.selectorValue && (e.selectorValue as { patternKind?: string }).patternKind === 'parameterized')
-    expect(keyed).toBeTruthy()
-    return { deps, keyed }
-  }
-
   it('uses a repeated radio value without component configuration', () => {
-    const { keyed } = compileRadioFixture('MyRadioGroup_OptionValue.vue', 'MyRadioGroup')
+    const { keyed } = compileKeyedFixture('MyRadioGroup_OptionValue.vue', 'MyRadioGroup')
 
     // The injected data-testid template interpolates option.value, NOT the v-for index.
     expect((keyed!.selectorValue as { formatted: string }).formatted)
@@ -2278,7 +2265,7 @@ describe('option-keying: semantic inference and explicit overrides', () => {
   })
 
   it('allows explicit configuration to override the semantic radio value', () => {
-    const { keyed } = compileRadioFixture('MyRadioGroup_OptionValue.vue', 'MyRadioGroup', {
+    const { keyed } = compileKeyedFixture('MyRadioGroup_OptionValue.vue', 'MyRadioGroup', {
       optionKeyAttribute: { MyRadioGroup: 'key' },
     })
 
@@ -2291,19 +2278,19 @@ describe('option-keying: semantic inference and explicit overrides', () => {
   })
 
   it('rejects an explicit option identity override that is absent from a repeated radio', () => {
-    expect(() => compileRadioFixture('MyRadioGroup_OptionId.vue', 'MyRadioGroup', {
+    expect(() => compileKeyedFixture('MyRadioGroup_OptionId.vue', 'MyRadioGroup', {
       optionKeyAttribute: { MyRadioGroup: 'label' },
     })).toThrow(/optionKeyAttribute.*label.*does not bind :label/)
   })
 
   it('rejects an explicit key override when the repeated radio has no Vue key', () => {
-    expect(() => compileRadioFixture('MyRadioGroup_OptionValueMissingKey.vue', 'MyRadioGroup', {
+    expect(() => compileKeyedFixture('MyRadioGroup_OptionValueMissingKey.vue', 'MyRadioGroup', {
       optionKeyAttribute: { MyRadioGroup: 'key' },
     })).toThrow(/optionKeyAttribute.*"key".*no resolvable v-for :key/)
   })
 
   it('rejects a repeated radio without a bound value identity through structural wrappers', () => {
-    expect(() => compileRadioFixture('MyRadioGroup_OptionChangeMissingValue.vue', 'MyRadioGroup'))
+    expect(() => compileKeyedFixture('MyRadioGroup_OptionChangeMissingValue.vue', 'MyRadioGroup'))
       .toThrow(/Repeated radio must bind :value/)
   })
 })
@@ -2313,43 +2300,12 @@ describe('action-event recognition: option-selection events beyond @click', () =
   // @change on radios/checkboxes, @mousedown on combobox/listbox <option> elements —
   // not @click. The generator must recognize these as action-able (like @click) so
   // it emits keyed accessors for v-for option elements that use them.
-  function compileOptionFixture(
-    fixtureName: string,
-    componentName: string,
-    options?: { optionKeyAttribute?: Record<string, string> },
-  ) {
-    const componentHierarchyMap = new Map<string, IComponentDependencies>()
-
-    const transformOptions: Record<string, unknown> = { existingIdBehavior: 'preserve' }
-    if (options?.optionKeyAttribute) {
-      transformOptions.optionKeyAttribute = options.optionKeyAttribute
-    }
-
-    compileAndCaptureAst(
-      readFixtureTemplate(fixtureName),
-      {
-        filename: `/src/components/${componentName}.vue`,
-        nodeTransforms: [
-          createTestIdTransform(componentName, componentHierarchyMap, {}, [], '/src/views', transformOptions as Parameters<typeof createTestIdTransform>[5]),
-        ],
-      },
-    )
-
-    const deps = componentHierarchyMap.get(componentName) as IComponentDependencies | undefined
-    expect(deps).toBeTruthy()
-
-    const entries = Array.from(deps?.dataTestIdSet ?? [])
-    const keyed = entries.find(e => e.pom?.selector && (e.pom.selector as { patternKind?: string }).patternKind === 'parameterized')
-      ?? entries.find(e => e.selectorValue && (e.selectorValue as { patternKind?: string }).patternKind === 'parameterized')
-    expect(keyed).toBeTruthy()
-    return { deps, keyed }
-  }
 
   it('emits a keyed accessor for a v-for radio driven by @change (not @click)', () => {
     // The fixture uses @change="modelValue = option.value" — the Vue idiom for radio
     // selection — instead of @click. Before action-event widening this produced an
     // EMPTY POM (no recognized handler); it must emit a keyed Option[key] accessor.
-    const { keyed } = compileOptionFixture('MyRadioGroup_OptionChange.vue', 'MyRadioGroup')
+    const { keyed } = compileKeyedFixture('MyRadioGroup_OptionChange.vue', 'MyRadioGroup')
 
     // The keyed accessor is parameterized by the inferred :value binding, collapsing
     // option.value -> ${value}, regardless of whether the radio is driven by @click or @change.
@@ -2370,7 +2326,7 @@ describe('action-event recognition: option-selection events beyond @click', () =
     // Combobox/listbox option elements commonly use @mousedown (often .prevent) to
     // select on pointer-down for responsive UX. The fixture keys off :data-value
     // (the meaningful option value) by convention.
-    const { keyed } = compileOptionFixture('MyList_OptionMousedown.vue', 'MyList')
+    const { keyed } = compileKeyedFixture('MyList_OptionMousedown.vue', 'MyList')
 
     // The keyed accessor is parameterized by the conventional :data-value binding,
     // collapsing option.value -> ${key}. The suffix derives from the handler name
@@ -2382,7 +2338,7 @@ describe('action-event recognition: option-selection events beyond @click', () =
   })
 
   it('rejects a repeated role=option without a bound data-value identity', () => {
-    expect(() => compileOptionFixture('MyList_OptionMousedownMissingValue.vue', 'MyList'))
+    expect(() => compileKeyedFixture('MyList_OptionMousedownMissingValue.vue', 'MyList'))
       .toThrow(/role="option".*must bind :data-value/)
   })
 })

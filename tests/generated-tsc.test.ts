@@ -7,30 +7,13 @@ import { createRequire } from "node:module";
 
 import { describe, expect, it } from "vitest";
 
-import type { IComponentDependencies, IDataTestId } from "../utils";
+import type { IComponentDependencies } from "../utils";
 import { generateFiles } from "../class-generation";
 import { createPomMethodSignature, createPomParameters } from "../pom-params";
 import { createPomStringPattern } from "../pom-patterns";
-import { renderTypeScriptLines } from "../typescript-codegen";
-
-function extractClassBlock(content: string, className: string): string {
-  const start = content.indexOf(`export class ${className}`);
-  if (start < 0) {
-    throw new Error(`Class ${className} not found in generated output.`);
-  }
-
-  const next = content.indexOf("export class ", start + 1);
-  const end = next >= 0 ? next : content.length;
-  return content.slice(start, end);
-}
-
-function writeFile(filePath: string, content: string) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const normalizedContent = filePath.endsWith(".ts") || filePath.endsWith(".tsx") || filePath.endsWith(".mts") || filePath.endsWith(".cts") || filePath.endsWith(".d.ts")
-    ? renderTypeScriptLines(content.replace(/\r\n/g, "\n").split("\n"))
-    : content;
-  fs.writeFileSync(filePath, normalizedContent, "utf8");
-}
+import { makeComponentDependencies } from "./helpers/component-deps";
+import { makeTestIdEntry } from "./helpers/pom-entry";
+import { extractClassBlock, writeFile } from "./helpers/tmp-project";
 
 function copyRepoFixture(rootDir: string, fixtureName: string, destinationRelativePath: string) {
   const content = fs.readFileSync(new URL(`./fixtures/generated-tsc/${fixtureName}`, import.meta.url), "utf8");
@@ -78,6 +61,18 @@ function runTscNoEmit(files: string[], options?: { cwd?: string }) {
 }
 
 /**
+ * Run tsc --noEmit and fail the test with the compiler's own output when it fails.
+ */
+function expectTscOk(files: string[], cwd: string) {
+  const result = runTscNoEmit(files, { cwd });
+  if (result.status !== 0) {
+    const stdout = (result.stdout || "").toString();
+    const stderr = (result.stderr || "").toString();
+    throw new Error(`tsc failed (exit ${result.status})\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`);
+  }
+}
+
+/**
  * Fresh temp project with the Playwright type stub and the base-page/pointer
  * fixtures copied in, ready for generateFiles + runTscNoEmit.
  */
@@ -100,20 +95,16 @@ describe("generated output", () => {
     const componentName = "TestComponent";
 
     const formattedDataTestId = "TestComponent-${key}-Save-button";
-    const dataTestIdEntry: IDataTestId = {
-      selectorValue: createPomStringPattern(formattedDataTestId, "parameterized", ["key"]),
-      pom: {
-        nativeRole: "button",
-        methodName: "SaveButton",
-        selector: createPomStringPattern(formattedDataTestId, "parameterized", ["key"]),
-        parameters: createPomParameters(["key", "string"]),
-      },
-    };
+    const dataTestIdEntry = makeTestIdEntry({
+      selector: formattedDataTestId,
+      patternKind: "parameterized",
+      patternParams: ["key"],
+      methodName: "SaveButton",
+      parameters: [["key", "string"]],
+    });
 
-    const deps: IComponentDependencies = {
+    const deps = makeComponentDependencies({
       filePath: path.join(tempRoot, `${componentName}.vue`),
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
       dataTestIdSet: new Set([dataTestIdEntry]),
       pomExtraMethods: [
         {
@@ -130,7 +121,7 @@ describe("generated output", () => {
       ],
       generatedMethods: new Map(),
       isView: false,
-    };
+    });
 
     const componentHierarchyMap = new Map<string, IComponentDependencies>([[componentName, deps]]);
     const vueFilesPathMap = new Map<string, string>();
@@ -149,13 +140,7 @@ describe("generated output", () => {
     // Keyed locator getters should also expose an indexable property proxy.
     expect(generatedContent).toContain("get SaveButton()");
 
-    const result = runTscNoEmit([generatedFilePath, basePagePath], { cwd: tempRoot });
-
-    if (result.status !== 0) {
-      const stdout = (result.stdout || "").toString();
-      const stderr = (result.stderr || "").toString();
-      throw new Error(`tsc failed (exit ${result.status})\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`);
-    }
+    expectTscOk([generatedFilePath, basePagePath], tempRoot);
   });
 
   it("typechecks query-aware navigation for create and details routes", async () => {
@@ -187,14 +172,11 @@ describe("generated output", () => {
         ].join("\n"),
       );
 
-      const dependencies: IComponentDependencies = {
+      const dependencies = makeComponentDependencies({
         filePath: viewPath,
-        childrenComponentSet: new Set(),
-        usedComponentSet: new Set(),
-        dataTestIdSet: new Set(),
         generatedMethods: new Map(),
         isView: true,
-      };
+      });
       const outDir = path.join(tempRoot, "out");
       await generateFiles(new Map([[componentName, dependencies]]), new Map(), basePagePath, {
         outDir,
@@ -219,12 +201,8 @@ describe("generated output", () => {
         ].join("\n"),
       );
 
-      const result = runTscNoEmit([generatedFilePath, basePagePath, path.join(tempRoot, "usage.ts")], { cwd: tempRoot });
-      if (result.status !== 0) {
-        throw new Error(`tsc failed (exit ${result.status})\n\nSTDOUT:\n${result.stdout}\n\nSTDERR:\n${result.stderr}`);
-      }
-    }
-    finally {
+      expectTscOk([generatedFilePath, basePagePath, path.join(tempRoot, "usage.ts")], tempRoot);
+    }    finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
   }, 120_000);
@@ -233,25 +211,22 @@ describe("generated output", () => {
     const { tempRoot, basePagePath } = makeTypecheckRoot("vue-pom-generator-keyed-input-");
 
     const componentName = "ItemsPage";
-    const dataTestIdEntry: IDataTestId = {
-      selectorValue: createPomStringPattern("items-check-${key}", "parameterized", ["key"]),
-      pom: {
-        nativeRole: "input",
-        methodName: "ItemsCheckByKey",
-        selector: createPomStringPattern("items-check-${key}", "parameterized", ["key"]),
-        // IR carries the `key` selector variable, but the method params omit it.
-        parameters: createPomParameters(["text", "string"], ["annotationText", 'string = ""']),
-      },
-    };
+    const dataTestIdEntry = makeTestIdEntry({
+      selector: "items-check-${key}",
+      patternKind: "parameterized",
+      patternParams: ["key"],
+      methodName: "ItemsCheckByKey",
+      nativeRole: "input",
+      // IR carries the `key` selector variable, but the method params omit it.
+      parameters: [["text", "string"], ["annotationText", 'string = ""']],
+    });
 
-    const deps: IComponentDependencies = {
+    const deps = makeComponentDependencies({
       filePath: path.join(tempRoot, `${componentName}.vue`),
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
       dataTestIdSet: new Set([dataTestIdEntry]),
       generatedMethods: new Map(),
       isView: false,
-    };
+    });
 
     const outDir = path.join(tempRoot, "out");
     await expect(generateFiles(new Map([[componentName, deps]]), new Map(), basePagePath, {
@@ -264,25 +239,22 @@ describe("generated output", () => {
     const { tempRoot, basePagePath } = makeTypecheckRoot("vue-pom-generator-selector-vars-");
 
     const componentName = "ItemsPage";
-    const dataTestIdEntry: IDataTestId = {
-      selectorValue: createPomStringPattern("items-check-${itemId}", "parameterized", ["itemId"]),
-      pom: {
-        nativeRole: "input",
-        methodName: "ItemsCheckByKey",
-        selector: createPomStringPattern("items-check-${itemId}", "parameterized", ["itemId"]),
-        // IR carries the `itemId` selector variable, but the method params omit it.
-        parameters: createPomParameters(["text", "string"], ["annotationText", 'string = ""']),
-      },
-    };
+    const dataTestIdEntry = makeTestIdEntry({
+      selector: "items-check-${itemId}",
+      patternKind: "parameterized",
+      patternParams: ["itemId"],
+      methodName: "ItemsCheckByKey",
+      nativeRole: "input",
+      // IR carries the `itemId` selector variable, but the method params omit it.
+      parameters: [["text", "string"], ["annotationText", 'string = ""']],
+    });
 
-    const deps: IComponentDependencies = {
+    const deps = makeComponentDependencies({
       filePath: path.join(tempRoot, `${componentName}.vue`),
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
       dataTestIdSet: new Set([dataTestIdEntry]),
       generatedMethods: new Map(),
       isView: false,
-    };
+    });
 
     const outDir = path.join(tempRoot, "out");
     await expect(generateFiles(new Map([[componentName, deps]]), new Map(), basePagePath, {
@@ -299,18 +271,13 @@ describe("generated output", () => {
       "<template><TenantDetailsEditForm /></template>\n",
     );
 
-    const navigationEntry: IDataTestId = {
-      selectorValue: createPomStringPattern("TenantListPage-NewTenant-routerlink", "static", []),
+    const navigationEntry = makeTestIdEntry({
+      selector: "TenantListPage-NewTenant-routerlink",
       targetPageObjectModelClass: "NewTenantPage",
-      pom: {
-        nativeRole: "button",
-        methodName: "NewTenant",
-        selector: createPomStringPattern("TenantListPage-NewTenant-routerlink", "static", []),
-        parameters: [],
-      },
-    };
+      methodName: "NewTenant",
+    });
 
-    const tenantListDeps: IComponentDependencies = {
+    const tenantListDeps = makeComponentDependencies({
       filePath: path.join(tempRoot, "src", "views", "TenantListPage.vue"),
       childrenComponentSet: new Set(["TenantDetailsEditForm"]),
       usedComponentSet: new Set(["TenantDetailsEditForm"]),
@@ -324,26 +291,21 @@ describe("generated output", () => {
       }],
       generatedMethods: new Map(),
       isView: true,
-    };
+    });
 
-    const formDeps: IComponentDependencies = {
+    const formDeps = makeComponentDependencies({
       filePath: path.join(tempRoot, "src", "components", "TenantDetailsEditForm.vue"),
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
-      dataTestIdSet: new Set([{
-        selectorValue: createPomStringPattern("TenantDetailsEditForm-Name-input", "static", []),
-        pom: {
-          nativeRole: "input",
-          methodName: "TenantName",
-          selector: createPomStringPattern("TenantDetailsEditForm-Name-input", "static", []),
-          parameters: createPomParameters(["text", "string"], ["annotationText", 'string = ""']),
-        },
-      }]),
+      dataTestIdSet: new Set([makeTestIdEntry({
+        selector: "TenantDetailsEditForm-Name-input",
+        methodName: "TenantName",
+        nativeRole: "input",
+        parameters: [["text", "string"], ["annotationText", 'string = ""']],
+      })]),
       generatedMethods: new Map([
         ["typeTenantName", createPomMethodSignature(createPomParameters(["name", "string"]))],
       ]),
       isView: false,
-    };
+    });
 
     const componentHierarchyMap = new Map<string, IComponentDependencies>([
       ["TenantListPage", tenantListDeps],
@@ -357,13 +319,7 @@ describe("generated output", () => {
       typescriptOutputStructure: "split",
     });
 
-    const result = runTscNoEmit([path.join(outDir, "index.ts")], { cwd: tempRoot });
-
-    if (result.status !== 0) {
-      const stdout = (result.stdout || "").toString();
-      const stderr = (result.stderr || "").toString();
-      throw new Error(`tsc failed (exit ${result.status})\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`);
-    }
+    expectTscOk([path.join(outDir, "index.ts")], tempRoot);
   });
 
   it("does not emit a self-referential constructor for recursively-nested components", async () => {
@@ -375,27 +331,20 @@ describe("generated output", () => {
     const componentName = "TreeViewItem";
 
     // The component renders both a real child (TreeViewItemValue) and itself recursively.
-    const toggleEntry: IDataTestId = {
-      selectorValue: createPomStringPattern("TreeViewItem-ToggleOpen-div", "static", []),
-      pom: {
-        nativeRole: "button",
-        methodName: "ToggleOpen",
-        selector: createPomStringPattern("TreeViewItem-ToggleOpen-div", "static", []),
-        parameters: createPomParameters(["annotationText", 'string = ""']),
-      },
-    };
+    const toggleEntry = makeTestIdEntry({
+      selector: "TreeViewItem-ToggleOpen-div",
+      methodName: "ToggleOpen",
+      parameters: [["annotationText", 'string = ""']],
+    });
 
-    const valueEntry: IDataTestId = {
-      selectorValue: createPomStringPattern("TreeViewItemValue-Label-input", "static", []),
-      pom: {
-        nativeRole: "input",
-        methodName: "Label",
-        selector: createPomStringPattern("TreeViewItemValue-Label-input", "static", []),
-        parameters: createPomParameters(["text", "string"], ["annotationText", 'string = ""']),
-      },
-    };
+    const valueEntry = makeTestIdEntry({
+      selector: "TreeViewItemValue-Label-input",
+      methodName: "Label",
+      nativeRole: "input",
+      parameters: [["text", "string"], ["annotationText", 'string = ""']],
+    });
 
-    const treeItemDeps: IComponentDependencies = {
+    const treeItemDeps = makeComponentDependencies({
       filePath: path.join(tempRoot, "src", "components", `${componentName}.vue`),
       childrenComponentSet: new Set([componentName, "TreeViewItemValue"]),
       usedComponentSet: new Set([componentName, "TreeViewItemValue"]),
@@ -418,16 +367,14 @@ describe("generated output", () => {
       ],
       generatedMethods: new Map(),
       isView: false,
-    };
+    });
 
-    const valueDeps: IComponentDependencies = {
+    const valueDeps = makeComponentDependencies({
       filePath: path.join(tempRoot, "src", "components", "TreeViewItemValue.vue"),
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
       dataTestIdSet: new Set([valueEntry]),
       generatedMethods: new Map(),
       isView: false,
-    };
+    });
 
     const componentHierarchyMap = new Map<string, IComponentDependencies>([
       [componentName, treeItemDeps],
@@ -452,13 +399,7 @@ describe("generated output", () => {
     expect(generatedContent).toContain("this.TreeViewItemValue = new TreeViewItemValue(page, this.componentInstanceLocator(\"TreeViewItem-TreeViewItemValue-component\"))");
 
     // The generated barrel must typecheck — proving the class is constructible (no recursion).
-    const result = runTscNoEmit([path.join(outDir, "index.ts")], { cwd: tempRoot });
-
-    if (result.status !== 0) {
-      const stdout = (result.stdout || "").toString();
-      const stderr = (result.stderr || "").toString();
-      throw new Error(`tsc failed (exit ${result.status})\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`);
-    }
+    expectTscOk([path.join(outDir, "index.ts")], tempRoot);
   });
 
   it("typechecks generated fixtures that prefer matching override classes", async () => {
@@ -479,14 +420,11 @@ describe("generated output", () => {
       ].join("\n"),
     );
 
-    const deps: IComponentDependencies = {
+    const deps = makeComponentDependencies({
       filePath: path.join(tempRoot, "src", "views", "PersonListPage.vue"),
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
-      dataTestIdSet: new Set(),
       generatedMethods: new Map(),
       isView: true,
-    };
+    });
 
     const componentHierarchyMap = new Map<string, IComponentDependencies>([["PersonListPage", deps]]);
     const vueFilesPathMap = new Map<string, string>();
@@ -516,13 +454,7 @@ describe("generated output", () => {
     expect(fixtureContent).not.toMatch(/export\s*\{[^}]*\btest\b[^}]*\}/);
     expect(fixtureContent).not.toMatch(/import\s*\{[^}]*test as base[^}]*\}/);
 
-    const result = runTscNoEmit([fixtureFile, basePagePath], { cwd: tempRoot });
-
-    if (result.status !== 0) {
-      const stdout = (result.stdout || "").toString();
-      const stderr = (result.stderr || "").toString();
-      throw new Error(`tsc failed (exit ${result.status})\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`);
-    }
+    expectTscOk([fixtureFile, basePagePath], tempRoot);
   });
 
   it("fails by default when custom POM import collides with generated class name", async () => {
@@ -542,14 +474,11 @@ describe("generated output", () => {
       "export class PersonListPage { constructor(_: any, __?: any) {} }",
     );
 
-    const deps: IComponentDependencies = {
+    const deps = makeComponentDependencies({
       filePath: path.join(tempRoot, "src", "views", "PersonListPage.vue"),
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
-      dataTestIdSet: new Set(),
       generatedMethods: new Map(),
       isView: true,
-    };
+    });
 
     const componentHierarchyMap = new Map<string, IComponentDependencies>([["PersonListPage", deps]]);
     const vueFilesPathMap = new Map<string, string>();
@@ -586,14 +515,12 @@ describe("generated output", () => {
       "export class PersonListPage { constructor(_: any, __?: any) {} }",
     );
 
-    const deps: IComponentDependencies = {
+    const deps = makeComponentDependencies({
       filePath: path.join(tempRoot, "src", "views", "PersonListPage.vue"),
-      childrenComponentSet: new Set(),
       usedComponentSet: new Set(["Page"]),
-      dataTestIdSet: new Set(),
       generatedMethods: new Map(),
       isView: true,
-    };
+    });
 
     const componentHierarchyMap = new Map<string, IComponentDependencies>([["PersonListPage", deps]]);
     const vueFilesPathMap = new Map<string, string>();
@@ -656,18 +583,14 @@ describe("generated output", () => {
         ].join("\n"),
     );
 
-    const deps: IComponentDependencies = {
+    const deps = makeComponentDependencies({
       filePath: path.join(tempRoot, "src", "components", "UsersTable.vue"),
       childrenComponentSet: new Set(["MyDataGrid"]),
       usedComponentSet: new Set(["MyDataGrid"]),
-      dataTestIdSet: new Set([
-        {
-          selectorValue: createPomStringPattern("UsersTable-Refresh-button", "static", []),
-        },
-      ]),
+      dataTestIdSet: new Set([makeTestIdEntry({ selector: "UsersTable-Refresh-button" })]),
       generatedMethods: new Map(),
       isView: false,
-    };
+    });
 
     const componentHierarchyMap = new Map<string, IComponentDependencies>([["UsersTable", deps]]);
     const vueFilesPathMap = new Map<string, string>();
@@ -698,13 +621,7 @@ describe("generated output", () => {
     expect(classBlock).toContain("searchHighlight(text: string) {");
     expect(classBlock).toContain("return this.grid.searchHighlight(text);");
 
-    const result = runTscNoEmit([generatedFile, basePagePath], { cwd: tempRoot });
-
-    if (result.status !== 0) {
-      const stdout = (result.stdout || "").toString();
-      const stderr = (result.stderr || "").toString();
-      throw new Error(`tsc failed (exit ${result.status})\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`);
-    }
+    expectTscOk([generatedFile, basePagePath], tempRoot);
   });
 
   it("fails when configured custom helper infrastructure is missing", async () => {
@@ -727,18 +644,13 @@ describe("generated output", () => {
       "export type PlaywrightAnimationOptions = any; export function setPlaywrightAnimationOptions(_: PlaywrightAnimationOptions): void {} export class Pointer { constructor(_: any, __: string) {} }",
     );
 
-    const deps: IComponentDependencies = {
+    const deps = makeComponentDependencies({
       filePath: path.join(tempRoot, "src", "views", "UsersView.vue"),
-      childrenComponentSet: new Set(),
       usedComponentSet: new Set(["Page", "MyDataGrid"]),
-      dataTestIdSet: new Set([
-        {
-          selectorValue: createPomStringPattern("UsersView-EnableSessionEmails-toggle", "static", []),
-        },
-      ]),
+      dataTestIdSet: new Set([makeTestIdEntry({ selector: "UsersView-EnableSessionEmails-toggle" })]),
       generatedMethods: new Map(),
       isView: true,
-    };
+    });
 
     const componentHierarchyMap = new Map<string, IComponentDependencies>([["UsersView", deps]]);
     const vueFilesPathMap = new Map<string, string>();
@@ -829,31 +741,13 @@ describe("generated output", () => {
     const childA = "ChildA";
     const childB = "ChildB";
 
-    const childAEntry: IDataTestId = {
-      selectorValue: createPomStringPattern("ChildA-OnlyInA-button", "static", []),
-      pom: {
-        nativeRole: "button",
-        methodName: "OnlyInAButton",
-        selector: createPomStringPattern("ChildA-OnlyInA-button", "static", []),
-        parameters: [],
-      },
-    };
+    const childAEntry = makeTestIdEntry({ selector: "ChildA-OnlyInA-button", methodName: "OnlyInAButton" });
 
-    const childBEntry: IDataTestId = {
-      selectorValue: createPomStringPattern("ChildB-SomethingElse-button", "static", []),
-      pom: {
-        nativeRole: "button",
-        methodName: "SomethingElseButton",
-        selector: createPomStringPattern("ChildB-SomethingElse-button", "static", []),
-        parameters: [],
-      },
-    };
+    const childBEntry = makeTestIdEntry({ selector: "ChildB-SomethingElse-button", methodName: "SomethingElseButton" });
 
-    const depsViewWithTwoChildren: IComponentDependencies = {
+    const depsViewWithTwoChildren = makeComponentDependencies({
       filePath: path.join(tempRoot, `${viewName}.vue`),
-      childrenComponentSet: new Set(),
       usedComponentSet: new Set([childA, childB]),
-      dataTestIdSet: new Set(),
       componentInstances: [
         {
           sourceId: "child-a",
@@ -872,25 +766,21 @@ describe("generated output", () => {
       ],
       generatedMethods: new Map(),
       isView: true,
-    };
+    });
 
-    const depsChildA: IComponentDependencies = {
+    const depsChildA = makeComponentDependencies({
       filePath: path.join(tempRoot, `${childA}.vue`),
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
       dataTestIdSet: new Set([childAEntry]),
       generatedMethods: new Map([["clickOnlyInAButton", createPomMethodSignature(createPomParameters(["wait", "boolean = true"], ["annotationText", "string = \"\""]))]]),
       isView: false,
-    };
+    });
 
-    const depsChildB: IComponentDependencies = {
+    const depsChildB = makeComponentDependencies({
       filePath: path.join(tempRoot, `${childB}.vue`),
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
       dataTestIdSet: new Set([childBEntry]),
       generatedMethods: new Map([["clickSomethingElseButton", createPomMethodSignature(createPomParameters(["wait", "boolean = true"], ["annotationText", "string = \"\""]))]]),
       isView: false,
-    };
+    });
 
     const componentHierarchyMapTwo = new Map<string, IComponentDependencies>([
       [viewName, depsViewWithTwoChildren],
@@ -913,7 +803,7 @@ describe("generated output", () => {
     expect(viewContentTwo).not.toContain("async clickOnlyInAButton");
 
     // Single child component case: passthrough should be emitted.
-    const depsViewSingleChild: IComponentDependencies = {
+    const depsViewSingleChild = {
       ...depsViewWithTwoChildren,
       filePath: path.join(tempRoot, `${viewName}Single.vue`),
       usedComponentSet: new Set([childA]),

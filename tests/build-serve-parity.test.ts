@@ -152,6 +152,22 @@ function asDevServer(stub: DevServerStub): ViteDevServer {
   return stub as object as ViteDevServer;
 }
 
+/**
+ * Create the dev plugin and run its configureServer hook against a stub server
+ * (the standard test setup). Returns both for tests that drive HMR afterwards.
+ */
+async function startDevPlugin(projectRoot: string, overrides?: DevPluginOverrides) {
+  const plugin = asSinglePlugin(makeDevPlugin(projectRoot, overrides));
+  const server = createDevServerStub();
+  await hookFn(plugin.configureServer)?.(asDevServer(server));
+  return { plugin, server };
+}
+
+/** The component snapshot handed to the most recent generateFiles call. */
+function latestGenerationSnapshot(): Map<string, IComponentDependencies> {
+  return vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, IComponentDependencies>;
+}
+
 // ---------------------------------------------------------------------------
 // Test 1: SFC-aware compilation — the dev plugin must pass bindingMetadata
 // and inline:true to compilerDom.compile for <script setup> components.
@@ -187,9 +203,7 @@ function openDialog() {}
     );
 
     try {
-      const plugin = asSinglePlugin(makeDevPlugin(projectRoot));
-      const server = createDevServerStub();
-      await hookFn(plugin.configureServer)?.(asDevServer(server));
+      await startDevPlugin(projectRoot);
 
       // Find the compile call for our fixture.
       const calls = compileSpy.mock.calls;
@@ -235,9 +249,7 @@ export default defineComponent({
     );
 
     try {
-      const plugin = asSinglePlugin(makeDevPlugin(projectRoot));
-      const server = createDevServerStub();
-      await hookFn(plugin.configureServer)?.(asDevServer(server));
+      await startDevPlugin(projectRoot);
 
       const calls = compileSpy.mock.calls;
       const counterCall = calls.find(
@@ -268,9 +280,7 @@ export default defineComponent({
     );
 
     try {
-      const plugin = asSinglePlugin(makeDevPlugin(projectRoot));
-      const server = createDevServerStub();
-      await hookFn(plugin.configureServer)?.(asDevServer(server));
+      await startDevPlugin(projectRoot);
 
       const calls = compileSpy.mock.calls;
       const simpleCall = calls.find(
@@ -322,13 +332,11 @@ export default defineComponent({
     );
 
     try {
-      const plugin = asSinglePlugin(makeDevPlugin(projectRoot, {
+      await startDevPlugin(projectRoot, {
         existingIdBehavior: "preserve",
-      }));
-      const server = createDevServerStub();
+      });
 
       // Should NOT throw.
-      await hookFn(plugin.configureServer)?.(asDevServer(server));
     } finally {
       cleanup();
     }
@@ -345,11 +353,9 @@ export default defineComponent({
     fs.writeFileSync(betaPath, '<template><button @click="save()">Beta</button></template>');
 
     try {
-      const plugin = asSinglePlugin(makeDevPlugin(projectRoot));
-      const server = createDevServerStub();
-      await hookFn(plugin.configureServer)?.(asDevServer(server));
+      const { server } = await startDevPlugin(projectRoot);
 
-      const initialSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, unknown>;
+      const initialSnapshot = latestGenerationSnapshot();
       expect(initialSnapshot.size).toBe(2);
 
       fs.rmSync(betaPath);
@@ -358,7 +364,7 @@ export default defineComponent({
 
       await new Promise(resolve => setTimeout(resolve, 900));
 
-      const finalSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, unknown>;
+      const finalSnapshot = latestGenerationSnapshot();
       expect(finalSnapshot.size).toBe(1);
       expect(finalSnapshot.has("Alpha")).toBe(true);
       expect(finalSnapshot.has("Beta")).toBe(false);
@@ -374,11 +380,9 @@ export default defineComponent({
     );
 
     try {
-      const plugin = asSinglePlugin(makeDevPlugin(projectRoot));
-      const server = createDevServerStub();
-      await hookFn(plugin.configureServer)?.(asDevServer(server));
+      const { plugin } = await startDevPlugin(projectRoot);
 
-      const initialSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, IComponentDependencies>;
+      const initialSnapshot = latestGenerationSnapshot();
       expect(initialSnapshot.size).toBe(1);
       expect(initialSnapshot.has("Recoverable")).toBe(true);
 
@@ -395,7 +399,7 @@ export default defineComponent({
       await hookFn(plugin.handleHotUpdate)?.({ file: path.join(projectRoot, "src", "components", "Recoverable.vue") } as HmrContext);
       await new Promise(resolve => setTimeout(resolve, 900));
 
-      const finalSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, IComponentDependencies>;
+      const finalSnapshot = latestGenerationSnapshot();
       expect(finalSnapshot.size).toBe(1);
       expect(finalSnapshot.has("Recoverable")).toBe(true);
       expect(finalSnapshot.get("Recoverable")?.dataTestIdSet?.size ?? 0).toBeGreaterThan(0);
@@ -413,11 +417,9 @@ export default defineComponent({
     const componentPath = path.join(projectRoot, "src", "components", "TemplateLess.vue");
 
     try {
-      const plugin = asSinglePlugin(makeDevPlugin(projectRoot));
-      const server = createDevServerStub();
-      await hookFn(plugin.configureServer)?.(asDevServer(server));
+      const { plugin } = await startDevPlugin(projectRoot);
 
-      const initialSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, IComponentDependencies>;
+      const initialSnapshot = latestGenerationSnapshot();
       expect(initialSnapshot.size).toBe(1);
       expect(initialSnapshot.has("TemplateLess")).toBe(true);
 
@@ -431,7 +433,7 @@ const count = 1
       await hookFn(plugin.handleHotUpdate)?.({ file: componentPath } as HmrContext);
       await new Promise(resolve => setTimeout(resolve, 900));
 
-      const finalSnapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, IComponentDependencies>;
+      const finalSnapshot = latestGenerationSnapshot();
       expect(finalSnapshot.size).toBe(1);
       expect(finalSnapshot.has("TemplateLess")).toBe(true);
       expect(finalSnapshot.get("TemplateLess")?.dataTestIdSet?.size ?? 0).toBe(0);
@@ -501,22 +503,18 @@ const count = 1
       process.chdir(projectRoot);
 
       const appRoot = path.join(projectRoot, "app");
-      const basePageClassPath = path.join(appRoot, "base-page.ts");
-      const plugin = asSinglePlugin(makeDevPlugin(appRoot, {
+      await startDevPlugin(appRoot, {
         getPageDirs: () => ["app/pages"],
         getComponentDirs: () => ["app/components"],
         getLayoutDirs: () => ["app/layouts"],
         getViewsDir: () => "views",
         getSourceDirs: () => ["app/pages", "app/components", "app/layouts"],
         projectRootRef: { current: appRoot },
-        normalizedBasePagePath: path.posix.normalize(basePageClassPath),
-        basePageClassPath,
-      }));
+        normalizedBasePagePath: path.posix.normalize(path.join(appRoot, "base-page.ts")),
+        basePageClassPath: path.join(appRoot, "base-page.ts"),
+      });
 
-      const server = createDevServerStub();
-      await hookFn(plugin.configureServer)?.(asDevServer(server));
-
-      const snapshot = vi.mocked(generateFiles).mock.calls.at(-1)?.[0] as Map<string, IComponentDependencies>;
+      const snapshot = latestGenerationSnapshot();
       expect(snapshot.size).toBe(1);
       expect(snapshot.has("NuxtRooted")).toBe(true);
     } finally {
