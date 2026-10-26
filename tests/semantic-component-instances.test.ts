@@ -123,7 +123,7 @@ describe("semantic component instances", () => {
         source: `
           <template>
             <div>
-              <ImmyRadioGroup
+              <AppRadioGroup
                 :model-value="modelValue"
                 :options="overridePolicyOptions"
               />
@@ -131,8 +131,8 @@ describe("semantic component instances", () => {
           </template>
         `,
       }],
-      ["ImmyRadioGroup", {
-        filePath: path.join(componentsDir, "ImmyRadioGroup.vue"),
+      ["AppRadioGroup", {
+        filePath: path.join(componentsDir, "AppRadioGroup.vue"),
         source: `
           <template>
             <div role="radiogroup">
@@ -212,10 +212,10 @@ describe("semantic component instances", () => {
 
     const formPom = fs.readFileSync(path.join(outDir, "DeploymentParametersForm.g.ts"), "utf8");
     const onboardingPom = fs.readFileSync(path.join(outDir, "OnboardingOption.g.ts"), "utf8");
-    const radioPom = fs.readFileSync(path.join(outDir, "ImmyRadioGroup.g.ts"), "utf8");
+    const radioPom = fs.readFileSync(path.join(outDir, "AppRadioGroup.g.ts"), "utf8");
     const formVtuPom = fs.readFileSync(path.join(vueTestUtilsOutDir, "DeploymentParametersForm.vtu.g.ts"), "utf8");
     const onboardingVtuPom = fs.readFileSync(path.join(vueTestUtilsOutDir, "OnboardingOption.vtu.g.ts"), "utf8");
-    const radioVtuPom = fs.readFileSync(path.join(vueTestUtilsOutDir, "ImmyRadioGroup.vtu.g.ts"), "utf8");
+    const radioVtuPom = fs.readFileSync(path.join(vueTestUtilsOutDir, "AppRadioGroup.vtu.g.ts"), "utf8");
 
     expect(formPom).toContain("DynamicFormField(key: string): DynamicFormField & { readonly OnboardingOption: OnboardingOption }");
     expect(formPom).toContain("const ownerRoot = this.componentInstanceLocator(\"DeploymentParametersForm-BaseDynamicForm-component\")");
@@ -226,11 +226,11 @@ describe("semantic component instances", () => {
     expect(compiledTemplateByComponent.get("DeploymentParametersForm"))
       .toContain("DeploymentParametersForm-CopyToClipboardInput-component");
 
-    expect(onboardingPom).toContain("OverridePolicyOptions: ImmyRadioGroup");
-    expect(onboardingPom).toContain("this.OverridePolicyOptions = new ImmyRadioGroup(page, this.componentInstanceLocator(\"OnboardingOption-OverridePolicyOptions-component\"))");
+    expect(onboardingPom).toContain("OverridePolicyOptions: AppRadioGroup");
+    expect(onboardingPom).toContain("this.OverridePolicyOptions = new AppRadioGroup(page, this.componentInstanceLocator(\"OnboardingOption-OverridePolicyOptions-component\"))");
 
     expect(radioPom).toContain("async selectByValue(value: string | number | boolean | bigint, annotationText: string = \"\")");
-    expect(radioPom).toContain("`ImmyRadioGroup-${value}-OptionValue-radio`");
+    expect(radioPom).toContain("`AppRadioGroup-${value}-OptionValue-radio`");
     expect(radioPom).toContain("constructor(page: PwPage, root?: PwLocator)");
     expect(radioPom).toContain("super(page, { root, testIdAttribute: \"data-testid\" })");
 
@@ -238,11 +238,11 @@ describe("semantic component instances", () => {
     expect(formVtuPom).toContain("const ownerRoot = this.getComponentInstance(\"DeploymentParametersForm-BaseDynamicForm-component\")");
     expect(formVtuPom).toContain("const root = this.getComponentInstance(`BaseDynamicForm-${key}-DynamicFormField-component`, ownerRoot)");
     expect(formVtuPom).toContain("OnboardingOption: new OnboardingOption(this.getComponentInstance(\"DeploymentParametersForm-OnboardingOption-component\", root))");
-    expect(onboardingVtuPom).toContain("get OverridePolicyOptions(): ImmyRadioGroup");
-    expect(onboardingVtuPom).toContain("return new ImmyRadioGroup(this.getComponentInstance(\"OnboardingOption-OverridePolicyOptions-component\"))");
+    expect(onboardingVtuPom).toContain("get OverridePolicyOptions(): AppRadioGroup");
+    expect(onboardingVtuPom).toContain("return new AppRadioGroup(this.getComponentInstance(\"OnboardingOption-OverridePolicyOptions-component\"))");
     expect(onboardingVtuPom).not.toContain("this.OverridePolicyOptions =");
     expect(radioVtuPom).toContain("async selectByValue(value: string | number | boolean | bigint)");
-    expect(radioVtuPom).toContain("await this.getByTestId(`ImmyRadioGroup-${value}-OptionValue-radio`).setValue()");
+    expect(radioVtuPom).toContain("await this.getByTestId(`AppRadioGroup-${value}-OptionValue-radio`).setValue()");
     expect(radioVtuPom).not.toContain("annotationText");
     expect(fs.readFileSync(path.join(vueTestUtilsOutDir, "index.ts"), "utf8"))
       .toContain("export * from \"./DeploymentParametersForm.vtu.g\"");
@@ -288,7 +288,7 @@ describe("semantic component instances", () => {
                     type: "radio",
                     value,
                     checked: selected.server === value,
-                    "data-testid": `ImmyRadioGroup-${value}-OptionValue-radio`,
+                    "data-testid": `AppRadioGroup-${value}-OptionValue-radio`,
                     onChange: () => selected.server = value,
                   })),
                 ]),

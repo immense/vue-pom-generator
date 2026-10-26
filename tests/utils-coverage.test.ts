@@ -437,7 +437,7 @@ describe("utils.ts coverage", () => {
 
   it("derives :loadAction semanticNameHint the same way as the legacy :handler", () => {
     const root = parseTemplate(`
-      <ImmyLoadButton :loadAction="() => createTenants('selected')">Selected</ImmyLoadButton>
+      <LoadButton :loadAction="() => createTenants('selected')">Selected</LoadButton>
     `);
     const el = firstElement(root);
 
@@ -446,7 +446,7 @@ describe("utils.ts coverage", () => {
     expect(info?.semanticNameHint).toBe("CreateTenantsSelected");
 
     const root2 = parseTemplate(`
-      <ImmyLoadButton :loadAction="() => createTenants('all')">All</ImmyLoadButton>
+      <LoadButton :loadAction="() => createTenants('all')">All</LoadButton>
     `);
     const el2 = firstElement(root2);
 
@@ -457,10 +457,10 @@ describe("utils.ts coverage", () => {
 
   it("derives :load-action (kebab-case) semanticNameHint identically to :loadAction", () => {
     const kebab = firstElement(parseTemplate(`
-      <ImmyLoadButton :load-action="() => createTenants('selected')">Selected</ImmyLoadButton>
+      <LoadButton :load-action="() => createTenants('selected')">Selected</LoadButton>
     `));
     const camel = firstElement(parseTemplate(`
-      <ImmyLoadButton :loadAction="() => createTenants('selected')">Selected</ImmyLoadButton>
+      <LoadButton :loadAction="() => createTenants('selected')">Selected</LoadButton>
     `));
 
     expect(nodeHandlerAttributeInfo(kebab)).toEqual(nodeHandlerAttributeInfo(camel));
@@ -478,7 +478,7 @@ describe("utils.ts coverage", () => {
 
   it("derives semanticNameHint from a wrapper-declared actionProp binding", () => {
     const el = firstElement(parseTemplate(`
-      <ImmyLoadButton :action="() => createTenants('selected')">Selected</ImmyLoadButton>
+      <LoadButton :action="() => createTenants('selected')">Selected</LoadButton>
     `));
 
     expect(nodeHandlerAttributeInfo(el, resolveActionPropNames({ role: "button", actionProp: "action" }))?.semanticNameHint).toBe("CreateTenantsSelected");

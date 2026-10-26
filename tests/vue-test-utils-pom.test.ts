@@ -5,15 +5,15 @@ import { describe, expect, it } from "vitest";
 
 import { VueTestUtilsPom } from "../class-generation/vue-test-utils-pom";
 
-class ImmyRadioGroup extends VueTestUtilsPom {
+class AppRadioGroup extends VueTestUtilsPom {
   public async selectByValue(value: string): Promise<void> {
-    await this.getByTestId(`ImmyRadioGroup-${value}-OptionValue-radio`).setValue();
+    await this.getByTestId(`AppRadioGroup-${value}-OptionValue-radio`).setValue();
   }
 }
 
 class OnboardingOption extends VueTestUtilsPom {
-  public get OverridePolicyOptions(): ImmyRadioGroup {
-    return new ImmyRadioGroup(
+  public get OverridePolicyOptions(): AppRadioGroup {
+    return new AppRadioGroup(
       this.getComponentInstance("OnboardingOption-OverridePolicyOptions-component"),
     );
   }
@@ -67,7 +67,7 @@ const Harness = defineComponent({
             type: "radio",
             value,
             checked: values[key] === value,
-            "data-testid": `ImmyRadioGroup-${value}-OptionValue-radio`,
+            "data-testid": `AppRadioGroup-${value}-OptionValue-radio`,
             onChange: () => values[key] = value,
           })),
         ]),
