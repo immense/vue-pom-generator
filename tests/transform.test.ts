@@ -15,6 +15,7 @@ import { parse as parseSfc } from '@vue/compiler-sfc'
 
 
 import { describe, expect, it } from 'vitest'
+import { findBindDirective, findStaticAttr } from './helpers/ast-queries'
 import { createPomMethodSignature, createPomParameters } from '../pom-params'
 import { createPomStringPattern } from '../pom-patterns'
 import { createVuePluginWithTestIds } from '../plugin/vue-plugin'
@@ -133,6 +134,17 @@ function compilePageWithWrapperSfcs(
   return { ast, tempRoot, componentHierarchyMap }
 }
 
+/**
+ * Fetch a component's collected dependencies or fail the test loudly.
+ */
+function requireDeps(map: Map<string, IComponentDependencies>, component: string): IComponentDependencies {
+  const deps = map.get(component)
+  if (!deps) {
+    throw new Error(`expected dependencies for ${component}`)
+  }
+  return deps
+}
+
 function compileAndCaptureCode(source: string, options: CompilerOptions & { filename: string }): string {
   const result = baseCompile(
     source,
@@ -215,13 +227,7 @@ function findFirstDataTestIdDirectiveExpAst(root: RootNode): BabelNode | null | 
 
     if (node.type === NodeTypes.ELEMENT) {
       const el = node as ElementNode
-      const prop = el.props.find(
-        (p): p is DirectiveNode =>
-          p.type === NodeTypes.DIRECTIVE
-          && p.name === 'bind'
-          && p.arg?.type === NodeTypes.SIMPLE_EXPRESSION
-          && p.arg.content === 'data-testid',
-      )
+      const prop = findBindDirective(el, 'data-testid')
 
       if (prop?.exp?.type === NodeTypes.SIMPLE_EXPRESSION) {
         found = prop.exp.ast as BabelNode
@@ -1135,8 +1141,7 @@ describe('createTestIdTransform', () => {
       )
     }).not.toThrow()
 
-    const deps = componentHierarchyMap.get('MyComp') as IComponentDependencies | undefined
-    expect(deps).toBeTruthy()
+    const deps = requireDeps(componentHierarchyMap, 'MyComp')
 
     // Ensure we get a single merged click method.
     expect(deps?.generatedMethods?.has('clickCancel')).toBe(true)
@@ -1179,8 +1184,7 @@ describe('createTestIdTransform', () => {
       )
     }).not.toThrow()
 
-    const deps = componentHierarchyMap.get('DynamicFormField') as IComponentDependencies | undefined
-    expect(deps).toBeTruthy()
+    const deps = requireDeps(componentHierarchyMap, 'DynamicFormField')
     expect(deps?.generatedMethods?.has('typeFieldValue')).toBe(true)
     expect(deps?.generatedMethods?.has('typeFieldValue2')).toBe(false)
 
@@ -1224,8 +1228,7 @@ describe('createTestIdTransform', () => {
       )
     }).not.toThrow()
 
-    const deps = componentHierarchyMap.get('MediaSelector') as IComponentDependencies | undefined
-    expect(deps).toBeTruthy()
+    const deps = requireDeps(componentHierarchyMap, 'MediaSelector')
     expect(deps?.generatedMethods?.has('clickShowMediaLibrary')).toBe(true)
     expect(deps?.generatedMethods?.has('clickMediaLibrary')).toBe(true)
 
@@ -1266,8 +1269,7 @@ describe('createTestIdTransform', () => {
       )
     }).not.toThrow()
 
-    const deps = componentHierarchyMap.get('MediaSelector') as IComponentDependencies | undefined
-    expect(deps).toBeTruthy()
+    const deps = requireDeps(componentHierarchyMap, 'MediaSelector')
     expect(deps?.generatedMethods?.has('clickMediaLibrary')).toBe(true)
 
     const methodNames = Array.from(deps?.dataTestIdSet ?? [])
@@ -1302,8 +1304,7 @@ describe('createTestIdTransform', () => {
       )
     }).not.toThrow()
 
-    const deps = componentHierarchyMap.get('UnifiedSoftwareDetailsDataRow') as IComponentDependencies | undefined
-    expect(deps).toBeTruthy()
+    const deps = requireDeps(componentHierarchyMap, 'UnifiedSoftwareDetailsDataRow')
     expect(deps?.generatedMethods?.has('clickRunDeploymentActionAssign')).toBe(true)
   })
 
@@ -1327,8 +1328,7 @@ describe('createTestIdTransform', () => {
       )
     }).not.toThrow()
 
-    const deps = componentHierarchyMap.get('OauthAccessTokensListPage') as IComponentDependencies | undefined
-    expect(deps).toBeTruthy()
+    const deps = requireDeps(componentHierarchyMap, 'OauthAccessTokensListPage')
     expect(deps?.generatedMethods?.has('clickRefreshOauthAccessToken')).toBe(true)
   })
 
@@ -1352,8 +1352,7 @@ describe('createTestIdTransform', () => {
       )
     }).not.toThrow()
 
-    const deps = componentHierarchyMap.get('RbacUserDetailsPage') as IComponentDependencies | undefined
-    expect(deps).toBeTruthy()
+    const deps = requireDeps(componentHierarchyMap, 'RbacUserDetailsPage')
     expect(deps?.generatedMethods?.has('clickImpersonateUser')).toBe(true)
   })
 
@@ -1406,8 +1405,7 @@ describe('createTestIdTransform', () => {
       },
     )
 
-    const deps = componentHierarchyMap.get('MyComp') as IComponentDependencies | undefined
-    expect(deps).toBeTruthy()
+    const deps = requireDeps(componentHierarchyMap, 'MyComp')
 
     const sigOne = deps?.generatedMethods?.get('clickOneButton')
     expect(sigOne).toEqual(createPomMethodSignature(createPomParameters(['wait', 'boolean = true'], ['annotationText', 'string = ""'])))
@@ -1486,8 +1484,7 @@ describe('createTestIdTransform', () => {
     expect(simpleParts.some(p => p.constType === ConstantTypes.NOT_CONSTANT)).toBe(true)
 
     // Also ensure our generator does NOT attempt static-list key narrowing here.
-    const deps = componentHierarchyMap.get('MyComp') as IComponentDependencies | undefined
-    expect(deps).toBeTruthy()
+    const deps = requireDeps(componentHierarchyMap, 'MyComp')
     const sig = deps?.generatedMethods?.get('clickDoThingByKey')
     expect(sig).toEqual(createPomMethodSignature(createPomParameters(['key', 'string'])))
   })
@@ -1526,14 +1523,10 @@ describe('createTestIdTransform', () => {
 
     const selectEl = ast.children[0] as ElementNode
 
-    const optionPrefixAttr = selectEl.props.find(
-      (p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === 'option-data-testid-prefix',
-    )
+    const optionPrefixAttr = findStaticAttr(selectEl, 'option-data-testid-prefix')
     expect(optionPrefixAttr?.value?.content).toBe('MyComp-SelectedGroup')
 
-    const dataTestIdAttr = selectEl.props.find(
-      (p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === 'data-testid',
-    )
+    const dataTestIdAttr = findStaticAttr(selectEl, 'data-testid')
     expect(dataTestIdAttr?.value?.content).toBe('MyComp-SelectedGroup-vselect')
   })
 
@@ -1554,8 +1547,7 @@ describe('createTestIdTransform', () => {
       },
     )
 
-    const deps = componentHierarchyMap.get('MyComp') as IComponentDependencies | undefined
-    expect(deps).toBeTruthy()
+    const deps = requireDeps(componentHierarchyMap, 'MyComp')
 
     const signature = deps?.generatedMethods?.get('selectSelectedGroup')
     expect(signature).toEqual(createPomMethodSignature(createPomParameters(
@@ -1584,14 +1576,10 @@ describe('createTestIdTransform', () => {
     expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
     const radioGroupEl = ast.children[0] as ElementNode
 
-    const dataTestIdAttr = radioGroupEl.props.find(
-      (p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === 'data-testid',
-    )
+    const dataTestIdAttr = findStaticAttr(radioGroupEl, 'data-testid')
     expect(dataTestIdAttr?.value?.content).toBe('MyPage-DatabaseType-radio')
 
-    const optionPrefixAttr = radioGroupEl.props.find(
-      (p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === 'option-data-testid-prefix',
-    )
+    const optionPrefixAttr = findStaticAttr(radioGroupEl, 'option-data-testid-prefix')
     expect(optionPrefixAttr).toBeUndefined()
 
     const deps = componentHierarchyMap.get('MyPage')
@@ -1638,9 +1626,7 @@ describe('createTestIdTransform', () => {
     expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
     const radioGroupEl = ast.children[0] as ElementNode
 
-    const dataTestIdAttr = radioGroupEl.props.find(
-      (p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === 'data-testid',
-    )
+    const dataTestIdAttr = findStaticAttr(radioGroupEl, 'data-testid')
     expect(dataTestIdAttr).toBeUndefined()
 
     const extras = componentHierarchyMap.get('MyPage')?.pomExtraMethods ?? []
@@ -1675,9 +1661,7 @@ describe('createTestIdTransform', () => {
     expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
     const radioGroupEl = ast.children[0] as ElementNode
 
-    const dataTestIdAttr = radioGroupEl.props.find(
-      (p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === 'data-testid',
-    )
+    const dataTestIdAttr = findStaticAttr(radioGroupEl, 'data-testid')
     expect(dataTestIdAttr?.value?.content).toBe('MyPage-DatabaseType-radio')
 
     const deps = componentHierarchyMap.get('MyPage')
@@ -1708,9 +1692,7 @@ describe('createTestIdTransform', () => {
 
     expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
     const linkEl = ast.children[0] as ElementNode
-    const dataTestIdAttr = linkEl.props.find(
-      (p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === 'data-testid',
-    )
+    const dataTestIdAttr = findStaticAttr(linkEl, 'data-testid')
     // Inferred role "link" drives the testid suffix, aligning with the rendered element.
     expect(dataTestIdAttr?.value?.content).toBe('MyPage-Click me-link')
 
@@ -1733,9 +1715,7 @@ describe('createTestIdTransform', () => {
 
     expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
     const statEl = ast.children[0] as ElementNode
-    const dataTestIdAttr = statEl.props.find(
-      (p): p is AttributeNode => p.type === NodeTypes.ATTRIBUTE && p.name === 'data-testid',
-    )
+    const dataTestIdAttr = findStaticAttr(statEl, 'data-testid')
     expect(dataTestIdAttr?.value?.content).toBe('MyPage-Computers missing critical-link')
   })
 
@@ -1812,8 +1792,7 @@ describe('createTestIdTransform', () => {
     expect(testIds).toEqual(expect.arrayContaining(['MyPage-Users-tab', 'MyPage-Roles-tab']))
 
     // And a distinct click accessor per tab, named from the title hint.
-    const deps = componentHierarchyMap.get('MyPage') as IComponentDependencies | undefined
-    expect(deps).toBeTruthy()
+    const deps = requireDeps(componentHierarchyMap, 'MyPage')
     expect(deps?.generatedMethods?.has('clickUsers')).toBe(true)
     expect(deps?.generatedMethods?.has('clickRoles')).toBe(true)
 
@@ -1876,9 +1855,7 @@ describe('createTestIdTransform', () => {
 
     expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
     const searchBox = ast.children[0] as ElementNode
-    const testId = searchBox.props.find(
-      (prop): prop is AttributeNode => prop.type === NodeTypes.ATTRIBUTE && prop.name === 'data-testid',
-    )
+    const testId = findStaticAttr(searchBox, 'data-testid')
 
     expect(testId?.value?.content).toBe('MyPage-Search-input')
     expect(componentHierarchyMap.get('MyPage')?.generatedMethods?.has('typeSearch')).toBe(true)
@@ -1900,9 +1877,7 @@ describe('createTestIdTransform', () => {
 
     expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
     const link = ast.children[0] as ElementNode
-    const testId = link.props.find(
-      (prop): prop is AttributeNode => prop.type === NodeTypes.ATTRIBUTE && prop.name === 'data-testid',
-    )
+    const testId = findStaticAttr(link, 'data-testid')
     expect(testId?.value?.content).toBe('MyPage-Documentation-link')
     expect(componentHierarchyMap.get('MyPage')?.generatedMethods?.has('clickDocumentation')).toBe(true)
   })

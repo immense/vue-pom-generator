@@ -17,6 +17,7 @@ import { baseCompile, parse, parserOptions } from "@vue/compiler-dom";
 
 import { parseExpression } from "@babel/parser";
 
+import { findBindDirective } from "./helpers/ast-queries";
 import { createPomMethodSignature, createPomParameters } from "../pom-params";
 import { createPomStringPattern } from "../pom-patterns";
 import {
@@ -230,13 +231,7 @@ function buildHierarchyMap(root: RootNode): HierarchyMap {
 }
 
 function setBindAst(node: ElementNode, argName: string, expAstSource: string) {
-  const dir = node.props.find(
-    (p)  =>
-      p.type === NodeTypes.DIRECTIVE
-      && p.name === "bind"
-      && p.arg?.type === NodeTypes.SIMPLE_EXPRESSION
-      && p.arg.content === argName,
-  );
+  const dir = findBindDirective(node, argName)
   const directiveNode = dir as DirectiveNode;
   if (!directiveNode || directiveNode === undefined || directiveNode.exp === undefined) {
     throw new Error(`Missing :${argName} directive with SIMPLE_EXPRESSION`);
@@ -246,13 +241,7 @@ function setBindAst(node: ElementNode, argName: string, expAstSource: string) {
 }
 
 function clearBindAst(node: ElementNode, argName: string) {
-  const dir = node.props.find(
-    (p)  =>
-      p.type === NodeTypes.DIRECTIVE
-      && p.name === "bind"
-      && p.arg?.type === NodeTypes.SIMPLE_EXPRESSION
-      && p.arg.content === argName,
-  );
+  const dir = findBindDirective(node, argName)
   const directiveNode = dir as DirectiveNode;
   if (!directiveNode || directiveNode === undefined || directiveNode.exp === undefined) {
     throw new Error(`Missing :${argName} directive with SIMPLE_EXPRESSION`);
@@ -267,6 +256,52 @@ type ApplyTestIdArgs = Parameters<typeof applyResolvedDataTestId>[0];
  * Shared harness for applyResolvedDataTestId: fresh dependencies per call and
  * uniform invariant fields, so each test states only what it varies.
  */
+/**
+ * Shared harness for applyResolvedDataTestId tests that reuse one dependencies
+ * object across several calls: `apply` fills the invariant fields, `deps` is
+ * shared by every call in the context.
+ */
+function makeApplyContext() {
+  const deps = makeComponentDependencies({
+    filePath: "/src/components/MyComp.vue",
+    generatedMethods: new Map(),
+    isView: false,
+  });
+  const generatedMethodContentByComponent = new Map<string, Set<string>>();
+  const apply = (
+    element: ElementNode,
+    options: {
+      existingIdBehavior: Parameters<typeof applyResolvedDataTestId>[0]["existingIdBehavior"];
+      preferredGeneratedValue: Parameters<typeof applyResolvedDataTestId>[0]["preferredGeneratedValue"];
+    } & Partial<Omit<
+      Parameters<typeof applyResolvedDataTestId>[0],
+      | "element"
+      | "componentName"
+      | "parentComponentName"
+      | "dependencies"
+      | "generatedMethodContentByComponent"
+      | "testIdAttribute"
+      | "addHtmlAttribute"
+      | "existingIdBehavior"
+      | "preferredGeneratedValue"
+    >>,
+  ) => {
+    applyResolvedDataTestId({
+      element,
+      componentName: "MyComp",
+      parentComponentName: "MyComp",
+      dependencies: deps,
+      generatedMethodContentByComponent,
+      nativeRole: "button",
+      keyInfo: null,
+      testIdAttribute: "data-testid",
+      addHtmlAttribute: false,
+      ...options,
+    });
+  };
+  return { deps, generatedMethodContentByComponent, apply };
+}
+
 function applyTestId(
   element: ElementNode,
   options: {
@@ -869,27 +904,13 @@ describe("utils.ts coverage", () => {
   it("throws when preserving an existing dynamic data-testid expression (unusable selector)", () => {
     const el = firstElement(parseTemplate("<button :data-testid=\"__props.name\" />"));
 
-    const deps = makeComponentDependencies({
-      filePath: "/src/components/MyComp.vue",
-      generatedMethods: new Map(),
-      isView: false,
-    });
+    const { apply } = makeApplyContext();
 
-    const generatedMethodContentByComponent = new Map<string, Set<string>>();
 
     expect(() => {
-      applyResolvedDataTestId({
-        element: el,
-        componentName: "MyComp",
-        parentComponentName: "MyComp",
-        dependencies: deps,
-        generatedMethodContentByComponent,
-        nativeRole: "button",
-        preferredGeneratedValue: staticAttributeValue("MyComp-Foo-button"),
-        keyInfo: null,
-        testIdAttribute: "data-testid",
-        existingIdBehavior: "preserve",
-        addHtmlAttribute: false,
+      apply(el, {
+      preferredGeneratedValue: staticAttributeValue("MyComp-Foo-button"),
+      existingIdBehavior: "preserve",
       });
     }).toThrow(/cannot be preserved|dynamic/i);
   });
@@ -977,27 +998,14 @@ describe("utils.ts coverage", () => {
     const ast = parseTemplate("<dx-radio-group :options=\"['One','Two']\" />");
     const el = firstElement(ast);
 
-    const deps = makeComponentDependencies({
-      filePath: "/src/components/MyComp.vue",
-      generatedMethods: new Map(),
-      isView: false,
-    });
+    const { deps, apply } = makeApplyContext();
 
-    const generatedMethodContentByComponent = new Map<string, Set<string>>();
 
-    applyResolvedDataTestId({
-      element: el,
-      componentName: "MyComp",
-      parentComponentName: "MyComp",
-      dependencies: deps,
-      generatedMethodContentByComponent,
+    apply(el, {
       nativeRole: "radio",
       preferredGeneratedValue: staticAttributeValue("MyComp-Foo-radio"),
-      keyInfo: null,
-      testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
       nameCollisionBehavior: "suffix",
-      addHtmlAttribute: false,
       entryOverrides: { selectorValue: createPomStringPattern("MyComp-Foo-radio", "static", []) },
     });
 
@@ -1013,19 +1021,11 @@ describe("utils.ts coverage", () => {
     const prevCount = extras.length;
 
     // Call again to hit the de-dupe path in appendMethodOnce.
-    applyResolvedDataTestId({
-      element: el,
-      componentName: "MyComp",
-      parentComponentName: "MyComp",
-      dependencies: deps,
-      generatedMethodContentByComponent,
+    apply(el, {
       nativeRole: "radio",
       preferredGeneratedValue: staticAttributeValue("MyComp-Foo-radio"),
-      keyInfo: null,
-      testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
       nameCollisionBehavior: "suffix",
-      addHtmlAttribute: false,
       entryOverrides: { selectorValue: createPomStringPattern("MyComp-Foo-radio", "static", []) },
     });
 
@@ -1036,27 +1036,14 @@ describe("utils.ts coverage", () => {
   it("covers applyResolvedDataTestId dynamic options method + signature collision handling", () => {
     const el = firstElement(parseTemplate("<dx-radio-group :options=\"options\" />"));
 
-    const deps = makeComponentDependencies({
-      filePath: "/src/components/MyComp.vue",
-      generatedMethods: new Map(),
-      isView: false,
-    });
+    const { deps, apply } = makeApplyContext();
 
-    const generatedMethodContentByComponent = new Map<string, Set<string>>();
 
-    applyResolvedDataTestId({
-      element: el,
-      componentName: "MyComp",
-      parentComponentName: "MyComp",
-      dependencies: deps,
-      generatedMethodContentByComponent,
+    apply(el, {
       nativeRole: "radio",
       preferredGeneratedValue: staticAttributeValue("MyComp-radio"),
-      keyInfo: null,
-      testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
       nameCollisionBehavior: "suffix",
-      addHtmlAttribute: false,
     });
 
     const some = "selectRadio";
@@ -1066,21 +1053,11 @@ describe("utils.ts coverage", () => {
     // Force a collision on the next registration pass.
     deps.generatedMethods!.set(some, createPomMethodSignature(createPomParameters(["x", "number"])));
 
-    applyResolvedDataTestId({
-      element: el,
-      componentName: "MyComp",
-      parentComponentName: "MyComp",
-      dependencies: deps,
-      generatedMethodContentByComponent,
+    apply(el, {
       nativeRole: "radio",
-      // Change the wrapper prefix so the extra method is not semantically de-duped,
-      // and the generator has to pick a unique name.
       preferredGeneratedValue: staticAttributeValue("MyComp2-radio"),
-      keyInfo: null,
-      testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
       nameCollisionBehavior: "suffix",
-      addHtmlAttribute: false,
     });
 
     // Because dynamic options use ensureUniqueGeneratedName, collisions produce a suffixed name
@@ -1260,13 +1237,8 @@ describe("utils.ts coverage", () => {
     const els = (root.children ?? []).filter((c) => c?.type === NodeTypes.ELEMENT) as ElementNode[];
     expect(els.length).toBe(2);
 
-    const deps = makeComponentDependencies({
-      filePath: "/src/components/MyComp.vue",
-      generatedMethods: new Map(),
-      isView: false,
-    });
+    const { deps, generatedMethodContentByComponent } = makeApplyContext();
 
-    const generatedMethodContentByComponent = new Map<string, Set<string>>();
 
     const applyKeyedPrimary = (element: ElementNode) => {
       applyResolvedDataTestId({
@@ -1307,45 +1279,24 @@ describe("utils.ts coverage", () => {
     const els = (root.children ?? []).filter((c) => c?.type === NodeTypes.ELEMENT) as ElementNode[];
     expect(els.length).toBe(2);
 
-    const deps = makeComponentDependencies({
-      filePath: "/src/components/MyComp.vue",
-      generatedMethods: new Map(),
-      isView: false,
-    });
+    const { deps, apply } = makeApplyContext();
 
-    const generatedMethodContentByComponent = new Map<string, Set<string>>();
 
-    applyResolvedDataTestId({
-      element: els[0]!,
-      componentName: "MyComp",
-      parentComponentName: "MyComp",
-      dependencies: deps,
-      generatedMethodContentByComponent,
+    apply(els[0]!, {
       nativeRole: "select",
-      semanticNameHint: "ParameterDefaultValue",
       preferredGeneratedValue: staticAttributeValue("MyComp-select"),
-      keyInfo: null,
-      testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
-      addHtmlAttribute: false,
       nameCollisionBehavior: "error",
+      semanticNameHint: "ParameterDefaultValue",
     });
 
     expect(() => {
-      applyResolvedDataTestId({
-        element: els[1]!,
-        componentName: "MyComp",
-        parentComponentName: "MyComp",
-        dependencies: deps,
-        generatedMethodContentByComponent,
-        nativeRole: "radio",
-        semanticNameHint: "ParameterDefaultValue",
-        preferredGeneratedValue: staticAttributeValue("MyComp-radio"),
-        keyInfo: null,
-        testIdAttribute: "data-testid",
-        existingIdBehavior: "overwrite",
-        addHtmlAttribute: false,
-        nameCollisionBehavior: "error",
+      apply(els[1]!, {
+      nativeRole: "radio",
+      preferredGeneratedValue: staticAttributeValue("MyComp-radio"),
+      existingIdBehavior: "overwrite",
+      nameCollisionBehavior: "error",
+      semanticNameHint: "ParameterDefaultValue",
       });
     }).not.toThrow();
 

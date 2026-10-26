@@ -1,6 +1,7 @@
 import type { DirectiveNode } from "@vue/compiler-core";
 import { stringifyExpression } from "@vue/compiler-core";
-import { parseExpression } from "@babel/parser";
+import { parseExpression } from "@babel/parser"
+import { isIdentifierNode, isObjectExpressionNode, isObjectPropertyNode, isStringLiteralNode } from "../compiler/babel-guards";
 
 import {
   isAsciiAlphaNumericCode,
@@ -89,32 +90,6 @@ function buildPlaceholderParams(keys: string[]): Record<string, string> {
     params[k] = "__placeholder__";
   return params;
 }
-
-const isNodeType = (node: object | null, type: string): node is { type: string } => {
-  return node !== null && (node as { type?: string }).type === type;
-};
-
-const isStringLiteralNode = (node: object | null): node is { type: "StringLiteral"; value: string } => {
-  return isNodeType(node, "StringLiteral") && typeof (node as { value?: string }).value === "string";
-};
-
-const isIdentifierNode = (node: object | null): node is { type: "Identifier"; name: string } => {
-  return isNodeType(node, "Identifier") && typeof (node as { name?: string }).name === "string";
-};
-
-const isObjectPropertyNode = (node: object | null): node is { type: "ObjectProperty"; key: object; value: object } => {
-  if (!isNodeType(node, "ObjectProperty"))
-    return false;
-  const n = node as { key?: object; value?: object };
-  return typeof n.key === "object" && n.key !== null && typeof n.value === "object" && n.value !== null;
-};
-
-const isObjectExpressionNode = (node: object | null): node is { type: "ObjectExpression"; properties: object[] } => {
-  if (!isNodeType(node, "ObjectExpression"))
-    return false;
-  const n = node as { properties?: object[] };
-  return Array.isArray(n.properties);
-};
 
 function materializeResolvedRouteTarget(
   target: string | RouteLocationTarget,
