@@ -66,6 +66,73 @@ function compileAndCaptureAst(source: string, options: CompilerOptions & { filen
   return captured
 }
 
+interface TestIdCompileOptions {
+  component?: string
+  nativeWrappers?: NativeWrappersMap
+  viewsDir?: string
+  filename?: string
+  transformOptions?: Parameters<typeof createTestIdTransform>[5]
+}
+
+/**
+ * Compile `template` through the test-id transform with the standard in-memory
+ * component paths. Defaults match the common case: component 'MyComp' at
+ * /src/components/MyComp.vue with views at /src/views.
+ */
+function compileWithTestIdTransform(template: string, options: TestIdCompileOptions = {}) {
+  const component = options.component ?? 'MyComp'
+  const componentHierarchyMap = new Map<string, IComponentDependencies>()
+  const ast = compileAndCaptureAst(template, {
+    filename: options.filename ?? `/src/components/${component}.vue`,
+    nodeTransforms: [
+      createTestIdTransform(
+        component,
+        componentHierarchyMap,
+        options.nativeWrappers ?? {},
+        [],
+        options.viewsDir ?? '/src/views',
+        options.transformOptions,
+      ),
+    ],
+  })
+  return { ast, componentHierarchyMap }
+}
+
+interface WrapperSfc {
+  name: string
+  template: string
+}
+
+/**
+ * Compile a page that uses local wrapper SFC fixtures: each wrapper is written
+ * under <tempRoot>/src/components, the page lives under <tempRoot>/src/views,
+ * and the transform resolves wrappers through vueFilesPathMap.
+ */
+function compilePageWithWrapperSfcs(
+  usageTemplate: string,
+  wrappers: WrapperSfc[],
+  options: { nativeWrappers?: NativeWrappersMap, pageComponent?: string } = {},
+) {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-transform-'))
+  const viewsDir = path.join(tempRoot, 'src', 'views')
+  const vueFilesPathMap = new Map<string, string>()
+  for (const wrapper of wrappers) {
+    const wrapperPath = path.join(tempRoot, 'src', 'components', `${wrapper.name}.vue`)
+    fs.mkdirSync(path.dirname(wrapperPath), { recursive: true })
+    fs.writeFileSync(wrapperPath, wrapper.template)
+    vueFilesPathMap.set(wrapper.name, wrapperPath)
+  }
+  const pageComponent = options.pageComponent ?? 'MyPage'
+  const componentHierarchyMap = new Map<string, IComponentDependencies>()
+  const ast = compileAndCaptureAst(usageTemplate, {
+    filename: path.join(viewsDir, `${pageComponent}.vue`),
+    nodeTransforms: [
+      createTestIdTransform(pageComponent, componentHierarchyMap, options.nativeWrappers ?? {}, [], viewsDir, { vueFilesPathMap }),
+    ],
+  })
+  return { ast, tempRoot, componentHierarchyMap }
+}
+
 function compileAndCaptureCode(source: string, options: CompilerOptions & { filename: string }): string {
   const result = baseCompile(
     source,
@@ -411,14 +478,8 @@ describe('createTestIdTransform', () => {
   })
 
   it('injects html attributes and collects ids', () => {
-    const componentHierarchyMap = new Map<string, IComponentDependencies>()
-
-    const ast = compileAndCaptureAst(
+    const { ast, componentHierarchyMap } = compileWithTestIdTransform(
       readFixtureTemplate('MyComp_SaveButton.vue'),
-      {
-        filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
-      },
     )
 
     const testId = findFirstDataTestId(ast)
@@ -430,14 +491,11 @@ describe('createTestIdTransform', () => {
   })
 
   it('preserves existing data-testid when existingIdBehavior is preserve', () => {
-    const componentHierarchyMap = new Map<string, IComponentDependencies>()
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compileWithTestIdTransform(
       readFixtureTemplate('MyComp_SaveButton_ExistingTestId.vue'),
-      {
-        filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views', { existingIdBehavior: 'preserve' })],
-      },
+    {
+      transformOptions: { existingIdBehavior: 'preserve' },
+    },
     )
 
     const testId = findFirstDataTestId(ast)
@@ -445,14 +503,11 @@ describe('createTestIdTransform', () => {
   })
 
   it('preserves existing dynamic data-testid on @click element when existingIdBehavior is preserve', () => {
-    const componentHierarchyMap = new Map<string, IComponentDependencies>()
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compileWithTestIdTransform(
       `<button :data-testid="\`select-all-\${subject.id}\`" @click="selectAll">Select All</button>`,
-      {
-        filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views', { existingIdBehavior: 'preserve' })],
-      },
+    {
+      transformOptions: { existingIdBehavior: 'preserve' },
+    },
     )
 
     // The author's dynamic testid must be preserved, NOT overwritten with
@@ -487,14 +542,11 @@ describe('createTestIdTransform', () => {
   })
 
   it('overwrites existing data-testid when existingIdBehavior is overwrite', () => {
-    const componentHierarchyMap = new Map<string, IComponentDependencies>()
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compileWithTestIdTransform(
       readFixtureTemplate('MyComp_SaveButton_ExistingTestId.vue'),
-      {
-        filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views', { existingIdBehavior: 'overwrite' })],
-      },
+    {
+      transformOptions: { existingIdBehavior: 'overwrite' },
+    },
     )
 
     const testId = findFirstDataTestId(ast)
@@ -516,14 +568,8 @@ describe('createTestIdTransform', () => {
   })
 
   it('injects a RouterLink :to test id early', () => {
-    const componentHierarchyMap = new Map()
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compileWithTestIdTransform(
       readFixtureTemplate('MyComp_RouterLinkUsers.vue'),
-      {
-        filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
-      },
     )
 
     const testId = findFirstDataTestId(ast)
@@ -531,14 +577,8 @@ describe('createTestIdTransform', () => {
   })
 
   it('injects a dynamic @click test id including :key placeholder', () => {
-    const componentHierarchyMap = new Map()
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compileWithTestIdTransform(
       readFixtureTemplate('MyComp_SelectButton_DynamicKey.vue'),
-      {
-        filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
-      },
     )
 
     // For dynamic bindings, Vue stores directive exp as a string. We expect the exact backticked template string.
@@ -710,14 +750,8 @@ describe('createTestIdTransform', () => {
   })
 
   it('ignores singleton :key values when generating click test ids', () => {
-    const componentHierarchyMap = new Map()
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compileWithTestIdTransform(
       '<button :key="activeTab" @click="select">Select</button>',
-      {
-        filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
-      },
     )
 
     const testId = findFirstDataTestId(ast)
@@ -725,14 +759,11 @@ describe('createTestIdTransform', () => {
   })
 
   it('preserves static data-testid values on singleton keyed elements', () => {
-    const componentHierarchyMap = new Map()
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compileWithTestIdTransform(
       '<button :key="activeTab" data-testid="target-visibility-selector" @click="select">Select</button>',
-      {
-        filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views', { existingIdBehavior: 'preserve' })],
-      },
+    {
+      transformOptions: { existingIdBehavior: 'preserve' },
+    },
     )
 
     const testId = findFirstDataTestId(ast)
@@ -740,9 +771,7 @@ describe('createTestIdTransform', () => {
   })
 
   it('injects a stable keyed test id for scoped slot data objects', () => {
-    const componentHierarchyMap = new Map()
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compileWithTestIdTransform(
       `
         <DxDataGrid :data-source="items" key-expr="id">
           <DxColumn cell-template="selectCell" />
@@ -751,10 +780,6 @@ describe('createTestIdTransform', () => {
           </template>
         </DxDataGrid>
       `,
-      {
-        filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
-      },
     )
 
     const testId = findFirstDataTestId(ast)
@@ -762,9 +787,7 @@ describe('createTestIdTransform', () => {
   })
 
   it('injects a stable keyed test id for scoped slot data objects through v-if wrappers', () => {
-    const componentHierarchyMap = new Map()
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compileWithTestIdTransform(
       `
         <MyList :items="items">
           <template #item="{ data: maintenanceItem }">
@@ -778,10 +801,6 @@ describe('createTestIdTransform', () => {
           </template>
         </MyList>
       `,
-      {
-        filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
-      },
     )
 
     const testId = findFirstDataTestId(ast)
@@ -789,9 +808,7 @@ describe('createTestIdTransform', () => {
   })
 
   it('injects a stable keyed test id for scoped slot data objects with key prop', () => {
-    const componentHierarchyMap = new Map()
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compileWithTestIdTransform(
       `
         <MyList :items="items">
           <template #item="{ data, key }">
@@ -799,10 +816,6 @@ describe('createTestIdTransform', () => {
           </template>
         </MyList>
       `,
-      {
-        filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
-      },
     )
 
     const testId = findFirstDataTestId(ast)
@@ -810,9 +823,7 @@ describe('createTestIdTransform', () => {
   })
 
   it('uses a slot item URL before falling back to object stringification', () => {
-    const componentHierarchyMap = new Map()
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compileWithTestIdTransform(
       `
         <MyList :items="items">
           <template #item="{ item }">
@@ -820,10 +831,6 @@ describe('createTestIdTransform', () => {
           </template>
         </MyList>
       `,
-      {
-        filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
-      },
     )
 
     const testId = findFirstDataTestId(ast)
@@ -836,9 +843,7 @@ describe('createTestIdTransform', () => {
     // handler is a bare slot-scope identifier — a callback reference, not row data —
     // so the generated selector must be a plain singleton, not keyed by a fallback
     // expression interpolated off the callback.
-    const componentHierarchyMap = new Map()
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compileWithTestIdTransform(
       `
         <MyPopover>
           <template #trigger="{ toggle, isOpen }">
@@ -846,10 +851,6 @@ describe('createTestIdTransform', () => {
           </template>
         </MyPopover>
       `,
-      {
-        filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
-      },
     )
 
     const testId = findFirstDataTestId(ast)
@@ -857,9 +858,7 @@ describe('createTestIdTransform', () => {
   })
 
   it('emits a singleton test id for a slot-scope callback wrapped in withModifiers', () => {
-    const componentHierarchyMap = new Map()
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compileWithTestIdTransform(
       `
         <MyPopover>
           <template #trigger="{ toggle }">
@@ -867,10 +866,6 @@ describe('createTestIdTransform', () => {
           </template>
         </MyPopover>
       `,
-      {
-        filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
-      },
     )
 
     const testId = findFirstDataTestId(ast)
@@ -885,9 +880,7 @@ describe('createTestIdTransform', () => {
     // producing runtime output like:
     //   MyComp-${cancel.key ?? cancel.data?.id ?? ... ?? cancel}-Save-immybutton
     // which rendered the entire function source into the DOM data-testid.
-    const componentHierarchyMap = new Map()
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compileWithTestIdTransform(
       `
         <ImmyPopup>
           <template #popup-footer="{ cancel }">
@@ -898,10 +891,9 @@ describe('createTestIdTransform', () => {
           </template>
         </ImmyPopup>
       `,
-      {
-        filename: '/src/components/MonitorConfigureDialog.vue',
-        nodeTransforms: [createTestIdTransform('MonitorConfigureDialog', componentHierarchyMap, {}, [], '/src/views')],
-      },
+    {
+      component: 'MonitorConfigureDialog',
+    },
     )
 
     const testIds = findAllDataTestIds(ast)
@@ -925,9 +917,7 @@ describe('createTestIdTransform', () => {
     // resolve to the INNER binding. If the scan counts it against the outer
     // slot's `item`, the outer slot is treated as callback-shaped and a sibling
     // keyed selector keyed off the outer `item` incorrectly loses its key.
-    const componentHierarchyMap = new Map()
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compileWithTestIdTransform(
       `
         <MyList :items="rows">
           <template #row="{ item }">
@@ -941,10 +931,6 @@ describe('createTestIdTransform', () => {
           </template>
         </MyList>
       `,
-      {
-        filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
-      },
     )
 
     // The inner @click="item" names the inner scope's own binding — the scan must
@@ -960,9 +946,7 @@ describe('createTestIdTransform', () => {
     // Same nesting shape as the shadowing test, but the OUTER slot has the bare
     // callback and the INNER slot merely shadows the name without using it. The
     // outer usage must still be detected.
-    const componentHierarchyMap = new Map()
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compileWithTestIdTransform(
       `
         <ImmyPopup>
           <template #popup-footer="{ cancel }">
@@ -977,10 +961,9 @@ describe('createTestIdTransform', () => {
           </template>
         </ImmyPopup>
       `,
-      {
-        filename: '/src/components/MonitorConfigureDialog.vue',
-        nodeTransforms: [createTestIdTransform('MonitorConfigureDialog', componentHierarchyMap, {}, [], '/src/views')],
-      },
+    {
+      component: 'MonitorConfigureDialog',
+    },
     )
 
     const testIds = findAllDataTestIds(ast)
@@ -999,9 +982,7 @@ describe('createTestIdTransform', () => {
     // v-for introduces its own scope: a bare @click="item" inside
     // <div v-for="item in rows"> under <template #row="{ item }"> names the LOOP
     // binding, not the slot prop. The scan must not count it for the slot.
-    const componentHierarchyMap = new Map()
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compileWithTestIdTransform(
       `
         <MyList :items="rows">
           <template #row="{ item }">
@@ -1013,10 +994,6 @@ describe('createTestIdTransform', () => {
           </template>
         </MyList>
       `,
-      {
-        filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
-      },
     )
 
     // Whatever ids are emitted, the loop's @click="item" must not cause the
@@ -1088,28 +1065,20 @@ describe('createTestIdTransform', () => {
   })
 
   it('injects native input test ids from static ids before falling back to v-model', () => {
-    const componentHierarchyMap = new Map()
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compileWithTestIdTransform(
       `
         <div>
           <label for="txbClientName">Client Name</label>
           <input id="txbClientName" v-model="state.clientName" type="text" />
         </div>
       `,
-      {
-        filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
-      },
     )
 
     expect(findFirstDataTestId(ast)).toBe('MyComp-txbClientName-input')
   })
 
   it('injects native select test ids from static ids', () => {
-    const componentHierarchyMap = new Map()
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compileWithTestIdTransform(
       `
         <div>
           <label for="modal-kind">Search Type</label>
@@ -1119,48 +1088,32 @@ describe('createTestIdTransform', () => {
           </select>
         </div>
       `,
-      {
-        filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
-      },
     )
 
     expect(findFirstDataTestId(ast)).toBe('MyComp-modal-kind-select')
   })
 
   it('injects native input test ids from wrapping label text when no id exists', () => {
-    const componentHierarchyMap = new Map()
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compileWithTestIdTransform(
       `
         <label>
           <span>File Name*</span>
           <input v-model="state.createFile.projectName" type="text" />
         </label>
       `,
-      {
-        filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
-      },
     )
 
     expect(findFirstDataTestId(ast)).toBe('MyComp-FileName-input')
   })
 
   it('injects native radio test ids using v-model context plus the option label', () => {
-    const componentHierarchyMap = new Map()
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compileWithTestIdTransform(
       `
         <label>
           <input v-model="state.createFile.copyAnswersChoice" type="radio" value="no" />
           No
         </label>
       `,
-      {
-        filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
-      },
     )
 
     expect(findFirstDataTestId(ast)).toBe('MyComp-StateCreateFileCopyAnswersChoiceNo-radio')
@@ -1484,14 +1437,8 @@ describe('createTestIdTransform', () => {
   })
 
   it('treats v-for source with Math.random() as dynamic via constType', () => {
-    const componentHierarchyMap = new Map()
-
-    const ast = compileAndCaptureAst(
+    const { ast, componentHierarchyMap } = compileWithTestIdTransform(
       readFixtureTemplate('MyComp_GoButton_RandomList.vue'),
-      {
-        filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
-      },
     )
 
     const forNode = ast.children.find((c): c is ForNode => c.type === NodeTypes.FOR)
@@ -1546,14 +1493,8 @@ describe('createTestIdTransform', () => {
   })
 
   it('does not populate exp.ast in this test harness even when prefixIdentifiers is enabled', () => {
-    const componentHierarchyMap = new Map()
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compileWithTestIdTransform(
       readFixtureTemplate('MyComp_SelectButton_DynamicKey.vue'),
-      {
-        filename: '/src/components/MyComp.vue',
-        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, {}, [], '/src/views')],
-      },
     )
 
     const expAst = findFirstDataTestIdDirectiveExpAst(ast)
@@ -1632,28 +1573,12 @@ describe('createTestIdTransform', () => {
   })
 
   it('infers radio wrappers through nested local SFCs without nativeWrappers config', () => {
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-transform-'))
-    const radioPath = path.join(tempRoot, 'src', 'components', 'MyRadio.vue')
-    const radioGroupPath = path.join(tempRoot, 'src', 'components', 'MyRadioGroup.vue')
-    fs.mkdirSync(path.dirname(radioPath), { recursive: true })
-    fs.writeFileSync(radioPath, '<template><div><input type="radio" /></div></template>')
-    fs.writeFileSync(
-      radioGroupPath,
-      '<template><div role="radiogroup"><MyRadio v-for="option in props.options" :key="option.value" :text="option.text" :modelValue="option.value" /></div></template>',
-    )
-
-    const componentHierarchyMap = new Map<string, IComponentDependencies>()
-    const vueFilesPathMap = new Map<string, string>([
-      ['MyRadio', radioPath],
-      ['MyRadioGroup', radioGroupPath],
-    ])
-
-    const ast = compileAndCaptureAst(
+    const { ast, componentHierarchyMap } = compilePageWithWrapperSfcs(
       '<MyRadioGroup :options="[\'Cloud\', \'Local\']" v-model="databaseType" />',
-      {
-        filename: path.join(tempRoot, 'src', 'views', 'MyPage.vue'),
-        nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, {}, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],
-      },
+      [
+        { name: 'MyRadio', template: '<template><div><input type="radio" /></div></template>' },
+        { name: 'MyRadioGroup', template: '<template><div role="radiogroup"><MyRadio v-for="option in props.options" :key="option.value" :text="option.text" :modelValue="option.value" /></div></template>' },
+      ],
     )
 
     expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
@@ -1701,13 +1626,13 @@ describe('createTestIdTransform', () => {
       '<template><div role="radiogroup"><SharedRadio v-for="option in props.options" :key="option.value" :text="option.text" :modelValue="option.value" /></div></template>',
     )
 
-    const componentHierarchyMap = new Map<string, IComponentDependencies>()
-    const ast = compileAndCaptureAst(
+    const { ast, componentHierarchyMap } = compileWithTestIdTransform(
       '<SharedRadioGroup :options="[\'Cloud\', \'Local\']" v-model="databaseType" />',
-      {
-        filename: path.join(frontendRoot, 'src', 'views', 'MyPage.vue'),
-        nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, {}, [], path.join(frontendRoot, 'src', 'views'))],
-      },
+    {
+      component: 'MyPage',
+      viewsDir: path.join(frontendRoot, 'src', 'views'),
+      filename: path.join(frontendRoot, 'src', 'views', 'MyPage.vue'),
+    },
     )
 
     expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
@@ -1770,25 +1695,15 @@ describe('createTestIdTransform', () => {
   })
 
   it('infers a link role from a rendered <a> when nativeWrappers omits role', () => {
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-link-'))
-    const linkPath = path.join(tempRoot, 'src', 'components', 'MyAnchor.vue')
-    fs.mkdirSync(path.dirname(linkPath), { recursive: true })
-    // Renders a native anchor — implicit ARIA role "link".
-    fs.writeFileSync(linkPath, '<template><a :href="href"><slot /></a></template>')
-
-    const componentHierarchyMap = new Map<string, IComponentDependencies>()
-    const vueFilesPathMap = new Map<string, string>([['MyAnchor', linkPath]])
-
-    // valueAttribute is configured, but `role` is deliberately omitted: the generator
-    // should infer it from the rendered <a> so consumers can't declare a mismatched role.
-    const nativeWrappers: NativeWrappersMap = { MyAnchor: { valueAttribute: 'label' } }
-
-    const ast = compileAndCaptureAst(
+    const { ast, componentHierarchyMap } = compilePageWithWrapperSfcs(
       '<MyAnchor label="Click me" :href="url" />',
-      {
-        filename: path.join(tempRoot, 'src', 'views', 'MyPage.vue'),
-        nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, nativeWrappers, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],
-      },
+      [
+        // Renders a native anchor — implicit ARIA role "link".
+        { name: 'MyAnchor', template: '<template><a :href="href"><slot /></a></template>' },
+      ],
+      // valueAttribute is configured, but `role` is deliberately omitted: the generator
+      // should infer it from the rendered <a> so consumers can't declare a mismatched role.
+      { nativeWrappers: { MyAnchor: { valueAttribute: 'label' } } },
     )
 
     expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
@@ -1805,29 +1720,15 @@ describe('createTestIdTransform', () => {
   })
 
   it('infers a link role through a nested link-wrapper component (RouterLink)', () => {
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-link-nested-'))
-    const immyLinkPath = path.join(tempRoot, 'src', 'components', 'ImmyLink.vue')
-    const statLinkPath = path.join(tempRoot, 'src', 'components', 'DashboardStatLink.vue')
-    fs.mkdirSync(path.dirname(immyLinkPath), { recursive: true })
-    // ImmyLink forwards to a RouterLink (which renders an <a>).
-    fs.writeFileSync(immyLinkPath, '<template><RouterLink :to="to"><slot /></RouterLink></template>')
-    // DashboardStatLink wraps ImmyLink — inference must recurse through both.
-    fs.writeFileSync(statLinkPath, '<template><ImmyLink :to="to"><slot /></ImmyLink></template>')
-
-    const componentHierarchyMap = new Map<string, IComponentDependencies>()
-    const vueFilesPathMap = new Map<string, string>([
-      ['ImmyLink', immyLinkPath],
-      ['DashboardStatLink', statLinkPath],
-    ])
-
-    const nativeWrappers: NativeWrappersMap = { DashboardStatLink: { valueAttribute: 'label' } }
-
-    const ast = compileAndCaptureAst(
+    const { ast } = compilePageWithWrapperSfcs(
       '<DashboardStatLink label="Computers missing critical" :to="route" />',
-      {
-        filename: path.join(tempRoot, 'src', 'views', 'MyPage.vue'),
-        nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, nativeWrappers, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],
-      },
+      [
+        // ImmyLink forwards to a RouterLink (which renders an <a>).
+        { name: 'ImmyLink', template: '<template><RouterLink :to="to"><slot /></RouterLink></template>' },
+        // DashboardStatLink wraps ImmyLink — inference must recurse through both.
+        { name: 'DashboardStatLink', template: '<template><ImmyLink :to="to"><slot /></ImmyLink></template>' },
+      ],
+      { nativeWrappers: { DashboardStatLink: { valueAttribute: 'label' } } },
     )
 
     expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
@@ -1839,28 +1740,13 @@ describe('createTestIdTransform', () => {
   })
 
   it('does not infer an action for a fragment wrapper whose injected attribute cannot fall through', () => {
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-fragment-wrapper-'))
-    const actionButtonPath = path.join(tempRoot, 'src', 'components', 'ActionButton.vue')
-    const fragmentButtonPath = path.join(tempRoot, 'src', 'components', 'FragmentButton.vue')
-    fs.mkdirSync(path.dirname(actionButtonPath), { recursive: true })
-    fs.writeFileSync(actionButtonPath, '<template><button type="button"><slot /></button></template>')
-    fs.writeFileSync(
-      fragmentButtonPath,
-      '<template><ActionButton :handler="handler" /><div class="dialog" /></template>',
-    )
-
-    const componentHierarchyMap = new Map<string, IComponentDependencies>()
-    const vueFilesPathMap = new Map<string, string>([
-      ['ActionButton', actionButtonPath],
-      ['FragmentButton', fragmentButtonPath],
-    ])
-
-    const ast = compileAndCaptureAst(
+    const { ast, componentHierarchyMap } = compilePageWithWrapperSfcs(
       '<FragmentButton :handler="saveRecord" />',
-      {
-        filename: path.join(tempRoot, 'src', 'views', 'RecordPage.vue'),
-        nodeTransforms: [createTestIdTransform('RecordPage', componentHierarchyMap, {}, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],
-      },
+      [
+        { name: 'ActionButton', template: '<template><button type="button"><slot /></button></template>' },
+        { name: 'FragmentButton', template: '<template><ActionButton :handler="handler" /><div class="dialog" /></template>' },
+      ],
+      { pageComponent: 'RecordPage' },
     )
 
     expect(ast.children[0]?.type).toBe(NodeTypes.ELEMENT)
@@ -1874,50 +1760,28 @@ describe('createTestIdTransform', () => {
   })
 
   it('does not infer a link role from a bare <a> without an href (and throws for the omitted role)', () => {
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-link-nohref-'))
-    const anchorPath = path.join(tempRoot, 'src', 'components', 'BareAnchor.vue')
-    fs.mkdirSync(path.dirname(anchorPath), { recursive: true })
-    // A bare <a> without href is not a link (no implicit ARIA role "link") — it may be an
-    // anchor target/placeholder or an anchor-styled button. It must NOT be classified as link.
-    fs.writeFileSync(anchorPath, '<template><a><slot /></a></template>')
-
-    const componentHierarchyMap = new Map<string, IComponentDependencies>()
-    const vueFilesPathMap = new Map<string, string>([['BareAnchor', anchorPath]])
-
-    const nativeWrappers: NativeWrappersMap = { BareAnchor: { valueAttribute: 'label' } }
-
     expect(() => {
-      compileAndCaptureAst(
+      compilePageWithWrapperSfcs(
         '<BareAnchor label="Save" />',
-        {
-          filename: path.join(tempRoot, 'src', 'views', 'MyPage.vue'),
-          nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, nativeWrappers, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],
-        },
+        [
+          // A bare <a> without href is not a link (no implicit ARIA role "link") — it may be an
+          // anchor target/placeholder or an anchor-styled button. It must NOT be classified as link.
+          { name: 'BareAnchor', template: '<template><a><slot /></a></template>' },
+        ],
+        { nativeWrappers: { BareAnchor: { valueAttribute: 'label' } } },
       )
     }).toThrow(/Could not infer a native role for declared wrapper <BareAnchor>/)
   })
 
   it('throws when an omitted role cannot be inferred from a non-native rendered element', () => {
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-link-default-'))
-    const divPath = path.join(tempRoot, 'src', 'components', 'MyDiv.vue')
-    fs.mkdirSync(path.dirname(divPath), { recursive: true })
-    fs.writeFileSync(divPath, '<template><div><slot /></div></template>')
-
-    const componentHierarchyMap = new Map<string, IComponentDependencies>()
-    const vueFilesPathMap = new Map<string, string>([['MyDiv', divPath]])
-
-    // No role, and the component renders a <div> (no inferable native role): the generator
-    // fails fast and loud rather than silently defaulting to a generic role. The author must
-    // declare `role` explicitly for wrappers that don't render a recognized native control.
-    const nativeWrappers: NativeWrappersMap = { MyDiv: { valueAttribute: 'label' } }
-
     expect(() => {
-      compileAndCaptureAst(
+      compilePageWithWrapperSfcs(
         '<MyDiv label="Save" />',
-        {
-          filename: path.join(tempRoot, 'src', 'views', 'MyPage.vue'),
-          nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, nativeWrappers, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],
-        },
+        [{ name: 'MyDiv', template: '<template><div><slot /></div></template>' }],
+        // No role, and the component renders a <div> (no inferable native role): the generator
+        // fails fast and loud rather than silently defaulting to a generic role. The author must
+        // declare `role` explicitly for wrappers that don't render a recognized native control.
+        { nativeWrappers: { MyDiv: { valueAttribute: 'label' } } },
       )
     }).toThrow(/Could not infer a native role for declared wrapper <MyDiv>/)
   })
@@ -1930,27 +1794,14 @@ describe('createTestIdTransform', () => {
     // suffix. This mirrors how `link`/`button` wrappers behave, and lets consumers delete
     // hand-rolled tab POMs that previously clicked by accessible name (which is brittle when a
     // tab's slot content carries a badge that pollutes its accessible name).
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-tab-'))
-    const tabItemPath = path.join(tempRoot, 'src', 'components', 'TabItem.vue')
-    fs.mkdirSync(path.dirname(tabItemPath), { recursive: true })
-    // TabItem renders a list-item wrapping a `role="tab"` button; the model is driven by
-    // `tabValue`. role is declared explicitly as "tab" (not inferred from the <li> wrapper).
-    fs.writeFileSync(
-      tabItemPath,
-      '<template><li role="presentation"><button role="tab" :class="{ active: modelValue == tabValue }" @click="$emit(\'update:modelValue\', tabValue)"><slot>{{ title }}</slot></button></li></template>',
-    )
-
-    const componentHierarchyMap = new Map<string, IComponentDependencies>()
-    const vueFilesPathMap = new Map<string, string>([['TabItem', tabItemPath]])
-
-    const nativeWrappers: NativeWrappersMap = { TabItem: { role: 'tab', valueAttribute: 'title' } }
-
-    const ast = compileAndCaptureAst(
+    const { ast, componentHierarchyMap } = compilePageWithWrapperSfcs(
       `<TabItem v-model="currentTab" title="Users" :tabValue="'users'" /><TabItem v-model="currentTab" title="Roles" :tabValue="'roles'" />`,
-      {
-        filename: path.join(tempRoot, 'src', 'views', 'MyPage.vue'),
-        nodeTransforms: [createTestIdTransform('MyPage', componentHierarchyMap, nativeWrappers, [], path.join(tempRoot, 'src', 'views'), { vueFilesPathMap })],
-      },
+      [
+        // TabItem renders a list-item wrapping a `role="tab"` button; the model is driven by
+        // `tabValue`. role is declared explicitly as "tab" (not inferred from the <li> wrapper).
+        { name: 'TabItem', template: '<template><li role="presentation"><button role="tab" :class="{ active: modelValue == tabValue }" @click="$emit(\'update:modelValue\', tabValue)"><slot>{{ title }}</slot></button></li></template>' },
+      ],
+      { nativeWrappers: { TabItem: { role: 'tab', valueAttribute: 'title' } } },
     )
 
     // Each literal title produces a distinct per-usage data-testid with the `-tab` suffix.

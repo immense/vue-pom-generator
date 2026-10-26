@@ -77,15 +77,25 @@ function runTscNoEmit(files: string[], options?: { cwd?: string }) {
   });
 }
 
+/**
+ * Fresh temp project with the Playwright type stub and the base-page/pointer
+ * fixtures copied in, ready for generateFiles + runTscNoEmit.
+ */
+function makeTypecheckRoot(prefix: string) {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+
+  writePlaywrightTypeStub(tempRoot);
+
+  const basePagePath = path.join(tempRoot, "base-page.ts");
+  copyRepoFixture(tempRoot, "base-page.full.ts", "base-page.ts");
+  copyRepoFixture(tempRoot, "pointer.ts", "pointer.ts");
+
+  return { tempRoot, basePagePath };
+}
+
 describe("generated output", () => {
   it("typechecks generated methods (tsc --noEmit)", async () => {
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-"));
-
-    writePlaywrightTypeStub(tempRoot);
-
-    const basePagePath = path.join(tempRoot, "base-page.ts");
-    copyRepoFixture(tempRoot, "base-page.full.ts", "base-page.ts");
-    copyRepoFixture(tempRoot, "pointer.ts", "pointer.ts");
+    const { tempRoot, basePagePath } = makeTypecheckRoot("vue-pom-generator-");
 
     const componentName = "TestComponent";
 
@@ -220,13 +230,7 @@ describe("generated output", () => {
   }, 120_000);
 
   it("fails fast when parameterized input methods omit key params", async () => {
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-keyed-input-"));
-
-    writePlaywrightTypeStub(tempRoot);
-
-    const basePagePath = path.join(tempRoot, "base-page.ts");
-    copyRepoFixture(tempRoot, "base-page.full.ts", "base-page.ts");
-    copyRepoFixture(tempRoot, "pointer.ts", "pointer.ts");
+    const { tempRoot, basePagePath } = makeTypecheckRoot("vue-pom-generator-keyed-input-");
 
     const componentName = "ItemsPage";
     const dataTestIdEntry: IDataTestId = {
@@ -257,13 +261,7 @@ describe("generated output", () => {
   });
 
   it("fails fast when parameterized input methods omit non-key selector vars", async () => {
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-selector-vars-"));
-
-    writePlaywrightTypeStub(tempRoot);
-
-    const basePagePath = path.join(tempRoot, "base-page.ts");
-    copyRepoFixture(tempRoot, "base-page.full.ts", "base-page.ts");
-    copyRepoFixture(tempRoot, "pointer.ts", "pointer.ts");
+    const { tempRoot, basePagePath } = makeTypecheckRoot("vue-pom-generator-selector-vars-");
 
     const componentName = "ItemsPage";
     const dataTestIdEntry: IDataTestId = {
@@ -294,13 +292,7 @@ describe("generated output", () => {
   });
 
   it("typechecks split TypeScript output with barrel exports and stub targets", async () => {
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-split-"));
-
-    writePlaywrightTypeStub(tempRoot);
-
-    const basePagePath = path.join(tempRoot, "base-page.ts");
-    copyRepoFixture(tempRoot, "base-page.full.ts", "base-page.ts");
-    copyRepoFixture(tempRoot, "pointer.ts", "pointer.ts");
+    const { tempRoot, basePagePath } = makeTypecheckRoot("vue-pom-generator-split-");
 
     writeFile(
       path.join(tempRoot, "src", "views", "NewTenantPage.vue"),
@@ -378,13 +370,7 @@ describe("generated output", () => {
     // A component that renders itself (e.g. a tree/list that nests same-named children)
     // must not get a `this.<SelfName> = new <SelfName>(page)` line in its constructor —
     // that would infinitely recurse the moment any POM transitively instantiates it.
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-recursive-"));
-
-    writePlaywrightTypeStub(tempRoot);
-
-    const basePagePath = path.join(tempRoot, "base-page.ts");
-    copyRepoFixture(tempRoot, "base-page.full.ts", "base-page.ts");
-    copyRepoFixture(tempRoot, "pointer.ts", "pointer.ts");
+    const { tempRoot, basePagePath } = makeTypecheckRoot("vue-pom-generator-recursive-");
 
     const componentName = "TreeViewItem";
 

@@ -14,9 +14,10 @@ exclude = [
   ".tmp/**",
 ]
 
-# CI gate. Measured baseline (deslop 0.38.0, repo-wide): 15.6% duplicated
-# (6,563 of 42,057 analysed loc) — mostly tests/. The ratchet sits at the next
-# whole point so current debt passes while a PR adding ~170+ duplicated lines
-# fails. Lower as duplication is paid down.
+# CI gate. Measured baseline (deslop 0.38.0, repo-wide): 14.2% duplicated
+# (5,930 of 41,847 analysed loc) after the test-suite helper extraction
+# (was 15.6% before it). The ratchet sits at the next half point above the
+# measured value so current debt passes while a PR adding meaningful
+# duplicated lines fails. Lower as further waves pay duplication down.
 [threshold]
-max_duplication_percent = 16
+max_duplication_percent = 15

@@ -60,6 +60,8 @@ import {
 
 import type { IComponentDependencies, IDataTestId, HierarchyMap, NativeWrappersMap } from "../utils";
 
+import { makeComponentDependencies } from "./helpers/component-deps";
+
 function parseTemplate(template: string, filename = "/src/components/Test.vue"): RootNode {
   return parse(template, Object.assign({}, parserOptions, { filename }));
 }
@@ -257,6 +259,51 @@ function clearBindAst(node: ElementNode, argName: string) {
   }
   else
     (directiveNode.exp as SimpleExpressionNode).ast = null;
+}
+
+type ApplyTestIdArgs = Parameters<typeof applyResolvedDataTestId>[0];
+
+/**
+ * Shared harness for applyResolvedDataTestId: fresh dependencies per call and
+ * uniform invariant fields, so each test states only what it varies.
+ */
+function applyTestId(
+  element: ElementNode,
+  options: {
+    existingIdBehavior: ApplyTestIdArgs["existingIdBehavior"];
+    preferredGeneratedValue: ApplyTestIdArgs["preferredGeneratedValue"];
+  } & Partial<Omit<
+    ApplyTestIdArgs,
+    | "element"
+    | "componentName"
+    | "parentComponentName"
+    | "dependencies"
+    | "generatedMethodContentByComponent"
+    | "testIdAttribute"
+    | "addHtmlAttribute"
+    | "existingIdBehavior"
+    | "preferredGeneratedValue"
+  >>,
+): { deps: IComponentDependencies; generatedMethodContentByComponent: Map<string, Set<string>> } {
+  const deps = makeComponentDependencies({
+    filePath: "/src/components/MyComp.vue",
+    generatedMethods: new Map(),
+    isView: false,
+  });
+  const generatedMethodContentByComponent = new Map<string, Set<string>>();
+  applyResolvedDataTestId({
+    element,
+    componentName: "MyComp",
+    parentComponentName: "MyComp",
+    dependencies: deps,
+    generatedMethodContentByComponent,
+    nativeRole: "button",
+    keyInfo: null,
+    testIdAttribute: "data-testid",
+    addHtmlAttribute: false,
+    ...options,
+  });
+  return { deps, generatedMethodContentByComponent };
 }
 
 describe("utils.ts coverage", () => {
@@ -822,14 +869,11 @@ describe("utils.ts coverage", () => {
   it("throws when preserving an existing dynamic data-testid expression (unusable selector)", () => {
     const el = firstElement(parseTemplate("<button :data-testid=\"__props.name\" />"));
 
-    const deps: IComponentDependencies = {
+    const deps = makeComponentDependencies({
       filePath: "/src/components/MyComp.vue",
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
-      dataTestIdSet: new Set<IDataTestId>(),
       generatedMethods: new Map(),
       isView: false,
-    };
+    });
 
     const generatedMethodContentByComponent = new Map<string, Set<string>>();
 
@@ -854,33 +898,14 @@ describe("utils.ts coverage", () => {
     const el = firstElement(parseTemplate("<button :data-testid=\"`abc-${item.id}`\" />"));
     setBindAst(el, "data-testid", "`abc-${item.id}`");
 
-    const deps: IComponentDependencies = {
-      filePath: "/src/components/MyComp.vue",
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
-      dataTestIdSet: new Set<IDataTestId>(),
-      generatedMethods: new Map(),
-      isView: false,
-    };
-
-    const generatedMethodContentByComponent = new Map<string, Set<string>>();
-
-    applyResolvedDataTestId({
-      element: el,
-      componentName: "MyComp",
-      parentComponentName: "MyComp",
-      dependencies: deps,
-      generatedMethodContentByComponent,
-      nativeRole: "button",
+    const { deps } = applyTestId(el, {
       preferredGeneratedValue: staticAttributeValue("ignored"),
       keyInfo: {
         selectorFragment: "${item.id}",
         runtimeFragment: "${item.id}",
         rawExpression: "item.id",
       },
-      testIdAttribute: "data-testid",
       existingIdBehavior: "preserve",
-      addHtmlAttribute: false,
     });
 
     const entries = Array.from(deps.dataTestIdSet);
@@ -892,33 +917,14 @@ describe("utils.ts coverage", () => {
     const el = firstElement(parseTemplate("<button :data-testid=\"`abc-line-${item.id}`\" />"));
     setBindAst(el, "data-testid", "`abc-line-${item.id}`");
 
-    const deps: IComponentDependencies = {
-      filePath: "/src/components/MyComp.vue",
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
-      dataTestIdSet: new Set<IDataTestId>(),
-      generatedMethods: new Map(),
-      isView: false,
-    };
-
-    const generatedMethodContentByComponent = new Map<string, Set<string>>();
-
-    applyResolvedDataTestId({
-      element: el,
-      componentName: "MyComp",
-      parentComponentName: "MyComp",
-      dependencies: deps,
-      generatedMethodContentByComponent,
-      nativeRole: "button",
+    const { deps } = applyTestId(el, {
       preferredGeneratedValue: staticAttributeValue("ignored"),
       keyInfo: {
         selectorFragment: "line-${item.id}",
         runtimeFragment: "line-${item.id}",
         rawExpression: null,
       },
-      testIdAttribute: "data-testid",
       existingIdBehavior: "preserve",
-      addHtmlAttribute: false,
     });
 
     const entries = Array.from(deps.dataTestIdSet);
@@ -930,33 +936,14 @@ describe("utils.ts coverage", () => {
     const el = firstElement(parseTemplate("<button :data-testid=\"`abc-${data.id}`\" />"));
     setBindAst(el, "data-testid", "`abc-${data.id}`");
 
-    const deps: IComponentDependencies = {
-      filePath: "/src/components/MyComp.vue",
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
-      dataTestIdSet: new Set<IDataTestId>(),
-      generatedMethods: new Map(),
-      isView: false,
-    };
-
-    const generatedMethodContentByComponent = new Map<string, Set<string>>();
-
-    applyResolvedDataTestId({
-      element: el,
-      componentName: "MyComp",
-      parentComponentName: "MyComp",
-      dependencies: deps,
-      generatedMethodContentByComponent,
-      nativeRole: "button",
+    const { deps } = applyTestId(el, {
       preferredGeneratedValue: staticAttributeValue("ignored"),
       keyInfo: {
         selectorFragment: "${data.key ?? data.data?.id ?? data.id ?? data.value ?? data.url ?? data}",
         runtimeFragment: "${data.key ?? data.data?.id ?? data.id ?? data.value ?? data.url ?? data}",
         rawExpression: "data.key ?? data.data?.id ?? data.id ?? data.value ?? data.url ?? data",
       },
-      testIdAttribute: "data-testid",
       existingIdBehavior: "preserve",
-      addHtmlAttribute: false,
     });
 
     const entries = Array.from(deps.dataTestIdSet);
@@ -968,33 +955,14 @@ describe("utils.ts coverage", () => {
     const el = firstElement(parseTemplate("<button :data-testid=\"p.parameter.name\" />"));
     setBindAst(el, "data-testid", "p.parameter.name");
 
-    const deps: IComponentDependencies = {
-      filePath: "/src/components/MyComp.vue",
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
-      dataTestIdSet: new Set<IDataTestId>(),
-      generatedMethods: new Map(),
-      isView: false,
-    };
-
-    const generatedMethodContentByComponent = new Map<string, Set<string>>();
-
-    applyResolvedDataTestId({
-      element: el,
-      componentName: "MyComp",
-      parentComponentName: "MyComp",
-      dependencies: deps,
-      generatedMethodContentByComponent,
-      nativeRole: "button",
+    const { deps } = applyTestId(el, {
       preferredGeneratedValue: staticAttributeValue("ignored"),
       keyInfo: {
         selectorFragment: "${p.parameter.name}",
         runtimeFragment: "${p.parameter.name}",
         rawExpression: "p.parameter.name",
       },
-      testIdAttribute: "data-testid",
       existingIdBehavior: "preserve",
-      addHtmlAttribute: false,
     });
 
     const entries = Array.from(deps.dataTestIdSet);
@@ -1009,14 +977,11 @@ describe("utils.ts coverage", () => {
     const ast = parseTemplate("<dx-radio-group :options=\"['One','Two']\" />");
     const el = firstElement(ast);
 
-    const deps: IComponentDependencies = {
+    const deps = makeComponentDependencies({
       filePath: "/src/components/MyComp.vue",
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
-      dataTestIdSet: new Set<IDataTestId>(),
       generatedMethods: new Map(),
       isView: false,
-    };
+    });
 
     const generatedMethodContentByComponent = new Map<string, Set<string>>();
 
@@ -1071,14 +1036,11 @@ describe("utils.ts coverage", () => {
   it("covers applyResolvedDataTestId dynamic options method + signature collision handling", () => {
     const el = firstElement(parseTemplate("<dx-radio-group :options=\"options\" />"));
 
-    const deps: IComponentDependencies = {
+    const deps = makeComponentDependencies({
       filePath: "/src/components/MyComp.vue",
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
-      dataTestIdSet: new Set<IDataTestId>(),
       generatedMethods: new Map(),
       isView: false,
-    };
+    });
 
     const generatedMethodContentByComponent = new Map<string, Set<string>>();
 
@@ -1157,14 +1119,12 @@ describe("utils.ts coverage", () => {
     const els = (root.children ?? []).filter((c) => c?.type === NodeTypes.ELEMENT) as ElementNode[];
     expect(els.length).toBe(2);
 
-    const makeDeps = (): IComponentDependencies => ({
-      filePath: "/src/components/MyComp.vue",
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
-      dataTestIdSet: new Set<IDataTestId>(),
-      generatedMethods: new Map(),
-      isView: false,
-    });
+    const makeDeps = (): IComponentDependencies =>
+      makeComponentDependencies({
+        filePath: "/src/components/MyComp.vue",
+        generatedMethods: new Map(),
+        isView: false,
+      });
 
     // (1) error: throw on first collision
     {
@@ -1300,14 +1260,11 @@ describe("utils.ts coverage", () => {
     const els = (root.children ?? []).filter((c) => c?.type === NodeTypes.ELEMENT) as ElementNode[];
     expect(els.length).toBe(2);
 
-    const deps: IComponentDependencies = {
+    const deps = makeComponentDependencies({
       filePath: "/src/components/MyComp.vue",
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
-      dataTestIdSet: new Set<IDataTestId>(),
       generatedMethods: new Map(),
       isView: false,
-    };
+    });
 
     const generatedMethodContentByComponent = new Map<string, Set<string>>();
 
@@ -1350,14 +1307,11 @@ describe("utils.ts coverage", () => {
     const els = (root.children ?? []).filter((c) => c?.type === NodeTypes.ELEMENT) as ElementNode[];
     expect(els.length).toBe(2);
 
-    const deps: IComponentDependencies = {
+    const deps = makeComponentDependencies({
       filePath: "/src/components/MyComp.vue",
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
-      dataTestIdSet: new Set<IDataTestId>(),
       generatedMethods: new Map(),
       isView: false,
-    };
+    });
 
     const generatedMethodContentByComponent = new Map<string, Set<string>>();
 
@@ -1406,29 +1360,10 @@ describe("utils.ts coverage", () => {
   it("covers applyResolvedDataTestId static option labels extracted from array-of-objects", () => {
     const el = firstElement(parseTemplate("<dx-radio-group :options=\"[{ label: 'A' }, { text: `A` }]\" />"));
 
-    const deps: IComponentDependencies = {
-      filePath: "/src/components/MyComp.vue",
-      childrenComponentSet: new Set(),
-      usedComponentSet: new Set(),
-      dataTestIdSet: new Set<IDataTestId>(),
-      generatedMethods: new Map(),
-      isView: false,
-    };
-
-    const generatedMethodContentByComponent = new Map<string, Set<string>>();
-
-    applyResolvedDataTestId({
-      element: el,
-      componentName: "MyComp",
-      parentComponentName: "MyComp",
-      dependencies: deps,
-      generatedMethodContentByComponent,
+    const { deps } = applyTestId(el, {
       nativeRole: "radio",
       preferredGeneratedValue: staticAttributeValue("MyComp-radio"),
-      keyInfo: null,
-      testIdAttribute: "data-testid",
       existingIdBehavior: "overwrite",
-      addHtmlAttribute: false,
     });
 
     // Duplicate labels that resolve to the same semantic option are de-duped.
