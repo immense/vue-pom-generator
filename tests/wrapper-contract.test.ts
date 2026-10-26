@@ -17,6 +17,19 @@ function writeComponent(root: string, name: string, source: string): string {
   return filePath
 }
 
+/**
+ * Run the wrapper-contract analyzer on an SFC source with the standard
+ * component path and passthrough nested-contract resolution.
+ */
+function analyzeContract(component: string, source: string) {
+  return analyzeWrapperContractFromSfc({
+    filePath: `/src/components/${component}.vue`,
+    source,
+    testIdAttribute: 'data-testid',
+    resolveNestedContract: () => null,
+  })
+}
+
 describe('wrapper contract analysis', () => {
   it('uses the explicit ARIA role on the element receiving fallthrough attributes', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-wrapper-tab-'))
@@ -43,9 +56,8 @@ describe('wrapper contract analysis', () => {
   })
 
   it('uses input interaction behavior for an editable combobox target', () => {
-    const contract = analyzeWrapperContractFromSfc({
-      filePath: '/src/components/SearchBox.vue',
-      source: `
+    const contract = analyzeContract('SearchBox',
+      `
         <template>
           <div class="search-box">
             <input v-bind="$attrs" type="search" role="combobox" />
@@ -55,9 +67,7 @@ describe('wrapper contract analysis', () => {
         defineOptions({ inheritAttrs: false })
         </script>
       `,
-      testIdAttribute: 'data-testid',
-      resolveNestedContract: () => null,
-    })
+    )
 
     expect(contract.role).toBe('input')
     expect(contract.targetRoles).toEqual(['input'])
@@ -106,9 +116,8 @@ describe('wrapper contract analysis', () => {
   })
 
   it('recognizes a top-level rest binding from useAttrs', () => {
-    const contract = analyzeWrapperContractFromSfc({
-      filePath: '/src/components/AppButton.vue',
-      source: `
+    const contract = analyzeContract('AppButton',
+      `
         <template><button v-bind="buttonAttrs"><slot /></button></template>
         <script setup>
         import { useAttrs } from 'vue'
@@ -116,18 +125,15 @@ describe('wrapper contract analysis', () => {
         const { class: rootClass, style: rootStyle, ...buttonAttrs } = useAttrs()
         </script>
       `,
-      testIdAttribute: 'data-testid',
-      resolveNestedContract: () => null,
-    })
+    )
 
     expect(contract.role).toBe('button')
     expect(contract.forwardedTestIdTargetOffsets.size).toBe(1)
   })
 
   it('recognizes a helper that forwards every attribute except named layout attributes', () => {
-    const contract = analyzeWrapperContractFromSfc({
-      filePath: '/src/components/AppCheckbox.vue',
-      source: `
+    const contract = analyzeContract('AppCheckbox',
+      `
         <template>
           <div>
             <input v-bind="inputAttrs()" type="checkbox" />
@@ -146,9 +152,7 @@ describe('wrapper contract analysis', () => {
         }
         </script>
       `,
-      testIdAttribute: 'data-testid',
-      resolveNestedContract: () => null,
-    })
+    )
 
     expect(contract.role).toBe('checkbox')
     expect(contract.forwardedTestIdTargetOffsets.size).toBe(1)
@@ -221,9 +225,8 @@ describe('wrapper contract analysis', () => {
   })
 
   it('keeps polymorphic forwarding targets discoverable without inventing one role', () => {
-    const contract = analyzeWrapperContractFromSfc({
-      filePath: '/src/components/AppAction.vue',
-      source: `
+    const contract = analyzeContract('AppAction',
+      `
         <template>
           <a v-if="href" v-bind="$attrs" :href="href"><slot /></a>
           <button v-else v-bind="$attrs"><slot /></button>
@@ -232,9 +235,7 @@ describe('wrapper contract analysis', () => {
         defineOptions({ inheritAttrs: false })
         </script>
       `,
-      testIdAttribute: 'data-testid',
-      resolveNestedContract: () => null,
-    })
+    )
 
     expect(contract.role).toBeNull()
     expect(contract.forwardedTestIdTargetOffsets.size).toBe(2)
