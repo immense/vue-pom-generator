@@ -1,0 +1,22 @@
+# Deslop — duplicate-code analysis for CI and local scans.
+# Reference: https://deslop.live/docs/configuration/
+#
+# Built-in rules already exclude dependency trees (node_modules, vendor) and
+# build output (dist, build, target), and hide generated-suffix files and the
+# tests/fixtures directory pair from the report headline. Only repo-specific
+# additions live here.
+
+[defaults]
+# Local-only vendor clones and inspection checkouts (see .gitignore):
+# never parsed, never compared against real source.
+exclude = [
+  ".vendor/**",
+  ".tmp/**",
+]
+
+# CI gate. Measured baseline (deslop 0.38.0, repo-wide): 15.6% duplicated
+# (6,563 of 42,057 analysed loc) — mostly tests/. The ratchet sits at the next
+# whole point so current debt passes while a PR adding ~170+ duplicated lines
+# fails. Lower as duplication is paid down.
+[threshold]
+max_duplication_percent = 16
