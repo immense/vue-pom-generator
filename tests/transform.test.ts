@@ -880,22 +880,22 @@ describe('createTestIdTransform', () => {
 
   it('emits a static test id for a slot-scope callback on a child component with dynamic text', () => {
     // Reproduction: a button-rendering child component inside a scoped slot whose
-    // @click handler is a bare slot-scope prop (`cancel` — ImmyPopup's cancelAction
+    // @click handler is a bare slot-scope prop (`cancel` — AppPopup's cancelAction
     // function) and whose text content is a dynamic interpolation. The slot-scope
     // key candidate chain fell back to stringifying the callback function itself,
     // producing runtime output like:
-    //   MyComp-${cancel.key ?? cancel.data?.id ?? ... ?? cancel}-Save-immybutton
+    //   MyComp-${cancel.key ?? cancel.data?.id ?? ... ?? cancel}-Save-appbutton
     // which rendered the entire function source into the DOM data-testid.
     const { ast } = compileWithTestIdTransform(
       `
-        <ImmyPopup>
+        <AppPopup>
           <template #popup-footer="{ cancel }">
-            <ImmyButton roboto variant="tertiary" @click="cancel">Cancel</ImmyButton>
-            <ImmyButton roboto variant="primary" @click="save">
+            <AppButton roboto variant="tertiary" @click="cancel">Cancel</AppButton>
+            <AppButton roboto variant="primary" @click="save">
               {{ saving ? "Saving..." : "Save Monitor" }}
-            </ImmyButton>
+            </AppButton>
           </template>
-        </ImmyPopup>
+        </AppPopup>
       `,
     {
       component: 'MonitorConfigureDialog',
@@ -904,7 +904,7 @@ describe('createTestIdTransform', () => {
 
     const testIds = findAllDataTestIds(ast)
     // The Cancel button (@click="cancel" IS the slot-scope callback) has static text,
-    // so it already gets a static test id. The unresolvable ImmyButton source falls
+    // so it already gets a static test id. The unresolvable AppButton source falls
     // back to the conventional button-role suffix.
     expect(testIds).toContain('MonitorConfigureDialog-Cancel-button')
     // The Save button must not stringify the slot-scope callback function: no keyed
@@ -954,18 +954,18 @@ describe('createTestIdTransform', () => {
     // outer usage must still be detected.
     const { ast } = compileWithTestIdTransform(
       `
-        <ImmyPopup>
+        <AppPopup>
           <template #popup-footer="{ cancel }">
             <MyPopover>
               <template #trigger="{ cancel: noop }">
                 <button @click="noop">Inner</button>
               </template>
             </MyPopover>
-            <ImmyButton roboto variant="primary" @click="cancel">
+            <AppButton roboto variant="primary" @click="cancel">
               {{ saving ? "Saving..." : "Save Monitor" }}
-            </ImmyButton>
+            </AppButton>
           </template>
-        </ImmyPopup>
+        </AppPopup>
       `,
     {
       component: 'MonitorConfigureDialog',
@@ -1330,6 +1330,182 @@ describe('createTestIdTransform', () => {
 
     const deps = requireDeps(componentHierarchyMap, 'OauthAccessTokensListPage')
     expect(deps?.generatedMethods?.has('clickRefreshOauthAccessToken')).toBe(true)
+  })
+
+  it('derives the same semantic action from :load-action as from :loadAction', () => {
+    const compileWith = (template: string) => {
+      const componentHierarchyMap = new Map<string, IComponentDependencies>()
+      const nativeWrappers: NativeWrappersMap = {
+        LoadButton: { role: 'button' },
+      }
+      compileAndCaptureAst(template, {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, nativeWrappers, [], '/src/views')],
+      })
+      return componentHierarchyMap.get('MyComp')
+    }
+
+    const camel = compileWith(`<LoadButton :loadAction="() => createTenants('selected')">Selected</LoadButton>`)
+    const kebab = compileWith(`<LoadButton :load-action="() => createTenants('selected')">Selected</LoadButton>`)
+
+    expect(kebab?.generatedMethods?.has('clickCreateTenantsSelected')).toBe(true)
+    expect([...(kebab?.generatedMethods?.keys() ?? [])].sort()).toEqual([...(camel?.generatedMethods?.keys() ?? [])].sort())
+  })
+
+  it('echoes the matched action prop in the unnameable-handler error', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const nativeWrappers: NativeWrappersMap = {
+      LoadButton: { role: 'button' },
+    }
+
+    expect(() => {
+      compileAndCaptureAst(
+        `
+          <LoadButton :handler="() => isEdit ? update() : create()">
+            Go
+          </LoadButton>
+        `,
+        {
+          filename: '/src/components/MyComp.vue',
+          nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, nativeWrappers, [], '/src/views')],
+        },
+      )
+    }).toThrow(/:handler="onAction"/)
+  })
+
+  it('fails fast when a declared-actionProp wrapper usage binds neither the action nor @click', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const nativeWrappers: NativeWrappersMap = {
+      LoadButton: { role: 'button', actionProp: 'loadAction' },
+    }
+
+    expect(() => {
+      compileAndCaptureAst(
+        `
+          <LoadButton>
+            Save
+          </LoadButton>
+        `,
+        {
+          filename: '/src/components/MyComp.vue',
+          nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, nativeWrappers, [], '/src/views')],
+        },
+      )
+    }).toThrow(/declares actionProp "loadAction"/)
+  })
+
+  it('allows a declared-actionProp wrapper usage that binds @click instead', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const nativeWrappers: NativeWrappersMap = {
+      LoadButton: { role: 'button', actionProp: 'loadAction' },
+    }
+
+    compileAndCaptureAst(
+      `
+        <LoadButton @click="save">
+          Save
+        </LoadButton>
+      `,
+      {
+        filename: '/src/components/MyComp.vue',
+        nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, nativeWrappers, [], '/src/views')],
+      },
+    )
+
+    const deps = componentHierarchyMap.get('MyComp') as IComponentDependencies | undefined
+    expect(deps?.generatedMethods?.has('clickSave')).toBe(true)
+  })
+
+  it('rejects a declared-actionProp wrapper usage that binds only @change', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const nativeWrappers: NativeWrappersMap = {
+      LoadButton: { role: 'button', actionProp: 'loadAction' },
+    }
+
+    expect(() => {
+      compileAndCaptureAst(
+        `
+          <LoadButton @change="save">
+            Save
+          </LoadButton>
+        `,
+        {
+          filename: '/src/components/MyComp.vue',
+          nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, nativeWrappers, [], '/src/views')],
+        },
+      )
+    }).toThrow(/declares actionProp "loadAction"/)
+  })
+
+  it('rejects a declared-actionProp wrapper usage whose action binding uses a dynamic argument', () => {
+    expect(() => {
+      compileWithRuntimeTemplateOptions(
+        `
+          <LoadButton :[action]="save">
+            Save
+          </LoadButton>
+        `,
+        { nativeWrappers: { LoadButton: { role: 'button', actionProp: 'action' } } },
+      )
+    }).toThrow(/declares actionProp "action"/)
+  })
+
+  it('still allows a declared-actionProp wrapper usage with a dynamic argument plus @click', () => {
+    const code = compileWithRuntimeTemplateOptions(
+      `
+        <LoadButton :[action]="save" @click="save">
+          Save
+        </LoadButton>
+      `,
+      { nativeWrappers: { LoadButton: { role: 'button', actionProp: 'action' } } },
+    )
+
+    expect(code).toContain('"data-testid": "MyComp-Save-button"')
+  })
+
+  it('accepts Vue same-name shorthand for a declared actionProp in both spellings', () => {
+    for (const binding of [':loadAction', ':load-action']) {
+      const componentHierarchyMap = new Map<string, IComponentDependencies>()
+      const nativeWrappers: NativeWrappersMap = {
+        LoadButton: { role: 'button', actionProp: 'loadAction' },
+      }
+
+      compileAndCaptureAst(
+        `
+          <LoadButton ${binding}>
+            Save
+          </LoadButton>
+        `,
+        {
+          filename: '/src/components/MyComp.vue',
+          nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, nativeWrappers, [], '/src/views')],
+        },
+      )
+
+      const deps = componentHierarchyMap.get('MyComp') as IComponentDependencies | undefined
+      expect(deps?.generatedMethods?.has('clickLoadAction')).toBe(true)
+    }
+  })
+
+  it('does not enforce the action-prop contract for wrappers without a declared actionProp', () => {
+    const componentHierarchyMap = new Map<string, IComponentDependencies>()
+    const nativeWrappers: NativeWrappersMap = {
+      LoadButton: { role: 'button' },
+    }
+
+    expect(() => {
+      compileAndCaptureAst(
+        `
+          <LoadButton>
+            Save
+          </LoadButton>
+        `,
+        {
+          filename: '/src/components/MyComp.vue',
+          nodeTransforms: [createTestIdTransform('MyComp', componentHierarchyMap, nativeWrappers, [], '/src/views')],
+        },
+      )
+    }).not.toThrow()
   })
 
   it('derives semantic names for button-like wrapper handlers guarded by simple null checks', () => {
@@ -1705,10 +1881,10 @@ describe('createTestIdTransform', () => {
     const { ast } = compilePageWithWrapperSfcs(
       '<DashboardStatLink label="Computers missing critical" :to="route" />',
       [
-        // ImmyLink forwards to a RouterLink (which renders an <a>).
-        { name: 'ImmyLink', template: '<template><RouterLink :to="to"><slot /></RouterLink></template>' },
-        // DashboardStatLink wraps ImmyLink — inference must recurse through both.
-        { name: 'DashboardStatLink', template: '<template><ImmyLink :to="to"><slot /></ImmyLink></template>' },
+        // AppLink forwards to a RouterLink (which renders an <a>).
+        { name: 'AppLink', template: '<template><RouterLink :to="to"><slot /></RouterLink></template>' },
+        // DashboardStatLink wraps AppLink — inference must recurse through both.
+        { name: 'DashboardStatLink', template: '<template><AppLink :to="to"><slot /></AppLink></template>' },
       ],
       { nativeWrappers: { DashboardStatLink: { valueAttribute: 'label' } } },
     )

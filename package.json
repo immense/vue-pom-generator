@@ -77,6 +77,7 @@
     "@vue/compiler-core": ">=3.5",
     "@vue/compiler-dom": ">=3.5",
     "@vue/compiler-sfc": ">=3.5",
+    "@vue/shared": ">=3.5",
     "eslint": ">=9",
     "playwright": ">=1.61.0 <2",
     "vite": "^5 || ^6 || ^7"
@@ -103,7 +104,6 @@
     "@vitest/coverage-v8": "^4.0.16",
     "@vue/server-renderer": "3.5.27",
     "@vue/test-utils": "^2.4.11",
-    "@vue/shared": "^3.5.22",
     "esbuild": "^0.28.0",
     "eslint": "^9.27.0",
     "jsdom": "^27.4.0",

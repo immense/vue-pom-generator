@@ -166,7 +166,8 @@ export interface VuePomGeneratorPluginOptions {
     layoutDirs?: string[];
 
     /**
-      * Wrapper component configuration.
+      * Wrapper component configuration. See `NativeWrappersMap` (utils.ts) for the
+      * per-wrapper contract, including `actionProp` for click-action prop declaration.
       */
     nativeWrappers?: NativeWrappersMap;
 
