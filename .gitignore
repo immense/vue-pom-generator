@@ -9,5 +9,8 @@
 /dist/
 /coverage/
 
+# Deslop local scan output (reports, logs, parse cache)
+/.deslop/
+
 # Local-only inspection clones
 /.tmp/

@@ -24,6 +24,18 @@ function readFile(filePath: string) {
   return fs.readFileSync(filePath, "utf8");
 }
 
+function readExisting(filePath: string): string {
+  expect(fs.existsSync(filePath)).toBe(true);
+  return readFile(filePath);
+}
+
+function expectFileContains(filePath: string, ...snippets: string[]): void {
+  const content = readExisting(filePath);
+  for (const snippet of snippets) {
+    expect(content).toContain(snippet);
+  }
+}
+
 function makeTempRoot(prefix: string) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
@@ -168,28 +180,11 @@ describe("class-generation coverage", () => {
       // Reserved fixture name should not appear as a generated component fixture.
       expect(defaultFixtureContent).not.toContain("page: Pom.Page");
 
-      const defaultGitAttributesPath = path.join(outDir, ".gitattributes");
-      expect(fs.existsSync(defaultGitAttributesPath)).toBe(true);
-      const defaultGitAttributesContent = readFile(defaultGitAttributesPath);
-      expect(defaultGitAttributesContent).toContain("README.md linguist-documentation");
-      expect(defaultGitAttributesContent).toContain("page-object-models.g.ts linguist-generated");
-      expect(defaultGitAttributesContent).toContain("index.ts linguist-generated");
-      expect(defaultGitAttributesContent).toContain("fixtures.g.ts linguist-generated");
+      expectFileContains(path.join(outDir, ".gitattributes"), "README.md linguist-documentation", "page-object-models.g.ts linguist-generated", "index.ts linguist-generated", "fixtures.g.ts linguist-generated");
 
-      const runtimeGitAttributesPath = path.join(outDir, "_pom-runtime", ".gitattributes");
-      expect(fs.existsSync(runtimeGitAttributesPath)).toBe(true);
-      const runtimeGitAttributesContent = readFile(runtimeGitAttributesPath);
-      expect(runtimeGitAttributesContent).toContain("click-instrumentation.ts linguist-generated");
+      expectFileContains(path.join(outDir, "_pom-runtime", ".gitattributes"), "click-instrumentation.ts linguist-generated");
 
-      const runtimeClassGenGitAttributesPath = path.join(outDir, "_pom-runtime", "class-generation", ".gitattributes");
-      expect(fs.existsSync(runtimeClassGenGitAttributesPath)).toBe(true);
-      const runtimeClassGenGitAttributesContent = readFile(runtimeClassGenGitAttributesPath);
-      expect(runtimeClassGenGitAttributesContent).toContain("base-page.ts linguist-generated");
-      expect(runtimeClassGenGitAttributesContent).toContain("callout.ts linguist-generated");
-      expect(runtimeClassGenGitAttributesContent).toContain("floating-ui-callout.ts linguist-generated");
-      expect(runtimeClassGenGitAttributesContent).toContain("floating-ui.ts linguist-generated");
-      expect(runtimeClassGenGitAttributesContent).toContain("pointer.ts linguist-generated");
-      expect(runtimeClassGenGitAttributesContent).toContain("playwright-types.ts linguist-generated");
+      expectFileContains(path.join(outDir, "_pom-runtime", "class-generation", ".gitattributes"), "base-page.ts linguist-generated", "callout.ts linguist-generated", "floating-ui-callout.ts linguist-generated", "floating-ui.ts linguist-generated", "pointer.ts linguist-generated", "playwright-types.ts linguist-generated");
       expect(readFile(fileURLToPath(new URL("../class-generation/base-page.ts", import.meta.url)))).toContain("export class BasePage");
       const runtimeFloatingUiContent = readFile(path.join(outDir, "_pom-runtime", "class-generation", "floating-ui.ts"));
       expect(runtimeFloatingUiContent).toContain("Portions of this file are derived from Floating UI.");
@@ -202,11 +197,7 @@ describe("class-generation coverage", () => {
         generateFixtures: "tests/playwright/fixture/CustomFixtures.ts",
       });
 
-      const explicitFixturePath = path.join(tempRoot, "tests", "playwright", "fixture", "CustomFixtures.ts");
-      expect(fs.existsSync(explicitFixturePath)).toBe(true);
-      const explicitFixtureContent = readFile(explicitFixturePath);
-      expect(explicitFixtureContent).toContain("import { UsersPage as UsersPageOverride } from \"../pom/overrides/UsersPage\";");
-      expect(explicitFixtureContent).toContain("usersPage: UsersPageOverride");
+      expectFileContains(path.join(tempRoot, "tests", "playwright", "fixture", "CustomFixtures.ts"), "import { UsersPage as UsersPageOverride } from \"../pom/overrides/UsersPage\";", "usersPage: UsersPageOverride");
       const explicitGitAttributesPath = path.join(tempRoot, "tests", "playwright", "fixture", ".gitattributes");
       expect(fs.existsSync(explicitGitAttributesPath)).toBe(true);
       expect(readFile(explicitGitAttributesPath)).toContain("CustomFixtures.ts linguist-generated");

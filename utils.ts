@@ -57,6 +57,7 @@ import {
   isTemplateLiteral,
 } from "@babel/types";
 import { parse, parseExpression } from "@babel/parser";
+import { isNodeType, isIdentifierNode, isStringLiteralNode, isBooleanLiteralNode, isNumericLiteralNode, isNullLiteralNode, isMemberExpressionNode, isCallExpressionNode, isAwaitExpressionNode, isAssignmentExpressionNode, isArrowFunctionExpressionNode, isBlockStatementNode, isExpressionStatementNode, isReturnStatementNode, isObjectExpressionNode, isObjectPropertyNode, isObjectPropertyNodeShallow, isLogicalExpressionNode } from "./compiler/babel-guards";
 import { createPomStringPattern, pomStringPatternEquals, type PomPatternKind, type PomStringPattern } from "./pom-patterns";
 import {
   createPomMethodSignature,
@@ -1776,97 +1777,6 @@ export function nodeHandlerAttributeInfo(node: ElementNode): HandlerAttributeInf
     ? tryParseBabelExpressionFromSource(authorSource, ["typescript", "jsx"])
     : null;
 
-  const isNodeType = (node: object | null, type: string): node is { type: string } => {
-    return node !== null && (node as { type?: string }).type === type;
-  };
-  const isIdentifierNode = (node: object | null): node is { type: "Identifier"; name: string } => {
-    return isNodeType(node, "Identifier") && typeof (node as { name?: string }).name === "string";
-  };
-  const isStringLiteralNode = (node: object | null): node is { type: "StringLiteral"; value: string } => {
-    return isNodeType(node, "StringLiteral") && typeof (node as { value?: string }).value === "string";
-  };
-  const isBooleanLiteralNode = (node: object | null): node is { type: "BooleanLiteral"; value: boolean } => {
-    return isNodeType(node, "BooleanLiteral") && typeof (node as { value?: boolean }).value === "boolean";
-  };
-  const isNumericLiteralNode = (node: object | null): node is { type: "NumericLiteral"; value: number } => {
-    return isNodeType(node, "NumericLiteral") && typeof (node as { value?: number }).value === "number";
-  };
-  const isNullLiteralNode = (node: object | null): node is { type: "NullLiteral" } => {
-    return isNodeType(node, "NullLiteral");
-  };
-  const isMemberExpressionNode = (node: object | null): node is { type: "MemberExpression"; computed: boolean; object: object; property: object } => {
-    if (!isNodeType(node, "MemberExpression"))
-      return false;
-    const n = node as { computed?: boolean; object?: object; property?: object };
-    return typeof n.computed === "boolean"
-      && typeof n.object === "object" && n.object !== null
-      && typeof n.property === "object" && n.property !== null;
-  };
-  const isCallExpressionNode = (node: object | null): node is { type: "CallExpression"; callee: object; arguments: object[] } => {
-    if (!isNodeType(node, "CallExpression"))
-      return false;
-    const n = node as { callee?: object; arguments?: object[] };
-    return typeof n.callee === "object" && n.callee !== null && Array.isArray(n.arguments);
-  };
-  const isAwaitExpressionNode = (node: object | null): node is { type: "AwaitExpression"; argument: object } => {
-    if (!isNodeType(node, "AwaitExpression"))
-      return false;
-    const n = node as { argument?: object };
-    return typeof n.argument === "object" && n.argument !== null;
-  };
-  const isAssignmentExpressionNode = (node: object | null): node is { type: "AssignmentExpression"; left: object; right: object } => {
-    if (!isNodeType(node, "AssignmentExpression"))
-      return false;
-    const n = node as { left?: object; right?: object };
-    return typeof n.left === "object" && n.left !== null && typeof n.right === "object" && n.right !== null;
-  };
-  const isArrowFunctionExpressionNode = (node: object | null): node is { type: "ArrowFunctionExpression"; body: object } => {
-    if (!isNodeType(node, "ArrowFunctionExpression"))
-      return false;
-    const n = node as { body?: object };
-    return typeof n.body === "object" && n.body !== null;
-  };
-  const isBlockStatementNode = (node: object | null): node is { type: "BlockStatement"; body: object[] } => {
-    if (!isNodeType(node, "BlockStatement"))
-      return false;
-    const n = node as { body?: object[] };
-    return Array.isArray(n.body);
-  };
-  const isExpressionStatementNode = (node: object | null): node is { type: "ExpressionStatement"; expression: object } => {
-    if (!isNodeType(node, "ExpressionStatement"))
-      return false;
-    const n = node as { expression?: object };
-    return typeof n.expression === "object" && n.expression !== null;
-  };
-  const isReturnStatementNode = (node: object | null): node is { type: "ReturnStatement"; argument: object | null } => {
-    if (!isNodeType(node, "ReturnStatement"))
-      return false;
-    const n = node as { argument?: object | null };
-    return typeof n.argument === "object" || n.argument === null;
-  };
-  const isObjectExpressionNode = (node: object | null): node is { type: "ObjectExpression"; properties: object[] } => {
-    if (!isNodeType(node, "ObjectExpression"))
-      return false;
-    const n = node as { properties?: object[] };
-    return Array.isArray(n.properties);
-  };
-  const isObjectPropertyNode = (node: object | null): node is { type: "ObjectProperty"; computed: boolean; key: object; value: object } => {
-    if (!isNodeType(node, "ObjectProperty"))
-      return false;
-    const n = node as { computed?: boolean; key?: object; value?: object };
-    return typeof n.computed === "boolean"
-      && typeof n.key === "object" && n.key !== null
-      && typeof n.value === "object" && n.value !== null;
-  };
-  const isLogicalExpressionNode = (node: object | null): node is { type: "LogicalExpression"; operator: string; left: object; right: object } => {
-    if (!isNodeType(node, "LogicalExpression"))
-      return false;
-    const n = node as { operator?: string; left?: object; right?: object };
-    return typeof n.operator === "string"
-      && typeof n.left === "object" && n.left !== null
-      && typeof n.right === "object" && n.right !== null;
-  };
-
   const getLastIdentifierFromMemberChain = (node: object | null): string | null => {
     if (!node)
       return null;
@@ -2417,38 +2327,16 @@ export function toDirectiveObjectFieldNameValue(node: DirectiveNode): string | n
     return null;
   }
 
-  const isNodeType = (n: object | null, type: string): n is { type: string } => {
-    return n !== null && (n as { type?: string }).type === type;
-  };
-  const isStringLiteralNode = (n: object | null): n is { type: "StringLiteral"; value: string } => {
-    return isNodeType(n, "StringLiteral") && typeof (n as { value?: string }).value === "string";
-  };
-  const isIdentifierNode = (n: object | null): n is { type: "Identifier"; name: string } => {
-    return isNodeType(n, "Identifier") && typeof (n as { name?: string }).name === "string";
-  };
-  const isObjectPropertyNode = (n: object | null): n is { type: "ObjectProperty"; key: object; value: object } => {
-    if (!isNodeType(n, "ObjectProperty"))
-      return false;
-    const nn = n as { key?: object; value?: object };
-    return typeof nn.key === "object" && nn.key !== null && typeof nn.value === "object" && nn.value !== null;
-  };
-  const isObjectExpressionNode = (n: object | null): n is { type: "ObjectExpression"; properties: object[] } => {
-    if (!isNodeType(n, "ObjectExpression"))
-      return false;
-    const nn = n as { properties?: object[] };
-    return Array.isArray(nn.properties);
-  };
-
   if (!isObjectExpressionNode(expr))
     return null;
 
   const nameProp = (expr as { properties: object[] }).properties.find((p) => {
-    if (!isObjectPropertyNode(p))
+    if (!isObjectPropertyNodeShallow(p))
       return false;
     const key = p.key as object;
     return (isIdentifierNode(key) && key.name === "name") || (isStringLiteralNode(key) && key.value === "name");
   });
-  if (!nameProp || !isObjectPropertyNode(nameProp) || !isStringLiteralNode(nameProp.value as object))
+  if (!nameProp || !isObjectPropertyNodeShallow(nameProp) || !isStringLiteralNode(nameProp.value as object))
     return null;
   return toPascalCase((nameProp.value as { value: string }).value);
 }

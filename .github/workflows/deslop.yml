@@ -1,0 +1,24 @@
+name: Deslop
+
+on:
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: deslop-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  duplication-gate:
+    name: Duplication Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # Pin an exact release: the tag is the CLI version the action installs
+      # (no @v1 alias exists by design). The ceiling lives in .deslop.toml.
+      - uses: Nimblesite/Deslop@v0.38.0

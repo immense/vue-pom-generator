@@ -13,7 +13,8 @@ import type {
 } from "@vue/compiler-core";
 import type { AttributeValue, DataTestIdEntryOverrides, HierarchyMap, ResolvedKeyInfo } from "./utils";
 import { createSimpleExpression, NodeTypes, processExpression } from "@vue/compiler-core";
-import { parseExpression } from "@babel/parser";
+import { parseExpression } from "@babel/parser"
+import { isIdentifierNode, isStringLiteralNode } from "./compiler/babel-guards";
 import path from "node:path";
 import fs from "node:fs";
 import { TESTID_CLICK_EVENT_NAME } from "./click-instrumentation";
@@ -403,16 +404,6 @@ function tryExtractStableHintFromConditionalExpressionSource(source: string): st
 
   try {
     const expr = parseExpression(src, { plugins: ["typescript"] }) as object;
-
-    const isNodeType = (n: object | null, type: string): n is { type: string } => {
-      return n !== null && (n as { type?: string }).type === type;
-    };
-    const isStringLiteralNode = (n: object | null): n is { type: "StringLiteral"; value: string } => {
-      return isNodeType(n, "StringLiteral") && typeof (n as { value?: string }).value === "string";
-    };
-    const isIdentifierNode = (n: object | null): n is { type: "Identifier"; name: string } => {
-      return isNodeType(n, "Identifier") && typeof (n as { name?: string }).name === "string";
-    };
 
     const results: string[] = [];
 
