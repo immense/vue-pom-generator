@@ -343,6 +343,18 @@ function applyTestId(
   return { deps, generatedMethodContentByComponent };
 }
 
+/**
+ * Parse a LoadButton `:handler` expression and assert its derived
+ * semanticNameHint. Returns the element for follow-up assertions.
+ */
+function expectHandlerHint(handler: string, expected: string): ElementNode {
+  const el = firstElement(parseTemplate(`<LoadButton :handler="${handler}">Go</LoadButton>`));
+  const info = nodeHandlerAttributeInfo(el);
+  expect(info).toBeTruthy();
+  expect(info?.semanticNameHint).toBe(expected);
+  return el;
+}
+
 describe("utils.ts coverage", () => {
   it("covers simple type helpers and click detection", () => {
     expect(toPascalCase("hello world")).toBe("HelloWorld");
@@ -416,23 +428,8 @@ describe("utils.ts coverage", () => {
   });
 
   it("derives :handler semanticNameHint from literal call arguments", () => {
-    const root = parseTemplate(`
-      <LoadButton :handler="() => createTenants('selected')">Selected</LoadButton>
-    `);
-    const el = firstElement(root);
-
-    const info = nodeHandlerAttributeInfo(el);
-    expect(info).toBeTruthy();
-    expect(info?.semanticNameHint).toBe("CreateTenantsSelected");
-
-    const root2 = parseTemplate(`
-      <LoadButton :handler="() => createTenants('all')">All</LoadButton>
-    `);
-    const el2 = firstElement(root2);
-
-    const info2 = nodeHandlerAttributeInfo(el2);
-    expect(info2).toBeTruthy();
-    expect(info2?.semanticNameHint).toBe("CreateTenantsAll");
+    expectHandlerHint("() => createTenants('selected')", "CreateTenantsSelected");
+    expectHandlerHint("() => createTenants('all')", "CreateTenantsAll");
   });
 
   it("derives :loadAction semanticNameHint the same way as the legacy :handler", () => {
@@ -486,82 +483,32 @@ describe("utils.ts coverage", () => {
   });
 
   it("derives :handler semanticNameHint from member-expression arguments", () => {
-    const root = parseTemplate(`
-      <LoadButton :handler="() => resolveConflictWithDecision(AgentIdentificationManualResolutionDecision.OverwriteExisting)">
-        Overwrite
-      </LoadButton>
-    `);
-    const el = firstElement(root);
-
-    const info = nodeHandlerAttributeInfo(el);
-    expect(info).toBeTruthy();
-    expect(info?.semanticNameHint).toBe("ResolveConflictWithDecisionOverwriteExisting");
-
-    const root2 = parseTemplate(`
-      <LoadButton :handler="() => resolveConflictWithDecision(AgentIdentificationManualResolutionDecision.GenerateNewDeviceId)">
-        Generate
-      </LoadButton>
-    `);
-    const el2 = firstElement(root2);
-
-    const info2 = nodeHandlerAttributeInfo(el2);
-    expect(info2).toBeTruthy();
-    expect(info2?.semanticNameHint).toBe("ResolveConflictWithDecisionGenerateNewDeviceId");
+    expectHandlerHint(
+      "() => resolveConflictWithDecision(AgentIdentificationManualResolutionDecision.OverwriteExisting)",
+      "ResolveConflictWithDecisionOverwriteExisting",
+    );
+    expectHandlerHint(
+      "() => resolveConflictWithDecision(AgentIdentificationManualResolutionDecision.GenerateNewDeviceId)",
+      "ResolveConflictWithDecisionGenerateNewDeviceId",
+    );
   });
 
   it("derives :handler semanticNameHint from later stable call arguments when leading args are dynamic", () => {
-    const root = parseTemplate(`
-      <LoadButton :handler="() => runDeploymentAction(rowData, 'Assign', RebootPreference.Suppress)">
-        Assign
-      </LoadButton>
-    `);
-    const el = firstElement(root);
-
-    const info = nodeHandlerAttributeInfo(el);
-    expect(info).toBeTruthy();
-    expect(info?.semanticNameHint).toBe("RunDeploymentActionAssignSuppress");
+    expectHandlerHint("() => runDeploymentAction(rowData, 'Assign', RebootPreference.Suppress)", "RunDeploymentActionAssignSuppress");
   });
 
   it("derives :handler semanticNameHint from async await call lambdas", () => {
-    const root = parseTemplate(`
-      <LoadButton :handler="async () => await refreshOauthAccessToken(data.id)">
-        Refresh now
-      </LoadButton>
-    `);
-    const el = firstElement(root);
-
-    const info = nodeHandlerAttributeInfo(el);
-    expect(info).toBeTruthy();
-    expect(info?.semanticNameHint).toBe("RefreshOauthAccessToken");
+    const el = expectHandlerHint("async () => await refreshOauthAccessToken(data.id)", "RefreshOauthAccessToken");
     expect(nodeHandlerAttributeValue(el)).toBe("RefreshOauthAccessToken");
   });
 
   it("derives :handler semanticNameHint from assignment-bodied arrow functions", () => {
-    const root = parseTemplate(`
-      <LoadButton :handler="() => showResetLocalDatabaseModal = true">Reset</LoadButton>
-    `);
-    const el = firstElement(root);
-    const info = nodeHandlerAttributeInfo(el);
-    expect(info).toBeTruthy();
-    expect(info?.semanticNameHint).toBe("SetShowResetLocalDatabaseModalTrue");
-
-    const root2 = parseTemplate(`
-      <LoadButton :handler="() => showPopulateScenarioModal = true">Populate</LoadButton>
-    `);
-    const el2 = firstElement(root2);
-    const info2 = nodeHandlerAttributeInfo(el2);
-    expect(info2).toBeTruthy();
-    expect(info2?.semanticNameHint).toBe("SetShowPopulateScenarioModalTrue");
+    expectHandlerHint("() => showResetLocalDatabaseModal = true", "SetShowResetLocalDatabaseModalTrue");
+    expectHandlerHint("() => showPopulateScenarioModal = true", "SetShowPopulateScenarioModalTrue");
   });
 
   it("derives assignment target name from ref.value", () => {
-    const root = parseTemplate(`
-      <LoadButton :handler="() => showModal.value = true">Show</LoadButton>
-    `);
-    const el = firstElement(root);
-    const info = nodeHandlerAttributeInfo(el);
-    expect(info).toBeTruthy();
-    expect(info?.semanticNameHint).toBe("SetShowModalTrue");
+    expectHandlerHint("() => showModal.value = true", "SetShowModalTrue");
   });
 
   it("derives a :handler semanticNameHint from logical-expression arrow bodies", () => {
@@ -635,36 +582,21 @@ describe("utils.ts coverage", () => {
     expect(nodeHandlerAttributeInfo(direct)?.mergeKey).toBe("handler:expr:approveChangeRequest");
 
     const rewritten = firstElement(parseTemplate("<LoadButton :handler=\"saveNotes\" />"));
-    const rewrittenDirective = rewritten.props.find((prop): prop is DirectiveNode => {
-      return prop.type === NodeTypes.DIRECTIVE
-        && prop.name === "bind"
-        && prop.arg?.type === NodeTypes.SIMPLE_EXPRESSION
-        && prop.arg.content === "handler";
-    });
+    const rewrittenDirective = findBindDirective(rewritten, "handler");
     expect(rewrittenDirective?.exp?.type).toBe(NodeTypes.SIMPLE_EXPRESSION);
     (rewrittenDirective?.exp as SimpleExpressionNode).content = "_unref(saveNotes)";
     expect(nodeHandlerAttributeValue(rewritten)).toBe("SaveNotes");
     expect(nodeHandlerAttributeInfo(rewritten)?.mergeKey).toBe("handler:expr:saveNotes");
 
     const refValue = firstElement(parseTemplate("<LoadButton :handler=\"saveNotes\" />"));
-    const refValueDirective = refValue.props.find((prop): prop is DirectiveNode => {
-      return prop.type === NodeTypes.DIRECTIVE
-        && prop.name === "bind"
-        && prop.arg?.type === NodeTypes.SIMPLE_EXPRESSION
-        && prop.arg.content === "handler";
-    });
+    const refValueDirective = findBindDirective(refValue, "handler");
     expect(refValueDirective?.exp?.type).toBe(NodeTypes.SIMPLE_EXPRESSION);
     (refValueDirective?.exp as SimpleExpressionNode).content = "saveNotes.value";
     expect(nodeHandlerAttributeValue(refValue)).toBe("SaveNotes");
     expect(nodeHandlerAttributeInfo(refValue)?.mergeKey).toBe("handler:expr:saveNotes");
 
     const propsAccess = firstElement(parseTemplate("<LoadButton :handler=\"saveNotes\" />"));
-    const propsAccessDirective = propsAccess.props.find((prop): prop is DirectiveNode => {
-      return prop.type === NodeTypes.DIRECTIVE
-        && prop.name === "bind"
-        && prop.arg?.type === NodeTypes.SIMPLE_EXPRESSION
-        && prop.arg.content === "handler";
-    });
+    const propsAccessDirective = findBindDirective(propsAccess, "handler");
     expect(propsAccessDirective?.exp?.type).toBe(NodeTypes.SIMPLE_EXPRESSION);
     (propsAccessDirective?.exp as SimpleExpressionNode).content = "__props.saveNotes";
     expect(nodeHandlerAttributeValue(propsAccess)).toBe("SaveNotes");

@@ -14,10 +14,10 @@ exclude = [
   ".tmp/**",
 ]
 
-# CI gate. Measured baseline (deslop 0.38.0, repo-wide): 13.4% duplicated
-# (5,589 of 41,753 analysed loc) after waves 1-2 of the paydown (was 15.6%
-# originally). The ratchet sits above the measured value so current debt
-# passes while a PR adding meaningful duplicated lines fails. Lower as
-# further waves pay duplication down.
+# CI gate. Measured baseline (deslop 0.38.0, repo-wide): 11.9% duplicated
+# (4,921 of 41,452 analysed loc) after the wave-2 test-suite paydown
+# (was 15.6% originally, 13.4% after waves 1-2 of PR #76). The ratchet sits
+# above the measured value so current debt passes while a PR adding meaningful
+# duplicated lines fails. Lower as further waves pay duplication down.
 [threshold]
-max_duplication_percent = 14
+max_duplication_percent = 12

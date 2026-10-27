@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 
-import { type ElementNode, ElementTypes } from "@vue/compiler-core";
+import { type ElementNode, ElementTypes, type TemplateChildNode } from "@vue/compiler-core";
 
 import { createMetadataCollectorTransform, type ElementMetadata } from "../../metadata-collector";
 import {
@@ -29,12 +29,50 @@ function makeElementNode(overrides: Partial<ElementNode> = {}): ElementNode {
   } as ElementNode;
 }
 
+/**
+ * Run the metadata-collector transform over one element and return the collected
+ * metadata map (the transform's exit hook is invoked, like the compiler would).
+ */
+function runCollector(options: { el?: ElementNode | TemplateChildNode, debug?: boolean, component?: string, expectExitFunction?: boolean, semanticNames?: Array<[string, string]> } = {}) {
+  const metadataMap = new Map<string, Map<string, ElementMetadata>>();
+  const semanticNameMap = new Map<string, string>(options.semanticNames ?? []);
+  const transform = createMetadataCollectorTransform(
+    options.component ?? "Comp",
+    metadataMap,
+    semanticNameMap,
+    options.debug ?? false,
+  );
+
+  const onExit = transform(options.el ?? makeElementNode(), makeTransformContext());
+  if (options.expectExitFunction)
+    expect(typeof onExit).toBe("function");
+  if (typeof onExit === "function")
+    onExit();
+
+  return { metadataMap, semanticNameMap };
+}
+
+/** Capture console.log lines while `run` executes, restoring the original afterwards. */
+function captureLogs(run: () => void): string[] {
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (...args: unknown[]) => {
+    logs.push(args.join(" "));
+  };
+  try {
+    run();
+  }
+  finally {
+    console.log = originalLog;
+  }
+  return logs;
+}
+
 describe("metadata-collector.ts createMetadataCollectorTransform", () => {
   it("normalizes a null/whitespace testIdAttribute to the default (line 50)", () => {
+    // null/undefined testIdAttribute falls back to default after trim/empty-coalesce.
     const metadataMap = new Map<string, Map<string, ElementMetadata>>();
     const semanticNameMap = new Map<string, string>();
-
-    // null/undefined testIdAttribute falls back to default after trim/empty-coalesce.
     const transformNull = createMetadataCollectorTransform(
       "Comp",
       metadataMap,
@@ -43,8 +81,7 @@ describe("metadata-collector.ts createMetadataCollectorTransform", () => {
       // @ts-expect-error intentionally null testIdAttribute to exercise the default-fallback path (line 50)
       null,
     );
-    const el = makeElementNode();
-    const onExit = transformNull(el, makeTransformContext());
+    const onExit = transformNull(makeElementNode(), makeTransformContext());
     if (typeof onExit === "function")
       onExit();
     expect(metadataMap.get("Comp")?.get("submit-button")).toBeTruthy();
@@ -65,183 +102,61 @@ describe("metadata-collector.ts createMetadataCollectorTransform", () => {
   });
 
   it("uses the default testIdAttribute when the argument is omitted (line 50 default param)", () => {
-    const metadataMap = new Map<string, Map<string, ElementMetadata>>();
-    const semanticNameMap = new Map<string, string>();
     // Omit the 5th argument entirely to exercise the default parameter value.
-    const transform = createMetadataCollectorTransform(
-      "Comp",
-      metadataMap,
-      semanticNameMap,
-      false,
-    );
-    const onExit = transform(makeElementNode(), makeTransformContext());
-    if (typeof onExit === "function")
-      onExit();
+    const { metadataMap } = runCollector();
     expect(metadataMap.get("Comp")?.get("submit-button")).toBeTruthy();
   });
 
   it("returns an exit function that returns early for non-element nodes (lines 56-57)", () => {
-    const metadataMap = new Map<string, Map<string, ElementMetadata>>();
-    const semanticNameMap = new Map<string, string>();
-    const transform = createMetadataCollectorTransform(
-      "Comp",
-      metadataMap,
-      semanticNameMap,
-      false,
-    );
-
-    const interpolationNode = makeTextNode("x");
-    const onExit = transform(interpolationNode, makeTransformContext());
-    expect(typeof onExit).toBe("function");
-    if (typeof onExit === "function")
-      onExit();
-    // Nothing should have been collected.
+    // A text node is not an element: the transform returns an exit function that collects nothing.
+    const { metadataMap } = runCollector({ el: makeTextNode("x"), expectExitFunction: true });
     expect(metadataMap.size).toBe(0);
   });
 
   it("emits debug logs when debug is enabled (lines 63-69)", () => {
-    const logs: string[] = [];
-    const originalLog = console.log;
-    console.log = (...args: unknown[]) => {
-      logs.push(args.join(" "));
-    };
-    try {
-      const metadataMap = new Map<string, Map<string, ElementMetadata>>();
-      const semanticNameMap = new Map<string, string>();
-      const transform = createMetadataCollectorTransform(
-        "Comp",
-        metadataMap,
-        semanticNameMap,
-        true,
-      );
+    const logs = captureLogs(() => runCollector({ debug: true }));
 
-      const el = makeElementNode();
-      const onExit = transform(el, makeTransformContext());
-      if (typeof onExit === "function")
-        onExit();
-
-      // Debug logs from metadata-collector exit function.
-      expect(logs.some((l) => l.includes("[metadata] Checking <button>"))).toBe(true);
-      expect(logs.some((l) => l.includes("codegenNode exists: true"))).toBe(true);
-      expect(logs.some((l) => l.includes("codegenNode.type:"))).toBe(true);
-      expect(logs.some((l) => l.includes("tagType="))).toBe(true);
-      expect(logs.some((l) => l.includes("testId=\"submit-button\""))).toBe(true);
-    }
-    finally {
-      console.log = originalLog;
-    }
+    // Debug logs from metadata-collector exit function.
+    expect(logs.some((l) => l.includes("[metadata] Checking <button>"))).toBe(true);
+    expect(logs.some((l) => l.includes("codegenNode exists: true"))).toBe(true);
+    expect(logs.some((l) => l.includes("codegenNode.type:"))).toBe(true);
+    expect(logs.some((l) => l.includes("tagType="))).toBe(true);
+    expect(logs.some((l) => l.includes("testId=\"submit-button\""))).toBe(true);
   });
 
   it("logs an empty testId string when no testId prop exists in debug mode (line 65 null branch)", () => {
-    const logs: string[] = [];
-    const originalLog = console.log;
-    console.log = (...args: unknown[]) => {
-      logs.push(args.join(" "));
-    };
-    try {
-      const metadataMap = new Map<string, Map<string, ElementMetadata>>();
-      const semanticNameMap = new Map<string, string>();
-      const transform = createMetadataCollectorTransform(
-        "Comp",
-        metadataMap,
-        semanticNameMap,
-        true,
-      );
-
-      // Element with no data-testid prop -> getTestIdFromProp returns null -> debugTestId ?? "" yields "".
-      const el = makeElementNode({ props: [] });
-      const onExit = transform(el, makeTransformContext());
-      if (typeof onExit === "function")
-        onExit();
-
-      expect(logs.some((l) => l.includes('testId=""'))).toBe(true);
+    // Element with no data-testid prop -> getTestIdFromProp returns null -> debugTestId ?? "" yields "".
+    const logs = captureLogs(() => {
+      const { metadataMap } = runCollector({ debug: true, el: makeElementNode({ props: [] }) });
       expect(metadataMap.size).toBe(0);
-    }
-    finally {
-      console.log = originalLog;
-    }
+    });
+
+    expect(logs.some((l) => l.includes('testId=""'))).toBe(true);
   });
 
   it("logs codegenNode exists: false in debug mode when codegenNode is missing", () => {
-    const logs: string[] = [];
-    const originalLog = console.log;
-    console.log = (...args: unknown[]) => {
-      logs.push(args.join(" "));
-    };
-    try {
-      const metadataMap = new Map<string, Map<string, ElementMetadata>>();
-      const semanticNameMap = new Map<string, string>();
-      const transform = createMetadataCollectorTransform(
-        "Comp",
-        metadataMap,
-        semanticNameMap,
-        true,
-      );
+    const logs = captureLogs(() => runCollector({ debug: true, el: makeElementNode({ codegenNode: undefined }) }));
 
-      const el = makeElementNode({ codegenNode: undefined });
-      const onExit = transform(el, makeTransformContext());
-      if (typeof onExit === "function")
-        onExit();
-
-      expect(logs.some((l) => l.includes("codegenNode exists: false"))).toBe(true);
-      // No codegenNode.type log line because codegenNode is falsy.
-      expect(logs.some((l) => l.includes("codegenNode.type:"))).toBe(false);
-    }
-    finally {
-      console.log = originalLog;
-    }
+    expect(logs.some((l) => l.includes("codegenNode exists: false"))).toBe(true);
+    // No codegenNode.type log line because codegenNode is falsy.
+    expect(logs.some((l) => l.includes("codegenNode.type:"))).toBe(false);
   });
 
   it("returns early when metadata cannot be created (lines 82-83)", () => {
-    const metadataMap = new Map<string, Map<string, ElementMetadata>>();
-    const semanticNameMap = new Map<string, string>();
-    const transform = createMetadataCollectorTransform(
-      "Comp",
-      metadataMap,
-      semanticNameMap,
-      false,
-    );
-
     // Element has no data-testid prop, so tryCreateElementMetadata returns null.
-    const el = makeElementNode({ props: [] });
-    const onExit = transform(el, makeTransformContext());
-    if (typeof onExit === "function")
-      onExit();
+    const { metadataMap } = runCollector({ el: makeElementNode({ props: [] }) });
 
     expect(metadataMap.size).toBe(0);
   });
 
   it("returns early when codegenNode is missing so metadata is null (lines 82-83)", () => {
-    const metadataMap = new Map<string, Map<string, ElementMetadata>>();
-    const semanticNameMap = new Map<string, string>();
-    const transform = createMetadataCollectorTransform(
-      "Comp",
-      metadataMap,
-      semanticNameMap,
-      false,
-    );
-
-    const el = makeElementNode({ codegenNode: undefined });
-    const onExit = transform(el, makeTransformContext());
-    if (typeof onExit === "function")
-      onExit();
+    const { metadataMap } = runCollector({ el: makeElementNode({ codegenNode: undefined }) });
 
     expect(metadataMap.size).toBe(0);
   });
 
   it("creates and stores a new component map when none exists yet (line 86)", () => {
-    const metadataMap = new Map<string, Map<string, ElementMetadata>>();
-    const semanticNameMap = new Map<string, string>([["submit-button", "submit"]]);
-    const transform = createMetadataCollectorTransform(
-      "FreshComp",
-      metadataMap,
-      semanticNameMap,
-      false,
-    );
-
-    const onExit = transform(makeElementNode(), makeTransformContext());
-    if (typeof onExit === "function")
-      onExit();
+    const { metadataMap } = runCollector({ component: "FreshComp", semanticNames: [["submit-button", "submit"]] });
 
     // The component map did not exist before; it should be created now.
     expect(metadataMap.has("FreshComp")).toBe(true);

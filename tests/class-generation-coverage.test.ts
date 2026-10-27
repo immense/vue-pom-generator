@@ -1,6 +1,5 @@
 // @vitest-environment node
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,15 +9,8 @@ import type { IComponentDependencies, IDataTestId } from "../utils";
 import { generateFiles } from "../class-generation";
 import { createPomMethodSignature, createPomParameters } from "../pom-params";
 import { createPomStringPattern } from "../pom-patterns";
-import { renderTypeScriptLines } from "../typescript-codegen";
-
-function writeFile(filePath: string, content: string) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const normalizedContent = filePath.endsWith(".ts") || filePath.endsWith(".tsx") || filePath.endsWith(".mts") || filePath.endsWith(".cts") || filePath.endsWith(".d.ts")
-    ? renderTypeScriptLines(content.replace(/\r\n/g, "\n").split("\n"))
-    : content;
-  fs.writeFileSync(filePath, normalizedContent, "utf8");
-}
+import { makeTestIdEntry } from "./helpers/pom-entry";
+import { extractClassBlock, makeTempRoot, writeFile } from "./helpers/tmp-project";
 
 function readFile(filePath: string) {
   return fs.readFileSync(filePath, "utf8");
@@ -34,10 +26,6 @@ function expectFileContains(filePath: string, ...snippets: string[]): void {
   for (const snippet of snippets) {
     expect(content).toContain(snippet);
   }
-}
-
-function makeTempRoot(prefix: string) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
 function writeMinimalBasePage(filePath: string) {
@@ -119,17 +107,12 @@ describe("class-generation coverage", () => {
           makeDeps({
             filePath: path.join(tempRoot, "src", "components", "WrapperButton.vue"),
             isView: false,
-            dataTestIdSet: new Set<IDataTestId>([{
-              selectorValue: createPomStringPattern("WrapperButton-Click-button", "static", []),
-              pom: {
-                nativeRole: "button",
-                methodName: "WrapperButton",
-                selector: createPomStringPattern("WrapperButton-Click-button", "static", []),
-                parameters: [],
-                generatedActionName: "clickWrapperButton",
-                generatedPropertyName: "WrapperButton",
-              },
-            }]),
+            dataTestIdSet: new Set<IDataTestId>([makeTestIdEntry({
+              selector: "WrapperButton-Click-button",
+              methodName: "WrapperButton",
+              generatedActionName: "clickWrapperButton",
+              generatedPropertyName: "WrapperButton",
+            })]),
           }),
         ],
         // Should be filtered out because fixture name would be "page" (reserved by Playwright)
@@ -272,10 +255,10 @@ describe("class-generation coverage", () => {
         ].join("\n"),
       );
 
-      const dt: IDataTestId = {
-        selectorValue: createPomStringPattern("TenantListPage-NewTenant-routerlink", "static", []),
+      const dt = makeTestIdEntry({
+        selector: "TenantListPage-NewTenant-routerlink",
         targetPageObjectModelClass: "NewTenantPage",
-      };
+      });
 
       const depsTenantListPage = makeDeps({
         filePath: path.join(tempRoot, "src", "views", "TenantListPage.vue"),
@@ -286,7 +269,7 @@ describe("class-generation coverage", () => {
       const depsForm = makeDeps({
         filePath: path.join(tempRoot, "src", "components", "TenantDetailsEditForm.vue"),
         isView: false,
-        dataTestIdSet: new Set([{ selectorValue: createPomStringPattern("TenantDetailsEditForm-Name-input", "static", []) }]),
+        dataTestIdSet: new Set([makeTestIdEntry({ selector: "TenantDetailsEditForm-Name-input" })]),
         generatedMethods: new Map([
           ["typeTenantName", createPomMethodSignature(createPomParameters(["name", "string"]))],
         ]),
@@ -337,10 +320,10 @@ describe("class-generation coverage", () => {
         ].join("\n"),
       );
 
-      const navigationEntry: IDataTestId = {
-        selectorValue: createPomStringPattern("TenantListPage-NewTenant-routerlink", "static", []),
+      const navigationEntry = makeTestIdEntry({
+        selector: "TenantListPage-NewTenant-routerlink",
         targetPageObjectModelClass: "NewTenantPage",
-      };
+      });
 
       const depsTenantListPage = makeDeps({
         filePath: path.join(tempRoot, "src", "views", "TenantListPage.vue"),
@@ -359,7 +342,7 @@ describe("class-generation coverage", () => {
       const depsForm = makeDeps({
         filePath: path.join(tempRoot, "src", "components", "TenantDetailsEditForm.vue"),
         isView: false,
-        dataTestIdSet: new Set([{ selectorValue: createPomStringPattern("TenantDetailsEditForm-Name-input", "static", []) }]),
+        dataTestIdSet: new Set([makeTestIdEntry({ selector: "TenantDetailsEditForm-Name-input" })]),
         generatedMethods: new Map([
           ["typeTenantName", createPomMethodSignature(createPomParameters(["name", "string"]))],
         ]),
@@ -442,15 +425,7 @@ describe("class-generation coverage", () => {
       const depsNestedComponent = makeDeps({
         filePath: path.join(tempRoot, "src", "components", "MaintenanceItems", "MaintenanceItemConfiguration.vue"),
         isView: false,
-        dataTestIdSet: new Set([{
-          selectorValue: createPomStringPattern("MaintenanceItemsMaintenanceItemConfiguration-Save-button", "static", []),
-          pom: {
-            nativeRole: "button",
-            methodName: "Save",
-            selector: createPomStringPattern("MaintenanceItemsMaintenanceItemConfiguration-Save-button", "static", []),
-            parameters: [],
-          },
-        }]),
+        dataTestIdSet: new Set([makeTestIdEntry({ selector: "MaintenanceItemsMaintenanceItemConfiguration-Save-button", methodName: "Save" })]),
         generatedMethods: new Map([
           ["clickSave", createPomMethodSignature(createPomParameters(["wait", "boolean = true"], ["annotationText", 'string = ""']))],
         ]),
@@ -503,15 +478,12 @@ describe("class-generation coverage", () => {
       const depsChildComponent = makeDeps({
         filePath: path.join(tempRoot, "src", "components", "MaintenanceItems", "MaintenanceItemSelector.vue"),
         isView: false,
-        dataTestIdSet: new Set([{
-          selectorValue: createPomStringPattern("MaintenanceItemsMaintenanceItemSelector-Search-input", "static", []),
-          pom: {
-            nativeRole: "input",
-            methodName: "Search",
-            selector: createPomStringPattern("MaintenanceItemsMaintenanceItemSelector-Search-input", "static", []),
-            parameters: createPomParameters(["text", "string"], ["annotationText", 'string = ""']),
-          },
-        }]),
+        dataTestIdSet: new Set([makeTestIdEntry({
+          selector: "MaintenanceItemsMaintenanceItemSelector-Search-input",
+          methodName: "Search",
+          nativeRole: "input",
+          parameters: [["text", "string"], ["annotationText", 'string = ""']],
+        })]),
         generatedMethods: new Map([
           ["typeSearch", createPomMethodSignature(createPomParameters(["text", "string"], ["annotationText", 'string = ""']))],
         ]),
@@ -558,15 +530,12 @@ describe("class-generation coverage", () => {
           selector: createPomStringPattern("RecordDialog-ActionWrapper-component", "static", []),
           parameters: [],
         }],
-        dataTestIdSet: new Set([{
-          selectorValue: createPomStringPattern("RecordDialog-Name-input", "static", []),
-          pom: {
-            nativeRole: "input",
-            methodName: "Name",
-            selector: createPomStringPattern("RecordDialog-Name-input", "static", []),
-            parameters: createPomParameters(["text", "string"]),
-          },
-        }]),
+        dataTestIdSet: new Set([makeTestIdEntry({
+          selector: "RecordDialog-Name-input",
+          methodName: "Name",
+          nativeRole: "input",
+          parameters: [["text", "string"]],
+        })]),
       });
       const actionWrapper = makeDeps({
         filePath: path.join(tempRoot, "src", "components", "ActionWrapper.vue"),
@@ -583,15 +552,7 @@ describe("class-generation coverage", () => {
       const actionButton = makeDeps({
         filePath: path.join(tempRoot, "src", "components", "ActionButton.vue"),
         isView: false,
-        dataTestIdSet: new Set([{
-          selectorValue: createPomStringPattern("ActionButton-Run-button", "static", []),
-          pom: {
-            nativeRole: "button",
-            methodName: "Run",
-            selector: createPomStringPattern("ActionButton-Run-button", "static", []),
-            parameters: [],
-          },
-        }]),
+        dataTestIdSet: new Set([makeTestIdEntry({ selector: "ActionButton-Run-button", methodName: "Run" })]),
       });
 
       const componentHierarchyMap = new Map<string, IComponentDependencies>([
@@ -668,7 +629,7 @@ describe("class-generation coverage", () => {
       const depsUsersView = makeDeps({
         filePath: path.join(tempRoot, "UsersView.vue"),
         isView: true,
-        dataTestIdSet: new Set([{ selectorValue: createPomStringPattern("UsersView-EnableSessionEmails-toggle", "static", []) }]),
+        dataTestIdSet: new Set([makeTestIdEntry({ selector: "UsersView-EnableSessionEmails-toggle" })]),
       });
 
       // Provide custom widget helpers so the generated file has imports for ToggleWidget.
@@ -780,7 +741,7 @@ describe("class-generation coverage", () => {
         makeDeps({
           filePath: path.join(tempRoot, fileName),
           isView: true,
-          dataTestIdSet: new Set<IDataTestId>([{ selectorValue: createPomStringPattern(`${name}-Sample-button`, "static", []) }]),
+          dataTestIdSet: new Set<IDataTestId>([makeTestIdEntry({ selector: `${name}-Sample-button` })]),
         }),
       ] as const;
 
@@ -804,12 +765,7 @@ describe("class-generation coverage", () => {
       const content = readFile(path.join(outDir, "page-object-models.g.ts"));
 
       // Extract one class block regardless of the (alphabetical) emit order.
-      const extractClass = (name: string): string => {
-        const start = content.indexOf(`export class ${name}`);
-        expect(start, `class ${name} should be generated`).toBeGreaterThan(-1);
-        const nextClass = content.indexOf("export class ", start + 1);
-        return nextClass === -1 ? content.slice(start) : content.slice(start, nextClass);
-      };
+      const extractClass = (name: string): string => extractClassBlock(content, name);
 
       // Shared: named routes drive the runtime router, partitioning the generated method's
       // flat navigation arguments into params and query records. Both warm and cold pages SPA-push
@@ -963,7 +919,7 @@ describe("class-generation coverage", () => {
           makeDeps({
             filePath: viewPath,
             isView: true,
-            dataTestIdSet: new Set<IDataTestId>([{ selectorValue: createPomStringPattern("List-FetchData-button", "static", []) }]),
+            dataTestIdSet: new Set<IDataTestId>([makeTestIdEntry({ selector: "List-FetchData-button" })]),
           }),
         ],
       ]);
@@ -1075,24 +1031,13 @@ describe("class-generation coverage", () => {
             filePath: path.join(tempRoot, "src", "views", "UserListPage.vue"),
             isView: true,
             dataTestIdSet: new Set<IDataTestId>([
-              {
-                selectorValue: createPomStringPattern("UserListPage-Search-input", "static", []),
-                pom: {
-                  nativeRole: "input",
-                  methodName: "Search",
-                  selector: createPomStringPattern("UserListPage-Search-input", "static", []),
-                  parameters: createPomParameters(["text", "string"], ["annotationText", "string = \"\""]),
-                },
-              },
-              {
-                selectorValue: createPomStringPattern("UserListPage-Save-button", "static", []),
-                pom: {
-                  nativeRole: "button",
-                  methodName: "Save",
-                  selector: createPomStringPattern("UserListPage-Save-button", "static", []),
-                  parameters: [],
-                },
-              },
+              makeTestIdEntry({
+                selector: "UserListPage-Search-input",
+                methodName: "Search",
+                nativeRole: "input",
+                parameters: [["text", "string"], ["annotationText", "string = \"\""]],
+              }),
+              makeTestIdEntry({ selector: "UserListPage-Save-button", methodName: "Save" }),
             ]),
           }),
         ],
@@ -1119,15 +1064,14 @@ describe("class-generation coverage", () => {
     const tempRoot = makeTempRoot("vue-pom-csharp-dyn-input-");
 
     try {
-      const dt: IDataTestId = {
-        selectorValue: createPomStringPattern("items-check-${key}", "parameterized", ["key"]),
-        pom: {
-          nativeRole: "input",
-          methodName: "ItemsCheckByKey",
-          selector: createPomStringPattern("items-check-${key}", "parameterized", ["key"]),
-          parameters: createPomParameters(["text", "string"], ["annotationText", "string = \"\""]),
-        },
-      };
+      const dt = makeTestIdEntry({
+        selector: "items-check-${key}",
+        patternKind: "parameterized",
+        patternParams: ["key"],
+        methodName: "ItemsCheckByKey",
+        nativeRole: "input",
+        parameters: [["text", "string"], ["annotationText", "string = \"\""]],
+      });
 
       const componentHierarchyMap = new Map<string, IComponentDependencies>([
         [
@@ -1156,16 +1100,15 @@ describe("class-generation coverage", () => {
     const tempRoot = makeTempRoot("vue-pom-csharp-selector-vars-");
 
     try {
-      const dt: IDataTestId = {
-        selectorValue: createPomStringPattern("items-check-${itemId}", "parameterized", ["itemId"]),
-        pom: {
-          nativeRole: "input",
-          methodName: "ItemsCheckByKey",
-          selector: createPomStringPattern("items-check-${itemId}", "parameterized", ["itemId"]),
-          // Simulate stale/manual IR that forgot to carry the selector variable name.
-          parameters: createPomParameters(["text", "string"], ["annotationText", "string = \"\""]),
-        },
-      };
+      const dt = makeTestIdEntry({
+        selector: "items-check-${itemId}",
+        patternKind: "parameterized",
+        patternParams: ["itemId"],
+        methodName: "ItemsCheckByKey",
+        nativeRole: "input",
+        // Simulate stale/manual IR that forgot to carry the selector variable name.
+        parameters: [["text", "string"], ["annotationText", "string = \"\""]],
+      });
 
       const componentHierarchyMap = new Map<string, IComponentDependencies>([
         [
@@ -1194,15 +1137,12 @@ describe("class-generation coverage", () => {
     const tempRoot = makeTempRoot("vue-pom-csharp-editable-locator-");
 
     try {
-      const dt: IDataTestId = {
-        selectorValue: createPomStringPattern("TenantSelectBox-StateSelectedTenant-input", "static", []),
-        pom: {
-          nativeRole: "input",
-          methodName: "StateSelectedTenant",
-          selector: createPomStringPattern("TenantSelectBox-StateSelectedTenant-input", "static", []),
-          parameters: createPomParameters(["text", "string"], ["annotationText", "string = \"\""]),
-        },
-      };
+      const dt = makeTestIdEntry({
+        selector: "TenantSelectBox-StateSelectedTenant-input",
+        methodName: "StateSelectedTenant",
+        nativeRole: "input",
+        parameters: [["text", "string"], ["annotationText", "string = \"\""]],
+      });
 
       const componentHierarchyMap = new Map<string, IComponentDependencies>([
         [
