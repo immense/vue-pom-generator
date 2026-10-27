@@ -33,7 +33,7 @@ function makeElementNode(overrides: Partial<ElementNode> = {}): ElementNode {
  * Run the metadata-collector transform over one element and return the collected
  * metadata map (the transform's exit hook is invoked, like the compiler would).
  */
-function runCollector(options: { el?: ElementNode | TemplateChildNode, debug?: boolean, component?: string, semanticNames?: Array<[string, string]> } = {}) {
+function runCollector(options: { el?: ElementNode | TemplateChildNode, debug?: boolean, component?: string, expectExitFunction?: boolean, semanticNames?: Array<[string, string]> } = {}) {
   const metadataMap = new Map<string, Map<string, ElementMetadata>>();
   const semanticNameMap = new Map<string, string>(options.semanticNames ?? []);
   const transform = createMetadataCollectorTransform(
@@ -44,6 +44,8 @@ function runCollector(options: { el?: ElementNode | TemplateChildNode, debug?: b
   );
 
   const onExit = transform(options.el ?? makeElementNode(), makeTransformContext());
+  if (options.expectExitFunction)
+    expect(typeof onExit).toBe("function");
   if (typeof onExit === "function")
     onExit();
 
@@ -107,7 +109,7 @@ describe("metadata-collector.ts createMetadataCollectorTransform", () => {
 
   it("returns an exit function that returns early for non-element nodes (lines 56-57)", () => {
     // A text node is not an element: the transform returns an exit function that collects nothing.
-    const { metadataMap } = runCollector({ el: makeTextNode("x") });
+    const { metadataMap } = runCollector({ el: makeTextNode("x"), expectExitFunction: true });
     expect(metadataMap.size).toBe(0);
   });
 
@@ -124,7 +126,10 @@ describe("metadata-collector.ts createMetadataCollectorTransform", () => {
 
   it("logs an empty testId string when no testId prop exists in debug mode (line 65 null branch)", () => {
     // Element with no data-testid prop -> getTestIdFromProp returns null -> debugTestId ?? "" yields "".
-    const logs = captureLogs(() => runCollector({ debug: true, el: makeElementNode({ props: [] }) }));
+    const logs = captureLogs(() => {
+      const { metadataMap } = runCollector({ debug: true, el: makeElementNode({ props: [] }) });
+      expect(metadataMap.size).toBe(0);
+    });
 
     expect(logs.some((l) => l.includes('testId=""'))).toBe(true);
   });
