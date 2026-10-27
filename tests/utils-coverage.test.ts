@@ -1080,46 +1080,20 @@ describe("utils.ts coverage", () => {
     const els = (root.children ?? []).filter((c) => c?.type === NodeTypes.ELEMENT) as ElementNode[];
     expect(els.length).toBe(2);
 
-    const makeDeps = (): IComponentDependencies =>
-      makeComponentDependencies({
-        filePath: "/src/components/MyComp.vue",
-        generatedMethods: new Map(),
-        isView: false,
-      });
-
     // (1) error: throw on first collision
     {
-      const deps = makeDeps();
-      const generatedMethodContentByComponent = new Map<string, Set<string>>();
+      const { apply } = makeApplyContext();
 
-      applyResolvedDataTestId({
-        element: els[0]!,
-        componentName: "MyComp",
-        parentComponentName: "MyComp",
-        dependencies: deps,
-        generatedMethodContentByComponent,
-        nativeRole: "button",
+      apply(els[0]!, {
         preferredGeneratedValue: staticAttributeValue("MyComp-A-button"),
-        keyInfo: null,
-        testIdAttribute: "data-testid",
         existingIdBehavior: "overwrite",
-        addHtmlAttribute: false,
         nameCollisionBehavior: "error",
       });
 
       expect(() => {
-        applyResolvedDataTestId({
-          element: els[1]!,
-          componentName: "MyComp",
-          parentComponentName: "MyComp",
-          dependencies: deps,
-          generatedMethodContentByComponent,
-          nativeRole: "button",
+        apply(els[1]!, {
           preferredGeneratedValue: staticAttributeValue("MyComp-B-button"),
-          keyInfo: null,
-          testIdAttribute: "data-testid",
           existingIdBehavior: "overwrite",
-          addHtmlAttribute: false,
           nameCollisionBehavior: "error",
         });
       }).toThrow(/member-name collision/i);
@@ -1127,38 +1101,19 @@ describe("utils.ts coverage", () => {
 
     // (2) warn: warn and suffix
     {
-      const deps = makeDeps();
-      const generatedMethodContentByComponent = new Map<string, Set<string>>();
+      const { deps, apply } = makeApplyContext();
       const warnings: string[] = [];
 
-      applyResolvedDataTestId({
-        element: els[0]!,
-        componentName: "MyComp",
-        parentComponentName: "MyComp",
-        dependencies: deps,
-        generatedMethodContentByComponent,
-        nativeRole: "button",
+      apply(els[0]!, {
         preferredGeneratedValue: staticAttributeValue("MyComp-A-button"),
-        keyInfo: null,
-        testIdAttribute: "data-testid",
         existingIdBehavior: "overwrite",
-        addHtmlAttribute: false,
         nameCollisionBehavior: "warn",
         warn: (m) => warnings.push(m),
       });
 
-      applyResolvedDataTestId({
-        element: els[1]!,
-        componentName: "MyComp",
-        parentComponentName: "MyComp",
-        dependencies: deps,
-        generatedMethodContentByComponent,
-        nativeRole: "button",
+      apply(els[1]!, {
         preferredGeneratedValue: staticAttributeValue("MyComp-B-button"),
-        keyInfo: null,
-        testIdAttribute: "data-testid",
         existingIdBehavior: "overwrite",
-        addHtmlAttribute: false,
         nameCollisionBehavior: "warn",
         warn: (m) => warnings.push(m),
       });
@@ -1173,38 +1128,19 @@ describe("utils.ts coverage", () => {
 
     // (3) suffix: suffix silently
     {
-      const deps = makeDeps();
-      const generatedMethodContentByComponent = new Map<string, Set<string>>();
+      const { deps, apply } = makeApplyContext();
       let warned = false;
 
-      applyResolvedDataTestId({
-        element: els[0]!,
-        componentName: "MyComp",
-        parentComponentName: "MyComp",
-        dependencies: deps,
-        generatedMethodContentByComponent,
-        nativeRole: "button",
+      apply(els[0]!, {
         preferredGeneratedValue: staticAttributeValue("MyComp-A-button"),
-        keyInfo: null,
-        testIdAttribute: "data-testid",
         existingIdBehavior: "overwrite",
-        addHtmlAttribute: false,
         nameCollisionBehavior: "suffix",
         warn: () => { warned = true; },
       });
 
-      applyResolvedDataTestId({
-        element: els[1]!,
-        componentName: "MyComp",
-        parentComponentName: "MyComp",
-        dependencies: deps,
-        generatedMethodContentByComponent,
-        nativeRole: "button",
+      apply(els[1]!, {
         preferredGeneratedValue: staticAttributeValue("MyComp-B-button"),
-        keyInfo: null,
-        testIdAttribute: "data-testid",
         existingIdBehavior: "overwrite",
-        addHtmlAttribute: false,
         nameCollisionBehavior: "suffix",
         warn: () => { warned = true; },
       });
@@ -1221,22 +1157,13 @@ describe("utils.ts coverage", () => {
     const els = (root.children ?? []).filter((c) => c?.type === NodeTypes.ELEMENT) as ElementNode[];
     expect(els.length).toBe(2);
 
-    const { deps, generatedMethodContentByComponent } = makeApplyContext();
+    const { deps, apply } = makeApplyContext();
 
 
     const applyKeyedPrimary = (element: ElementNode) => {
-      applyResolvedDataTestId({
-        element,
-        componentName: "MyComp",
-        parentComponentName: "MyComp",
-        dependencies: deps,
-        generatedMethodContentByComponent,
-        nativeRole: "button",
+      apply(element, {
         preferredGeneratedValue: templateAttributeValue("MyComp-${value}-mynavitem"),
-        keyInfo: null,
-        testIdAttribute: "data-testid",
         existingIdBehavior: "overwrite",
-        addHtmlAttribute: false,
         nameCollisionBehavior: "error",
         semanticNameHint: "Value",
       });
