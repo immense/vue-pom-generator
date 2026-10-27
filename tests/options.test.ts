@@ -53,7 +53,11 @@ describe("createVuePomGeneratorPlugins options", () => {
     }) => void | Promise<void>;
   }
 
-  const runConfigResolved = async (plugins: Array<object | null | undefined | false>, root: string = "/project") => {
+  const runConfigResolved = async (
+    plugins: Array<object | null | undefined | false>,
+    root: string = "/project",
+    resolvedPlugins?: Parameters<NonNullable<ConfigPlugin["configResolved"]>>[0]["plugins"],
+  ) => {
     const configPlugin = plugins
       .map((p) => {
         if (typeof p !== "object" || !p || !("name" in p))
@@ -74,8 +78,29 @@ describe("createVuePomGeneratorPlugins options", () => {
     await configPlugin.configResolved({
       root,
       logger,
+      plugins: resolvedPlugins,
     });
   };
+
+  async function resolveViteVueCompilerOptions(plugins: Array<object | null | undefined | false>) {
+    const viteVuePlugin = {
+      name: "vite:vue",
+      api: {
+        options: {
+          template: {
+            compilerOptions: {
+              expressionPlugins: ["typescript"],
+            },
+          },
+        },
+      },
+    };
+
+    await runConfigResolved(plugins, "/project", [viteVuePlugin]);
+
+    return (viteVuePlugin.api.options as { template?: { compilerOptions?: { nodeTransforms?: unknown[]; expressionPlugins?: string[]; prefixIdentifiers?: boolean } } })
+      .template?.compilerOptions;
+  }
 
   async function withTempProject(
     files: Record<string, string>,
@@ -126,42 +151,7 @@ describe("createVuePomGeneratorPlugins options", () => {
 
     expect(names).not.toContain("vite:vue");
 
-    const configPlugin = plugins
-      .map((p) => {
-        if (typeof p !== "object" || !p || !("name" in p))
-          return null;
-        return p as ConfigPlugin;
-      })
-      .find(p => p?.name === "vue-pom-generator-config");
-
-    if (!configPlugin?.configResolved)
-      throw new Error("config plugin not found");
-
-    const viteVuePlugin = {
-      name: "vite:vue",
-      api: {
-        options: {
-          template: {
-            compilerOptions: {
-              expressionPlugins: ["typescript"],
-            },
-          },
-        },
-      },
-    };
-
-    await configPlugin.configResolved({
-      root: "/project",
-      logger: {
-        info() {},
-        warn() {},
-        error() {},
-      },
-      plugins: [viteVuePlugin],
-    });
-
-    const compilerOptions = (viteVuePlugin.api.options as { template?: { compilerOptions?: { nodeTransforms?: unknown[]; expressionPlugins?: string[]; prefixIdentifiers?: boolean } } })
-      .template?.compilerOptions;
+    const compilerOptions = await resolveViteVueCompilerOptions(plugins);
 
     expect(compilerOptions?.nodeTransforms?.length).toBeGreaterThan(0);
     expect(compilerOptions?.expressionPlugins).toContain("typescript");
@@ -389,42 +379,7 @@ describe("createVuePomGeneratorPlugins options", () => {
         },
       });
 
-      const configPlugin = plugins
-        .map((p) => {
-          if (typeof p !== "object" || !p || !("name" in p))
-            return null;
-          return p as ConfigPlugin;
-        })
-        .find(p => p?.name === "vue-pom-generator-config");
-
-      if (!configPlugin?.configResolved)
-        throw new Error("config plugin not found");
-
-      const viteVuePlugin = {
-        name: "vite:vue",
-        api: {
-          options: {
-            template: {
-              compilerOptions: {
-                expressionPlugins: ["typescript"],
-              },
-            },
-          },
-        },
-      };
-
-      await configPlugin.configResolved({
-        root: "/project",
-        logger: {
-          info() {},
-          warn() {},
-          error() {},
-        },
-        plugins: [viteVuePlugin],
-      });
-
-      const compilerOptions = (viteVuePlugin.api.options as { template?: { compilerOptions?: { nodeTransforms?: unknown[]; expressionPlugins?: string[]; prefixIdentifiers?: boolean } } })
-        .template?.compilerOptions;
+      const compilerOptions = await resolveViteVueCompilerOptions(plugins);
 
       expect(compilerOptions?.nodeTransforms?.length).toBeGreaterThan(0);
       expect(compilerOptions?.expressionPlugins).toContain("typescript");
