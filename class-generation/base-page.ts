@@ -1,5 +1,5 @@
 import type { Locator, Page } from "playwright";
-import type { PwLocator, PwPage } from "./playwright-types";
+import type { BasePageScreenshotOptions, PwLocator, PwPage } from "./playwright-types";
 
 import { TESTID_CLICK_EVENT_NAME } from "../click-instrumentation";
 import type { TestIdClickEventDetail } from "../click-instrumentation";
@@ -166,6 +166,17 @@ export class BasePage {
 
   public get screencast(): Page["screencast"] {
     return this.page.screencast;
+  }
+
+  /**
+   * Captures a screenshot of the page through the POM, so specs never need the
+   * raw-Page escape hatch for proof captures. Thin delegate to Playwright's
+   * `page.screenshot` — no animation, callout or annotation side effects;
+   * options mirror Playwright's own (`path`, `fullPage`, `timeout`). Resolves
+   * to the image buffer; when `path` is set the file is also written.
+   */
+  public screenshot(options?: BasePageScreenshotOptions): ReturnType<Page["screenshot"]> {
+    return this._page.screenshot(options);
   }
 
   private async waitForTestIdClickEventAfter(testId: string, options?: { timeoutMs?: number }): Promise<void> {

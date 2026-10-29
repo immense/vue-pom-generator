@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { Buffer } from "node:buffer";
 import { describe, expect, it, vi } from "vitest";
 
 import { BasePage, ObjectId, type Fluent } from "../../class-generation/base-page";
@@ -209,6 +210,27 @@ describe("BasePage callout delegation", () => {
     expect(annotation?.getAttribute("data-placement")).toBe("hidden");
   });
 });
+
+describe("BasePage screenshot seam", () => {
+  it("delegates to the page screenshot with the given options and returns the buffer", async () => {
+    const fakePage = new FakePage();
+    fakePage.screenshotResult = Buffer.from("89504e47", "hex");
+    const page = new ExposedBasePage(fakePage);
+    const buffer = await page.screenshot({ fullPage: true, path: "proof/demo.png", timeout: 1_000 });
+
+    expect(buffer).toBe(fakePage.screenshotResult);
+    expect(fakePage.screenshotCalls).toEqual([{ fullPage: true, path: "proof/demo.png", timeout: 1_000 }]);
+  });
+
+  it("passes no options through when called without arguments", async () => {
+    const fakePage = new FakePage();
+    const page = new ExposedBasePage(fakePage);
+    await page.screenshot();
+
+    expect(fakePage.screenshotCalls).toEqual([undefined]);
+  });
+});
+
 
 describe("BasePage action helpers", () => {
   it("animates the cursor via the pointer", async () => {
