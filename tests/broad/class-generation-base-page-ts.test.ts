@@ -229,6 +229,17 @@ describe("BasePage screenshot seam", () => {
 
     expect(fakePage.screenshotCalls).toEqual([undefined]);
   });
+
+  it("preserves the screenshot buffer through a fluent chain", async () => {
+    const fakePage = new FakePage();
+    fakePage.screenshotResult = Buffer.from("89504e47", "hex");
+    const page = new ExposedBasePage(fakePage);
+    const chain = page.makeFluent(async () => page);
+    const buffer = await chain.screenshot({ path: "proof/demo.png" });
+
+    expect(buffer).toBe(fakePage.screenshotResult);
+    expect(fakePage.screenshotCalls).toEqual([{ path: "proof/demo.png" }]);
+  });
 });
 
 

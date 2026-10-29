@@ -53,9 +53,7 @@ const CLICK_EVENT_DEBUG = false;
  */
 type DeepFluent<T, TRoot extends object> = {
   [K in keyof T]: T[K] extends (...args: infer A) => infer _R
-  ? K extends "getObjectId"
-  ? (...args: A) => ValueFluent<Awaited<_R>>
-  : K extends "getObjectIdAsInt"
+  ? K extends "getObjectId" | "getObjectIdAsInt" | "screenshot"
   ? (...args: A) => ValueFluent<Awaited<_R>>
   : (...args: A) => Fluent<TRoot>
   : T[K] extends object
@@ -465,6 +463,7 @@ export class BasePage {
     const VALUE_RETURNING_METHODS = new Set<PropertyKey>([
       "getObjectId",
       "getObjectIdAsInt",
+      "screenshot",
     ]);
 
     const getCtorName = (obj: object): string => {
