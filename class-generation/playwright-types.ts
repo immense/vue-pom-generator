@@ -1,4 +1,4 @@
-import type { Keyboard, Locator, Response, Screencast } from "playwright";
+import type { Keyboard, Locator, Page, Response, Screencast } from "playwright";
 
 
 /**
@@ -79,6 +79,20 @@ export interface BasePageLocator {
 }
 
 /**
+ * Narrow subset of Playwright's screenshot options that
+ * {@link BasePagePage.screenshot} passes through verbatim. Member names and
+ * semantics mirror Playwright's own `page.screenshot` options.
+ */
+export interface BasePageScreenshotOptions {
+  /** Save the screenshot to this file path (PNG unless the extension says otherwise). */
+  path?: string;
+  /** Capture the full scrollable page instead of the visible viewport. */
+  fullPage?: boolean;
+  /** Maximum operation time in milliseconds; `0` disables the timeout. */
+  timeout?: number;
+}
+
+/**
  * Narrow subset of the Playwright {@link Page} surface that the generated POM
  * runtime depends on.
  *
@@ -99,6 +113,7 @@ export interface BasePagePage {
   evaluate<R, Arg = never>(pageFunction: string | ((arg: Arg) => R | Promise<R>), arg?: Arg): Promise<R>;
   readonly keyboard: Keyboard;
   readonly screencast: Screencast;
+  screenshot(options?: BasePageScreenshotOptions): ReturnType<Page["screenshot"]>;
 }
 
 /**

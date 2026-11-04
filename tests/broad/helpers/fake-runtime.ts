@@ -1,8 +1,9 @@
 // @vitest-environment node
+import { Buffer } from "node:buffer";
 import type { Screencast } from "playwright";
 import { JSDOM } from "jsdom";
 
-import type { BasePageLocator, BasePagePage } from "../../../class-generation/playwright-types";
+import type { BasePageLocator, BasePagePage, BasePageScreenshotOptions } from "../../../class-generation/playwright-types";
 
 export interface BoundingBox {
   x: number;
@@ -49,6 +50,13 @@ export class FakePage implements BasePagePage {
   public waitForSelectorCalls: Array<{ selector: string; options?: { state?: "attached" | "detached" | "visible" | "hidden"; timeout?: number; strict?: boolean } }> = [];
   public hoverCalls: string[] = [];
   public selectOptionCalls: Array<{ selector: string; value: string }> = [];
+  public screenshotCalls: Array<BasePageScreenshotOptions | undefined> = [];
+  public screenshotResult: Buffer = Buffer.alloc(0);
+
+  public async screenshot(options?: BasePageScreenshotOptions): Promise<Buffer> {
+    this.screenshotCalls.push(options);
+    return this.screenshotResult;
+  }
 
   public constructor() {
     this.dom = new JSDOM("<!doctype html><html><body></body></html>");
