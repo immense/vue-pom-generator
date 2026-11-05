@@ -16,7 +16,7 @@ import { TypeScriptRenderCache } from "../../typescript-codegen";
 import type { IComponentDependencies, NativeWrappersMap, RouterIntrospectionResult } from "../../utils";
 import { setResolveToComponentNameFn, setRouteNameToComponentNameMap, toPascalCase } from "../../utils";
 import type { VuePomGeneratorLogger } from "../logger";
-import { isPathWithinDir, resolveComponentNameFromPath } from "../path-utils";
+import { isPathWithinDir, resolveComponentNameFromPath, toPosixSlashes } from "../path-utils";
 import type { ResolvedGenerationSupportOptions } from "../resolved-generation-options";
 import { resolveExistingIdBehavior } from "../vue-plugin";
 
@@ -191,7 +191,7 @@ export function createDevProcessorPlugin(options: DevProcessorOptions): PluginOp
           const { descriptor } = parseSfc(source, { filename });
           if (!descriptor.script && !descriptor.scriptSetup)
             return { bindings: undefined, isScriptSetup: false };
-          const scriptBlock = compileScript(descriptor, { id: filename });
+          const scriptBlock = compileScript(descriptor, { id: toPosixSlashes(filename) });
           return { bindings: scriptBlock.bindings, isScriptSetup: !!descriptor.scriptSetup };
         }
         catch {

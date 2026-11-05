@@ -58,6 +58,56 @@ describe("generateVuePoms", () => {
     expect(read("tests/playwright/__generated__/SaveButton.g.ts")).toBe(pom);
   });
 
+  it("supplements v-bind() components whose paths contain backslash separators", async () => {
+    // Reproduces the Windows failure (#80) on any platform: path.resolve() yields
+    // backslash paths on Windows, and compiler-sfc embeds the SFC id verbatim into
+    // generated useCssVars code, where `\u` (from `...\ui-components`) is an
+    // invalid escape sequence. path.resolve keeps the backslash here: a nested
+    // directory on Windows, a single directory whose NAME contains a backslash
+    // on POSIX — both produce the same id shape for the compiler.
+    options.injection = { viewsDir: "src/views", componentDirs: ["src\\ui-components"], layoutDirs: [] };
+    const componentDirAbs = path.resolve(root, "src\\ui-components");
+    fs.mkdirSync(componentDirAbs, { recursive: true });
+    fs.writeFileSync(path.join(componentDirAbs, "VBindBadge.vue"), [
+      "<script setup lang=\"ts\">",
+      "const lines = 2;",
+      "</script>",
+      "<template>",
+      "<span class=\"badge\">Badge</span>",
+      "</template>",
+      "<style scoped>",
+      "-webkit-line-clamp: v-bind(lines);",
+      "</style>",
+    ].join("\n"));
+    await generate();
+    expect(read("tests/playwright/__generated__/VBindBadge.g.ts")).toContain("class VBindBadge");
+  });
+
+  it("keeps hierarchical component names for nested files under backslash directories", async () => {
+    // Component-name matching must be separator-insensitive: on POSIX a
+    // literal-backslash directory stops matching its configured root when the
+    // collection path is canonicalized to posix slashes, and nested components
+    // would all fall back to their basename, overwriting each other's
+    // metadata (PR #81 review).
+    options.injection = { viewsDir: "src/views", componentDirs: ["src\\ui-components"], layoutDirs: [] };
+    const componentDirAbs = path.resolve(root, "src\\ui-components");
+    for (const nested of ["forms", "tables"]) {
+      const dir = path.join(componentDirAbs, nested);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "Badge.vue"), [
+        "<script setup lang=\"ts\">",
+        "const count = 1;",
+        "</script>",
+        "<template>",
+        "<span class=\"badge\">Badge</span>",
+        "</template>",
+      ].join("\n"));
+    }
+    await generate();
+    expect(read("tests/playwright/__generated__/FormsBadge.g.ts")).toContain("class FormsBadge");
+    expect(read("tests/playwright/__generated__/TablesBadge.g.ts")).toContain("class TablesBadge");
+  });
+
   it("prunes renamed components and supports an empty final snapshot in the same process", async () => {
     await generate();
     fs.renameSync(path.join(root, "src/components/SaveButton.vue"), path.join(root, "src/components/ConfirmButton.vue"));

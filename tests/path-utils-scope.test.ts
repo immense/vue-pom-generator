@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { isFileInConfiguredSourceScope } from "../plugin/path-utils";
+import { isFileInConfiguredSourceScope, toPosixSlashes } from "../plugin/path-utils";
 
 describe("isFileInConfiguredSourceScope", () => {
   it("matches mixed-separator Windows paths against cwd-based Nuxt source dirs", () => {
@@ -25,5 +25,12 @@ describe("isFileInConfiguredSourceScope", () => {
       sourceDirs: ["app/pages"],
       pathImpl: path.win32,
     })).toBe(true);
+  });
+});
+
+describe("toPosixSlashes", () => {
+  it("converts Windows separators and leaves posix paths untouched", () => {
+    expect(toPosixSlashes("C:\\repo\\shared\\ui\\src\\components\\Foo.vue")).toBe("C:/repo/shared/ui/src/components/Foo.vue");
+    expect(toPosixSlashes("/repo/shared/ui/Foo.vue")).toBe("/repo/shared/ui/Foo.vue");
   });
 });
