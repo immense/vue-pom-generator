@@ -18,7 +18,7 @@ import type { CrossFileKeyRegistry } from "../transform";
 import type { IComponentDependencies, NativeWrappersMap } from "../utils";
 
 import type { VuePomGeneratorLogger } from "./logger";
-import { isFileInConfiguredSourceScope, resolveComponentNameFromPath } from "./path-utils";
+import { isFileInConfiguredSourceScope, resolveComponentNameFromPath, toPosixSlashes } from "./path-utils";
 import type { ExistingIdBehavior, ExistingIdBehaviorConfig, MissingSemanticNameBehavior, PomNameCollisionBehavior } from "./types";
 
 interface InternalFactoryOptions {
@@ -337,7 +337,16 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     ],
   };
 
-  const collectSource = async (code: string, cleanPath: string): Promise<void> => {
+  const collectSource = async (code: string, rawPath: string): Promise<void> => {
+    // The two collection passes hand us different separator forms of the same
+    // file (native paths from the filesystem walk, posix module ids from Vite).
+    // Canonicalize to posix once so naming, metadata, and generated manifests
+    // agree across passes. This path is also handed to the compiler as the SFC
+    // id, which compiler-generated code (e.g. useCssVars ids) embeds verbatim —
+    // Windows backslashes there would form invalid escape sequences (\u, \x).
+    // Component-name matching is separator-insensitive, so a POSIX directory
+    // whose NAME contains a backslash still matches its configured root.
+    const cleanPath = toPosixSlashes(rawPath);
     const componentName = getComponentNameFromPath(cleanPath);
     loggerRef.current.debug(`Collecting metadata for ${cleanPath} (component: ${componentName})`);
 

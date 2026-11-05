@@ -5,7 +5,7 @@ import { toPascalCase } from "../utils";
 
 type ScopePathApi = Pick<typeof path, "basename" | "isAbsolute" | "normalize" | "resolve" | "sep">;
 
-function toPosixSlashes(value: string): string {
+export function toPosixSlashes(value: string): string {
   let out = "";
   for (let i = 0; i < value.length; i++) {
     const ch = value[i];
@@ -107,7 +107,12 @@ export function resolveComponentNameFromPath(options: ResolveComponentNameOption
   const absFilename = path.isAbsolute(cleanFilename)
     ? cleanFilename
     : path.resolve(projectRoot, cleanFilename);
-  const normalizedAbsFilename = path.normalize(safeRealpath(absFilename));
+  // Compare in posix form: the filename may arrive posix-normalized (Vite module
+  // ids, canonicalized collection paths) while a configured root on POSIX can
+  // legitimately contain a backslash as part of a directory NAME. Platform
+  // normalize keeps those backslashes literal, which would break the prefix
+  // match and drop every component under such a directory to its basename.
+  const normalizedAbsFilename = toPosixSlashes(path.normalize(safeRealpath(absFilename)));
 
   // Build candidate roots from both projectRoot and any extraRoots (e.g. process.cwd() for
   // Nuxt 4 where Vite sets config.root to the app/ subdirectory).
@@ -117,14 +122,14 @@ export function resolveComponentNameFromPath(options: ResolveComponentNameOption
     ...sourceDirs.flatMap(dir => path.isAbsolute(dir) ? [dir] : rootBases.map(base => path.resolve(base, dir))),
   ];
 
-  const potentialRoots = Array.from(new Set(roots.map(r => path.normalize(safeRealpath(r)))))
+  const potentialRoots = Array.from(new Set(roots.map(r => toPosixSlashes(path.normalize(safeRealpath(r))))))
     .sort((a, b) => b.length - a.length); // longest match first
 
   for (const root of potentialRoots) {
-    if (normalizedAbsFilename.startsWith(root + path.sep) || normalizedAbsFilename === root) {
-      const rel = path.relative(root, normalizedAbsFilename);
-      const parsed = path.parse(rel);
-      const segments = path.join(parsed.dir, parsed.name);
+    if (normalizedAbsFilename.startsWith(`${root}/`) || normalizedAbsFilename === root) {
+      const rel = path.posix.relative(root, normalizedAbsFilename);
+      const parsed = path.posix.parse(rel);
+      const segments = path.posix.join(parsed.dir, parsed.name);
       return toPascalCase(segments);
     }
   }
