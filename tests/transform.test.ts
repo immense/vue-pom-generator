@@ -2137,6 +2137,43 @@ describe('createTestIdTransform', () => {
     expect(componentHierarchyMap.get('ActionWithHelp')?.generatedMethods?.has('clickShowHelp')).toBe(true)
   })
 
+  it('suppresses the own fallthrough target after another plugin rewrote the template', () => {
+    // vite-plugin-vue-inspector (bundled by vite-plugin-vue-devtools) inserts data-v-inspector
+    // attributes into the SFC source before the template compiler runs, so element offsets no
+    // longer match the file on disk that the wrapper contract was read from.
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-rewritten-forward-target-'))
+    const source = `<template>
+  <div class="custom-control custom-checkbox">
+    <input v-bind="$attrs" :id="finalId" type="checkbox" class="custom-control-input" :checked="isChecked" @change="updateInput" />
+    <label :for="finalId" class="custom-control-label"><slot /></label>
+  </div>
+</template>
+<script lang="ts" setup>
+import type { HTMLAttributes } from "vue";
+defineOptions({ inheritAttrs: false });
+defineProps<{ class?: HTMLAttributes["class"] }>();
+</script>`
+    const componentPath = writeComponentSfc(tempRoot, 'FormCheckBox', source)
+    const rewritten = source.replace(/<(div|input|label)\b/g, '<$1 data-v-inspector="FormCheckBox.vue:1:1"')
+    const { descriptor } = parseSfc(rewritten, { filename: componentPath })
+
+    const ast = compileAndCaptureAst(descriptor.template?.content ?? '', {
+      filename: componentPath,
+      nodeTransforms: [createTestIdTransform(
+        'FormCheckBox',
+        new Map(),
+        {},
+        [],
+        path.join(tempRoot, 'src', 'views'),
+        { vueFilesPathMap: new Map([['FormCheckBox', componentPath]]) },
+      )],
+    })
+
+    const input = (firstElement(ast).children as ElementNode[])
+      .find(node => node.type === NodeTypes.ELEMENT && node.tag === 'input')!
+    expect(findStaticAttr(input, 'data-testid')).toBeUndefined()
+  })
+
   it('suppresses explicit test-id forwarding targets inside conditional fragments', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-conditional-forward-target-'))
     const source = `<template>
