@@ -110,9 +110,7 @@ describe('wrapper contract analysis', () => {
 
     expect(contract.role).toBe('button')
     expect(contract.forwardedTestIdTargetOffsets.size).toBe(1)
-    expect([...contract.forwardedTestIdTargetSfcOffsets]).toEqual(
-      [...contract.forwardedTestIdTargetOffsets].map(offset => offset + source.indexOf('<button')),
-    )
+    expect([...contract.attrsObjectNames]).toContain('attrs')
   })
 
   it('recognizes a top-level rest binding from useAttrs', () => {

@@ -22,6 +22,7 @@ import { createPomParameterSpec } from "./pom-params";
 import { createPomStringPattern } from "./pom-patterns";
 import {
   buildVueSfcPathIndex,
+  elementExplicitlyForwardsTestId,
   getElementControlRole,
   normalizeWrapperSearchRoots,
   resetWrapperContractCaches,
@@ -997,9 +998,8 @@ export function createTestIdTransform(
     // Vue fallthrough attributes. Do not generate a competing component-internal id on
     // that target; continue traversing so unrelated internal controls still get POM APIs.
     const ownWrapperContract = getWrapperContract(componentName);
-    const elementStartOffset = element.loc.start.offset;
-    const isExplicitFallthroughTarget = ownWrapperContract?.explicitlyForwardedTestIdTargetOffsets.has(elementStartOffset)
-      || ownWrapperContract?.explicitlyForwardedTestIdTargetSfcOffsets.has(elementStartOffset);
+    const isExplicitFallthroughTarget = !!ownWrapperContract
+      && elementExplicitlyForwardsTestId(element, testIdAttribute, ownWrapperContract);
     if (!dependencies.isView && isExplicitFallthroughTarget) {
       return;
     }

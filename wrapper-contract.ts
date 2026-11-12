@@ -64,12 +64,10 @@ export interface WrapperContract {
   targetRoles: Array<NativeRole | null>;
   /** Template-relative start offsets of elements that receive the configured test-id. */
   forwardedTestIdTargetOffsets: ReadonlySet<number>;
-  /** SFC-source-relative equivalents used by @vitejs/plugin-vue's compiler pass. */
-  forwardedTestIdTargetSfcOffsets: ReadonlySet<number>;
-  /** Targets selected by an explicit v-bind rather than Vue's implicit single-root fallthrough. */
-  explicitlyForwardedTestIdTargetOffsets: ReadonlySet<number>;
-  /** SFC-source-relative equivalents for explicit forwarding targets. */
-  explicitlyForwardedTestIdTargetSfcOffsets: ReadonlySet<number>;
+  /** Script names that hold the component's fallthrough attributes (`$attrs`, `const attrs = useAttrs()`). */
+  attrsObjectNames: ReadonlySet<string>;
+  /** Script functions that return the component's fallthrough attributes. */
+  attrsFunctionNames: ReadonlySet<string>;
 }
 
 export interface AnalyzeWrapperContractFromSfcOptions {
@@ -841,10 +839,17 @@ function directiveExpressionSource(directive: DirectiveNode): string {
   return directive.exp.loc?.source || (directive.exp.type === NodeTypes.SIMPLE_EXPRESSION ? directive.exp.content : "");
 }
 
-function elementExplicitlyForwardsTestId(
+/**
+ * Whether `element` receives the caller's test id through an explicit binding such as
+ * `v-bind="$attrs"`, given the component's `$attrs` aliases (a `WrapperContract` carries them).
+ * It inspects the element itself rather than its source offset, so it still holds when another
+ * Vite plugin has rewritten the template before compilation (for example vite-plugin-vue-inspector
+ * adding `data-v-inspector` attributes).
+ */
+export function elementExplicitlyForwardsTestId(
   element: ElementNode,
   testIdAttribute: string,
-  scriptMetadata: ScriptForwardingMetadata,
+  scriptMetadata: Pick<WrapperContract, "attrsObjectNames" | "attrsFunctionNames">,
 ): boolean {
   for (const prop of element.props) {
     if (prop.type !== NodeTypes.DIRECTIVE || prop.name !== "bind" || !prop.exp) {
@@ -907,9 +912,8 @@ export function analyzeWrapperContractFromSfc(options: AnalyzeWrapperContractFro
       role: null,
       targetRoles: [],
       forwardedTestIdTargetOffsets: new Set(),
-      forwardedTestIdTargetSfcOffsets: new Set(),
-      explicitlyForwardedTestIdTargetOffsets: new Set(),
-      explicitlyForwardedTestIdTargetSfcOffsets: new Set(),
+      attrsObjectNames: new Set(),
+      attrsFunctionNames: new Set(),
     };
   }
 
@@ -921,7 +925,6 @@ export function analyzeWrapperContractFromSfc(options: AnalyzeWrapperContractFro
   );
   const ast = parseTemplate(template, { comments: false });
   const targets = new Map<number, ElementNode>();
-  const explicitTargetOffsets = new Set<number>();
 
   if (scriptMetadata.inheritAttrs) {
     for (const element of getRenderedRootElements(ast)) {
@@ -932,7 +935,6 @@ export function analyzeWrapperContractFromSfc(options: AnalyzeWrapperContractFro
   walkTemplate(ast, (element) => {
     if (elementExplicitlyForwardsTestId(element, options.testIdAttribute, scriptMetadata)) {
       targets.set(element.loc.start.offset, element);
-      explicitTargetOffsets.add(element.loc.start.offset);
     }
   });
 
@@ -950,18 +952,12 @@ export function analyzeWrapperContractFromSfc(options: AnalyzeWrapperContractFro
   const role = uniqueRoles.size === 1 && !uniqueRoles.has(null)
     ? targetRoles[0] ?? null
     : null;
-  const templateContentStartOffset = descriptor.template?.loc.start.offset ?? 0;
-  const toSfcOffsets = (offsets: Iterable<number>) => new Set(
-    [...offsets].map(offset => offset + templateContentStartOffset),
-  );
-
   return {
     role,
     targetRoles,
     forwardedTestIdTargetOffsets: new Set(targets.keys()),
-    forwardedTestIdTargetSfcOffsets: toSfcOffsets(targets.keys()),
-    explicitlyForwardedTestIdTargetOffsets: explicitTargetOffsets,
-    explicitlyForwardedTestIdTargetSfcOffsets: toSfcOffsets(explicitTargetOffsets),
+    attrsObjectNames: scriptMetadata.attrsObjectNames,
+    attrsFunctionNames: scriptMetadata.attrsFunctionNames,
   };
 }
 
