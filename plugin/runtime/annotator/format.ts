@@ -3,6 +3,8 @@ import { normalizeInlineText } from "./text-utils";
 export type OutputDetail = "standard" | "forensic";
 
 export interface FormattedAnnotation {
+  /** Stable runtime id of the queued annotation; same id on retries, changed content keeps the id. */
+  id?: string;
   comment: string;
   targetLabel: string;
   source?: string;
@@ -10,6 +12,8 @@ export interface FormattedAnnotation {
   uiText?: string;
   locator?: string;
   domHint?: string;
+  /** Page URL where the annotation was captured (recorded at creation time, survives SPA route changes). */
+  pageUrl?: string;
 }
 
 export function formatAnnotations(

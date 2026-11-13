@@ -27,10 +27,29 @@ const SETTINGS_STORAGE_KEY = "vpg-annotator-settings";
 const ANNOTATIONS_STORAGE_KEY = "vpg-annotator-annotations";
 const TOOLBAR_POSITION_STORAGE_KEY = "vpg-annotator-toolbar-position";
 const RUNTIME_GUARD = "__VUE_POM_GENERATOR_ANNOTATOR_RUNTIME__";
+/**
+ * Where an app registers a submit handler at runtime. Annotator options are serialized into the
+ * injected client, so a function can't be passed through the Vite config.
+ */
+const SUBMIT_HOOK = "__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__";
 
-type RuntimeWindow = Window & {
-  [RUNTIME_GUARD]?: AnnotatorRuntime;
-};
+/**
+ * Receives every queued annotation at once, so feedback that only makes sense together is sent
+ * together. Return true only after the submission is accepted: it clears exactly the submitted
+ * records that are still unchanged. Any other return (false, undefined) or a throw retains the
+ * queue with visible feedback.
+ */
+export type AnnotatorSubmitHandler = (
+  annotations: FormattedAnnotation[],
+  context: { pageUrl: string },
+) => boolean | Promise<boolean>;
+
+declare global {
+  interface Window {
+    [RUNTIME_GUARD]?: AnnotatorRuntime;
+    [SUBMIT_HOOK]?: AnnotatorSubmitHandler;
+  }
+}
 
 interface ToolbarPosition {
   left: number;
@@ -43,13 +62,14 @@ interface ButtonOptions {
   disabled?: boolean;
 }
 
-type ToolbarIconName = "drag" | "inspect" | "preview" | "copy" | "clear" | "settings";
+type ToolbarIconName = "drag" | "inspect" | "preview" | "copy" | "submit" | "clear" | "settings";
 
 const TOOLBAR_ICON_MARKUP: Record<ToolbarIconName, string> = {
   drag: '<svg viewBox="0 0 16 16"><path d="M5 3h1v1H5zM10 3h1v1h-1zM5 7h1v1H5zM10 7h1v1h-1zM5 11h1v1H5zM10 11h1v1h-1z" fill="currentColor" stroke="none" /></svg>',
   inspect: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="4.5"/><path d="M8 1v2.5M8 12.5v2.5M1 8h2.5M12.5 8h2.5"/><circle cx="8" cy="8" r="0.9" fill="currentColor" stroke="none"/></svg>',
   preview: '<svg viewBox="0 0 16 16"><path d="M1.5 8s2.4-4 6.5-4 6.5 4 6.5 4-2.4 4-6.5 4-6.5-4-6.5-4Z"/><circle cx="8" cy="8" r="1.8"/></svg>',
   copy: '<svg viewBox="0 0 16 16"><path d="M6 2.5h6.5v9H6z"/><path d="M3.5 5.5H5v6.5h5.5v1.5h-7z"/></svg>',
+  submit: '<svg viewBox="0 0 16 16"><path d="M14 2 2 7.5l5 1.5 1.5 5z"/><path d="M14 2 7 9"/></svg>',
   clear: '<svg viewBox="0 0 16 16"><path d="M2.5 4.5h11"/><path d="M6 2.5h4"/><path d="M5 4.5v8"/><path d="M8 4.5v8"/><path d="M11 4.5v8"/><path d="M4 4.5h8l-.6 9H4.6z"/></svg>',
   settings: '<svg viewBox="0 0 16 16"><path d="M8 2.2l1 .6 1.2-.2.8 1 .9.7-.3 1.2.5 1-.5 1 .3 1.2-.9.7-.8 1-1.2-.2-1 .6-1-.6-1.2.2-.8-1-.9-.7.3-1.2-.5-1 .5-1-.3-1.2.9-.7.8-1 1.2.2z"/><circle cx="8" cy="8" r="2.2"/></svg>',
 };
@@ -230,6 +250,17 @@ async function copyTextToClipboard(text: string) {
   }
 }
 
+function annotationMatchesSubmitted(submitted: FormattedAnnotation, current: FormattedAnnotation): boolean {
+  return submitted.comment === current.comment
+    && submitted.targetLabel === current.targetLabel
+    && submitted.source === current.source
+    && submitted.component === current.component
+    && submitted.uiText === current.uiText
+    && submitted.locator === current.locator
+    && submitted.domHint === current.domHint
+    && submitted.pageUrl === current.pageUrl;
+}
+
 class AnnotatorRuntime {
   private readonly options: AnnotatorClientOptions;
   private readonly settings: AnnotatorSettings;
@@ -251,6 +282,7 @@ class AnnotatorRuntime {
   private currentPanelEl: HTMLElement | null = null;
   private toastTimer: number | null = null;
   private toolbarPosition: ToolbarPosition | null = null;
+  private submitting = false;
 
   constructor(options: AnnotatorClientOptions) {
     this.options = options;
@@ -332,6 +364,13 @@ class AnnotatorRuntime {
       disabled: this.annotations.length === 0,
     });
 
+    // Only when the app has registered a handler; otherwise Copy is the way out.
+    const submitButton = typeof window[SUBMIT_HOOK] === "function"
+      ? createIconButton("Submit annotations", "submit", () => void this.submitAnnotations(), {
+          disabled: this.submitting || this.annotations.length === 0,
+        })
+      : null;
+
     const clearButton = createIconButton("Clear annotations", "clear", () => this.clearAnnotations(), {
       disabled: this.annotations.length === 0,
     });
@@ -339,7 +378,7 @@ class AnnotatorRuntime {
     const settingsButton = createIconButton("Annotator settings", "settings", () => this.openSettings());
     this.settingsButton = settingsButton;
 
-    this.toolbarEl.append(handle, selectButton, previewButton, copyButton, clearButton, settingsButton, count);
+    this.toolbarEl.append(handle, selectButton, previewButton, copyButton, ...(submitButton ? [submitButton] : []), clearButton, settingsButton, count);
     this.applyToolbarPosition();
   }
 
@@ -602,6 +641,7 @@ class AnnotatorRuntime {
       uiText: getNearbyText(element),
       locator: getNearbyLocator(element),
       domHint: getElementPath(element),
+      pageUrl: window.location.href,
       pageX: rect.left + rect.width / 2,
       pageY: rect.top + window.scrollY,
     };
@@ -868,6 +908,54 @@ class AnnotatorRuntime {
     }
   }
 
+  /** Re-renders the toolbar, for example after an app registers or removes a submit handler. */
+  refresh() {
+    this.renderToolbar();
+  }
+
+  private async submitAnnotations() {
+    if (this.submitting || !this.annotations.length) {
+      return;
+    }
+    const handler = window[SUBMIT_HOOK];
+    if (typeof handler !== "function") {
+      return;
+    }
+
+    this.submitting = true;
+    this.renderToolbar();
+    // Snapshot the queue so annotations added while the handler runs are not cleared with it, and
+    // keep a copy of the exact submitted content: retry sends the same records, and a record is
+    // only cleared if its id AND content still match the snapshot.
+    const batch = [...this.annotations];
+    const submitted = new Map(batch.map(annotation => [annotation.id, { ...annotation }]));
+    try {
+      const accepted = await handler(batch, { pageUrl: window.location.href });
+      // Strict: only an explicit true is a successful submit. Anything else — false, undefined
+      // from an untyped caller, or a throw — retains the queue with visible feedback.
+      if (accepted !== true) {
+        this.showToast("Submit failed");
+        return;
+      }
+      // Keep new drafts and drafts edited (or mutated) after the snapshot; id + content decide.
+      this.annotations = this.annotations.filter((annotation) => {
+        const snapshot = submitted.get(annotation.id);
+        return snapshot === undefined || !annotationMatchesSubmitted(snapshot, annotation);
+      });
+      this.saveAnnotations();
+      this.closePanel();
+      this.showToast("Submitted");
+    }
+    catch (error) {
+      console.error("[vue-pom-generator] Annotator submit handler failed", error);
+      this.showToast("Submit failed");
+    }
+    finally {
+      this.submitting = false;
+      this.renderToolbar();
+    }
+  }
+
   private showToast(message: string) {
     this.toastEl?.remove();
     if (this.toastTimer !== null) {
@@ -890,18 +978,18 @@ class AnnotatorRuntime {
 }
 
 export function mountAnnotatorClient(options: AnnotatorClientOptions) {
-  const runtimeWindow = window as RuntimeWindow;
-  if (runtimeWindow[RUNTIME_GUARD]) {
-    return runtimeWindow[RUNTIME_GUARD]!;
+  if (window[RUNTIME_GUARD]) {
+    return window[RUNTIME_GUARD]!;
   }
 
   const runtime = new AnnotatorRuntime(options);
   runtime.mount();
-  runtimeWindow[RUNTIME_GUARD] = runtime;
+  window[RUNTIME_GUARD] = runtime;
   return runtime;
 }
 
-// Exposed for unit tests. Pure helper (no DOM access).
+// Test-only values and pure helpers (no DOM access).
 export const __internal = {
+  annotationsStorageKey: ANNOTATIONS_STORAGE_KEY,
   placementPrimarySide,
 };

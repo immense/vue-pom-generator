@@ -1,6 +1,6 @@
 import createVuePomGeneratorPlugins from "./plugin/create-vue-pom-generator-plugins";
 import { mountAnnotatorClient } from "./plugin/runtime/annotator/client";
-import type { AnnotatorClientOptions } from "./plugin/runtime/annotator/client";
+import type { AnnotatorClientOptions, AnnotatorSubmitHandler } from "./plugin/runtime/annotator/client";
 
 import type { NuxtPomGeneratorPluginOptions, VuePomGeneratorPluginOptions } from "./plugin/types";
 
@@ -13,7 +13,8 @@ export default createVuePomGeneratorPlugins;
 export { generateVuePoms, type VuePomGenerationViteOptions } from "./plugin/generate-vue-poms";
 
 export { mountAnnotatorClient };
-export type { AnnotatorClientOptions };
+export type { AnnotatorClientOptions, AnnotatorSubmitHandler };
+export type { FormattedAnnotation } from "./plugin/runtime/annotator/format";
 
 export function defineVuePomGeneratorConfig(options: VuePomGeneratorPluginOptions): VuePomGeneratorPluginOptions {
   return options;

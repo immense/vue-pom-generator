@@ -378,6 +378,45 @@ When `runtime.annotator.ui.enabled` is true, the same browser-only client is inj
 for both `vite serve` and `vite build`. Disable it for production in your conditional
 Vite config when the overlay is intended only for development or preview artifacts.
 
+To send annotations somewhere other than the clipboard, register a submit handler at
+runtime. Annotator options are serialized into the injected client, so a function can't
+go through the Vite config. While a handler is registered, the toolbar shows **Submit**,
+which hands over every queued annotation at once, so feedback that only makes sense
+together is sent together:
+
+```ts
+import type { AnnotatorSubmitHandler } from "@immense/vue-pom-generator";
+
+const submit: AnnotatorSubmitHandler = async (annotations, { pageUrl }) => {
+  // Each annotation carries `source` (`<file>:<line>:<column>`), its capture-time
+  // `pageUrl`, `comment`, `targetLabel`, ...
+  await postFeedback(annotations, pageUrl);
+  return true; // only an explicit true is a success; anything else retains the queue
+};
+
+window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__ = submit;
+window.__VUE_POM_GENERATOR_ANNOTATOR_RUNTIME__?.refresh(); // if the overlay is already mounted
+```
+
+The package types declare both window properties, so no local `declare global` is
+needed. The handler is invoked synchronously from the button click, before the overlay
+awaits anything — open popups (`window.open`) before your handler's first `await`.
+Only an explicit `true` counts as a successful submit; any other return (`false`,
+`undefined`) or a throw retains the queue and shows a **Submit failed** toast.
+Thrown errors are also logged to the console with a `[vue-pom-generator]` prefix
+for diagnostics. On success, exactly the submitted records that are still unchanged
+are cleared — new
+drafts and drafts edited while the submit was pending are kept (records are matched
+by id and submitted content), so a retry hands over the same records with the same
+ids. The Submit button is disabled while a submit is in flight.
+Remove the handler and call `refresh()` again to hide the button.
+
+The handler owns authentication, transport, and retry policy. Return `true` only
+after the destination confirms acceptance. A timeout or a closed popup does not
+prove that a remote write failed: retain the queue and reuse the same submission
+identifier until the destination confirms a receipt. The annotator itself makes no
+network requests and does not store destination credentials.
+
 ## Basic Nuxt setup
 
 ```ts
