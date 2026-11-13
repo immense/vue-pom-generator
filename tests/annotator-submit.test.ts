@@ -92,13 +92,14 @@ describe("annotator submit hook", () => {
     await vi.waitFor(() => expect(toast()).toBe("Submitted"));
   });
 
-  it("keeps the queue when the handler declines, resolves without true, or fails", async () => {
+  it("retains the queue with visible feedback unless the handler resolves true", async () => {
     seedAnnotations(1);
     const runtime = mount();
+
     window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__ = () => false;
     runtime.refresh();
     submitButton()!.click();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(toast()).toBe("Submit failed"));
     expect(storedCount()).toBe(1);
 
     window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__ = () => {
@@ -108,14 +109,17 @@ describe("annotator submit hook", () => {
     await vi.waitFor(() => expect(toast()).toBe("Submit failed"));
     expect(storedCount()).toBe(1);
 
-    // A handler that returns early (no true) must never lose the queue.
-    window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__ = () => {};
+    // A JS caller can bypass the type and resolve without a boolean; the runtime must
+    // defensively retain with the same visible feedback.
+    // reason: exercising that defense requires an off-type handler.
+    /* eslint-disable-next-line no-restricted-syntax */
+    window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__ = (() => undefined) as unknown as AnnotatorSubmitHandler;
     submitButton()!.click();
-    await vi.waitFor(() => expect(submitButton()!.disabled).toBe(false));
+    await vi.waitFor(() => expect(toast()).toBe("Submit failed"));
     expect(storedCount()).toBe(1);
   });
 
-  it("retains an annotation edited while a submit is pending, clearing by record not id", async () => {
+  it("retains an annotation edited while a submit is pending, clearing by id and content", async () => {
     seedAnnotations(2);
     const runtime = mount();
     const gate = deferred<boolean>();
@@ -140,6 +144,24 @@ describe("annotator submit hook", () => {
     expect(remaining).toHaveLength(1);
     expect(remaining[0]!.id).toBe("annotation-1");
     expect(remaining[0]!.comment).toBe("edited while pending");
+  });
+
+  it("retains a record the handler mutated in place, since its content no longer matches", async () => {
+    seedAnnotations(1);
+    const runtime = mount();
+    const gate = deferred<boolean>();
+    window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__ = (annotations) => {
+      annotations[0]!.comment = "mutated by handler";
+      return gate.promise;
+    };
+    runtime.refresh();
+
+    submitButton()!.click();
+    gate.release(true);
+    await vi.waitFor(() => expect(storedCount()).toBe(1));
+
+    const remaining = JSON.parse(sessionStorage.getItem("vpg-annotator-annotations") ?? "{}")[PAGE_URL];
+    expect(remaining[0]!.comment).toBe("mutated by handler");
   });
 
   it("ignores duplicate clicks while a submit is in flight, then submits again", async () => {

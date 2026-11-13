@@ -35,13 +35,14 @@ const SUBMIT_HOOK = "__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__";
 
 /**
  * Receives every queued annotation at once, so feedback that only makes sense together is sent
- * together. Return true to clear the submitted annotations; anything else (false, undefined,
- * throw) keeps them.
+ * together. Return true only after the submission is accepted: it clears exactly the submitted
+ * records that are still unchanged. Any other return (false, undefined) or a throw retains the
+ * queue with visible feedback.
  */
 export type AnnotatorSubmitHandler = (
   annotations: FormattedAnnotation[],
   context: { pageUrl: string },
-) => boolean | void | Promise<boolean | void>;
+) => boolean | Promise<boolean>;
 
 declare global {
   interface Window {
@@ -247,6 +248,17 @@ async function copyTextToClipboard(text: string) {
   if (!copied) {
     throw new Error("Clipboard copy failed.");
   }
+}
+
+function annotationMatchesSubmitted(submitted: FormattedAnnotation, current: FormattedAnnotation): boolean {
+  return submitted.comment === current.comment
+    && submitted.targetLabel === current.targetLabel
+    && submitted.source === current.source
+    && submitted.component === current.component
+    && submitted.uiText === current.uiText
+    && submitted.locator === current.locator
+    && submitted.domHint === current.domHint
+    && submitted.pageUrl === current.pageUrl;
 }
 
 class AnnotatorRuntime {
@@ -912,18 +924,24 @@ class AnnotatorRuntime {
 
     this.submitting = true;
     this.renderToolbar();
-    // Snapshot the queue so annotations added while the handler runs are not cleared with it.
+    // Snapshot the queue so annotations added while the handler runs are not cleared with it, and
+    // keep a copy of the exact submitted content: retry sends the same records, and a record is
+    // only cleared if its id AND content still match the snapshot.
     const batch = [...this.annotations];
+    const submitted = new Map(batch.map(annotation => [annotation.id, { ...annotation }]));
     try {
       const accepted = await handler(batch, { pageUrl: window.location.href });
-      // Strict: only an explicit true clears. undefined/false keep the queue so a
-      // handler that returns early never loses the user's notes.
+      // Strict: only an explicit true is a successful submit. Anything else — false, undefined
+      // from an untyped caller, or a throw — retains the queue with visible feedback.
       if (accepted !== true) {
+        this.showToast("Submit failed");
         return;
       }
-      // Clear by record identity, not id: an annotation edited while this submit was
-      // pending is a new record with the same id and must survive the receipt.
-      this.annotations = this.annotations.filter(annotation => !batch.includes(annotation));
+      // Keep new drafts and drafts edited (or mutated) after the snapshot; id + content decide.
+      this.annotations = this.annotations.filter((annotation) => {
+        const snapshot = submitted.get(annotation.id);
+        return snapshot === undefined || !annotationMatchesSubmitted(snapshot, annotation);
+      });
       this.saveAnnotations();
       this.closePanel();
       this.showToast("Submitted");
