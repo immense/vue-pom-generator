@@ -399,9 +399,12 @@ window.__VUE_POM_GENERATOR_ANNOTATOR_RUNTIME__?.refresh(); // if the overlay is 
 ```
 
 The package types declare both window properties, so no local `declare global` is
-needed. Resolving (or returning true) clears exactly the submitted annotations —
+needed. The handler is invoked synchronously from the button click, before the overlay
+awaits anything — open popups (`window.open`) before your handler's first `await`.
+Resolving (or returning true) clears exactly the submitted annotations —
 anything added while the handler runs waits for the next submit; returning false or
-throwing keeps the queue. The Submit button is disabled while a submit is in flight.
+throwing keeps the queue unchanged, so a retry hands over the same records with the
+same ids. The Submit button is disabled while a submit is in flight.
 Remove the handler and call `refresh()` again to hide the button.
 
 ## Basic Nuxt setup

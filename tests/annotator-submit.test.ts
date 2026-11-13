@@ -130,6 +130,24 @@ describe("annotator submit hook", () => {
     expect(storedCount()).toBe(2);
   });
 
+  it("invokes the handler synchronously within the click gesture, before any await", () => {
+    seedAnnotations(1);
+    const runtime = mount();
+    const order: string[] = [];
+    window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__ = () => {
+      order.push("handler");
+      return true;
+    };
+    runtime.refresh();
+
+    submitButton()!.click();
+    order.push("after-click");
+
+    // Popup flows rely on this: the handler runs inside the user gesture, so a
+    // window.open before the handler's first await is allowed.
+    expect(order).toEqual(["handler", "after-click"]);
+  });
+
   it("keeps annotations added while a submit is in flight", async () => {
     seedAnnotations(1);
     const runtime = mount();
