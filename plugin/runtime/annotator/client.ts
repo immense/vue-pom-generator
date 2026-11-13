@@ -946,7 +946,8 @@ class AnnotatorRuntime {
       this.closePanel();
       this.showToast("Submitted");
     }
-    catch {
+    catch (error) {
+      console.error("[vue-pom-generator] Annotator submit handler failed", error);
       this.showToast("Submit failed");
     }
     finally {
@@ -987,7 +988,8 @@ export function mountAnnotatorClient(options: AnnotatorClientOptions) {
   return runtime;
 }
 
-// Exposed for unit tests. Pure helper (no DOM access).
+// Test-only values and pure helpers (no DOM access).
 export const __internal = {
+  annotationsStorageKey: ANNOTATIONS_STORAGE_KEY,
   placementPrimarySide,
 };

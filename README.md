@@ -402,8 +402,10 @@ The package types declare both window properties, so no local `declare global` i
 needed. The handler is invoked synchronously from the button click, before the overlay
 awaits anything — open popups (`window.open`) before your handler's first `await`.
 Only an explicit `true` counts as a successful submit; any other return (`false`,
-`undefined`) or a throw retains the queue and shows a **Submit failed** toast. On
-success, exactly the submitted records that are still unchanged are cleared — new
+`undefined`) or a throw retains the queue and shows a **Submit failed** toast.
+Thrown errors are also logged to the console with a `[vue-pom-generator]` prefix
+for diagnostics. On success, exactly the submitted records that are still unchanged
+are cleared — new
 drafts and drafts edited while the submit was pending are kept (records are matched
 by id and submitted content), so a retry hands over the same records with the same
 ids. The Submit button is disabled while a submit is in flight.

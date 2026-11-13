@@ -4,12 +4,13 @@
 // Submit hands over the whole queue at once so feedback that belongs together is sent together.
 // Failure keeps the queue, double-clicks during flight are ignored, and annotations added while the
 // handler runs survive a resolving submit.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { mountAnnotatorClient } from "../plugin/runtime/annotator/client";
+import { __internal, mountAnnotatorClient } from "../plugin/runtime/annotator/client";
 import type { AnnotatorSubmitHandler } from "../plugin/runtime/annotator/client";
 
 const PAGE_URL = window.location.href;
+const ANNOTATIONS_STORAGE_KEY = __internal.annotationsStorageKey;
 
 function seedAnnotations(count: number) {
   const records = Array.from({ length: count }, (_, index) => ({
@@ -21,7 +22,7 @@ function seedAnnotations(count: number) {
     pageX: 100,
     pageY: 100,
   }));
-  sessionStorage.setItem("vpg-annotator-annotations", JSON.stringify({ [PAGE_URL]: records }));
+  sessionStorage.setItem(ANNOTATIONS_STORAGE_KEY, JSON.stringify({ [PAGE_URL]: records }));
 }
 
 function mount() {
@@ -35,7 +36,7 @@ function mount() {
 }
 
 const submitButton = () => document.querySelector<HTMLButtonElement>('button[aria-label="Submit annotations"]');
-const storedCount = () => (JSON.parse(sessionStorage.getItem("vpg-annotator-annotations") ?? "{}")[PAGE_URL] ?? []).length;
+const storedCount = () => (JSON.parse(sessionStorage.getItem(ANNOTATIONS_STORAGE_KEY) ?? "{}")[PAGE_URL] ?? []).length;
 const toast = () => document.querySelector(".vpg-annotator-toast")?.textContent;
 
 function deferred<T>() {
@@ -53,6 +54,7 @@ describe("annotator submit hook", () => {
     delete window.__VUE_POM_GENERATOR_ANNOTATOR_RUNTIME__;
     delete window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__;
   });
+  afterEach(() => vi.restoreAllMocks());
 
   it("offers no Submit button until an app registers a handler", () => {
     seedAnnotations(1);
@@ -95,19 +97,23 @@ describe("annotator submit hook", () => {
   it("retains the queue with visible feedback unless the handler resolves true", async () => {
     seedAnnotations(1);
     const runtime = mount();
+    const failureLog = vi.spyOn(console, "error").mockImplementation(() => {});
 
     window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__ = () => false;
     runtime.refresh();
     submitButton()!.click();
     await vi.waitFor(() => expect(toast()).toBe("Submit failed"));
     expect(storedCount()).toBe(1);
+    expect(failureLog).not.toHaveBeenCalled();
 
+    const failure = new Error("offline");
     window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__ = () => {
-      throw new Error("offline");
+      throw failure;
     };
     submitButton()!.click();
     await vi.waitFor(() => expect(toast()).toBe("Submit failed"));
     expect(storedCount()).toBe(1);
+    expect(failureLog).toHaveBeenCalledExactlyOnceWith("[vue-pom-generator] Annotator submit handler failed", failure);
 
     // A JS caller can bypass the type and resolve without a boolean; the runtime must
     // defensively retain with the same visible feedback.
@@ -140,7 +146,7 @@ describe("annotator submit hook", () => {
     gate.release(true);
     await vi.waitFor(() => expect(storedCount()).toBe(1));
 
-    const remaining = JSON.parse(sessionStorage.getItem("vpg-annotator-annotations") ?? "{}")[PAGE_URL];
+    const remaining = JSON.parse(sessionStorage.getItem(ANNOTATIONS_STORAGE_KEY) ?? "{}")[PAGE_URL];
     expect(remaining).toHaveLength(1);
     expect(remaining[0]!.id).toBe("annotation-1");
     expect(remaining[0]!.comment).toBe("edited while pending");
@@ -160,7 +166,7 @@ describe("annotator submit hook", () => {
     gate.release(true);
     await vi.waitFor(() => expect(storedCount()).toBe(1));
 
-    const remaining = JSON.parse(sessionStorage.getItem("vpg-annotator-annotations") ?? "{}")[PAGE_URL];
+    const remaining = JSON.parse(sessionStorage.getItem(ANNOTATIONS_STORAGE_KEY) ?? "{}")[PAGE_URL];
     expect(remaining[0]!.comment).toBe("mutated by handler");
   });
 
@@ -231,7 +237,7 @@ describe("annotator submit hook", () => {
     gate.release(true);
     await vi.waitFor(() => expect(storedCount()).toBe(1));
 
-    const remaining = JSON.parse(sessionStorage.getItem("vpg-annotator-annotations") ?? "{}")[PAGE_URL];
+    const remaining = JSON.parse(sessionStorage.getItem(ANNOTATIONS_STORAGE_KEY) ?? "{}")[PAGE_URL];
     expect(remaining).toHaveLength(1);
     expect(remaining[0]!.comment).toBe("late feedback");
     expect(handler.mock.calls[0]![0]).toHaveLength(1); // handler got the pre-flight snapshot only
