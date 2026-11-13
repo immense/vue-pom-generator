@@ -378,6 +378,32 @@ When `runtime.annotator.ui.enabled` is true, the same browser-only client is inj
 for both `vite serve` and `vite build`. Disable it for production in your conditional
 Vite config when the overlay is intended only for development or preview artifacts.
 
+To send annotations somewhere other than the clipboard, register a submit handler at
+runtime. Annotator options are serialized into the injected client, so a function can't
+go through the Vite config. While a handler is registered, the toolbar shows **Submit**,
+which hands over every queued annotation at once, so feedback that only makes sense
+together is sent together:
+
+```ts
+import type { AnnotatorSubmitHandler } from "@immense/vue-pom-generator";
+
+const submit: AnnotatorSubmitHandler = async (annotations, { pageUrl }) => {
+  // Each annotation carries `source` (`<file>:<line>:<column>`), its capture-time
+  // `pageUrl`, `comment`, `targetLabel`, ...
+  await postFeedback(annotations, pageUrl);
+  return true; // clear the queue; return false (or throw) to keep it
+};
+
+window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__ = submit;
+window.__VUE_POM_GENERATOR_ANNOTATOR_RUNTIME__?.refresh(); // if the overlay is already mounted
+```
+
+The package types declare both window properties, so no local `declare global` is
+needed. Resolving (or returning true) clears exactly the submitted annotations —
+anything added while the handler runs waits for the next submit; returning false or
+throwing keeps the queue. The Submit button is disabled while a submit is in flight.
+Remove the handler and call `refresh()` again to hide the button.
+
 ## Basic Nuxt setup
 
 ```ts

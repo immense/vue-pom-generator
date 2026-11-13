@@ -10,6 +10,8 @@ export interface FormattedAnnotation {
   uiText?: string;
   locator?: string;
   domHint?: string;
+  /** Page URL where the annotation was captured (recorded at creation time, survives SPA route changes). */
+  pageUrl?: string;
 }
 
 export function formatAnnotations(
