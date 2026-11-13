@@ -92,7 +92,7 @@ describe("annotator submit hook", () => {
     await vi.waitFor(() => expect(toast()).toBe("Submitted"));
   });
 
-  it("keeps the queue when the handler declines or fails", async () => {
+  it("keeps the queue when the handler declines, resolves without true, or fails", async () => {
     seedAnnotations(1);
     const runtime = mount();
     window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__ = () => false;
@@ -107,6 +107,39 @@ describe("annotator submit hook", () => {
     submitButton()!.click();
     await vi.waitFor(() => expect(toast()).toBe("Submit failed"));
     expect(storedCount()).toBe(1);
+
+    // A handler that returns early (no true) must never lose the queue.
+    window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__ = () => {};
+    submitButton()!.click();
+    await vi.waitFor(() => expect(submitButton()!.disabled).toBe(false));
+    expect(storedCount()).toBe(1);
+  });
+
+  it("retains an annotation edited while a submit is pending, clearing by record not id", async () => {
+    seedAnnotations(2);
+    const runtime = mount();
+    const gate = deferred<boolean>();
+    const handler = vi.fn<AnnotatorSubmitHandler>(() => gate.promise);
+    window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__ = handler;
+    runtime.refresh();
+
+    submitButton()!.click();
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+    expect(handler.mock.calls[0]![0].map(a => a.comment)).toEqual(["feedback item 1", "feedback item 2"]);
+
+    // The user edits annotation 1 while the submit is pending.
+    document.querySelector<HTMLButtonElement>(".vpg-annotator-marker")!.click();
+    const comment = document.querySelector<HTMLTextAreaElement>(".vpg-annotator-comment")!;
+    comment.value = "edited while pending";
+    document.querySelector<HTMLButtonElement>('button[aria-label="Save"]')!.click();
+
+    gate.release(true);
+    await vi.waitFor(() => expect(storedCount()).toBe(1));
+
+    const remaining = JSON.parse(sessionStorage.getItem("vpg-annotator-annotations") ?? "{}")[PAGE_URL];
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]!.id).toBe("annotation-1");
+    expect(remaining[0]!.comment).toBe("edited while pending");
   });
 
   it("ignores duplicate clicks while a submit is in flight, then submits again", async () => {

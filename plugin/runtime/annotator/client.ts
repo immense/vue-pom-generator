@@ -35,8 +35,8 @@ const SUBMIT_HOOK = "__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__";
 
 /**
  * Receives every queued annotation at once, so feedback that only makes sense together is sent
- * together. Resolve (or return true) to clear the submitted annotations; return false or throw to
- * keep them.
+ * together. Return true to clear the submitted annotations; anything else (false, undefined,
+ * throw) keeps them.
  */
 export type AnnotatorSubmitHandler = (
   annotations: FormattedAnnotation[],
@@ -916,11 +916,14 @@ class AnnotatorRuntime {
     const batch = [...this.annotations];
     try {
       const accepted = await handler(batch, { pageUrl: window.location.href });
-      if (accepted === false) {
+      // Strict: only an explicit true clears. undefined/false keep the queue so a
+      // handler that returns early never loses the user's notes.
+      if (accepted !== true) {
         return;
       }
-      const submittedIds = new Set(batch.map(annotation => annotation.id));
-      this.annotations = this.annotations.filter(annotation => !submittedIds.has(annotation.id));
+      // Clear by record identity, not id: an annotation edited while this submit was
+      // pending is a new record with the same id and must survive the receipt.
+      this.annotations = this.annotations.filter(annotation => !batch.includes(annotation));
       this.saveAnnotations();
       this.closePanel();
       this.showToast("Submitted");
