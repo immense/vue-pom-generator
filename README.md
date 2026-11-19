@@ -1079,6 +1079,26 @@ const brandCallout: CalloutRenderer = {
 setDefaultCalloutRenderer(brandCallout);
 ```
 
+To act around what page objects do, such as moving a video camera with the pointer, register action hooks. Every page object, generated or handwritten, calls them around each pointer move, click and text input, and waits for each one before it continues. They are read as each action runs, so a fixture can set them for one test and pass `undefined` to `setActionHooks` afterwards. Move hooks run only while animations are enabled, since nothing moves otherwise; a pointer's first move, with no position yet, places it on its target (`from` equals `to`).
+
+```ts
+import { setActionHooks } from "@immense/vue-pom-generator/playwright/runtime";
+
+setActionHooks({
+  // Zoom out before the pointer travels, then in on the target once it stops.
+  async beforeMove({ from, to }) { await camera.show(spanning(from, to)); },
+  async afterMove({ box }) { await camera.show(box); },
+  async afterClick() { await camera.hold(); },
+  async beforeInput({ box }) { if (box) await camera.show(box); },
+});
+```
+
+| Hook | Runs | Gets |
+| --- | --- | --- |
+| `beforeMove`, `afterMove` | before the pointer starts moving, after it stops | `page`, `target`, `box`, `from`, `to`, `durationMilliseconds` |
+| `beforeClick`, `afterClick` | before the click, after it (and after the click instrumentation wait) | `page`, `target`, `box` |
+| `beforeInput`, `afterInput` | before the text is typed or filled, after it | `page`, `target`, `box`, `text` |
+
 The example below uses the optional floating-ui renderer so the callout can auto-place around nearby UI and point back to the target with an arrow.
 
 Example floating-ui callout sequence captured from the Playwright fixture coverage:
