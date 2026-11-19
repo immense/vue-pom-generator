@@ -303,7 +303,7 @@ async function introspectRouteMetaEntries(
   const extraRoots = process.cwd() !== root ? [process.cwd()] : [];
 
   const { routeMetaEntries } = routerType === "nuxt"
-    ? await introspectNuxtPages(root, { pageDirs: pageDirsAbs })
+    ? await introspectNuxtPages(root, { pageDirs: pageDirsAbs, collectComponentFiles: options.collectComponentFiles })
     : await parseRouterFileFromCwd(resolveRouterEntry(root, routerEntry), {
       componentNaming: {
         projectRoot: root,

@@ -4,7 +4,6 @@
  */
 
 import path from "node:path";
-import { camelize, capitalize } from "@vue/shared";
 import type { AccessibilityAuditResult } from "./accessibility-audit";
 import { buildAccessibilityAudit } from "./accessibility-audit";
 import type { ElementMetadata } from "./metadata-collector";
@@ -13,7 +12,7 @@ import type { RouterIntrospectionResult } from "./router-introspection";
 import { buildPomLocatorDescription, humanizePomMethodName } from "./pom-discoverability";
 import type { PomParameterSpec } from "./pom-params";
 import type { IComponentDependencies, IDataTestId, PomExtraClickMethodSpec, PomPrimarySpec } from "./utils";
-import { buildPomGeneratedActionName, buildPomGeneratedPropertyName } from "./utils";
+import { buildPomGeneratedActionName, buildPomGeneratedPropertyName, toPascalCase } from "./utils";
 import { renderSourceFile, renderStructuredSourceFile, StructureKind, VariableDeclarationKind, type TypeScriptRenderCache, type WriterFunction } from "./typescript-codegen";
 
 export type PomManifestEntry = {
@@ -211,7 +210,7 @@ function buildComponentGraph(
     name,
     // Templates may use kebab-case tags; tags that are not project components (built-ins, libraries) drop out.
     uses: sortedUnique(Array.from(dependencies.usedComponentSet).flatMap((tag) => {
-      const ref = resolveTrackedComponentRef(capitalize(camelize(tag)), componentHierarchyMap);
+      const ref = resolveTrackedComponentRef(toPascalCase(tag), componentHierarchyMap);
       const used = ref ? componentHierarchyMap.get(ref) : undefined;
       return used ? [toProjectPath(used.filePath)] : [];
     })),

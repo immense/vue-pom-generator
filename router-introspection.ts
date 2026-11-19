@@ -1078,7 +1078,7 @@ function toPathSegments(value: string): string[] {
 
 export async function introspectNuxtPages(
   projectRoot: string,
-  options: { pageDirs?: string[] } = {},
+  options: { pageDirs?: string[] } & Pick<RouterIntrospectionOptions, "collectComponentFiles"> = {},
 ): Promise<RouterIntrospectionResult> {
   const possiblePageDirs = options.pageDirs?.length
     ? options.pageDirs
@@ -1146,7 +1146,7 @@ export async function introspectNuxtPages(
         pathTemplate,
         params,
         query: [],
-        componentFiles: [fullPath],
+        ...(options.collectComponentFiles ? { componentFiles: [fullPath] } : {}),
       });
     }
   };

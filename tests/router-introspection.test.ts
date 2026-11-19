@@ -420,6 +420,7 @@ describe("parseRouterFileFromCwd", () => {
 
       const result = await introspectNuxtPages(tempRoot, {
         pageDirs: [pageDir],
+        collectComponentFiles: true,
       });
 
       expect(result.routePathMap.get("/administration/users")).toBe("AdministrationUsersIndex");
@@ -431,6 +432,9 @@ describe("parseRouterFileFromCwd", () => {
       expect(reportMeta?.params).toEqual([{ name: "id", optional: false }]);
       expect(reportMeta?.path).toBe("/reports/:id");
       expect(reportMeta?.componentFiles).toEqual([path.join(pageDir, "reports", "[id].vue")]);
+
+      const plain = await introspectNuxtPages(tempRoot, { pageDirs: [pageDir] });
+      expect(plain.routeMetaEntries.every(entry => entry.componentFiles === undefined)).toBe(true);
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
