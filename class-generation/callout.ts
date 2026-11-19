@@ -312,6 +312,18 @@ const __pw_default_callout_renderer__: CalloutRenderer = {
 
 export const simpleCalloutRenderer = __pw_default_callout_renderer__;
 
+let defaultCalloutRenderer: CalloutRenderer = simpleCalloutRenderer;
+
+/**
+ * Sets the process-wide callout renderer used by every `Callout` (and therefore every
+ * generated `BasePage`) constructed without a per-instance `renderer`. Call it before
+ * page objects are created, e.g. at module load of the project's shared `test` module.
+ * Pass `simpleCalloutRenderer` to restore the built-in callout.
+ */
+export function setDefaultCalloutRenderer(renderer: CalloutRenderer): void {
+	defaultCalloutRenderer = renderer;
+}
+
 export class Callout {
 	private readonly page: PwPage;
 	private readonly extraOverlayIds: string[];
@@ -320,7 +332,7 @@ export class Callout {
 	public constructor(page: PwPage, options?: CalloutOptions) {
 		this.page = page;
 		this.extraOverlayIds = options?.extraOverlayIds ?? [];
-		this.renderer = options?.renderer ?? __pw_default_callout_renderer__;
+		this.renderer = options?.renderer ?? defaultCalloutRenderer;
 	}
 
 	private toLocator(target: ElementTarget): PwLocator {

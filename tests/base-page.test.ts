@@ -2,7 +2,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { BasePage } from "../class-generation/base-page";
+import { POINTER_CALLOUT_IDS, type CalloutRenderer, setDefaultCalloutRenderer, simpleCalloutRenderer } from "../class-generation/callout";
 import { FakeLocator, FakePage } from "./broad/helpers/fake-runtime";
+
+function createRecordingCalloutRenderer(): CalloutRenderer & { hide: ReturnType<typeof vi.fn>; show: ReturnType<typeof vi.fn> } {
+  return { hide: vi.fn(async () => {}), show: vi.fn(async () => {}) };
+}
 
 class TestBasePage extends BasePage {
   public getLocator(testId: string, description?: string) {
@@ -58,5 +63,35 @@ describe("BasePage", () => {
     expect(root.locator).toHaveBeenNthCalledWith(1, '[data-testid="required-option"]');
     expect(root.locator).toHaveBeenNthCalledWith(2, '[data-pom-instance="field-name-component"]');
     expect(page.locator).not.toHaveBeenCalled();
+  });
+
+  it("renders callouts with the process-wide default renderer when no per-instance renderer is given", async () => {
+    const processDefault = createRecordingCalloutRenderer();
+    const perInstance = createRecordingCalloutRenderer();
+    setDefaultCalloutRenderer(processDefault);
+    try {
+      const page = new FakePage();
+      const target = new FakeLocator({ tagName: "BUTTON" });
+
+      await new BasePage(page).showCallout(target, "Save the tenant");
+      await new BasePage(page, { renderers: { callout: perInstance } }).showCallout(target, "Per-instance wins");
+
+      expect(processDefault.show).toHaveBeenCalledTimes(1);
+      expect(processDefault.show).toHaveBeenCalledWith(page, expect.objectContaining({ target, text: "Save the tenant" }));
+      expect(perInstance.show).toHaveBeenCalledWith(page, expect.objectContaining({ text: "Per-instance wins" }));
+      expect(page.dom.window.document.getElementById(POINTER_CALLOUT_IDS.annotation)).toBeNull();
+    }
+    finally {
+      setDefaultCalloutRenderer(simpleCalloutRenderer);
+    }
+  });
+
+  it("keeps the built-in callout when no default renderer has been set", async () => {
+    const page = new FakePage();
+
+    await new BasePage(page).showCallout(new FakeLocator({ tagName: "BUTTON" }), "Built-in bubble");
+
+    const annotation = page.dom.window.document.getElementById(POINTER_CALLOUT_IDS.annotation);
+    expect(annotation?.textContent).toBe("Built-in bubble");
   });
 });

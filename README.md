@@ -1015,7 +1015,29 @@ Current caveats:
 - generic wrapper-only component fallbacks whose best standalone name is just their wrapper class are skipped so parent views/components keep the more meaningful handler-derived API
 - an override class still needs a `new (page)`-compatible constructor because that is what fixtures call
 
-By default the runtime uses a simple red fallback bubble. The example below uses the optional floating-ui renderer so the callout can auto-place around nearby UI and point back to the target with an arrow.
+By default the runtime uses a simple red fallback bubble. Generated page objects are constructed without renderer options, so to restyle every callout in the process, register a default renderer once (for example in the module that builds your shared `test`). A per-instance `renderers.callout` still wins, and `setDefaultCalloutRenderer(simpleCalloutRenderer)` restores the built-in bubble.
+
+```ts
+// tests/playwright/test-base.ts
+import { setDefaultCalloutRenderer, type CalloutRenderer } from "./__generated__";
+
+const brandCallout: CalloutRenderer = {
+  async show(page, { targetBox, text }) {
+    await page.evaluate(({ box, label }) => {
+      const el = document.getElementById("my-callout") ?? document.body.appendChild(Object.assign(document.createElement("div"), { id: "my-callout" }));
+      el.textContent = label;
+      el.setAttribute("style", `position:fixed;z-index:2147483647;pointer-events:none;left:${box.x}px;top:${box.y + box.height + 8}px;padding:8px 12px;background:#1d4ed8;color:#fff;border-radius:6px;`);
+    }, { box: targetBox, label: text });
+  },
+  async hide(page) {
+    await page.evaluate(() => document.getElementById("my-callout")?.remove());
+  },
+};
+
+setDefaultCalloutRenderer(brandCallout);
+```
+
+The example below uses the optional floating-ui renderer so the callout can auto-place around nearby UI and point back to the target with an arrow.
 
 Example floating-ui callout sequence captured from the Playwright fixture coverage:
 
