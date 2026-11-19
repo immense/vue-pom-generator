@@ -1988,12 +1988,11 @@ function maybeGenerateFixtureRegistry(
     ctorExpression: fixtureCtorExpression(name),
   }));
 
-  const takenFixtureNames = new Set([
-    ...reservedPlaywrightFixtureNames,
-    "pomSetup",
-    "pomFactory",
-    "pomDiagnosticsSetup",
-    ...fixtureClassNames.map(lowerFirst),
+  // Fixture name -> what already owns it, so collision errors can name the source.
+  const takenFixtureNames = new Map<string, string>([
+    ...[...reservedPlaywrightFixtureNames, "pomSetup", "pomFactory", "pomDiagnosticsSetup"]
+      .map(name => [name, "a built-in Playwright or vue-pom-generator fixture"] as const),
+    ...fixtureClassNames.map(name => [lowerFirst(name), `the generated fixture for "${name}"`] as const),
   ]);
   const customCtorEntries = customPomFixtures.map((className, index) => {
     if (customPomFixtures.indexOf(className) !== index) {
@@ -2011,13 +2010,14 @@ function maybeGenerateFixtureRegistry(
       );
     }
     const fixtureName = lowerFirst(className);
-    if (takenFixtureNames.has(fixtureName)) {
+    const existingOwner = takenFixtureNames.get(fixtureName);
+    if (existingOwner) {
       throw new VuePomGeneratorError(
-        `Custom POM fixture "${fixtureName}" (from "${className}") collides with an existing fixture name.\n`
+        `Custom POM fixture "${fixtureName}" (from "${className}") collides with ${existingOwner}.\n`
         + `Rename the class or remove it from generation.playwright.customPoms.fixtures.`,
       );
     }
-    takenFixtureNames.add(fixtureName);
+    takenFixtureNames.set(fixtureName, `the custom POM fixture for "${className}"`);
     return {
       className,
       fixtureName,

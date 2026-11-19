@@ -558,8 +558,8 @@ describe("generated output", () => {
 
     await expect(generate(["SettingsPanel", "SettingsPanel"])).rejects.toThrow(/Custom POM fixture class "SettingsPanel" is listed more than once/);
     await expect(generate(["MissingPanel"])).rejects.toThrow(/Custom POM fixture class "MissingPanel" was not found/);
-    await expect(generate(["Page"])).rejects.toThrow(/Custom POM fixture "page" \(from "Page"\) collides/);
-    await expect(generate(["PersonListPage"])).rejects.toThrow(/Custom POM fixture "personListPage" \(from "PersonListPage"\) collides/);
+    await expect(generate(["Page"])).rejects.toThrow(/Custom POM fixture "page" \(from "Page"\) collides with a built-in Playwright or vue-pom-generator fixture/);
+    await expect(generate(["PersonListPage"])).rejects.toThrow(/Custom POM fixture "personListPage" \(from "PersonListPage"\) collides with the generated fixture for "PersonListPage"/);
     await expect(generate(["PersonListPage"], false)).rejects.toThrow(/customPoms\.fixtures requires generation\.playwright\.fixtures/);
   });
 
