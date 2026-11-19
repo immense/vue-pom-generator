@@ -3,9 +3,13 @@
  * Generates TypeScript types and manifests from collected test IDs
  */
 
+import path from "node:path";
+import { camelize, capitalize } from "@vue/shared";
 import type { AccessibilityAuditResult } from "./accessibility-audit";
 import { buildAccessibilityAudit } from "./accessibility-audit";
 import type { ElementMetadata } from "./metadata-collector";
+import { safeRealpath, toPosixSlashes } from "./plugin/path-utils";
+import type { RouterIntrospectionResult } from "./router-introspection";
 import { buildPomLocatorDescription, humanizePomMethodName } from "./pom-discoverability";
 import type { PomParameterSpec } from "./pom-params";
 import type { IComponentDependencies, IDataTestId, PomExtraClickMethodSpec, PomPrimarySpec } from "./utils";
@@ -156,6 +160,79 @@ export function buildPomManifest(
     .filter((entry): entry is readonly [string, PomManifestComponent] => entry !== null);
 
   return Object.fromEntries(manifestEntries);
+}
+
+export function normalizeTrackedComponentRef(value: string): string {
+  return value.endsWith(".vue") ? value.slice(0, -4) : value;
+}
+
+/** Resolves a template component reference to its key in the hierarchy, by name or unique file basename. */
+export function resolveTrackedComponentRef(value: string, componentHierarchyMap: Map<string, IComponentDependencies>): string | null {
+  const normalizedValue = normalizeTrackedComponentRef(value);
+  if (componentHierarchyMap.has(value)) {
+    return value;
+  }
+  if (componentHierarchyMap.has(normalizedValue)) {
+    return normalizedValue;
+  }
+
+  let match: string | null = null;
+  for (const [candidateName, candidateDeps] of componentHierarchyMap.entries()) {
+    const normalizedCandidate = normalizeTrackedComponentRef(candidateName);
+    const candidateBaseName = path.parse(candidateDeps.filePath).name;
+    if (normalizedCandidate !== normalizedValue && candidateBaseName !== normalizedValue) {
+      continue;
+    }
+    if (match && match !== candidateName) {
+      return null;
+    }
+    match = candidateName;
+  }
+  return match;
+}
+
+export interface ComponentGraph {
+  version: 1;
+  /** Keyed by source file relative to the project root. */
+  components: Record<string, { name: string; uses: string[] }>;
+  routes: Array<{ path: string; name: string | null; components: string[] }>;
+}
+
+function buildComponentGraph(
+  componentHierarchyMap: Map<string, IComponentDependencies>,
+  routeMetaEntries: RouterIntrospectionResult["routeMetaEntries"],
+  projectRoot: string,
+): ComponentGraph {
+  const rootAbs = safeRealpath(path.resolve(projectRoot));
+  const toProjectPath = (filePath: string) => toPosixSlashes(path.relative(rootAbs, safeRealpath(path.resolve(rootAbs, filePath))));
+  const sortedUnique = (values: string[]) => Array.from(new Set(values)).sort((a, b) => a.localeCompare(b));
+
+  const components = Array.from(componentHierarchyMap.entries(), ([name, dependencies]) => [toProjectPath(dependencies.filePath), {
+    name,
+    // Templates may use kebab-case tags; tags that are not project components (built-ins, libraries) drop out.
+    uses: sortedUnique(Array.from(dependencies.usedComponentSet).flatMap((tag) => {
+      const ref = resolveTrackedComponentRef(capitalize(camelize(tag)), componentHierarchyMap);
+      const used = ref ? componentHierarchyMap.get(ref) : undefined;
+      return used ? [toProjectPath(used.filePath)] : [];
+    })),
+  }] as const).sort(([a], [b]) => a.localeCompare(b));
+
+  const routes = routeMetaEntries.map((route) => {
+    if (!route.componentFiles) {
+      throw new Error(`[vue-pom-generator] Route "${route.path}" was introspected without its component files.`);
+    }
+    return { path: route.path, name: route.name, components: Array.from(new Set(route.componentFiles.map(toProjectPath))) };
+  }).sort((a, b) => a.path.localeCompare(b.path) || (a.name ?? "").localeCompare(b.name ?? ""));
+
+  return { version: 1, components: Object.fromEntries(components), routes };
+}
+
+export function generateComponentGraphJson(
+  componentHierarchyMap: Map<string, IComponentDependencies>,
+  routeMetaEntries: RouterIntrospectionResult["routeMetaEntries"],
+  projectRoot: string,
+): string {
+  return `${JSON.stringify(buildComponentGraph(componentHierarchyMap, routeMetaEntries, projectRoot), null, 2)}\n`;
 }
 
 function buildTestIdManifest(componentHierarchyMap: Map<string, IComponentDependencies>): Record<string, string[]> {

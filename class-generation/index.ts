@@ -9,7 +9,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { generateViewObjectModelMembers, generateViewObjectModelMethodContent } from "../method-generation";
-import { generatePomManifestModule } from "../manifest-generator";
+import { generateComponentGraphJson, generatePomManifestModule, normalizeTrackedComponentRef, resolveTrackedComponentRef } from "../manifest-generator";
 import type { ElementMetadata } from "../metadata-collector";
 import { writeGeneratedOutputs, type GeneratedFileOutput } from "../plugin/generated-outputs";
 import {
@@ -32,6 +32,7 @@ import {
   type PomStringPattern,
 } from "../pom-patterns";
 import { buildPomLocatorDescription, stripPomActionPrefix } from "../pom-discoverability";
+import type { RouterIntrospectionResult } from "../router-introspection";
 import { introspectNuxtPages, parseRouterFileFromCwd } from "../router-introspection";
 import {
   addNamedImport,
@@ -279,7 +280,7 @@ function resolveVueSourcePath(
   return candidates.find(candidate => fs.existsSync(candidate));
 }
 
-async function getRouteMetaByComponent(
+async function introspectRouteMetaEntries(
   projectRoot?: string,
   routerEntry?: string,
   routerType?: "vue-router" | "nuxt",
@@ -287,8 +288,9 @@ async function getRouteMetaByComponent(
     pageDirs?: string[];
     componentDirs?: string[];
     layoutDirs?: string[];
+    collectComponentFiles?: boolean;
   } = {},
-): Promise<Record<string, RouteMeta>> {
+): Promise<RouterIntrospectionResult["routeMetaEntries"]> {
   const root = projectRoot ?? process.cwd();
   const pageDirs = options.pageDirs?.length ? options.pageDirs : ["src/views"];
   const pageDirsAbs = pageDirs.map(dir => path.isAbsolute(dir) ? dir : path.resolve(root, dir));
@@ -309,8 +311,12 @@ async function getRouteMetaByComponent(
         sourceDirs,
         extraRoots,
       },
+      collectComponentFiles: options.collectComponentFiles,
     });
+  return routeMetaEntries;
+}
 
+function buildRouteMetaByComponent(routeMetaEntries: RouterIntrospectionResult["routeMetaEntries"]): Record<string, RouteMeta> {
   const map = new Map<string, RouteEntry[]>();
   for (const entry of routeMetaEntries) {
     const list = map.get(entry.componentName) ?? [];
@@ -806,6 +812,9 @@ export interface GenerateFilesOptions {
    */
   customPomFixtures?: string[];
 
+  /** Write `component-graph.json` next to the generated manifest. Requires `generateFixtures`. */
+  componentGraph?: boolean;
+
   /**
    * Handwritten POM helper attachments. These helpers are assumed to be present in the
    * aggregated output (e.g. via `tests/playwright/pom/custom/*.ts` inlining), but we only attach them to
@@ -900,6 +909,7 @@ export async function generateFiles(
     customPomImportAliases,
     customPomImportNameCollisionBehavior = "error",
     customPomFixtures = [],
+    componentGraph = false,
     testIdAttribute,
     emitLanguages: emitLanguagesOverride,
     typescriptOutputStructure = "aggregated",
@@ -926,14 +936,16 @@ export async function generateFiles(
     throw new Error("[vue-pom-generator] generation.vueTestUtils.outDir must differ from generation.outDir.");
   }
 
+  const routeMetaEntries = vueRouterFluentChaining && (!routeMetaByComponentOverride || componentGraph)
+    ? await introspectRouteMetaEntries(projectRoot, routerEntry, routerType, {
+      pageDirs,
+      componentDirs,
+      layoutDirs,
+      collectComponentFiles: componentGraph,
+    })
+    : [];
   const routeMetaByComponent = routeMetaByComponentOverride
-    ?? (vueRouterFluentChaining
-      ? await getRouteMetaByComponent(projectRoot, routerEntry, routerType, {
-        pageDirs,
-        componentDirs,
-        layoutDirs,
-      })
-      : undefined);
+    ?? (vueRouterFluentChaining ? buildRouteMetaByComponent(routeMetaEntries) : undefined);
   const emittableComponentHierarchyMap = componentHierarchyMap;
   const generatedFiles: GeneratedFileOutput[] = [];
 
@@ -973,6 +985,7 @@ export async function generateFiles(
       projectRoot,
       customPomDir,
       customPomFixtures,
+      componentGraphRoutes: componentGraph ? routeMetaEntries : undefined,
       elementMetadata,
       testIdAttribute,
     });
@@ -1881,15 +1894,22 @@ function maybeGenerateFixtureRegistry(
     projectRoot?: string;
     customPomDir?: string;
     customPomFixtures: string[];
+    /** Routes for `component-graph.json`; the graph is written only when set. */
+    componentGraphRoutes?: RouterIntrospectionResult["routeMetaEntries"];
     elementMetadata: Map<string, Map<string, ElementMetadata>>;
     testIdAttribute?: string;
   },
 ): GeneratedFileOutput[] {
-  const { generateFixtures, pomOutDir, customPomFixtures } = options;
+  const { generateFixtures, pomOutDir, customPomFixtures, componentGraphRoutes } = options;
   if (!generateFixtures) {
     if (customPomFixtures.length > 0) {
       throw new VuePomGeneratorError(
         "generation.playwright.customPoms.fixtures requires generation.playwright.fixtures to be enabled.",
+      );
+    }
+    if (componentGraphRoutes) {
+      throw new VuePomGeneratorError(
+        "generation.playwright.componentGraph requires generation.playwright.fixtures to be enabled.",
       );
     }
     return [];
@@ -2310,6 +2330,12 @@ function maybeGenerateFixtureRegistry(
       filePath: path.resolve(fixtureOutDirAbs, manifestFileName),
       content: manifestContent,
     },
+    ...(componentGraphRoutes
+      ? [{
+        filePath: path.resolve(fixtureOutDirAbs, "component-graph.json"),
+        content: generateComponentGraphJson(componentHierarchyMap, componentGraphRoutes, root),
+      }]
+      : []),
     diagnosticsRuntimeFile,
   ];
 
@@ -2328,36 +2354,8 @@ function prepareViewObjectModelClass(
     testIdAttribute,
   } = options;
 
-  const normalizeTrackedComponentRef = (value: string): string => {
-    return value.endsWith(".vue") ? value.slice(0, -4) : value;
-  };
-
-  const resolveTrackedComponentRef = (value: string): string | null => {
-    const normalizedValue = normalizeTrackedComponentRef(value);
-    if (componentHierarchyMap.has(value)) {
-      return value;
-    }
-    if (componentHierarchyMap.has(normalizedValue)) {
-      return normalizedValue;
-    }
-
-    let match: string | null = null;
-    for (const [candidateName, candidateDeps] of componentHierarchyMap.entries()) {
-      const normalizedCandidate = normalizeTrackedComponentRef(candidateName);
-      const candidateBaseName = path.parse(candidateDeps.filePath).name;
-      if (normalizedCandidate !== normalizedValue && candidateBaseName !== normalizedValue) {
-        continue;
-      }
-      if (match && match !== candidateName) {
-        return null;
-      }
-      match = candidateName;
-    }
-    return match;
-  };
-
   const hasGeneratedPomSurface = (value: string, seen = new Set<string>()): boolean => {
-    const resolvedRef = resolveTrackedComponentRef(value);
+    const resolvedRef = resolveTrackedComponentRef(value, componentHierarchyMap);
     if (!resolvedRef || seen.has(resolvedRef)) {
       return false;
     }
@@ -2391,7 +2389,7 @@ function prepareViewObjectModelClass(
   };
 
   const resolveComponentInstance = (spec: PomComponentInstanceSpec): ResolvedComponentInstance | null => {
-    const componentRef = resolveTrackedComponentRef(spec.componentName);
+    const componentRef = resolveTrackedComponentRef(spec.componentName, componentHierarchyMap);
     if (
       !componentRef
       || isSelfReference(componentRef)
@@ -2531,7 +2529,7 @@ function prepareViewObjectModelClass(
   const hasChildComponent = (needle: string) => {
     const normalizedNeedle = normalizeTrackedComponentRef(needle);
     for (const child of rawComponentRefsForInstances) {
-      const resolvedChild = resolveTrackedComponentRef(child);
+      const resolvedChild = resolveTrackedComponentRef(child, componentHierarchyMap);
       if (normalizeTrackedComponentRef(child) === normalizedNeedle)
         return true;
       if (resolvedChild && normalizeTrackedComponentRef(resolvedChild) === normalizedNeedle)

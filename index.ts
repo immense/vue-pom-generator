@@ -10,6 +10,7 @@ export { createVuePomGeneratorPlugins };
 export { createVuePomGeneratorPlugins as vuePomGenerator };
 export default createVuePomGeneratorPlugins;
 
+export type { ComponentGraph } from "./manifest-generator";
 export { generateVuePoms, type VuePomGenerationViteOptions } from "./plugin/generate-vue-poms";
 
 export { mountAnnotatorClient };
