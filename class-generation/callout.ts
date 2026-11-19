@@ -312,6 +312,22 @@ const __pw_default_callout_renderer__: CalloutRenderer = {
 
 export const simpleCalloutRenderer = __pw_default_callout_renderer__;
 
+// Kept on globalThis so the package's runtime entry and the runtime copied next to the
+// generated POMs share one default, whichever copy the setter is imported from.
+const DEFAULT_CALLOUT_RENDERER = Symbol.for("@immense/vue-pom-generator.default-callout-renderer");
+
+type DefaultCalloutRendererGlobal = typeof globalThis & { [DEFAULT_CALLOUT_RENDERER]?: CalloutRenderer };
+
+/**
+ * Sets the process-wide callout renderer used by every `Callout` (and therefore every
+ * `BasePage`, generated or handwritten) constructed without a per-instance `renderer`.
+ * Call it before page objects are created, e.g. at module load of the project's shared
+ * `test` module. Pass `undefined` to restore the built-in callout.
+ */
+export function setDefaultCalloutRenderer(renderer: CalloutRenderer | undefined): void {
+	(globalThis as DefaultCalloutRendererGlobal)[DEFAULT_CALLOUT_RENDERER] = renderer;
+}
+
 export class Callout {
 	private readonly page: PwPage;
 	private readonly extraOverlayIds: string[];
@@ -320,7 +336,9 @@ export class Callout {
 	public constructor(page: PwPage, options?: CalloutOptions) {
 		this.page = page;
 		this.extraOverlayIds = options?.extraOverlayIds ?? [];
-		this.renderer = options?.renderer ?? __pw_default_callout_renderer__;
+		this.renderer = options?.renderer
+			?? (globalThis as DefaultCalloutRendererGlobal)[DEFAULT_CALLOUT_RENDERER]
+			?? __pw_default_callout_renderer__;
 	}
 
 	private toLocator(target: ElementTarget): PwLocator {

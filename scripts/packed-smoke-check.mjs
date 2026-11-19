@@ -146,7 +146,7 @@ try {
       [
         "(async () => {",
         "  const runtime = await import('@immense/vue-pom-generator/playwright/runtime');",
-        "  if (typeof runtime.BasePage !== 'function' || typeof runtime.ObjectId !== 'function') {",
+        "  if (typeof runtime.BasePage !== 'function' || typeof runtime.ObjectId !== 'function' || typeof runtime.setDefaultCalloutRenderer !== 'function') {",
         "    throw new Error('Expected public Playwright runtime exports');",
         "  }",
         "  console.log('[packed-smoke] ok: public Playwright runtime');",
