@@ -457,6 +457,107 @@ describe("generated output", () => {
     expectTscOk([fixtureFile, basePagePath], tempRoot);
   });
 
+  it("registers configured custom POM classes as typed fixtures", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-"));
+
+    writePlaywrightTypeStub(tempRoot);
+
+    const basePagePath = path.join(tempRoot, "base-page.ts");
+    copyRepoFixture(tempRoot, "base-page.minimal.ts", "base-page.ts");
+    copyRepoFixture(tempRoot, "pointer.ts", "pointer.ts");
+
+    writeFile(
+      path.join(tempRoot, "tests", "playwright", "pom", "custom", "SettingsPanel.ts"),
+      [
+        "import type { Page } from \"@playwright/test\";",
+        "export class SettingsPanel {",
+        "  public constructor(public readonly page: Page) {}",
+        "  public async open(): Promise<void> {}",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    // Not listed in customPomFixtures, so it must not become a fixture.
+    writeFile(
+      path.join(tempRoot, "tests", "playwright", "pom", "custom", "RowHelper.ts"),
+      "export class RowHelper { constructor(_page: any, _owner: any) {} }\n",
+    );
+
+    const deps = makeComponentDependencies({
+      filePath: path.join(tempRoot, "src", "views", "PersonListPage.vue"),
+      generatedMethods: new Map(),
+      isView: true,
+    });
+
+    const outDir = path.join(tempRoot, "tests", "playwright", "__generated__");
+    await generateFiles(new Map([["PersonListPage", deps]]), new Map(), basePagePath, {
+      outDir,
+      projectRoot: tempRoot,
+      generateFixtures: true,
+      customPomDir: "tests/playwright/pom/custom",
+      customPomFixtures: ["SettingsPanel"],
+    });
+
+    const fixtureFile = path.join(outDir, "fixtures.g.ts");
+    const fixtureContent = fs.readFileSync(fixtureFile, "utf8");
+    expect(fixtureContent).toContain("import { SettingsPanel as SettingsPanelCustom } from \"../pom/custom/SettingsPanel\";");
+    expect(fixtureContent).toContain("settingsPanel: SettingsPanelCustom,");
+    expect(fixtureContent).toContain("...createPomFixtures(customCtors),");
+    expect(fixtureContent).not.toContain("RowHelper");
+
+    writeFile(
+      path.join(tempRoot, "usage.ts"),
+      [
+        "import type { PomFixtures } from \"./tests/playwright/__generated__/fixtures.g\";",
+        "declare const fixtures: PomFixtures;",
+        "void fixtures.settingsPanel.open();",
+        "void fixtures.personListPage;",
+        "// @ts-expect-error Custom POMs that are not listed are not fixtures.",
+        "void fixtures.rowHelper;",
+      ].join("\n"),
+    );
+
+    expectTscOk([fixtureFile, basePagePath, path.join(tempRoot, "usage.ts")], tempRoot);
+  });
+
+  it("fails fast on invalid custom POM fixture configuration", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-"));
+    const basePagePath = path.join(tempRoot, "base-page.ts");
+    copyRepoFixture(tempRoot, "base-page.minimal.ts", "base-page.ts");
+    copyRepoFixture(tempRoot, "pointer.ts", "pointer.ts");
+    writeFile(
+      path.join(tempRoot, "tests", "playwright", "pom", "custom", "Page.ts"),
+      "export class Page { constructor(_page: any) {} }\n",
+    );
+    writeFile(
+      path.join(tempRoot, "tests", "playwright", "pom", "custom", "PersonListPage.ts"),
+      "export class PersonListPage { constructor(_page: any) {} }\n",
+    );
+
+    const generate = (customPomFixtures: string[], generateFixtures: boolean = true) => generateFiles(
+      new Map([["PersonListPage", makeComponentDependencies({
+        filePath: path.join(tempRoot, "src", "views", "PersonListPage.vue"),
+        generatedMethods: new Map(),
+        isView: true,
+      })]]),
+      new Map(),
+      basePagePath,
+      {
+        outDir: path.join(tempRoot, "out"),
+        projectRoot: tempRoot,
+        generateFixtures,
+        customPomDir: "tests/playwright/pom/custom",
+        customPomImportNameCollisionBehavior: "alias",
+        customPomFixtures,
+      },
+    );
+
+    await expect(generate(["MissingPanel"])).rejects.toThrow(/Custom POM fixture class "MissingPanel" was not found/);
+    await expect(generate(["Page"])).rejects.toThrow(/Custom POM fixture "page" \(from "Page"\) collides/);
+    await expect(generate(["PersonListPage"])).rejects.toThrow(/Custom POM fixture "personListPage" \(from "PersonListPage"\) collides/);
+    await expect(generate(["PersonListPage"], false)).rejects.toThrow(/customPoms\.fixtures requires generation\.playwright\.fixtures/);
+  });
+
   it("fails by default when custom POM import collides with generated class name", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-generator-"));
 
