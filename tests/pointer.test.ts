@@ -1,10 +1,16 @@
 // @vitest-environment node
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { JSDOM } from "jsdom";
 
 import { Callout, type CalloutRenderer } from "../class-generation/callout";
 import { createFloatingUiCalloutRenderer } from "../class-generation/floating-ui-callout";
-import { Pointer, type PointerRenderer, setPlaywrightAnimationOptions } from "../class-generation/pointer";
+import {
+  type ActionHooks,
+  Pointer,
+  type PointerRenderer,
+  setActionHooks,
+  setPlaywrightAnimationOptions,
+} from "../class-generation/pointer";
 
 interface BoundingBox {
   x: number;
@@ -549,5 +555,123 @@ describe("pointer", () => {
     expect(calloutCalls).toEqual([expect.stringContaining("Highlight the publish action")]);
     expect(page.dom.window.document.getElementById("__pw_pointer__")).toBeNull();
     expect(page.dom.window.document.getElementById("__pw_pointer_callout__")).toBeNull();
+  });
+});
+
+describe("action hooks", () => {
+  beforeEach(() => {
+    setPlaywrightAnimationOptions({
+      enabled: true,
+      pointer: { durationMilliseconds: 120, clickDelayMilliseconds: 0 },
+      keyboard: { typeDelayMilliseconds: 25 },
+    });
+  });
+
+  afterEach(() => {
+    setActionHooks(undefined);
+  });
+
+  /** Hooks that log each call, with what the page had done when the hook ran. */
+  function recordingHooks(log: string[], target: FakeLocator, input: FakeLocator, page: FakePage): ActionHooks {
+    const state = () => `clicks=${target.clicks} typed=${page.keyboard.typed.length + input.fills.length}`;
+    return {
+      beforeMove: (move) => {
+        log.push(`beforeMove ${move.from.x},${move.from.y}->${move.to.x},${move.to.y} ${state()}`);
+      },
+      afterMove: (move) => {
+        log.push(`afterMove ${move.box.x} ${state()}`);
+      },
+      beforeClick: async ({ box }) => {
+        // A hook that takes time holds the action: the click must wait for it.
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        log.push(`beforeClick ${box?.x} ${state()}`);
+      },
+      afterClick: () => {
+        log.push(`afterClick ${state()}`);
+      },
+      beforeInput: ({ text }) => {
+        log.push(`beforeInput ${text} ${state()}`);
+      },
+      afterInput: ({ text }) => {
+        log.push(`afterInput ${text} ${state()}`);
+      },
+    };
+  }
+
+  it("runs around each move, click and input, and the action waits for every hook", async () => {
+    const page = new FakePage();
+    const target = new FakeLocator({ tagName: "DIV" }, { boundingBox: { x: 100, y: 200, width: 40, height: 20 } });
+    const input = new FakeLocator({ tagName: "INPUT" });
+    target.descendant = input;
+    const log: string[] = [];
+    setActionHooks(recordingHooks(log, target, input, page));
+
+    await new Pointer(page as never, "data-testid").animateCursorToElementAndClickAndFill(target as never, "Acme", true, 0);
+
+    expect(log).toEqual([
+      "beforeMove 120,210->120,210 clicks=0 typed=0",
+      "afterMove 100 clicks=0 typed=0",
+      "beforeClick 100 clicks=0 typed=0",
+      "afterClick clicks=1 typed=0",
+      "beforeInput Acme clicks=1 typed=0",
+      "afterInput Acme clicks=1 typed=1",
+    ]);
+  });
+
+  it("starts a new pointer on its first target, then moves from where the last move ended", async () => {
+    const page = new FakePage();
+    const moves: string[] = [];
+    const renderer: PointerRenderer = {
+      async ensure() {},
+      async move(_page, request) {
+        moves.push(`${request.animate ? "glide" : "place"} ${request.startX},${request.startY}->${request.endX},${request.endY}`);
+      },
+      async press() {},
+    };
+    const hookMoves: string[] = [];
+    setActionHooks({ beforeMove: ({ from, to }) => void hookMoves.push(`${from.x},${from.y}->${to.x},${to.y}`) });
+    const pointer = new Pointer(page as never, "data-testid", undefined, renderer);
+
+    await pointer.animateCursorToElement(new FakeLocator({ tagName: "BUTTON" }, { boundingBox: { x: 100, y: 200, width: 40, height: 20 } }) as never, false, 0);
+    await pointer.animateCursorToElement(new FakeLocator({ tagName: "BUTTON" }, { boundingBox: { x: 500, y: 300, width: 40, height: 20 } }) as never, false, 0);
+
+    // Failing this, the first move glides in from the top left corner, where no cursor was.
+    expect(moves).toEqual(["place 120,210->120,210", "glide 120,210->520,310"]);
+    expect(hookMoves).toEqual(["120,210->120,210", "120,210->520,310"]);
+  });
+
+  it("runs only the click and input hooks when animations are off, since nothing moves", async () => {
+    setPlaywrightAnimationOptions({ enabled: false });
+    const page = new FakePage();
+    const target = new FakeLocator({ tagName: "DIV" }, { boundingBox: { x: 100, y: 200, width: 40, height: 20 } });
+    const input = new FakeLocator({ tagName: "INPUT" });
+    target.descendant = input;
+    const log: string[] = [];
+    setActionHooks(recordingHooks(log, target, input, page));
+
+    await new Pointer(page as never, "data-testid").animateCursorToElementAndClickAndFill(target as never, "Acme", true, 0);
+
+    expect(log).toEqual([
+      "beforeClick 100 clicks=0 typed=0",
+      "afterClick clicks=1 typed=0",
+      "beforeInput Acme clicks=1 typed=0",
+      "afterInput Acme clicks=1 typed=1",
+    ]);
+  });
+
+  it("runs no click hooks for a move that doesn't click, and none once removed", async () => {
+    const page = new FakePage();
+    const target = new FakeLocator({ tagName: "BUTTON" }, { boundingBox: { x: 100, y: 200, width: 40, height: 20 } });
+    const log: string[] = [];
+    setActionHooks(recordingHooks(log, target, target, page));
+    const pointer = new Pointer(page as never, "data-testid");
+
+    await pointer.animateCursorToElement(target as never, false, 0);
+    expect(log.map((entry) => entry.split(" ")[0])).toEqual(["beforeMove", "afterMove"]);
+
+    setActionHooks(undefined);
+    await pointer.animateCursorToElement(target as never, true, 0);
+    expect(log).toHaveLength(2);
+    expect(target.clicks).toBe(1);
   });
 });

@@ -20,8 +20,9 @@ const __PW_POINTER_PNG__ =
 
 const __pw_pointer_positions__ = new WeakMap<object, { x: number; y: number }>();
 
-function __pw_get_pointer_pos__(page: PwPage): { x: number; y: number } {
-	return __pw_pointer_positions__.get(page as object) ?? { x: 0, y: 0 };
+/** Where the page's pointer is; undefined until its first move, so that move places it instead of gliding in. */
+function __pw_get_pointer_pos__(page: PwPage): { x: number; y: number } | undefined {
+	return __pw_pointer_positions__.get(page as object);
 }
 
 function __pw_set_pointer_pos__(page: PwPage, x: number, y: number): void {
@@ -133,6 +134,75 @@ export interface AfterPointerClickInfo {
 
 export type AfterPointerClick = (info: AfterPointerClickInfo) => void | Promise<void>;
 
+// ---------------------------------------------------------------------------
+// Action hooks
+// ---------------------------------------------------------------------------
+
+/** A box in viewport pixels. */
+export interface ActionBox {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
+/** The element an action is on, and its box once scrolled into view (null when it has none). */
+export interface ActionHookContext {
+	page: PwPage;
+	target: PwLocator;
+	box: ActionBox | null;
+}
+
+/**
+ * A pointer move to the center of `box`. `from` is where the pointer was; on its first move it has no position yet,
+ * so `from` equals `to` and the pointer is placed there instead of gliding.
+ */
+export interface PointerMoveHookContext extends ActionHookContext {
+	box: ActionBox;
+	from: { x: number; y: number };
+	to: { x: number; y: number };
+	/** How long the glide takes; 0 when the pointer is placed without one. */
+	durationMilliseconds: number;
+}
+
+/** Text typed or filled into `target`. */
+export interface InputHookContext extends ActionHookContext {
+	text: string;
+}
+
+/**
+ * Called around each pointer move, click and text input a page object performs, and awaited: the action continues once
+ * the hook resolves. For example, a video camera can pan to where the pointer is going before it moves and zoom in on
+ * the target after it arrives. Move hooks run only while animations are enabled, since nothing moves otherwise.
+ */
+export interface ActionHooks {
+	beforeMove?: (context: PointerMoveHookContext) => void | Promise<void>;
+	afterMove?: (context: PointerMoveHookContext) => void | Promise<void>;
+	beforeClick?: (context: ActionHookContext) => void | Promise<void>;
+	afterClick?: (context: ActionHookContext) => void | Promise<void>;
+	beforeInput?: (context: InputHookContext) => void | Promise<void>;
+	afterInput?: (context: InputHookContext) => void | Promise<void>;
+}
+
+// Kept on globalThis so the package's runtime entry and the runtime copied next to the
+// generated POMs share one set, whichever copy the setter is imported from.
+const ACTION_HOOKS = Symbol.for("@immense/vue-pom-generator.action-hooks");
+
+type ActionHooksGlobal = typeof globalThis & { [ACTION_HOOKS]?: ActionHooks };
+
+/**
+ * Sets the process-wide action hooks every page object, generated or handwritten, calls around its pointer moves,
+ * clicks and text input. They are read as each action runs, so they can change between tests. Pass `undefined` to
+ * remove them.
+ */
+export function setActionHooks(hooks: ActionHooks | undefined): void {
+	(globalThis as ActionHooksGlobal)[ACTION_HOOKS] = hooks;
+}
+
+function actionHooks(): ActionHooks | undefined {
+	return (globalThis as ActionHooksGlobal)[ACTION_HOOKS];
+}
+
 const __pw_default_pointer_renderer__: PointerRenderer = {
 	overlayIds: [__PW_POINTER_ID__],
 	async ensure(page) {
@@ -142,7 +212,8 @@ const __pw_default_pointer_renderer__: PointerRenderer = {
 		);
 		if (exists) return;
 
-		__pw_set_pointer_pos__(page, 0, 0);
+		// A new pointer, such as after a page load, has no position until its first move places it.
+		__pw_pointer_positions__.delete(page as object);
 
 		await page.evaluate(
 			({ id, src }: { id: string; src: string }) => {
@@ -352,6 +423,7 @@ export class Pointer {
 
 		const opts = animationOptions;
 		const animEnabled = opts.enabled !== false;
+		const hooks = actionHooks();
 		if (executeClick) {
 			await this.waitForFiniteAncestorAnimations(locator);
 		}
@@ -368,15 +440,18 @@ export class Pointer {
 			if (extraDelay > 0) await this.page.waitForTimeout(extraDelay);
 
 			let clickedTestId: string | undefined;
+			const click = hooks && executeClick ? await this.hookContext(locator) : undefined;
 			if (executeClick) {
 				if (options?.afterClick) {
 					try { clickedTestId = await this.getTestId(locator); } catch { /* noop */ }
 				}
+				if (click) await hooks?.beforeClick?.(click);
 				await locator.first().click();
 			}
 			if (options?.afterClick) {
 				await options.afterClick({ testId: clickedTestId, instrumented: Boolean(clickedTestId) });
 			}
+			if (click) await hooks?.afterClick?.(click);
 			return;
 		}
 
@@ -399,13 +474,23 @@ export class Pointer {
 
 		// Move the pointer to the target element.
 		const box = await locator.first().boundingBox();
+		let move: PointerMoveHookContext | undefined;
 		if (box) {
 			const endX = box.x + box.width / 2;
 			const endY = box.y + box.height / 2;
-			const { x: startX, y: startY } = __pw_get_pointer_pos__(this.page);
+			const { x: startX, y: startY } = __pw_get_pointer_pos__(this.page) ?? { x: endX, y: endY };
 			const distance = Math.sqrt((endX - startX) ** 2 + (endY - startY) ** 2);
 
 			const shouldAnimate = moveDurationMs > 0 && distance > 0;
+			move = {
+				page: this.page,
+				target: locator,
+				box,
+				from: { x: startX, y: startY },
+				to: { x: endX, y: endY },
+				durationMilliseconds: shouldAnimate ? moveDurationMs : 0,
+			};
+			await hooks?.beforeMove?.(move);
 			await this.renderer.move(this.page, {
 				animate: shouldAnimate,
 				durationMilliseconds: moveDurationMs,
@@ -432,6 +517,7 @@ export class Pointer {
 			}
 
 			__pw_set_pointer_pos__(this.page, endX, endY);
+			await hooks?.afterMove?.(move);
 		}
 		else {
 			await this.callout.hide();
@@ -442,7 +528,9 @@ export class Pointer {
 		if (totalDelay > 0) await this.page.waitForTimeout(totalDelay);
 
 		let clickedTestId: string | undefined;
+		const click = hooks && executeClick ? { page: this.page, target: locator, box } : undefined;
 		if (executeClick) {
+			if (click) await hooks?.beforeClick?.(click);
 			// Brief scale-down "press" animation on the pointer image.
 			if (moveDurationMs > 0) {
 				const pressDur = Math.max(80, Math.round(moveDurationMs / 3));
@@ -458,6 +546,11 @@ export class Pointer {
 		if (options?.afterClick) {
 			await options.afterClick({ testId: clickedTestId, instrumented: Boolean(clickedTestId) });
 		}
+		if (click) await hooks?.afterClick?.(click);
+	}
+
+	private async hookContext(locator: PwLocator): Promise<ActionHookContext> {
+		return { page: this.page, target: locator, box: await locator.first().boundingBox() };
 	}
 
 	public async animateCursorToElementAndClickAndFill(
@@ -476,6 +569,9 @@ export class Pointer {
 		const locator = this.toLocator(target);
 		const editableLocator = await this.resolveEditableLocator(locator);
 		const typeDelayMs = animationOptions.keyboard?.typeDelayMilliseconds ?? 100;
+		const hooks = actionHooks();
+		const input = hooks ? { ...(await this.hookContext(editableLocator)), text } : undefined;
+		if (input) await hooks?.beforeInput?.(input);
 
 		if (animationOptions.enabled !== false && typeDelayMs > 0) {
 			// Clear existing content, then type character-by-character so keystrokes are visible.
@@ -485,5 +581,6 @@ export class Pointer {
 		else {
 			await editableLocator.fill(text);
 		}
+		if (input) await hooks?.afterInput?.(input);
 	}
 }
