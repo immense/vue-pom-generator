@@ -29,6 +29,7 @@ export interface ResolvedGenerationSupportOptions {
   customPomImportAliases?: Record<string, string>;
   customPomImportNameCollisionBehavior: "error" | "alias";
   customPomFixtures: string[];
+  componentGraph: boolean;
   nameCollisionBehavior: PomNameCollisionBehavior;
   missingSemanticNameBehavior: MissingSemanticNameBehavior;
   existingIdBehavior: ExistingIdBehaviorConfig;
@@ -56,6 +57,7 @@ export function resolveGenerationSupportOptions(
     customPomImportAliases: options.customPomImportAliases,
     customPomImportNameCollisionBehavior: options.customPomImportNameCollisionBehavior ?? "error",
     customPomFixtures: options.customPomFixtures ?? [],
+    componentGraph: options.componentGraph ?? false,
     nameCollisionBehavior: options.nameCollisionBehavior ?? "error",
     missingSemanticNameBehavior: options.missingSemanticNameBehavior ?? "error",
     existingIdBehavior: options.existingIdBehavior ?? "error",

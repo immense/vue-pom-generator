@@ -488,6 +488,7 @@ Optional Playwright fixture output:
 
 - `fixtures.g.ts` next to the POMs by default
 - `pom-manifest.g.ts` — a Node-importable map from Vue source/test ids to generated methods
+- `component-graph.json` — component usage and route edges, when `generation.playwright.componentGraph` is on (see [Component usage graph](#component-usage-graph-component-graphjson))
 - or a custom directory / file path when configured
 
 Optional C# output:
@@ -1176,6 +1177,64 @@ What it contains:
 - for each component: source file, whether it is a view or component, sorted test ids, and rich entry metadata
 - for each entry: test id, semantic name, inferred role, generated property name, generated action names, collected compiler metadata when available, and accessibility review metadata when available
 
+## Component usage graph (`component-graph.json`)
+
+The manifest says what each component contains, not where it is used. Set `generation.playwright.componentGraph: true` (with `fixtures` on) to also write `component-graph.json` next to `pom-manifest.g.ts`. It holds the usage edges, so tools can work out which routes reach a component.
+
+Schema (`version: 1`):
+
+- `components` — keyed by source file, relative to the project root, with `/` separators
+  - `name` — the generated component/class name (the key in `pom-manifest.g.ts`)
+  - `uses` — source files of the project components this template uses. Tags resolve the same way as for POM generation (component name or file basename; kebab-case tags included). Tags that are not project components, such as built-ins and library components, are left out.
+- `routes` — one entry per route record from router introspection; empty when no router is configured
+  - `path` — the path pattern as declared (`/users/:id`)
+  - `name` — the route name, or `null`
+  - `components` — source files the route renders: parent route components first, then the route's own components, named views included. Nuxt pages list their page file.
+
+Keys and lists are sorted, so the file diffs cleanly. The `ComponentGraph` type is exported from the package.
+
+```json
+{
+  "version": 1,
+  "components": {
+    "src/components/NavBar.vue": { "name": "NavBar", "uses": ["src/components/users/UserAvatar.vue"] },
+    "src/components/users/UserAvatar.vue": { "name": "UsersUserAvatar", "uses": [] },
+    "src/layouts/AppShell.vue": { "name": "AppShell", "uses": ["src/components/NavBar.vue"] },
+    "src/views/UserDetail.vue": { "name": "UserDetail", "uses": [] }
+  },
+  "routes": [
+    { "path": "/users", "name": null, "components": ["src/layouts/AppShell.vue"] },
+    { "path": "/users/:id", "name": "user-detail", "components": ["src/layouts/AppShell.vue", "src/views/UserDetail.vue"] }
+  ]
+}
+```
+
+Routes that reach a component:
+
+```ts
+import fs from "node:fs";
+import type { ComponentGraph } from "@immense/vue-pom-generator";
+
+const graph: ComponentGraph = JSON.parse(fs.readFileSync("tests/playwright/__generated__/component-graph.json", "utf8"));
+
+function routesReaching(file: string) {
+  return graph.routes.filter((route) => {
+    const seen = new Set<string>();
+    const visit = (current: string): boolean => {
+      if (current === file) return true;
+      if (seen.has(current)) return false;
+      seen.add(current);
+      return (graph.components[current]?.uses ?? []).some(visit);
+    };
+    return route.components.some(visit);
+  });
+}
+
+routesReaching("src/components/users/UserAvatar.vue"); // both /users routes
+```
+
+Unnamed routes are placed in the route tree by resolving their own path pattern. Generation fails with an error if that pattern does not match itself (for example `/items/:id(\\d+)`). Name the route to fix it.
+
 ## ESLint rules that actually ship
 
 The package exports `@immense/vue-pom-generator/eslint`.
@@ -1585,6 +1644,15 @@ This object holds Playwright-specific additions on top of the generated TypeScri
   - `true` — emit `fixtures.g.ts` next to the generated POMs
   - `"path"` — if the string ends in `.ts` / `.tsx` / `.mts` / `.cts`, it is treated as a file path; otherwise as an output directory
   - `{ outDir }` — emit to a custom directory
+
+#### `generation.playwright.componentGraph`
+
+- **What it does:** Writes `component-graph.json` next to `pom-manifest.g.ts`: what each component uses and what each route renders.
+- **Why it exists:** the manifest has no usage edges, so tools cannot tell which routes reach a component.
+- **Benefit:** one deterministic file that maps components and routes to source files.
+- **Without it:** no graph file is written. Other outputs are the same either way.
+- **Requires:** `generation.playwright.fixtures`. Routes need `generation.router` (or Nuxt).
+- **Schema:** see [Component usage graph](#component-usage-graph-component-graphjson).
 
 #### `generation.playwright.outputStructure`
 

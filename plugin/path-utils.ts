@@ -14,7 +14,7 @@ export function toPosixSlashes(value: string): string {
   return out;
 }
 
-function safeRealpath(value: string): string {
+export function safeRealpath(value: string): string {
   try {
     if (fs.existsSync(value)) {
       return fs.realpathSync(value);

@@ -377,6 +377,13 @@ export interface VuePomGeneratorPluginOptions {
         */
       fixtures?: boolean | string | { outDir?: string };
 
+      /**
+       * When true, write `component-graph.json` next to the generated `pom-manifest.g.ts`:
+       * each component's source file and the components its template uses, plus each route
+       * and the component source files it renders. Requires `fixtures` to be enabled.
+       */
+      componentGraph?: boolean;
+
       /** Handwritten Page Object Model helpers and attachments. */
       customPoms?: {
         /**

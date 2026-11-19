@@ -157,6 +157,68 @@ describe("parseRouterFileFromCwd", () => {
     }
   }, 120_000);
 
+  it("collects the component files each route renders, parents and named views included", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-router-files-"));
+
+    try {
+      ensureTempNodeModules(tempRoot);
+      const stubViewContent = readFixture("StubView.vue");
+      for (const name of ["OrgShell", "OrgSettings", "OrgSidebar", "ItemView"])
+        writeFile(path.join(tempRoot, `${name}.vue`), stubViewContent);
+
+      const routerEntry = path.join(tempRoot, "router.ts");
+      writeTypeScriptFile(routerEntry, [
+        "import { createMemoryHistory, createRouter } from 'vue-router';",
+        "import OrgShell from './OrgShell.vue';",
+        "import OrgSettings from './OrgSettings.vue';",
+        "",
+        "export default function makeRouter() {",
+        "  return createRouter({",
+        "    history: createMemoryHistory(),",
+        "    routes: [",
+        "      { path: '/org/:orgId(\\\\d+)', name: 'org', component: OrgShell, children: [",
+        "        { path: 'settings', alias: 'prefs', name: 'org-settings', components: { default: OrgSettings, sidebar: () => import('./OrgSidebar.vue') } },",
+        "      ] },",
+        "    ],",
+        "  });",
+        "}",
+        "",
+      ]);
+
+      const result = await parseRouterFileFromCwd(routerEntry, { collectComponentFiles: true });
+      const filesByPath = Object.fromEntries(result.routeMetaEntries.map(entry => [
+        entry.path,
+        entry.componentFiles?.map(file => path.basename(file)),
+      ]));
+      expect(filesByPath).toEqual({
+        "/org/:orgId(\\d+)": ["OrgShell.vue"],
+        "/org/:orgId(\\d+)/settings": ["OrgShell.vue", "OrgSettings.vue", "OrgSidebar.vue"],
+        "/org/:orgId(\\d+)/prefs": ["OrgShell.vue", "OrgSettings.vue", "OrgSidebar.vue"],
+      });
+
+      // Without the option, introspection is unchanged and lists no files.
+      const plain = await parseRouterFileFromCwd(routerEntry);
+      expect(plain.routeMetaEntries.every(entry => entry.componentFiles === undefined)).toBe(true);
+
+      // An unnamed route whose pattern does not match itself cannot be placed in the tree.
+      writeTypeScriptFile(routerEntry, [
+        "import { createMemoryHistory, createRouter } from 'vue-router';",
+        "import ItemView from './ItemView.vue';",
+        "",
+        "export default function makeRouter() {",
+        "  return createRouter({ history: createMemoryHistory(), routes: [{ path: '/items/:id(\\\\d+)', component: ItemView }] });",
+        "}",
+        "",
+      ]);
+      await expect(parseRouterFileFromCwd(routerEntry, { collectComponentFiles: true }))
+        .rejects
+        .toThrow("Cannot resolve the parent routes of unnamed route \"/items/:id(\\d+)\"");
+      expect((await parseRouterFileFromCwd(routerEntry)).routeMetaEntries).toHaveLength(1);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   it("restores temporary DOM globals after router introspection", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "vue-pom-router-globals-"));
 
@@ -358,6 +420,7 @@ describe("parseRouterFileFromCwd", () => {
 
       const result = await introspectNuxtPages(tempRoot, {
         pageDirs: [pageDir],
+        collectComponentFiles: true,
       });
 
       expect(result.routePathMap.get("/administration/users")).toBe("AdministrationUsersIndex");
@@ -367,6 +430,11 @@ describe("parseRouterFileFromCwd", () => {
 
       const reportMeta = result.routeMetaEntries.find(entry => entry.pathTemplate === "/reports/:id");
       expect(reportMeta?.params).toEqual([{ name: "id", optional: false }]);
+      expect(reportMeta?.path).toBe("/reports/:id");
+      expect(reportMeta?.componentFiles).toEqual([path.join(pageDir, "reports", "[id].vue")]);
+
+      const plain = await introspectNuxtPages(tempRoot, { pageDirs: [pageDir] });
+      expect(plain.routeMetaEntries.every(entry => entry.componentFiles === undefined)).toBe(true);
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

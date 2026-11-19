@@ -225,6 +225,60 @@ describe("generateVuePoms", () => {
     expect(page).toContain("detail");
   });
 
+  it("writes no component graph unless it is enabled", async () => {
+    await generate();
+    expect(exists("tests/playwright/__generated__/pom-manifest.g.ts")).toBe(true);
+    expect(exists("tests/playwright/__generated__/component-graph.json")).toBe(false);
+  });
+
+  it("writes a deterministic component usage graph next to the manifest", async () => {
+    fs.symlinkSync(fileURLToPath(new URL("../node_modules", import.meta.url)), path.join(root, "node_modules"), "dir");
+    write("src/layouts/AppShell.vue", "<template><main><NavBar /><router-view /></main></template>");
+    write("src/components/NavBar.vue", "<template><nav><user-avatar /></nav></template>");
+    write("src/components/users/UserAvatar.vue", "<template><img alt=\"avatar\"></template>");
+    write("src/views/HomeView.vue", "<template><h1>Home</h1></template>");
+    write("src/views/UserDetail.vue", "<template><section><SaveButton /><SaveButton /></section></template>");
+    write("src/router.ts", [
+      'import { createRouter, createMemoryHistory } from "vue-router";',
+      'import AppShell from "./layouts/AppShell.vue";',
+      'import HomeView from "./views/HomeView.vue";',
+      'export default () => createRouter({ history: createMemoryHistory(), routes: [',
+      '  { path: "/users", component: AppShell, children: [',
+      '    { path: ":id", name: "user-detail", component: () => import("./views/UserDetail.vue") },',
+      '  ] },',
+      '  { path: "/", name: "home", component: HomeView },',
+      '] });',
+    ].join("\n"));
+    if (!options.generation) throw new Error("test requires generation");
+    options.generation.router = { entry: "src/router.ts" };
+    options.generation.playwright!.componentGraph = true;
+    await generate();
+
+    // Byte-for-byte: keys and arrays are sorted so the file diffs cleanly.
+    expect(read("tests/playwright/__generated__/component-graph.json")).toBe(`${JSON.stringify({
+      version: 1,
+      components: {
+        "src/components/NavBar.vue": { name: "NavBar", uses: ["src/components/users/UserAvatar.vue"] },
+        "src/components/SaveButton.vue": { name: "SaveButton", uses: [] },
+        "src/components/users/UserAvatar.vue": { name: "UsersUserAvatar", uses: [] },
+        "src/layouts/AppShell.vue": { name: "AppShell", uses: ["src/components/NavBar.vue"] },
+        "src/views/HomeView.vue": { name: "HomeView", uses: [] },
+        "src/views/UserDetail.vue": { name: "UserDetail", uses: ["src/components/SaveButton.vue"] },
+      },
+      routes: [
+        { path: "/", name: "home", components: ["src/views/HomeView.vue"] },
+        { path: "/users", name: null, components: ["src/layouts/AppShell.vue"] },
+        { path: "/users/:id", name: "user-detail", components: ["src/layouts/AppShell.vue", "src/views/UserDetail.vue"] },
+      ],
+    }, null, 2)}\n`);
+  });
+
+  it("requires fixtures for the component graph", async () => {
+    if (!options.generation) throw new Error("test requires generation");
+    options.generation.playwright = { componentGraph: true };
+    await expect(generate()).rejects.toThrow("generation.playwright.componentGraph requires generation.playwright.fixtures");
+  });
+
   it("rejects overlapping one-shot calls and releases the guard after completion", async () => {
     let started!: () => void;
     let release!: () => void;

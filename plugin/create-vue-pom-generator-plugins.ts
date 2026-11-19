@@ -406,6 +406,7 @@ export function createGeneratorPlugins(options: PomGeneratorPluginOptions, gener
     customPomImportAliases: resolvedCustomPomImportAliases,
     customPomImportNameCollisionBehavior: customPoms?.importNameCollisionBehavior,
     customPomFixtures: resolvedCustomPomFixtures,
+    componentGraph: generationOptions?.playwright?.componentGraph,
     nameCollisionBehavior: generationOptions?.nameCollisionBehavior,
     missingSemanticNameBehavior: generationOptions?.missingSemanticNameBehavior,
     existingIdBehavior: resolvedInjectionOptions.existingIdBehavior,

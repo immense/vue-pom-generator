@@ -51,6 +51,11 @@ export interface RouterIntrospectionOptions {
     sourceDirs: string[];
     extraRoots?: string[];
   };
+  /**
+   * When true, every route meta entry also lists `componentFiles`: the source files of all
+   * components the route renders (parent route components first, every named view included).
+   */
+  collectComponentFiles?: boolean;
 }
 
 type RouterModuleShimPrimitive = string | number | boolean | null | undefined;
@@ -305,9 +310,13 @@ export interface RouterIntrospectionResult {
     componentName: string;
     /** Vue Router route `name` (when declared). Used for runtime `router.push({ name, params })`. */
     name: string | null;
+    /** Route path pattern as declared (e.g. `/users/:id`). */
+    path: string;
     pathTemplate: string;
     params: Array<{ name: string; optional: boolean }>;
     query: string[];
+    /** Absolute source files the route renders, outermost first. Set when `collectComponentFiles` is on. */
+    componentFiles?: string[];
   }>;
 }
 
@@ -604,13 +613,13 @@ function getComponentInfoFromVueComponent(
   };
 }
 
-async function getComponentInfoFromRouteRecord(
-  record: RouteRecordNormalized,
+async function getComponentInfoFromRouteComponent(
+  routeComponent: NonNullable<RouteRecordNormalized["components"]>[string] | undefined,
   options: {
     rootDir?: string;
   } = {},
 ): Promise<RouteComponentInfo> {
-  const comp = record.components?.default as VueComponentLike | (() => Promise<unknown>) | undefined;
+  const comp = routeComponent as VueComponentLike | (() => Promise<unknown>) | undefined;
   if (!comp) {
     return {
       componentName: null,
@@ -643,6 +652,50 @@ async function getComponentInfoFromRouteRecord(
   }
 
   return getComponentInfoFromVueComponent(comp as VueComponentLike, options);
+}
+
+function isRouteParamNameCode(code: number) {
+  return code === 95 || isAsciiLetterCode(code) || isAsciiDigitCode(code);
+}
+
+/** Param names declared in a Vue Router path pattern (`/users/:id(\\d+)?` -> `["id"]`). */
+function getPathParamNames(routePath: string): string[] {
+  const names: string[] = [];
+  for (let start = routePath.indexOf(":"); start !== -1; start = routePath.indexOf(":", start + 1)) {
+    let end = start + 1;
+    while (end < routePath.length && isRouteParamNameCode(routePath.charCodeAt(end)))
+      end++;
+    if (end > start + 1)
+      names.push(routePath.slice(start + 1, end));
+  }
+  return names;
+}
+
+/** The records Vue Router renders for `record`: its parent records, outermost first, then itself. */
+function getRenderedRouteRecords(router: Router, record: RouteRecordNormalized): RouteRecordNormalized[] {
+  // Normalized records do not link to their parents; resolving the route does.
+  // Named routes resolve exactly; unnamed ones resolve their own path pattern.
+  const matched = record.name === undefined
+    ? router.resolve(record.path).matched
+    : router.resolve({ name: record.name, params: Object.fromEntries(getPathParamNames(record.path).map(name => [name, name])) }).matched;
+  // Aliases resolve to the records they alias, which render the same components.
+  const index = matched.findIndex(candidate => candidate === record || candidate === record.aliasOf);
+  if (index === -1) {
+    throw new Error(`[vue-pom-generator] Cannot resolve the parent routes of unnamed route "${record.path}". Give it a name so the components it renders can be listed.`);
+  }
+  return matched.slice(0, index + 1);
+}
+
+async function getRenderedComponentFiles(router: Router, record: RouteRecordNormalized, rootDir: string): Promise<string[]> {
+  const files: string[] = [];
+  for (const rendered of getRenderedRouteRecords(router, record)) {
+    for (const routeComponent of Object.values(rendered.components ?? {})) {
+      const { filePath } = await getComponentInfoFromRouteComponent(routeComponent, { rootDir });
+      if (filePath && !files.includes(filePath))
+        files.push(filePath);
+    }
+  }
+  return files;
 }
 
 function resolveIntrospectedComponentName(
@@ -1025,7 +1078,7 @@ function toPathSegments(value: string): string[] {
 
 export async function introspectNuxtPages(
   projectRoot: string,
-  options: { pageDirs?: string[] } = {},
+  options: { pageDirs?: string[] } & Pick<RouterIntrospectionOptions, "collectComponentFiles"> = {},
 ): Promise<RouterIntrospectionResult> {
   const possiblePageDirs = options.pageDirs?.length
     ? options.pageDirs
@@ -1089,9 +1142,11 @@ export async function introspectNuxtPages(
         // Nuxt file-based routes are named by convention, but the static walk does not
         // recover those names — leave null so callers fall back to path-template navigation.
         name: null,
+        path: pathTemplate,
         pathTemplate,
         params,
         query: [],
+        ...(options.collectComponentFiles ? { componentFiles: [fullPath] } : {}),
       });
     }
   };
@@ -1198,7 +1253,7 @@ export async function parseRouterFileFromCwd(
         const routeMetaEntries: RouterIntrospectionResult["routeMetaEntries"] = [];
 
         for (const r of router.getRoutes()) {
-          const componentInfo = await getComponentInfoFromRouteRecord(r, { rootDir: cwd });
+          const componentInfo = await getComponentInfoFromRouteComponent(r.components?.default, { rootDir: cwd });
           const componentName = resolveIntrospectedComponentName(componentInfo, options.componentNaming);
           if (!componentName)
             continue;
@@ -1219,9 +1274,11 @@ export async function parseRouterFileFromCwd(
             routeMetaEntries.push({
               componentName,
               name: typeof r.name === "string" && r.name.length ? r.name : null,
+              path: r.path,
               pathTemplate,
               params: paramsMeta,
               query: queryKeys,
+              ...(options.collectComponentFiles ? { componentFiles: await getRenderedComponentFiles(router, r, cwd) } : {}),
             });
           }
         }
