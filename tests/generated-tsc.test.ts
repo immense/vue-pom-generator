@@ -533,8 +533,12 @@ describe("generated output", () => {
       path.join(tempRoot, "tests", "playwright", "pom", "custom", "PersonListPage.ts"),
       "export class PersonListPage { constructor(_page: any) {} }\n",
     );
+    writeFile(
+      path.join(tempRoot, "tests", "playwright", "pom", "custom", "SettingsPanel.ts"),
+      "export class SettingsPanel { constructor(_page: any) {} }\n",
+    );
 
-    const generate = (customPomFixtures: string[], generateFixtures: boolean = true) => generateFiles(
+    const generate =(customPomFixtures: string[], generateFixtures: boolean = true) => generateFiles(
       new Map([["PersonListPage", makeComponentDependencies({
         filePath: path.join(tempRoot, "src", "views", "PersonListPage.vue"),
         generatedMethods: new Map(),
@@ -552,6 +556,7 @@ describe("generated output", () => {
       },
     );
 
+    await expect(generate(["SettingsPanel", "SettingsPanel"])).rejects.toThrow(/Custom POM fixture class "SettingsPanel" is listed more than once/);
     await expect(generate(["MissingPanel"])).rejects.toThrow(/Custom POM fixture class "MissingPanel" was not found/);
     await expect(generate(["Page"])).rejects.toThrow(/Custom POM fixture "page" \(from "Page"\) collides/);
     await expect(generate(["PersonListPage"])).rejects.toThrow(/Custom POM fixture "personListPage" \(from "PersonListPage"\) collides/);

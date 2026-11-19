@@ -704,7 +704,7 @@ test("opens settings", async ({ settingsPanel }) => {
 - each listed class must live in `<dir>/<ClassName>.ts` and be constructible as `new ClassName(page)`
 - the fixture name follows the generated convention (`SettingsPanel` → `settingsPanel`), with the same per-test lifecycle
 - the fixture is typed on `PomFixtures` (and `CustomPomFixtures`), so specs get autocomplete
-- generation fails when a listed class has no file, when its fixture name collides with a generated or built-in fixture, or when `fixtures` is disabled
+- generation fails when a listed class has no file, is listed twice, when its fixture name collides with a generated or built-in fixture, or when `fixtures` is disabled
 - helpers that are not listed (for example attachment helpers) are not registered
 
 ### `pom/overrides`

@@ -1995,7 +1995,13 @@ function maybeGenerateFixtureRegistry(
     "pomDiagnosticsSetup",
     ...fixtureClassNames.map(lowerFirst),
   ]);
-  const customCtorEntries = customPomFixtures.map((className) => {
+  const customCtorEntries = customPomFixtures.map((className, index) => {
+    if (customPomFixtures.indexOf(className) !== index) {
+      throw new VuePomGeneratorError(
+        `Custom POM fixture class "${className}" is listed more than once in generation.playwright.customPoms.fixtures.\n`
+        + "Remove the duplicate entry.",
+      );
+    }
     const filePath = path.join(customPomDirAbs, `${className}.ts`);
     if (!fs.existsSync(filePath)) {
       throw new VuePomGeneratorError(
