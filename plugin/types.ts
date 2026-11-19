@@ -397,6 +397,15 @@ export interface VuePomGeneratorPluginOptions {
          */
         importNameCollisionBehavior?: "error" | "alias";
 
+        /**
+         * Handwritten POM classes to register as Playwright fixtures next to the generated ones.
+         *
+         * Each entry is a class name whose file is `<dir>/<ClassName>.ts` and which is constructed
+         * with `new ClassName(page)`. The fixture name is the class name with a lowercase first
+         * letter (`SettingsPanel` -> `settingsPanel`). Requires `fixtures` to be enabled.
+         */
+        fixtures?: string[];
+
         /** Conditional helper attachments. */
         attachments?: Array<{
           className: string;

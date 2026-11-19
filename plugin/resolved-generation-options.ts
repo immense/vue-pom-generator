@@ -28,6 +28,7 @@ export interface ResolvedGenerationSupportOptions {
   requireCustomPomDir: boolean;
   customPomImportAliases?: Record<string, string>;
   customPomImportNameCollisionBehavior: "error" | "alias";
+  customPomFixtures: string[];
   nameCollisionBehavior: PomNameCollisionBehavior;
   missingSemanticNameBehavior: MissingSemanticNameBehavior;
   existingIdBehavior: ExistingIdBehaviorConfig;
@@ -54,6 +55,7 @@ export function resolveGenerationSupportOptions(
     requireCustomPomDir: options.requireCustomPomDir ?? false,
     customPomImportAliases: options.customPomImportAliases,
     customPomImportNameCollisionBehavior: options.customPomImportNameCollisionBehavior ?? "error",
+    customPomFixtures: options.customPomFixtures ?? [],
     nameCollisionBehavior: options.nameCollisionBehavior ?? "error",
     missingSemanticNameBehavior: options.missingSemanticNameBehavior ?? "error",
     existingIdBehavior: options.existingIdBehavior ?? "error",

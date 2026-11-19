@@ -43,6 +43,16 @@ describe("generateVuePoms", () => {
     expect(read("dist/keep.txt")).toBe("existing app assets");
   });
 
+  it("registers configured custom POMs as fixtures", async () => {
+    write("tests/playwright/pom/custom/SettingsPanel.ts", "export class SettingsPanel { constructor(public page: unknown) {} }\n");
+    if (!options.generation) throw new Error("test requires generation");
+    options.generation.playwright!.customPoms = { dir: "tests/playwright/pom/custom", fixtures: ["SettingsPanel"] };
+    await generate();
+    const fixtures = read("tests/playwright/__generated__/fixtures.g.ts");
+    expect(fixtures).toContain("import { SettingsPanel as SettingsPanelCustom } from \"../pom/custom/SettingsPanel\";");
+    expect(fixtures).toContain("settingsPanel: SettingsPanelCustom,");
+  });
+
   it("keeps compiler metadata and matches a real Vue build byte-for-byte", async () => {
     await generate();
     const manifestPath = "tests/playwright/__generated__/pom-manifest.g.ts";

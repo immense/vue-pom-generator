@@ -386,8 +386,10 @@ export function createGeneratorPlugins(options: PomGeneratorPluginOptions, gener
 
   const resolvedCustomPomAttachments = customPoms?.attachments ?? [];
   const resolvedCustomPomImportAliases = customPoms?.importAliases;
+  const resolvedCustomPomFixtures = customPoms?.fixtures ?? [];
   const requireCustomPomDir = customPoms?.dir !== undefined
     || resolvedCustomPomAttachments.length > 0
+    || resolvedCustomPomFixtures.length > 0
     || Object.keys(resolvedCustomPomImportAliases ?? {}).length > 0;
   const resolvedGenerationOptions = resolveGenerationSupportOptions({
     outDir: generationOptions?.outDir,
@@ -403,6 +405,7 @@ export function createGeneratorPlugins(options: PomGeneratorPluginOptions, gener
     requireCustomPomDir,
     customPomImportAliases: resolvedCustomPomImportAliases,
     customPomImportNameCollisionBehavior: customPoms?.importNameCollisionBehavior,
+    customPomFixtures: resolvedCustomPomFixtures,
     nameCollisionBehavior: generationOptions?.nameCollisionBehavior,
     missingSemanticNameBehavior: generationOptions?.missingSemanticNameBehavior,
     existingIdBehavior: resolvedInjectionOptions.existingIdBehavior,

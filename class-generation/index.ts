@@ -801,6 +801,12 @@ export interface GenerateFilesOptions {
   customPomImportNameCollisionBehavior?: "error" | "alias";
 
   /**
+   * Handwritten POM classes (by file/export name under customPomDir) to register as
+   * Playwright fixtures next to the generated ones. Requires `generateFixtures`.
+   */
+  customPomFixtures?: string[];
+
+  /**
    * Handwritten POM helper attachments. These helpers are assumed to be present in the
    * aggregated output (e.g. via `tests/playwright/pom/custom/*.ts` inlining), but we only attach them to
    * view classes that actually use certain components.
@@ -893,6 +899,7 @@ export async function generateFiles(
     requireCustomPomDir,
     customPomImportAliases,
     customPomImportNameCollisionBehavior = "error",
+    customPomFixtures = [],
     testIdAttribute,
     emitLanguages: emitLanguagesOverride,
     typescriptOutputStructure = "aggregated",
@@ -965,6 +972,7 @@ export async function generateFiles(
       pomOutDir: outDir,
       projectRoot,
       customPomDir,
+      customPomFixtures,
       elementMetadata,
       testIdAttribute,
     });
@@ -1872,13 +1880,20 @@ function maybeGenerateFixtureRegistry(
     pomOutDir: string;
     projectRoot?: string;
     customPomDir?: string;
+    customPomFixtures: string[];
     elementMetadata: Map<string, Map<string, ElementMetadata>>;
     testIdAttribute?: string;
   },
 ): GeneratedFileOutput[] {
-  const { generateFixtures, pomOutDir } = options;
-  if (!generateFixtures)
+  const { generateFixtures, pomOutDir, customPomFixtures } = options;
+  if (!generateFixtures) {
+    if (customPomFixtures.length > 0) {
+      throw new VuePomGeneratorError(
+        "generation.playwright.customPoms.fixtures requires generation.playwright.fixtures to be enabled.",
+      );
+    }
     return [];
+  }
 
   // generateFixtures accepts:
   // - true: enable fixtures with defaults
@@ -1973,6 +1988,45 @@ function maybeGenerateFixtureRegistry(
     ctorExpression: fixtureCtorExpression(name),
   }));
 
+  // Fixture name -> what already owns it, so collision errors can name the source.
+  const takenFixtureNames = new Map<string, string>([
+    ...[...reservedPlaywrightFixtureNames, "pomSetup", "pomFactory", "pomDiagnosticsSetup"]
+      .map(name => [name, "a built-in Playwright or vue-pom-generator fixture"] as const),
+    ...fixtureClassNames.map(name => [lowerFirst(name), `the generated fixture for "${name}"`] as const),
+  ]);
+  const customCtorEntries = customPomFixtures.map((className, index) => {
+    if (customPomFixtures.indexOf(className) !== index) {
+      throw new VuePomGeneratorError(
+        `Custom POM fixture class "${className}" is listed more than once in generation.playwright.customPoms.fixtures.\n`
+        + "Remove the duplicate entry.",
+      );
+    }
+    const filePath = path.join(customPomDirAbs, `${className}.ts`);
+    if (!fs.existsSync(filePath)) {
+      throw new VuePomGeneratorError(
+        `Custom POM fixture class "${className}" was not found.\n`
+        + `Expected file: ${filePath}\n`
+        + `Add the file or remove "${className}" from generation.playwright.customPoms.fixtures.`,
+      );
+    }
+    const fixtureName = lowerFirst(className);
+    const existingOwner = takenFixtureNames.get(fixtureName);
+    if (existingOwner) {
+      throw new VuePomGeneratorError(
+        `Custom POM fixture "${fixtureName}" (from "${className}") collides with ${existingOwner}.\n`
+        + `Rename the class or remove it from generation.playwright.customPoms.fixtures.`,
+      );
+    }
+    takenFixtureNames.set(fixtureName, `the custom POM fixture for "${className}"`);
+    return {
+      className,
+      fixtureName,
+      ctorExpression: `${className}Custom`,
+      importSpecifier: stripExtension(toPosixRelativePath(fixtureOutDirAbs, filePath)),
+    };
+  });
+  const hasCustomFixtures = customCtorEntries.length > 0;
+
   const fixturesContent = renderSourceFile(fixtureFileName, (sourceFile) => {
     sourceFile.addStatements("/** Generated Playwright fixtures (typed page objects). */");
 
@@ -2019,6 +2073,12 @@ function maybeGenerateFixtureRegistry(
         namedImports: [{ name: entry.className, alias: entry.localIdentifier }],
       });
     }
+    for (const entry of customCtorEntries) {
+      addNamedImport(sourceFile, {
+        moduleSpecifier: entry.importSpecifier,
+        namedImports: [{ name: entry.className, alias: entry.ctorExpression }],
+      });
+    }
 
     sourceFile.addInterface({
       isExported: true,
@@ -2060,36 +2120,27 @@ function maybeGenerateFixtureRegistry(
       type: "{ pomDiagnosticsSetup: void }",
     });
 
-    sourceFile.addVariableStatement({
-      declarationKind: VariableDeclarationKind.Const,
-      declarations: [{
-        name: "pageCtors",
-        initializer: (writer) => {
-          writer.write("{").newLine();
-          writer.indent(() => {
-            for (const entry of pageCtorEntries) {
-              writer.writeLine(`${entry.fixtureName}: ${entry.ctorExpression},`);
-            }
-          });
-          writer.write("} as const");
-        },
-      }],
-    });
-    sourceFile.addVariableStatement({
-      declarationKind: VariableDeclarationKind.Const,
-      declarations: [{
-        name: "componentCtors",
-        initializer: (writer) => {
-          writer.write("{").newLine();
-          writer.indent(() => {
-            for (const entry of componentCtorEntries) {
-              writer.writeLine(`${entry.fixtureName}: ${entry.ctorExpression},`);
-            }
-          });
-          writer.write("} as const");
-        },
-      }],
-    });
+    const addCtorMap = (name: string, entries: ReadonlyArray<{ fixtureName: string; ctorExpression: string }>) => {
+      sourceFile.addVariableStatement({
+        declarationKind: VariableDeclarationKind.Const,
+        declarations: [{
+          name,
+          initializer: (writer) => {
+            writer.write("{").newLine();
+            writer.indent(() => {
+              for (const entry of entries) {
+                writer.writeLine(`${entry.fixtureName}: ${entry.ctorExpression},`);
+              }
+            });
+            writer.write("} as const");
+          },
+        }],
+      });
+    };
+    addCtorMap("pageCtors", pageCtorEntries);
+    addCtorMap("componentCtors", componentCtorEntries);
+    if (hasCustomFixtures)
+      addCtorMap("customCtors", customCtorEntries);
 
     sourceFile.addTypeAlias({
       isExported: true,
@@ -2101,14 +2152,23 @@ function maybeGenerateFixtureRegistry(
       name: "GeneratedComponentFixtures",
       type: "{ [K in keyof typeof componentCtors]: InstanceType<(typeof componentCtors)[K]> }",
     });
+    if (hasCustomFixtures) {
+      sourceFile.addTypeAlias({
+        isExported: true,
+        name: "CustomPomFixtures",
+        type: "{ [K in keyof typeof customCtors]: InstanceType<(typeof customCtors)[K]> }",
+      });
+    }
     sourceFile.addTypeAlias({
       isExported: true,
       name: "PomFixtures",
       docs: [{
         description: "Every fixture contributed by the generator: the `animation` option, the internal\n"
-          + "`pomSetup`/`pomFactory` fixtures, and one fixture per generated page/component POM.",
+          + "`pomSetup`/`pomFactory` fixtures, and one fixture per generated page/component POM"
+          + (hasCustomFixtures ? "\nand per configured custom POM." : "."),
       }],
-      type: "PlaywrightOptions & PomSetupFixture & PomFactoryFixture & PomDiagnosticsSetupFixture & GeneratedPageFixtures & GeneratedComponentFixtures",
+      type: "PlaywrightOptions & PomSetupFixture & PomFactoryFixture & PomDiagnosticsSetupFixture & GeneratedPageFixtures & GeneratedComponentFixtures"
+        + (hasCustomFixtures ? " & CustomPomFixtures" : ""),
     });
 
     sourceFile.addFunction({
@@ -2203,6 +2263,8 @@ function maybeGenerateFixtureRegistry(
           writer.writeLine("},");
           writer.writeLine("...createPomFixtures(pageCtors),");
           writer.writeLine("...createPomFixtures(componentCtors),");
+          if (hasCustomFixtures)
+            writer.writeLine("...createPomFixtures(customCtors),");
         });
         writer.write(") as TestType<TTestArgs & PomFixtures, TWorkerArgs>;");
       },

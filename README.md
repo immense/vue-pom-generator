@@ -667,6 +667,46 @@ What it is not:
 - a magic auto-discovery system that wires every helper into every page
 - a replacement for `attachments`
 
+### Registering custom POMs as fixtures (`customPoms.fixtures`)
+
+Handwritten page-level POMs can be injected like generated ones. List their class names in `customPoms.fixtures`:
+
+```ts
+generation: {
+  playwright: {
+    fixtures: true,
+    customPoms: {
+      dir: "tests/playwright/pom/custom",
+      fixtures: ["SettingsPanel"],
+    },
+  },
+},
+```
+
+```ts
+// tests/playwright/pom/custom/SettingsPanel.ts
+import type { Page } from "@playwright/test";
+
+export class SettingsPanel {
+  constructor(private readonly page: Page) {}
+
+  async open() {
+    await this.page.getByRole("button", { name: "Settings" }).click();
+  }
+}
+
+// any spec
+test("opens settings", async ({ settingsPanel }) => {
+  await settingsPanel.open();
+});
+```
+
+- each listed class must live in `<dir>/<ClassName>.ts` and be constructible as `new ClassName(page)`
+- the fixture name follows the generated convention (`SettingsPanel` → `settingsPanel`), with the same per-test lifecycle
+- the fixture is typed on `PomFixtures` (and `CustomPomFixtures`), so specs get autocomplete
+- generation fails when a listed class has no file, is listed twice, when its fixture name collides with a generated or built-in fixture, or when `fixtures` is disabled
+- helpers that are not listed (for example attachment helpers) are not registered
+
 ### `pom/overrides`
 
 Default convention: sibling `overrides/` next to `customPoms.dir`
@@ -995,13 +1035,14 @@ export { expect };
 ```
 
 The module also exports the fixture types (`PomFixtures`, `GeneratedPageFixtures`,
-`GeneratedComponentFixtures`, `PlaywrightOptions`, `PomFactory`) and re-exports `expect`
-for convenience.
+`GeneratedComponentFixtures`, `PlaywrightOptions`, `PomFactory`, plus `CustomPomFixtures`
+when `customPoms.fixtures` is set) and re-exports `expect` for convenience.
 
 What it gives you:
 
 - lower-camel-case fixtures for views (`UserListPage` → `userListPage`)
 - lower-camel-case fixtures for component classes too
+- lower-camel-case fixtures for handwritten classes listed in `customPoms.fixtures`
 - `pomFactory.create(Ctor)` for ad-hoc page-object construction inside tests
 - an `animation` option that wires the generated runtime's pointer settings
 - per-page `renderers` overrides so you can keep the simple default callout or swap in a custom pointer / callout overlay implementation such as the bundled `floating-ui-callout.ts` renderer
