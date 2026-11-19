@@ -1,8 +1,8 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
 
-import { BasePage } from "../class-generation/base-page";
-import { POINTER_CALLOUT_IDS, type CalloutRenderer, setDefaultCalloutRenderer, simpleCalloutRenderer } from "../class-generation/callout";
+import { BasePage, type CalloutRenderer, setDefaultCalloutRenderer } from "../class-generation/base-page";
+import { POINTER_CALLOUT_IDS } from "../class-generation/callout";
 import { FakeLocator, FakePage } from "./broad/helpers/fake-runtime";
 
 function createRecordingCalloutRenderer(): CalloutRenderer & { hide: ReturnType<typeof vi.fn>; show: ReturnType<typeof vi.fn> } {
@@ -82,16 +82,42 @@ describe("BasePage", () => {
       expect(page.dom.window.document.getElementById(POINTER_CALLOUT_IDS.annotation)).toBeNull();
     }
     finally {
-      setDefaultCalloutRenderer(simpleCalloutRenderer);
+      setDefaultCalloutRenderer(undefined);
     }
   });
 
-  it("keeps the built-in callout when no default renderer has been set", async () => {
+  it("shares the default renderer with separately loaded copies of the runtime", async () => {
+    // Generated POMs extend a copied runtime, while handwritten POMs import the package entry.
+    const processDefault = createRecordingCalloutRenderer();
+    setDefaultCalloutRenderer(processDefault);
+    try {
+      vi.resetModules();
+      const runtimeCopy = await import("../class-generation/base-page");
+      expect(runtimeCopy.BasePage).not.toBe(BasePage);
+
+      await new runtimeCopy.BasePage(new FakePage()).showCallout(new FakeLocator({ tagName: "BUTTON" }), "From another copy");
+
+      expect(processDefault.show).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ text: "From another copy" }));
+    }
+    finally {
+      setDefaultCalloutRenderer(undefined);
+    }
+  });
+
+  it("uses the built-in callout when no default renderer is set, and after resetting it with undefined", async () => {
     const page = new FakePage();
+    const target = new FakeLocator({ tagName: "BUTTON" });
+    const annotationText = () => page.dom.window.document.getElementById(POINTER_CALLOUT_IDS.annotation)?.textContent;
 
-    await new BasePage(page).showCallout(new FakeLocator({ tagName: "BUTTON" }), "Built-in bubble");
+    await new BasePage(page).showCallout(target, "Built-in bubble");
+    expect(annotationText()).toBe("Built-in bubble");
 
-    const annotation = page.dom.window.document.getElementById(POINTER_CALLOUT_IDS.annotation);
-    expect(annotation?.textContent).toBe("Built-in bubble");
+    const replaced = createRecordingCalloutRenderer();
+    setDefaultCalloutRenderer(replaced);
+    setDefaultCalloutRenderer(undefined);
+    await new BasePage(page).showCallout(target, "Restored bubble");
+
+    expect(replaced.show).not.toHaveBeenCalled();
+    expect(annotationText()).toBe("Restored bubble");
   });
 });

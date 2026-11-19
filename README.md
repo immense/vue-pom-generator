@@ -1015,11 +1015,11 @@ Current caveats:
 - generic wrapper-only component fallbacks whose best standalone name is just their wrapper class are skipped so parent views/components keep the more meaningful handler-derived API
 - an override class still needs a `new (page)`-compatible constructor because that is what fixtures call
 
-By default the runtime uses a simple red fallback bubble. Generated page objects are constructed without renderer options, so to restyle every callout in the process, register a default renderer once (for example in the module that builds your shared `test`). A per-instance `renderers.callout` still wins, and `setDefaultCalloutRenderer(simpleCalloutRenderer)` restores the built-in bubble.
+By default the runtime uses a simple red fallback bubble. Generated page objects are constructed without renderer options, so to restyle every callout in the process, register a default renderer once (for example in the module that builds your shared `test`). It applies to generated and handwritten page objects alike. A per-instance `renderers.callout` still wins, and `setDefaultCalloutRenderer(undefined)` restores the built-in bubble.
 
 ```ts
 // tests/playwright/test-base.ts
-import { setDefaultCalloutRenderer, type CalloutRenderer } from "./__generated__";
+import { setDefaultCalloutRenderer, type CalloutRenderer } from "@immense/vue-pom-generator/playwright/runtime";
 
 const brandCallout: CalloutRenderer = {
   async show(page, { targetBox, text }) {

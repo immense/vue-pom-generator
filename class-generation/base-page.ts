@@ -7,6 +7,10 @@ import { Callout } from "./callout";
 import type { CalloutRenderer } from "./callout";
 import { Pointer, type AfterPointerClick, type AfterPointerClickInfo, type PointerRenderer } from "./pointer";
 
+// Part of the public `playwright/runtime` entry, whose source is this file.
+export { setDefaultCalloutRenderer } from "./callout";
+export type { CalloutRenderer, CalloutRenderRequest } from "./callout";
+
 const POM_ACTIVE_ACTION_REGISTRY = Symbol.for("@immense/vue-pom-generator.active-action-registry");
 const CHECKABLE_CONTROL_SELECTOR = 'input[type="checkbox"], input[type="radio"]';
 
