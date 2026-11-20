@@ -9,7 +9,7 @@ import type { ResolvedGenerationSupportOptions } from "./resolved-generation-opt
 import { createBuildProcessorPlugin } from "./internal/build-plugin";
 import { createDevProcessorPlugin } from "./internal/dev-plugin";
 import { createTestIdsVirtualModulesPlugin } from "./internal/virtual-modules";
-import { createAnnotatorUiPlugin } from "./runtime/annotator/plugin";
+import { createAnnotatorSourcePlugin, createAnnotatorUiPlugin } from "./runtime/annotator/plugin";
 
 interface InternalPluginFactoryOptions {
   componentHierarchyMap: Map<string, IComponentDependencies>;
@@ -144,5 +144,9 @@ export function createInternalPlugins(options: InternalPluginFactoryOptions): Pl
     metadataAttributePrefix: annotatorRuntime.metadataAttributePrefix,
   });
 
-  return [tsProcessor, devProcessor, virtualModules, annotatorUiPlugin];
+  const annotatorSourcePlugin = createAnnotatorSourcePlugin({
+    enabled: annotatorRuntime.enabled && annotatorRuntime.ui.enabled,
+  });
+
+  return [tsProcessor, devProcessor, virtualModules, annotatorUiPlugin, annotatorSourcePlugin];
 }
