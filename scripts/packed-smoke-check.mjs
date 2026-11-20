@@ -229,6 +229,13 @@ try {
   if (!browserBundle.includes("vpg-annotator-toolbar")) {
     throw new Error("Packed browser build did not include the configured annotator client.");
   }
+  if (!browserBundle.includes('"src/App.vue"')) {
+    throw new Error("Packed browser build did not give its components a source path for the annotator.");
+  }
+  // Vue links an element to its component (`__vnode`, `__vueParentComponent`) only with its devtools support built in.
+  if (!browserBundle.includes('"__vnode"')) {
+    throw new Error("Packed browser build left out Vue's element-to-component links the annotator walks.");
+  }
   if (browserBundle.includes("createRequire")) {
     throw new Error("Packed browser build pulled Node-only generator code into the annotator client.");
   }

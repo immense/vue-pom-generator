@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { parse } from "@babel/parser";
 import type { HtmlTagDescriptor, Plugin } from "vite";
 
 import type { OutputDetail } from "./format";
@@ -130,7 +131,74 @@ export function createAnnotatorUiPlugin(options: ResolvedAnnotatorUiOptions): Pl
   };
 }
 
-// Exposed for unit tests. Pure helper (no I/O).
+/**
+ * The identifier holding a compiled single-file component, from plugin-vue's output: `export default _sfc_main`, or
+ * `export default _export_sfc(_sfc_main, [...])`, which sets its options on `_sfc_main` and returns it. Undefined when the
+ * module exports something else.
+ */
+function findExportedComponent(code: string): string | undefined {
+  const program = parse(code, { sourceType: "module", plugins: ["typescript", "jsx"] }).program;
+  const exported = program.body.find(node => node.type === "ExportDefaultDeclaration");
+  if (!exported) {
+    return undefined;
+  }
+
+  const declaration = exported.declaration;
+  if (declaration.type === "Identifier") {
+    return declaration.name;
+  }
+
+  if (declaration.type === "CallExpression" && declaration.arguments[0]?.type === "Identifier") {
+    return declaration.arguments[0].name;
+  }
+
+  return undefined;
+}
+
+/**
+ * `code`, a compiled single-file component, with its source path set as `__file`, or undefined when it exports no
+ * component. The assignment is appended, so no existing code moves and its source map still applies.
+ */
+function addComponentSourcePath(code: string, file: string): string | undefined {
+  const component = findExportedComponent(code);
+  return component ? `${code}\n${component}.__file = ${JSON.stringify(file)};\n` : undefined;
+}
+
+/**
+ * In a build, lets the annotator name the component behind any element, as it does on the dev server: Vue links each
+ * element to its component (`__VUE_PROD_DEVTOOLS__`, which a production build leaves off), and every compiled
+ * single-file component gets its source path (`__file`, relative to the Vite root). So a built app, such as a preview
+ * deployment, shows the source of static text, slot content and teleported content too.
+ */
+export function createAnnotatorSourcePlugin(options: { enabled: boolean }): Plugin {
+  let root = process.cwd();
+  return {
+    name: "vue-pom-generator:annotator-sources",
+    enforce: "post",
+    // Client builds only: a server render has no annotator to read the links or paths.
+    apply(config, { command }) {
+      return command === "build" && !config.build?.ssr;
+    },
+    config() {
+      return options.enabled ? { define: { __VUE_PROD_DEVTOOLS__: true } } : undefined;
+    },
+    configResolved(config) {
+      root = config.root;
+    },
+    transform(code, id, transformOptions) {
+      // A component's own module, `Foo.vue`, not one of its `Foo.vue?vue&type=...` blocks.
+      if (!options.enabled || transformOptions?.ssr || !id.endsWith(".vue")) {
+        return null;
+      }
+
+      const updated = addComponentSourcePath(code, normalizePathSeparators(path.relative(root, id)));
+      return updated === undefined ? null : { code: updated, map: null };
+    },
+  };
+}
+
+// Exposed for unit tests. Pure helpers (no I/O).
 export const __internal = {
   normalizePathSeparators,
+  addComponentSourcePath,
 };
