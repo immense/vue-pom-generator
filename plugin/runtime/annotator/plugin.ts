@@ -165,9 +165,10 @@ function addComponentSourcePath(code: string, file: string): string | undefined 
 }
 
 /**
- * In a build, gives every compiled single-file component its source path (`__file`, relative to the Vite root), as
- * plugin-vue does on the dev server. The annotator names the component behind an element from it, so a built app, such
- * as a preview deployment, shows the source of static text, slot content and teleported content too.
+ * In a build, lets the annotator name the component behind any element, as it does on the dev server: Vue links each
+ * element to its component (`__VUE_PROD_DEVTOOLS__`, which a production build leaves off), and every compiled
+ * single-file component gets its source path (`__file`, relative to the Vite root). So a built app, such as a preview
+ * deployment, shows the source of static text, slot content and teleported content too.
  */
 export function createAnnotatorSourcePlugin(options: { enabled: boolean }): Plugin {
   let root = process.cwd();
@@ -175,6 +176,9 @@ export function createAnnotatorSourcePlugin(options: { enabled: boolean }): Plug
     name: "vue-pom-generator:annotator-sources",
     enforce: "post",
     apply: "build",
+    config() {
+      return options.enabled ? { define: { __VUE_PROD_DEVTOOLS__: true } } : undefined;
+    },
     configResolved(config) {
       root = config.root;
     },
