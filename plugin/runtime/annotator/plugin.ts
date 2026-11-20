@@ -175,7 +175,10 @@ export function createAnnotatorSourcePlugin(options: { enabled: boolean }): Plug
   return {
     name: "vue-pom-generator:annotator-sources",
     enforce: "post",
-    apply: "build",
+    // Client builds only: a server render has no annotator to read the links or paths.
+    apply(config, { command }) {
+      return command === "build" && !config.build?.ssr;
+    },
     config() {
       return options.enabled ? { define: { __VUE_PROD_DEVTOOLS__: true } } : undefined;
     },
