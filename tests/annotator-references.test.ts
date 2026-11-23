@@ -139,6 +139,40 @@ describe("annotation references", () => {
     expect(stored()[0]).toMatchObject(multi);
   });
 
+  it.each(["Preview annotations", "Annotator settings", "marker"])("cancels a pick when %s replaces its draft panel", (destination) => {
+    seed(multi);
+    mount();
+    button("Select element").click();
+    pick(first);
+    const draftEditor = editor();
+    button("Add element").click();
+
+    const marker = () => document.querySelector<HTMLButtonElement>(".vpg-annotator-marker")!;
+    if (destination === "marker") {
+      marker().click();
+    }
+    else {
+      button(destination).click();
+    }
+
+    expect(draftEditor.isConnected).toBe(false);
+    expect(document.querySelector<HTMLElement>(".vpg-annotator-shield")!.hidden).toBe(true);
+    expect(button("Select element")).not.toBeNull();
+    pick(second);
+    expect(draftEditor.querySelectorAll("[data-reference-id]")).toHaveLength(1);
+    expect(stored()[0]).toMatchObject(multi);
+
+    if (destination !== "marker") {
+      expect(editor()).toBeNull();
+      marker().click();
+    }
+    expect(editor().querySelectorAll("[data-reference-id]")).toHaveLength(2);
+    button("Add element").click();
+    pick(second);
+    button("Save").click();
+    expect(stored()[0]!.references).toEqual([first, second, expect.objectContaining({ id: "element3", targetLabel: second.targetLabel })]);
+  });
+
   it("removes pills without renumbering and discards canceled edits", () => {
     seed(multi);
     mount();

@@ -783,7 +783,6 @@ class AnnotatorRuntime {
         metadata.value = formatSingleAnnotationPreview(this.pendingAnnotation, this.settings.outputDetail, window.location.href);
       }
     });
-    this.commentEditor = editor;
     const addReferenceButton = createButton("Add element", () => this.startReferencePick());
     addReferenceButton.addEventListener("mousedown", event => event.preventDefault());
 
@@ -823,6 +822,7 @@ class AnnotatorRuntime {
     body.append(title, subtitle, metadata, commentLabel, editor.element, addReferenceButton, actions);
 
     this.showPanel(panel, () => this.attachFloating(reference, panel, arrowEl, "right-start", ["right-start", "left-start", "bottom-start", "top-start"]));
+    this.commentEditor = editor;
     editor.focus();
   }
 
@@ -912,6 +912,11 @@ class AnnotatorRuntime {
   }
 
   private disposeCurrentPanel() {
+    if (this.pickingReference) {
+      this.pickingReference = false;
+      this.stopInspectModePreservingPending();
+    }
+    this.commentEditor = null;
     this.currentPanelCleanup?.();
     this.currentPanelCleanup = null;
     this.currentPanelEl?.remove();
@@ -940,13 +945,9 @@ class AnnotatorRuntime {
   }
 
   private closePanel() {
-    if (this.pickingReference) {
-      this.finishReferencePick();
-    }
     this.disposeCurrentPanel();
     this.pendingAnnotation = null;
     this.editingAnnotationId = null;
-    this.commentEditor = null;
   }
 
   private clearAnnotations() {
