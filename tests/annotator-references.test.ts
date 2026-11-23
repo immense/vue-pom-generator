@@ -229,6 +229,19 @@ describe("annotation references", () => {
 });
 
 describe("comment pill editor", () => {
+  it("leaves deletion across a line break to the browser", () => {
+    const comment = new AnnotationCommentEditor("[element1: SaveButton]", [first], vi.fn());
+    document.body.append(comment.element);
+    const line = document.createElement("div");
+    line.textContent = "Next line";
+    comment.element.append(line);
+    caret(line.firstChild!, 0);
+    const event = new InputEvent("beforeinput", { inputType: "deleteContentBackward", bubbles: true, cancelable: true });
+    comment.element.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(comment.read().references).toEqual([first]);
+  });
+
   it.each(["deleteContentBackward", "deleteContentForward"])("removes an adjacent pill on %s without touching surrounding text", (inputType) => {
     const comment = new AnnotationCommentEditor(multi.comment, multi.references!, vi.fn());
     document.body.append(comment.element);

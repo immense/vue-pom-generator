@@ -145,6 +145,9 @@ export class AnnotationCommentEditor {
       : node.childNodes[backward ? offset - 1 : offset] ?? null;
     while (true) {
       while (!neighbor && node !== this.element) {
+        if (node instanceof HTMLElement && (node.tagName === "DIV" || node.tagName === "P")) {
+          return null;
+        }
         neighbor = backward ? node.previousSibling : node.nextSibling;
         node = node.parentNode!;
       }
