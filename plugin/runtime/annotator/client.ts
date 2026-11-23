@@ -1,6 +1,7 @@
 import { arrow, autoPlacement, autoUpdate, computePosition, offset, shift, type Placement } from "@floating-ui/dom";
 
-import { formatAnnotations, formatSingleAnnotationPreview, type FormattedAnnotation, type OutputDetail } from "./format";
+import { AnnotationCommentEditor } from "./comment-editor";
+import { formatAnnotations, formatSingleAnnotationPreview, referenceText, type AnnotationReference, type FormattedAnnotation, type OutputDetail } from "./format";
 import { ANNOTATOR_ROOT_ATTR, ANNOTATOR_STYLES } from "./styles";
 import { normalizeInlineText } from "./text-utils";
 import { resolveVueComponentInfo, type VueDetectorOptions } from "./vue-detector";
@@ -250,15 +251,28 @@ async function copyTextToClipboard(text: string) {
   }
 }
 
-function annotationMatchesSubmitted(submitted: FormattedAnnotation, current: FormattedAnnotation): boolean {
-  return submitted.comment === current.comment
-    && submitted.targetLabel === current.targetLabel
+function targetMatches(submitted: Omit<AnnotationReference, "id">, current: Omit<AnnotationReference, "id">): boolean {
+  return submitted.targetLabel === current.targetLabel
     && submitted.source === current.source
     && submitted.component === current.component
     && submitted.uiText === current.uiText
     && submitted.locator === current.locator
     && submitted.domHint === current.domHint
     && submitted.pageUrl === current.pageUrl;
+}
+
+function cloneAnnotation<T extends FormattedAnnotation>(annotation: T): T {
+  return { ...annotation, ...(annotation.references && { references: annotation.references.map(reference => ({ ...reference })) }) };
+}
+
+function annotationMatchesSubmitted(submitted: FormattedAnnotation, current: FormattedAnnotation): boolean {
+  return submitted.comment === current.comment
+    && targetMatches(submitted, current)
+    && submitted.references?.length === current.references?.length
+    && (submitted.references?.every((reference, index) => {
+      const other = current.references?.[index];
+      return other !== undefined && reference.id === other.id && targetMatches(reference, other);
+    }) ?? true);
 }
 
 class AnnotatorRuntime {
@@ -269,6 +283,8 @@ class AnnotatorRuntime {
   private inspectMode = false;
   private pendingAnnotation: AnnotationRecord | null = null;
   private editingAnnotationId: string | null = null;
+  private commentEditor: AnnotationCommentEditor | null = null;
+  private pickingReference = false;
   private toolbarEl!: HTMLDivElement;
   private markerLayerEl!: HTMLDivElement;
   private panelLayerEl!: HTMLDivElement;
@@ -558,6 +574,10 @@ class AnnotatorRuntime {
   }
 
   private setInspectMode(next: boolean) {
+    if (this.pickingReference) {
+      this.finishReferencePick();
+      return;
+    }
     this.inspectMode = next;
     this.shieldEl.hidden = !next;
     this.highlightEl.hidden = !next;
@@ -622,6 +642,12 @@ class AnnotatorRuntime {
       return;
     }
 
+    if (this.pickingReference && this.commentEditor) {
+      this.commentEditor.addReference(this.buildTarget(element));
+      this.finishReferencePick();
+      return;
+    }
+
     this.hoveredElement = element;
     this.pendingAnnotation = this.buildAnnotationDraft(element, "");
     this.editingAnnotationId = null;
@@ -629,12 +655,9 @@ class AnnotatorRuntime {
     this.openInputForDraft(element);
   }
 
-  private buildAnnotationDraft(element: Element, comment: string): AnnotationRecord {
-    const rect = element.getBoundingClientRect();
+  private buildTarget(element: Element): Omit<AnnotationReference, "id"> {
     const componentInfo = resolveVueComponentInfo(element, this.options);
     return {
-      id: `draft-${Date.now()}`,
-      comment,
       component: this.settings.showComponentTree ? componentInfo?.component : undefined,
       source: componentInfo?.source,
       targetLabel: componentInfo?.component || getElementSummary(element),
@@ -642,9 +665,43 @@ class AnnotatorRuntime {
       locator: getNearbyLocator(element),
       domHint: getElementPath(element),
       pageUrl: window.location.href,
+    };
+  }
+
+  private buildAnnotationDraft(element: Element, comment: string): AnnotationRecord {
+    const rect = element.getBoundingClientRect();
+    const target = this.buildTarget(element);
+    const reference = { ...target, id: "element1" };
+    return {
+      ...target,
+      id: `draft-${Date.now()}`,
+      comment: `${comment}${referenceText(reference)}`,
+      references: [reference],
       pageX: rect.left + rect.width / 2,
       pageY: rect.top + window.scrollY,
     };
+  }
+
+  private startReferencePick() {
+    if (!this.commentEditor || !this.currentPanelEl) {
+      return;
+    }
+    this.commentEditor.captureSelection();
+    this.pickingReference = true;
+    this.currentPanelEl.hidden = true;
+    this.inspectMode = true;
+    this.shieldEl.hidden = false;
+    this.renderToolbar();
+    this.showToast("Select an element. Stop selecting cancels the pick.");
+  }
+
+  private finishReferencePick() {
+    this.pickingReference = false;
+    this.stopInspectModePreservingPending();
+    if (this.currentPanelEl) {
+      this.currentPanelEl.hidden = false;
+    }
+    this.commentEditor?.focus();
   }
 
   private createPanelBase(className: string) {
@@ -720,10 +777,15 @@ class AnnotatorRuntime {
     commentLabel.className = "vpg-annotator-label";
     commentLabel.textContent = "Comment";
 
-    const comment = document.createElement("textarea");
-    comment.className = "vpg-annotator-comment";
-    comment.value = this.pendingAnnotation.comment;
-    comment.placeholder = "Add a comment...";
+    const editor = new AnnotationCommentEditor(this.pendingAnnotation.comment, this.pendingAnnotation.references ?? [], () => {
+      if (this.pendingAnnotation) {
+        Object.assign(this.pendingAnnotation, editor.read());
+        metadata.value = formatSingleAnnotationPreview(this.pendingAnnotation, this.settings.outputDetail, window.location.href);
+      }
+    });
+    this.commentEditor = editor;
+    const addReferenceButton = createButton("Add element", () => this.startReferencePick());
+    addReferenceButton.addEventListener("mousedown", event => event.preventDefault());
 
     const actions = document.createElement("div");
     actions.className = "vpg-annotator-actions";
@@ -732,7 +794,8 @@ class AnnotatorRuntime {
       if (!this.pendingAnnotation) {
         return;
       }
-      this.pendingAnnotation.comment = comment.value.trim();
+      Object.assign(this.pendingAnnotation, editor.read());
+      this.pendingAnnotation.comment = this.pendingAnnotation.comment.trim();
       if (this.editingAnnotationId) {
         const index = this.annotations.findIndex(annotation => annotation.id === this.editingAnnotationId);
         if (index >= 0) {
@@ -757,14 +820,14 @@ class AnnotatorRuntime {
     }
     actions.append(saveButton);
 
-    body.append(title, subtitle, metadata, commentLabel, comment, actions);
+    body.append(title, subtitle, metadata, commentLabel, editor.element, addReferenceButton, actions);
 
     this.showPanel(panel, () => this.attachFloating(reference, panel, arrowEl, "right-start", ["right-start", "left-start", "bottom-start", "top-start"]));
-    comment.focus();
+    editor.focus();
   }
 
   private openInputForExistingAnnotation(annotation: AnnotationRecord, reference: Element) {
-    this.pendingAnnotation = { ...annotation };
+    this.pendingAnnotation = cloneAnnotation(annotation);
     this.editingAnnotationId = annotation.id;
     this.openInputForDraft(reference);
   }
@@ -877,9 +940,13 @@ class AnnotatorRuntime {
   }
 
   private closePanel() {
+    if (this.pickingReference) {
+      this.finishReferencePick();
+    }
     this.disposeCurrentPanel();
     this.pendingAnnotation = null;
     this.editingAnnotationId = null;
+    this.commentEditor = null;
   }
 
   private clearAnnotations() {
@@ -928,7 +995,7 @@ class AnnotatorRuntime {
     // keep a copy of the exact submitted content: retry sends the same records, and a record is
     // only cleared if its id AND content still match the snapshot.
     const batch = [...this.annotations];
-    const submitted = new Map(batch.map(annotation => [annotation.id, { ...annotation }]));
+    const submitted = new Map(batch.map(annotation => [annotation.id, cloneAnnotation(annotation)]));
     try {
       const accepted = await handler(batch, { pageUrl: window.location.href });
       // Strict: only an explicit true is a successful submit. Anything else — false, undefined

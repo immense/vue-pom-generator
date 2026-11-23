@@ -139,8 +139,8 @@ describe("annotator submit hook", () => {
 
     // The user edits annotation 1 while the submit is pending.
     document.querySelector<HTMLButtonElement>(".vpg-annotator-marker")!.click();
-    const comment = document.querySelector<HTMLTextAreaElement>(".vpg-annotator-comment")!;
-    comment.value = "edited while pending";
+    const comment = document.querySelector<HTMLDivElement>(".vpg-annotator-comment")!;
+    comment.textContent = "edited while pending";
     document.querySelector<HTMLButtonElement>('button[aria-label="Save"]')!.click();
 
     gate.release(true);
@@ -230,8 +230,8 @@ describe("annotator submit hook", () => {
     document.querySelector(".vpg-annotator-shield")!.dispatchEvent(
       new MouseEvent("click", { bubbles: true, clientX: 8, clientY: 8 }),
     );
-    const comment = document.querySelector<HTMLTextAreaElement>(".vpg-annotator-comment")!;
-    comment.value = "late feedback";
+    const comment = document.querySelector<HTMLDivElement>(".vpg-annotator-comment")!;
+    comment.textContent = "late feedback";
     document.querySelector<HTMLButtonElement>('button[aria-label="Add"]')!.click();
 
     gate.release(true);

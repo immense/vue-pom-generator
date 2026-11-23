@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Annotation references</title>
+    <style>
+      body { font: 16px system-ui; margin: 64px; background: #f8fafc; color: #0f172a; }
+      main { padding: 32px; background: white; border: 1px solid #cbd5e1; border-radius: 12px; }
+      main button { margin: 24px 32px 24px 0; padding: 12px 24px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Account settings</h1>
+      <p>Select elements to describe a change.</p>
+      <button data-testid="save" data-source="src/SaveButton.vue:10:3" data-v-pom-component="SaveButton">Save changes</button>
+      <button data-testid="cancel" data-source="src/CancelButton.vue:20:5" data-v-pom-component="CancelButton">Cancel changes</button>
+      <button data-testid="reset" data-source="src/ResetButton.vue:30:7" data-v-pom-component="ResetButton">Reset changes</button>
+    </main>
+    <script type="module">
+      import { mountAnnotatorClient } from "/plugin/runtime/annotator/client.ts";
+      mountAnnotatorClient({
+        sourceAttribute: "data-source",
+        metadataAttributePrefix: "data-v-pom",
+        outputDetail: "standard",
+        copyToClipboard: true,
+        showComponentTree: true,
+      });
+    </script>
+  </body>
+</html>

@@ -417,6 +417,69 @@ prove that a remote write failed: retain the queue and reuse the same submission
 identifier until the destination confirms a receipt. The annotator itself makes no
 network requests and does not store destination credentials.
 
+### Notes with multiple element references
+
+Select an element to start a note. Its reference appears as an inline pill in the
+**Comment** editor. Place the cursor anywhere in the comment and choose **Add
+element**, then pick another element on the page. The new pill replaces the selected
+text or is inserted at the cursor. **Stop selecting** cancels a pick and returns to
+the draft. Remove a pill with its **×** button or by deleting it in the editor.
+
+The exported `FormattedAnnotation` type adds an optional `references` array of
+`AnnotationReference` objects. Each reference has an `id` (stable within its note),
+`targetLabel`, and its own optional `source`, `component`, `uiText`, `locator`,
+`domHint`, and capture-time `pageUrl`. For example:
+
+```ts
+import type { FormattedAnnotation } from "@immense/vue-pom-generator";
+
+const note: FormattedAnnotation = {
+  id: "annotation-1",
+  comment: "Swap [element1: SaveButton] with [element2: CancelButton]",
+  targetLabel: "SaveButton",
+  source: "src/components/SaveButton.vue:10:3",
+  component: "SaveButton",
+  locator: 'near `[data-testid="save"]`',
+  pageUrl: "https://example.com/settings",
+  references: [
+    {
+      id: "element1",
+      targetLabel: "SaveButton",
+      source: "src/components/SaveButton.vue:10:3",
+      component: "SaveButton",
+      locator: 'near `[data-testid="save"]`',
+      pageUrl: "https://example.com/settings",
+    },
+    {
+      id: "element2",
+      targetLabel: "CancelButton",
+      source: "src/components/CancelButton.vue:20:5",
+      component: "CancelButton",
+      locator: 'near `[data-testid="cancel"]`',
+      pageUrl: "https://example.com/settings",
+    },
+  ],
+};
+```
+
+`comment` stays a plain string: a pill is serialized as
+`[<id>: <targetLabel>]` (whitespace in the label is collapsed to spaces). These
+readable tokens identify the matching entries in `references`; preserve both fields
+when storing or forwarding a note. The array follows first appearance in the comment.
+Removing a pill removes its reference when no occurrences remain; other pills keep
+their IDs. A comment without pills has an empty array. The existing top-level target
+fields and marker position continue to describe the original selected element, even
+if its pill is removed. No existing fields are renamed or removed.
+
+Previously saved records may omit `references` and continue to load, edit, copy, and
+submit as single-target notes. New notes include a reference for the initial element.
+**Copy**, **Preview**, and the submit hook all include every reference. Copied output
+adds a section per reference with its source, component, target, and locator when
+available; forensic output also includes each DOM hint. The hook receives the full
+`references` array with the readable `comment`, so consumers can pass the annotation
+object through unchanged. Edits to references during submission keep the edited note
+in the queue, just like edits to its comment.
+
 ## Basic Nuxt setup
 
 ```ts
