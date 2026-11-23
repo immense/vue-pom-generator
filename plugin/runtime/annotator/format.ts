@@ -14,6 +14,40 @@ export interface FormattedAnnotation {
   domHint?: string;
   /** Page URL where the annotation was captured (recorded at creation time, survives SPA route changes). */
   pageUrl?: string;
+  /** Inline element pills, in comment order. Absent on records created before reference support. */
+  references?: AnnotationReference[];
+}
+
+export interface AnnotationReference extends Pick<FormattedAnnotation, "targetLabel" | "source" | "component" | "uiText" | "locator" | "domHint" | "pageUrl"> {
+  /** Stable within this note, e.g. "element1". Removing a pill does not renumber the others. */
+  id: string;
+}
+
+export function referenceText(reference: AnnotationReference): string {
+  return `[${reference.id}: ${normalizeInlineText(reference.targetLabel)}]`;
+}
+
+function formatTarget(target: Pick<FormattedAnnotation, "targetLabel" | "source" | "component" | "uiText" | "locator" | "domHint">, detail: OutputDetail): string[] {
+  const lines = [`- **Source:** ${target.source || "Unable to find component file path."}`];
+  if (target.component) {
+    lines.push(`- **Component:** ${target.component}`);
+  }
+  lines.push(`- **Target:** \`${target.targetLabel}\``);
+  const uiText = normalizeInlineText(target.uiText);
+  if (uiText) {
+    lines.push(`- **UI text:** \`${uiText}\``);
+  }
+  const locator = normalizeInlineText(target.locator);
+  if (locator) {
+    lines.push(`- **Locator:** ${locator}`);
+  }
+  if (detail === "forensic") {
+    const domHint = normalizeInlineText(target.domHint);
+    if (domHint) {
+      lines.push(`- **DOM hint:** \`${domHint}\``);
+    }
+  }
+  return lines;
 }
 
 export function formatAnnotations(
@@ -37,28 +71,11 @@ export function formatAnnotations(
     const annotation = annotations[i]!;
     const title = normalizeInlineText(annotation.comment) || annotation.targetLabel;
     lines.push(`### ${i + 1}. ${title}`);
-    lines.push(`- **Source:** ${annotation.source || "Unable to find component file path."}`);
-
-    if (annotation.component) {
-      lines.push(`- **Component:** ${annotation.component}`);
-    }
-
-    lines.push(`- **Target:** \`${annotation.targetLabel}\``);
-
-    const uiText = normalizeInlineText(annotation.uiText);
-    if (uiText) {
-      lines.push(`- **UI text:** \`${uiText}\``);
-    }
-
-    const locator = normalizeInlineText(annotation.locator);
-    if (locator) {
-      lines.push(`- **Locator:** ${locator}`);
-    }
-
-    if (detail === "forensic") {
-      const domHint = normalizeInlineText(annotation.domHint);
-      if (domHint) {
-        lines.push(`- **DOM hint:** \`${domHint}\``);
+    lines.push(...formatTarget(annotation, detail));
+    for (const reference of annotation.references ?? []) {
+      lines.push("", `#### ${referenceText(reference)}`, ...formatTarget(reference, detail));
+      if (reference.pageUrl) {
+        lines.push(`- **URL:** ${reference.pageUrl}`);
       }
     }
 

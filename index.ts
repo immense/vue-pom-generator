@@ -15,7 +15,7 @@ export { generateVuePoms, type VuePomGenerationViteOptions } from "./plugin/gene
 
 export { mountAnnotatorClient };
 export type { AnnotatorClientOptions, AnnotatorSubmitHandler };
-export type { FormattedAnnotation } from "./plugin/runtime/annotator/format";
+export type { AnnotationReference, FormattedAnnotation } from "./plugin/runtime/annotator/format";
 
 export function defineVuePomGeneratorConfig(options: VuePomGeneratorPluginOptions): VuePomGeneratorPluginOptions {
   return options;

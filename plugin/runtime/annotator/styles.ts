@@ -256,8 +256,45 @@ export const ANNOTATOR_STYLES = `
 
 .vpg-annotator-comment {
   min-height: 92px;
+  max-height: 240px;
+  overflow: auto;
   resize: vertical;
   font-family: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin-bottom: 8px;
+}
+
+.vpg-annotator-comment:empty::before {
+  content: attr(data-placeholder);
+  color: var(--vpg-annotator-text-soft);
+  pointer-events: none;
+}
+
+.vpg-annotator-reference {
+  display: inline;
+  padding: 2px 4px;
+  border-radius: 6px;
+  background: rgba(79, 70, 229, 0.15);
+  box-decoration-break: clone;
+  font-weight: 600;
+}
+
+.vpg-annotator-reference-remove {
+  padding: 0 3px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.vpg-annotator-reference-remove:focus-visible {
+  outline: 2px solid var(--vpg-annotator-accent);
+}
+
+.vpg-annotator-input[hidden] {
+  display: none;
 }
 
 .vpg-annotator-input-meta {
