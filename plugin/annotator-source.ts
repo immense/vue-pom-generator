@@ -9,7 +9,7 @@ export function resolveAnnotatorSourceRoot(viteRoot: string, sourceRoot?: string
       throw new Error("[vue-pom-generator] runtime.annotator.sourceRoot must be a non-empty directory path.");
     }
     const root = path.resolve(viteRoot, sourceRoot);
-    if (!fs.statSync(root).isDirectory()) {
+    if (!fs.statSync(root, { throwIfNoEntry: false })?.isDirectory()) {
       throw new Error("[vue-pom-generator] runtime.annotator.sourceRoot must be a directory.");
     }
     return fs.realpathSync(root);

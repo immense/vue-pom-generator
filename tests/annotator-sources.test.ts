@@ -38,6 +38,7 @@ describe("annotator source roots", () => {
     expect(resolveAnnotatorSourceRoot(app, "..")).toBe(root);
     expect(resolveAnnotatorSourceRoot(app, root)).toBe(root);
     expect(() => resolveAnnotatorSourceRoot(app, " ")).toThrow("non-empty");
+    expect(() => resolveAnnotatorSourceRoot(app, "../missing")).toThrow("runtime.annotator.sourceRoot must be a directory");
     fs.writeFileSync(path.join(root, "file"), "");
     expect(() => resolveAnnotatorSourceRoot(app, "../file")).toThrow("directory");
   });
