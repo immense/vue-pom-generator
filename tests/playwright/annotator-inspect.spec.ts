@@ -42,9 +42,13 @@ test("outlines elements with a source location only while selecting, without shi
   await page.getByRole("button", { name: "Select element", exact: true }).click();
   await page.getByRole("button", { name: "Annotator settings", exact: true }).click();
   const toggle = page.getByRole("checkbox", { name: "Outline source elements" });
+  const panel = page.locator(".vpg-annotator-settings");
+  const panelBox = await panel.boundingBox();
   await toggle.uncheck();
   expect(await outlineStyle(card)).toBe("none");
-  // The panel stays open and in place, so the setting can be turned back on.
+  // The panel stays open and in place (still anchored to the Settings button).
+  await page.evaluate(() => new Promise(requestAnimationFrame));
+  expect(await panel.boundingBox()).toEqual(panelBox);
   await toggle.check();
   expect(await outlineStyle(card)).toBe("dashed");
 });

@@ -81,6 +81,7 @@ describe("inspect-mode source outlines", () => {
   it("turns outlines off from settings and remembers the choice", () => {
     mount();
     button("Select element").click();
+    const settingsButton = button("Annotator settings");
     const checkbox = outlinesSetting();
     expect(checkbox.checked).toBe(true);
 
@@ -88,6 +89,9 @@ describe("inspect-mode source outlines", () => {
     checkbox.dispatchEvent(new Event("change"));
     expect(outlined()).toBe(false);
     expect(JSON.parse(localStorage.getItem("vpg-annotator-settings")!)).toMatchObject({ showSourceOutlines: false });
+    // The open panel is anchored to the Settings button, so a setting change must not replace it.
+    expect(checkbox.isConnected).toBe(true);
+    expect(button("Annotator settings")).toBe(settingsButton);
 
     document.body.innerHTML = "";
     delete window.__VUE_POM_GENERATOR_ANNOTATOR_RUNTIME__;
