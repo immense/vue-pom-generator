@@ -29,6 +29,15 @@ export function referenceText(reference: AnnotationReference): string {
   return `[${reference.id}: ${normalizeInlineText(reference.targetLabel)}]`;
 }
 
+/** Element identity, independent of display text, component visibility, and page URL. */
+export function targetIdentityMatches(a: Omit<AnnotationReference, "id">, b: Omit<AnnotationReference, "id">): boolean {
+  return a.targetLabel === b.targetLabel
+    && a.source === b.source
+    && a.usageSource === b.usageSource
+    && a.locator === b.locator
+    && a.domHint === b.domHint;
+}
+
 function formatTarget(target: Pick<FormattedAnnotation, "targetLabel" | "source" | "usageSource" | "component" | "uiText" | "locator" | "domHint">, detail: OutputDetail): string[] {
   const lines = [`- **Source:** ${target.source || "Unable to find component file path."}`];
   if (target.usageSource) {
@@ -76,10 +85,16 @@ export function formatAnnotations(
     const annotation = annotations[i]!;
     const title = normalizeInlineText(annotation.comment) || annotation.targetLabel;
     lines.push(`### ${i + 1}. ${title}`);
-    lines.push(...formatTarget(annotation, detail));
+    const targetHasReference = annotation.references?.some(reference => targetIdentityMatches(annotation, reference));
+    if (!targetHasReference) {
+      lines.push(...formatTarget(annotation, detail));
+    }
+    if (annotation.pageUrl && annotation.pageUrl !== pageUrl) {
+      lines.push(`- **URL:** ${annotation.pageUrl}`);
+    }
     for (const reference of annotation.references ?? []) {
       lines.push("", `#### ${referenceText(reference)}`, ...formatTarget(reference, detail));
-      if (reference.pageUrl) {
+      if (reference.pageUrl && reference.pageUrl !== annotation.pageUrl && reference.pageUrl !== pageUrl) {
         lines.push(`- **URL:** ${reference.pageUrl}`);
       }
     }

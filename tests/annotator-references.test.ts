@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { mountAnnotatorClient, type AnnotatorSubmitHandler } from "../plugin/runtime/annotator/client";
 import { AnnotationCommentEditor } from "../plugin/runtime/annotator/comment-editor";
-import { formatAnnotations, type AnnotationReference, type FormattedAnnotation } from "../plugin/runtime/annotator/format";
+import { formatAnnotations, formatSingleAnnotationPreview, type AnnotationReference, type FormattedAnnotation } from "../plugin/runtime/annotator/format";
 
 const PAGE_URL = window.location.href;
 const STORAGE_KEY = "vpg-annotator-annotations";
@@ -94,6 +94,40 @@ afterEach(() => {
 });
 
 describe("annotation references", () => {
+  it.each([
+    ["", "[element1: SaveButton]"],
+    ["Swap", "Swap [element1: SaveButton]"],
+    ["Swap ", "Swap [element1: SaveButton]"],
+    ["Swap\n", "Swap\n[element1: SaveButton]"],
+  ])("separates the initial draft pill from %j", (comment, expected) => {
+    const runtime = mount();
+    const target = document.createElement("button");
+    target.setAttribute("data-v-pom-component", first.targetLabel);
+    // eslint-disable-next-line dot-notation -- exercise draft spacing without making the runtime method public
+    expect(runtime["buildAnnotationDraft"](target, comment).comment).toBe(expected);
+  });
+
+  it("spaces text typed against pills and keeps the saved comment stable when reopened", () => {
+    mount();
+    button("Select element").click();
+    pick(first);
+    editor().prepend(document.createTextNode("Swap"));
+    editor().append(document.createTextNode("with "));
+    caret(editor().lastChild!, 5);
+    input();
+    button("Add element").click();
+    pick(second);
+    button("Add").click();
+    expect(stored()[0]!.comment).toBe(multi.comment);
+
+    for (let round = 0; round < 3; round += 1) {
+      document.querySelector<HTMLButtonElement>(".vpg-annotator-marker")!.click();
+      expect(editor().querySelectorAll("[data-reference-id]")).toHaveLength(2);
+      button("Save").click();
+      expect(stored()[0]!.comment).toBe(multi.comment);
+    }
+  });
+
   it("saves one multi-pill note with independent target metadata, then restores the pills", () => {
     mount();
     button("Select element").click();
@@ -203,21 +237,29 @@ describe("annotation references", () => {
     pick(second);
     button("Save").click();
     expect(stored()[0]).toMatchObject({ targetLabel: "button", references: [{ id: "element1", targetLabel: "CancelButton" }] });
-    expect(stored()[0]!.comment).toBe("Fix [element1: SaveButton][element1: CancelButton]");
+    expect(stored()[0]!.comment).toBe("Fix [element1: SaveButton] [element1: CancelButton]");
   });
 
   it.each(["standard", "forensic"] as const)("copies every reference in %s output", async (detail) => {
     const formatted = formatAnnotations([multi], detail, PAGE_URL);
-    expect(formatted).toContain(`### 1. ${multi.comment}`);
+    expect(formatted).toContain(`### 1. ${multi.comment}\n\n#### [element1: SaveButton]`);
+    expect(formatted.match(/^- \*\*URL:\*\*/gm)).toHaveLength(1);
     for (const reference of [first, second]) {
-      expect(formatted).toContain(`#### [${reference.id}: ${reference.targetLabel}]`);
-      expect(formatted).toContain(`- **Source:** ${reference.source}`);
-      expect(formatted).toContain(`- **Used at:** ${reference.usageSource}`);
-      expect(formatted).toContain(`- **Component:** ${reference.component}`);
-      expect(formatted).toContain(`- **Target:** \`${reference.targetLabel}\``);
-      expect(formatted).toContain(`- **Locator:** ${reference.locator}`);
+      for (const line of [
+        `#### [${reference.id}: ${reference.targetLabel}]`,
+        `- **Source:** ${reference.source}`,
+        `- **Used at:** ${reference.usageSource}`,
+        `- **Component:** ${reference.component}`,
+        `- **Target:** \`${reference.targetLabel}\``,
+        `- **UI text:** \`${reference.uiText}\``,
+        `- **Locator:** ${reference.locator}`,
+        ...(detail === "forensic" ? [`- **DOM hint:** \`${reference.domHint}\``] : []),
+      ]) {
+        expect(formatted.split("\n").filter(value => value === line)).toHaveLength(1);
+      }
       expect(formatted.includes(reference.domHint!)).toBe(detail === "forensic");
     }
+    expect(formatSingleAnnotationPreview(multi, detail, PAGE_URL)).toBe(formatted.slice(formatted.indexOf("### 1.")).trim());
     seed(multi);
     localStorage.setItem("vpg-annotator-settings", JSON.stringify({ outputDetail: detail }));
     const writeText = vi.fn(async (_text: string) => {});
@@ -227,6 +269,40 @@ describe("annotation references", () => {
     expect(document.querySelector<HTMLTextAreaElement>(".vpg-annotator-panel--preview textarea")!.value).toBe(formatted);
     button("Copy annotations").click();
     expect(writeText).toHaveBeenCalledWith(formatted);
+  });
+
+  it.each([{ references: undefined }, { references: [] }, { references: [second] }])("keeps the original target when its pill is absent: %j", ({ references }) => {
+    const formatted = formatAnnotations([{ ...multi, references }], "standard", PAGE_URL);
+    expect(formatted).toContain(`### 1. ${multi.comment}\n- **Source:** ${first.source}`);
+    expect(formatted).toContain(`- **Used at:** ${first.usageSource}`);
+  });
+
+  it.each(["targetLabel", "source", "usageSource", "locator", "domHint"] as const)("keeps the original target when a reference differs in %s", (field) => {
+    const formatted = formatAnnotations([{ ...multi, references: [{ ...first, [field]: "different target" }] }], "standard", PAGE_URL);
+    expect(formatted).toContain(`### 1. ${multi.comment}\n- **Source:** ${first.source}`);
+  });
+
+  it("finds a matching target beyond the first reference, ignoring display text and component changes", () => {
+    const formatted = formatAnnotations([{
+      ...multi,
+      references: [second, { ...first, component: "UpdatedButton", uiText: "Save changes" }],
+    }], "standard", PAGE_URL);
+    expect(formatted).toContain(`### 1. ${multi.comment}\n\n#### [element2: CancelButton]`);
+    expect(formatted).not.toContain("- **UI text:** `Save`");
+  });
+
+  it.each([PAGE_URL, "https://example.com/note", "https://example.com/other", undefined])("prints only reference URLs distinct from the note and batch: %j", (pageUrl) => {
+    const formatted = formatAnnotations([{
+      ...multi,
+      pageUrl: "https://example.com/note",
+      references: [{ ...first, pageUrl }],
+    }], "standard", PAGE_URL);
+    const urls = formatted.split("\n").filter(line => line.startsWith("- **URL:**"));
+    expect(urls).toEqual([
+      `- **URL:** ${PAGE_URL}`,
+      "- **URL:** https://example.com/note",
+      ...(pageUrl === "https://example.com/other" ? [`- **URL:** ${pageUrl}`] : []),
+    ]);
   });
 
   it("submits all reference fields and readable comment tokens unchanged", async () => {
@@ -239,7 +315,7 @@ describe("annotation references", () => {
     await vi.waitFor(() => expect(stored()).toHaveLength(0));
   });
 
-  it.each(["locator", "usageSource"] as const)("keeps a note when a handler mutates nested %s", async (field) => {
+  it.each(["locator", "usageSource", "component", "uiText", "pageUrl"] as const)("keeps a note when a handler mutates nested %s", async (field) => {
     seed(multi);
     window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__ = (annotations) => {
       annotations[0]!.references![1]![field] = "updated metadata";
@@ -270,6 +346,39 @@ describe("annotation references", () => {
 });
 
 describe("comment pill editor", () => {
+  it.each([
+    ["Swap[element1: SaveButton]with [element2: CancelButton]", multi.comment],
+    ["[element1: SaveButton][element2: CancelButton]", "[element1: SaveButton] [element2: CancelButton]"],
+    ["([element1: SaveButton])", "( [element1: SaveButton] )"],
+    ["Swap  [element1: SaveButton]\twith\n[element2: CancelButton]", "Swap  [element1: SaveButton]\twith\n[element2: CancelButton]"],
+    ["[element1: SaveButton]", "[element1: SaveButton]"],
+    ["literal[element3: AppSidebar]text", "literal[element3: AppSidebar]text"],
+  ])("serializes pill boundaries idempotently: %j", (input, expected) => {
+    let comment = new AnnotationCommentEditor(input, [first, second], vi.fn());
+    for (let round = 0; round < 3; round += 1) {
+      const saved = comment.read();
+      expect(saved.comment).toBe(expected);
+      comment = new AnnotationCommentEditor(saved.comment, saved.references, vi.fn());
+    }
+  });
+
+  it("spaces pills across inline wrappers and empty text nodes, preserving line breaks", () => {
+    const comment = new AnnotationCommentEditor("[element1: SaveButton]", [first], vi.fn());
+    const pill = comment.element.querySelector("[data-reference-id]")!;
+    const wrapper = document.createElement("span");
+    wrapper.append(pill);
+    const suffix = document.createElement("span");
+    suffix.textContent = "with";
+    comment.element.replaceChildren(document.createTextNode("Swap"), wrapper, document.createTextNode(""), suffix);
+    expect(comment.read().comment).toBe("Swap [element1: SaveButton] with");
+
+    comment.element.insertBefore(document.createElement("br"), suffix);
+    const line = document.createElement("div");
+    line.textContent = "next line";
+    comment.element.append(line);
+    expect(comment.read().comment).toBe("Swap [element1: SaveButton]\nwith\nnext line");
+  });
+
   it("leaves deletion across a line break to the browser", () => {
     const comment = new AnnotationCommentEditor("[element1: SaveButton]", [first], vi.fn());
     document.body.append(comment.element);

@@ -221,26 +221,44 @@ export class AnnotationCommentEditor {
   }
 
   private text(node: Node): string {
-    if (node.nodeType === Node.TEXT_NODE) {
-      return node.textContent ?? "";
-    }
-    if (node instanceof HTMLElement && node.dataset.referenceId) {
-      return referenceText(this.reference(node.dataset.referenceId));
-    }
-    if (node instanceof HTMLBRElement) {
-      return "\n";
-    }
     let result = "";
-    for (const child of node.childNodes) {
-      const block = child instanceof HTMLElement && (child.tagName === "DIV" || child.tagName === "P");
-      if (block && result && !result.endsWith("\n")) {
-        result += "\n";
+    let afterPill = false;
+    const append = (value: string, pill = false) => {
+      if (!value) {
+        return;
       }
-      result += this.text(child);
-      if (block && child.nextSibling && !result.endsWith("\n")) {
-        result += "\n";
+      if ((pill || afterPill) && result.slice(-1).trim() && value.slice(0, 1).trim()) {
+        result += " ";
       }
-    }
+      result += value;
+      afterPill = pill;
+    };
+    // Share pill boundaries across inline wrappers and empty caret text nodes.
+    const visit = (current: Node) => {
+      if (current.nodeType === Node.TEXT_NODE) {
+        append(current.textContent ?? "");
+        return;
+      }
+      if (current instanceof HTMLElement && current.dataset.referenceId) {
+        append(referenceText(this.reference(current.dataset.referenceId)), true);
+        return;
+      }
+      if (current instanceof HTMLBRElement) {
+        append("\n");
+        return;
+      }
+      for (const child of current.childNodes) {
+        const block = child instanceof HTMLElement && (child.tagName === "DIV" || child.tagName === "P");
+        if (block && result && !result.endsWith("\n")) {
+          append("\n");
+        }
+        visit(child);
+        if (block && child.nextSibling && !result.endsWith("\n")) {
+          append("\n");
+        }
+      }
+    };
+    visit(node);
     return result;
   }
 }

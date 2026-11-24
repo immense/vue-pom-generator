@@ -24,9 +24,9 @@ test("types a multi-pill note, picks at the caret, reloads, and deletes pills wi
   const comment = page.getByRole("textbox", { name: "Comment", exact: true });
   await expect(comment).toBeVisible();
   await comment.press("Home");
-  await page.keyboard.type("Swap ");
+  await page.keyboard.type("Swap");
   await comment.press("End");
-  await page.keyboard.type(" with  please");
+  await page.keyboard.type("with  please");
   for (let i = 0; i < 7; i += 1) {
     await page.keyboard.press("ArrowLeft");
   }
@@ -66,7 +66,7 @@ test("backspace removes a single atomic pill and typing continues after a newly 
   await page.keyboard.type(".");
   await page.getByRole("button", { name: "Add", exact: true }).click();
   expect(await records(page)).toMatchObject([{
-    comment: "Match [element2: CancelButton] to [element3: ResetButton].",
+    comment: "Match [element2: CancelButton] to [element3: ResetButton] .",
     references: [{ id: "element2" }, { id: "element3" }],
   }]);
 });
