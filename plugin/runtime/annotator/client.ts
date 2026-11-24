@@ -1,7 +1,7 @@
 import { arrow, autoPlacement, autoUpdate, computePosition, offset, shift, type Placement } from "@floating-ui/dom";
 
 import { AnnotationCommentEditor } from "./comment-editor";
-import { formatAnnotations, formatSingleAnnotationPreview, referenceText, type AnnotationReference, type FormattedAnnotation, type OutputDetail } from "./format";
+import { formatAnnotations, formatSingleAnnotationPreview, referenceText, targetIdentityMatches, type AnnotationReference, type FormattedAnnotation, type OutputDetail } from "./format";
 import { ANNOTATOR_ROOT_ATTR, ANNOTATOR_STYLES, SOURCE_OUTLINES_CLASS, sourceOutlineStyles } from "./styles";
 import { normalizeInlineText } from "./text-utils";
 import { resolveVueComponentInfo, type VueDetectorOptions } from "./vue-detector";
@@ -254,13 +254,9 @@ async function copyTextToClipboard(text: string) {
 }
 
 function targetMatches(submitted: Omit<AnnotationReference, "id">, current: Omit<AnnotationReference, "id">): boolean {
-  return submitted.targetLabel === current.targetLabel
-    && submitted.source === current.source
-    && submitted.usageSource === current.usageSource
+  return targetIdentityMatches(submitted, current)
     && submitted.component === current.component
     && submitted.uiText === current.uiText
-    && submitted.locator === current.locator
-    && submitted.domHint === current.domHint
     && submitted.pageUrl === current.pageUrl;
 }
 

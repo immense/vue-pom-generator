@@ -314,7 +314,7 @@ describe("annotation references", () => {
     await vi.waitFor(() => expect(stored()).toHaveLength(0));
   });
 
-  it.each(["locator", "usageSource"] as const)("keeps a note when a handler mutates nested %s", async (field) => {
+  it.each(["locator", "usageSource", "component", "uiText", "pageUrl"] as const)("keeps a note when a handler mutates nested %s", async (field) => {
     seed(multi);
     window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__ = (annotations) => {
       annotations[0]!.references![1]![field] = "updated metadata";
