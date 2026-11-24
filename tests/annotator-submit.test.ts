@@ -60,6 +60,8 @@ describe("annotator submit hook", () => {
     seedAnnotations(1);
     mount();
     expect(submitButton()).toBeNull();
+    expect(storedCount()).toBe(1);
+    expect(toast()).toBeUndefined();
   });
 
   it("shows and removes Submit as the handler registers and unregisters", () => {
@@ -76,10 +78,13 @@ describe("annotator submit hook", () => {
     expect(submitButton()).toBeNull();
   });
 
-  it("hands over every queued annotation at once, then clears the queue", async () => {
+  it.each([
+    { name: "synchronous", handler: () => true },
+    { name: "asynchronous", handler: async () => true },
+  ])("hands over the queue and clears it without a toast on $name success", async ({ handler: submit }) => {
     seedAnnotations(2);
     const runtime = mount();
-    const handler = vi.fn<AnnotatorSubmitHandler>(async () => true);
+    const handler = vi.fn<AnnotatorSubmitHandler>(submit);
     window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__ = handler;
     runtime.refresh();
 
@@ -91,38 +96,60 @@ describe("annotator submit hook", () => {
     expect(annotations.map(a => a.pageUrl)).toEqual([PAGE_URL, PAGE_URL]);
     expect(context.pageUrl).toBe(PAGE_URL);
     await vi.waitFor(() => expect(storedCount()).toBe(0));
-    await vi.waitFor(() => expect(toast()).toBe("Submitted"));
+    expect(toast()).toBeUndefined();
   });
 
-  it("retains the queue with visible feedback unless the handler resolves true", async () => {
+  it.each([
+    { name: "false", handler: () => false },
+    { name: "resolved false", handler: async () => false },
+    { name: "undefined", handler: () => undefined },
+    { name: "resolved undefined", handler: async () => undefined },
+  ])("retains the queue with visible feedback for $name", async ({ handler }) => {
     seedAnnotations(1);
     const runtime = mount();
     const failureLog = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__ = () => false;
+    // JS callers can bypass the boolean return type; they must retain the queue too.
+    window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__ = handler as AnnotatorSubmitHandler;
     runtime.refresh();
     submitButton()!.click();
     await vi.waitFor(() => expect(toast()).toBe("Submit failed"));
     expect(storedCount()).toBe(1);
+    expect(submitButton()!.disabled).toBe(false);
     expect(failureLog).not.toHaveBeenCalled();
+  });
 
+  it.each(["throw", "rejection"])("retains the queue and logs a handler %s", async (failureKind) => {
+    seedAnnotations(1);
+    const runtime = mount();
+    const failureLog = vi.spyOn(console, "error").mockImplementation(() => {});
     const failure = new Error("offline");
     window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__ = () => {
+      if (failureKind === "rejection") {
+        return Promise.reject(failure);
+      }
       throw failure;
     };
+    runtime.refresh();
     submitButton()!.click();
     await vi.waitFor(() => expect(toast()).toBe("Submit failed"));
     expect(storedCount()).toBe(1);
+    expect(submitButton()!.disabled).toBe(false);
     expect(failureLog).toHaveBeenCalledExactlyOnceWith("[vue-pom-generator] Annotator submit handler failed", failure);
+  });
 
-    // A JS caller can bypass the type and resolve without a boolean; the runtime must
-    // defensively retain with the same visible feedback.
-    // reason: exercising that defense requires an off-type handler.
-    /* eslint-disable-next-line no-restricted-syntax */
-    window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__ = (() => undefined) as unknown as AnnotatorSubmitHandler;
+  it("keeps the queue when the handler is removed before clicking Submit", () => {
+    seedAnnotations(1);
+    const handler = vi.fn<AnnotatorSubmitHandler>(() => true);
+    window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__ = handler;
+    mount();
+
+    delete window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__;
     submitButton()!.click();
-    await vi.waitFor(() => expect(toast()).toBe("Submit failed"));
+
+    expect(handler).not.toHaveBeenCalled();
     expect(storedCount()).toBe(1);
+    expect(toast()).toBeUndefined();
   });
 
   it("retains an annotation edited while a submit is pending, clearing by id and content", async () => {

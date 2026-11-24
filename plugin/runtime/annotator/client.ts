@@ -36,8 +36,8 @@ const SUBMIT_HOOK = "__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__";
 /**
  * Receives every queued annotation at once, so feedback that only makes sense together is sent
  * together. Return true only after the submission is accepted: it clears exactly the submitted
- * records that are still unchanged. Any other return (false, undefined) or a throw retains the
- * queue with visible feedback.
+ * records that are still unchanged, without an annotator success toast; the app owns success UI.
+ * Any other return (false, undefined) or a throw retains the queue with visible feedback.
  */
 export type AnnotatorSubmitHandler = (
   annotations: FormattedAnnotation[],
@@ -944,7 +944,6 @@ class AnnotatorRuntime {
       });
       this.saveAnnotations();
       this.closePanel();
-      this.showToast("Submitted");
     }
     catch (error) {
       console.error("[vue-pom-generator] Annotator submit handler failed", error);
