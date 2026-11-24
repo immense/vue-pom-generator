@@ -1,3 +1,5 @@
+import { camelize } from "@vue/shared";
+import { annotatorSourcePath } from "./plugin/annotator-source";
 import type {
   ElementNode,
   NodeTransform,
@@ -12,7 +14,7 @@ import type {
   ForNode,
 } from "@vue/compiler-core";
 import type { AttributeValue, DataTestIdEntryOverrides, HierarchyMap, ResolvedKeyInfo } from "./utils";
-import { createSimpleExpression, ElementTypes, NodeTypes, processExpression } from "@vue/compiler-core";
+import { createSimpleExpression, ElementTypes, NodeTypes, processExpression, isCoreComponent } from "@vue/compiler-core";
 import { parseExpression } from "@babel/parser"
 import { isIdentifierNode, isStringLiteralNode } from "./compiler/babel-guards";
 import path from "node:path";
@@ -673,6 +675,7 @@ export function createTestIdTransform(
     wrapperSearchRoots?: string[];
     annotatorMetadata?: {
       sourceAttribute: string;
+      getSourceRoot: () => string;
       metadataAttributePrefix: string;
     } | null;
     /** Shared registry for cross-file keyed slot context. */
@@ -815,12 +818,13 @@ export function createTestIdTransform(
   };
 
   return (node: RootNode | TemplateChildNode, context) => {
-    // Every native element carries its own source location, independent of test-id
-    // generation, so the annotator can resolve any element to its file:line. Component
-    // usages are never stamped: their attributes fall through to the child's root, which
-    // must keep its own location. The stamp is appended after authored props, so it also
-    // wins over an explicit `v-bind="$attrs"`.
-    if (annotatorMetadata && node.type === NodeTypes.ELEMENT && node.tagType === ElementTypes.ELEMENT && node.tag !== "template") {
+    // Keep the native element's source separate from the component's incoming usage.
+    // Each compiled component consumes its usage prop, preventing outer fallthrough
+    // from replacing the nearest usage when several component roots share one element.
+    if (annotatorMetadata && node.type === NodeTypes.ELEMENT
+      && (node.tagType === ElementTypes.ELEMENT || node.tagType === ElementTypes.COMPONENT)
+      && node.tag !== "template"
+      && !isCoreComponent(node.tag) && !context.isBuiltInComponent?.(node.tag)) {
       const filename = context.filename?.trim();
       if (!filename) {
         throw new Error(`[vue-pom-generator] runtime.annotator.enabled requires contextFilename for ${componentName}.`);
@@ -829,7 +833,23 @@ export function createTestIdTransform(
       if (!sourceLocation) {
         throw new Error(`[vue-pom-generator] runtime.annotator.enabled requires element source locations for ${componentName}.`);
       }
-      upsertAttribute(node, annotatorMetadata.sourceAttribute, staticAttributeValue(`${filename}:${sourceLocation.line}:${sourceLocation.column}`), context);
+      const source = `${annotatorSourcePath(filename, annotatorMetadata.getSourceRoot())}:${sourceLocation.line}:${sourceLocation.column}`;
+      const usageAttribute = `${annotatorMetadata.metadataAttributePrefix}-usage`;
+      if (node.tagType === ElementTypes.COMPONENT) {
+        upsertAttribute(node, usageAttribute, staticAttributeValue(source), context);
+      }
+      else {
+        upsertAttribute(node, annotatorMetadata.sourceAttribute, staticAttributeValue(source), context);
+        const expression = createSimpleExpression(`$props[${JSON.stringify(camelize(usageAttribute))}]`, false, node.loc);
+        node.props.push({
+          type: NodeTypes.DIRECTIVE,
+          name: "bind",
+          arg: createSimpleExpression(usageAttribute, true, node.loc),
+          exp: context.prefixIdentifiers ? processExpression(expression, context) : expression,
+          modifiers: [],
+          loc: node.loc,
+        });
+      }
     }
 
     if (skipTestIdGenerationInsideComponents.includes(componentName)) {

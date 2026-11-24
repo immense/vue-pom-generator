@@ -28,11 +28,13 @@ interface InternalPluginFactoryOptions {
   projectRootRef: { current: string };
   basePageClassPath?: string;
   collectSource: (code: string, filename: string) => Promise<void>;
+  isFileInScope: (filename: string) => boolean;
   generationOnly: boolean;
   loggerRef: { current: VuePomGeneratorLogger };
   annotatorRuntime: {
     enabled: boolean;
     sourceAttribute: string;
+    getSourceRoot: () => string;
     metadataAttributePrefix: string;
     ui: {
       enabled: boolean;
@@ -43,7 +45,7 @@ interface InternalPluginFactoryOptions {
   };
 }
 
-export function createInternalPlugins(options: InternalPluginFactoryOptions): PluginOption[] {
+export function createInternalPlugins(options: InternalPluginFactoryOptions): { generationPlugins: PluginOption[]; runtimePlugins: PluginOption[] } {
   const {
     componentHierarchyMap,
     elementMetadata,
@@ -145,8 +147,15 @@ export function createInternalPlugins(options: InternalPluginFactoryOptions): Pl
   });
 
   const annotatorSourcePlugin = createAnnotatorSourcePlugin({
-    enabled: annotatorRuntime.enabled && annotatorRuntime.ui.enabled,
+    enabled: annotatorRuntime.enabled,
+    componentLinks: annotatorRuntime.ui.enabled,
+    isFileInScope: options.isFileInScope,
+    getSourceRoot: annotatorRuntime.getSourceRoot,
+    metadataAttributePrefix: annotatorRuntime.metadataAttributePrefix,
   });
 
-  return [tsProcessor, devProcessor, virtualModules, annotatorUiPlugin, annotatorSourcePlugin];
+  return {
+    generationPlugins: [tsProcessor, devProcessor],
+    runtimePlugins: [virtualModules, annotatorUiPlugin, annotatorSourcePlugin],
+  };
 }

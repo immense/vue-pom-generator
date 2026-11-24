@@ -124,7 +124,7 @@ describe("inspect-mode snapping", () => {
     const highlight = document.querySelector<HTMLElement>(".vpg-annotator-highlight")!;
     expect(highlight.hidden).toBe(false);
     expect(highlight.style).toMatchObject({ left: "40px", top: "60px", width: "300px", height: "120px" });
-    expect(highlight.querySelector(".vpg-annotator-highlight-label")!.textContent).toBe("Page (src/views/Page.vue:4:3)");
+    expect(highlight.querySelector(".vpg-annotator-highlight-label")!.textContent).toBe("Page · Source: src/views/Page.vue:4:3");
   });
 
   it("annotates the snapped element on click", () => {

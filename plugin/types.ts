@@ -51,7 +51,7 @@ export interface VuePomGeneratorRuntimeAnnotatorOptions {
    *
    * When enabled, the template transform injects:
    * - source location metadata via `sourceAttribute` on every native template element
-   *   (component usages are not stamped, so a child's root keeps its own location)
+   * - component usage locations via `${metadataAttributePrefix}-usage`
    * - generated POM metadata via `${metadataAttributePrefix}-*` attributes on generated
    *   interactive elements
    */
@@ -62,9 +62,16 @@ export interface VuePomGeneratorRuntimeAnnotatorOptions {
    *
    * Defaults to `data-v-inspector`.
    *
-   * Value format: `<absolute-file-path>:<line>:<column>`.
+   * Value format: `<repository-relative-file-path>:<line>:<column>`.
    */
   sourceAttribute?: string;
+
+  /**
+   * Root for source and usage paths. Defaults to the nearest ancestor of the Vite
+   * root containing .git (directory or worktree file). Required when .git is absent.
+   * An explicit relative path is resolved against the Vite root.
+   */
+  sourceRoot?: string;
 
   /**
    * Attribute prefix used for generated POM metadata.
@@ -72,6 +79,7 @@ export interface VuePomGeneratorRuntimeAnnotatorOptions {
    * Defaults to `data-v-pom`.
    *
    * The transform emits:
+   * - `<prefix>-usage` (component usage location, also reserved as a component prop)
    * - `<prefix>-component`
    * - `<prefix>-tag`
    * - `<prefix>-testid`

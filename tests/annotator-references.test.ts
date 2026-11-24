@@ -10,7 +10,8 @@ const STORAGE_KEY = "vpg-annotator-annotations";
 const first: AnnotationReference = {
   id: "element1",
   targetLabel: "SaveButton",
-  source: "src/SaveButton.vue:10:3",
+  source: "shared/ui/src/SaveButton.vue:10:3",
+  usageSource: "frontend/src/views/Page.vue:44:9",
   component: "SaveButton",
   locator: 'near `[data-testid="save"]`',
   uiText: "Save",
@@ -21,7 +22,8 @@ const second: AnnotationReference = {
   ...first,
   id: "element2",
   targetLabel: "CancelButton",
-  source: "src/CancelButton.vue:20:5",
+  source: "shared/ui/src/CancelButton.vue:20:5",
+  usageSource: "frontend/src/views/Page.vue:45:9",
   component: "CancelButton",
   locator: 'near `[data-testid="cancel"]`',
   uiText: "Cancel",
@@ -64,6 +66,7 @@ function pick(reference: AnnotationReference) {
   const target = document.createElement("button");
   target.textContent = reference.uiText!;
   target.setAttribute("data-source", reference.source!);
+  target.setAttribute("data-v-pom-usage", reference.usageSource!);
   target.setAttribute("data-testid", reference.uiText!.toLowerCase());
   target.setAttribute("data-v-pom-component", reference.component!);
   document.body.append(target);
@@ -110,12 +113,13 @@ describe("annotation references", () => {
       comment: `${multi.comment} please`,
       targetLabel: first.targetLabel,
       source: first.source,
+      usageSource: first.usageSource,
       component: first.component,
       locator: first.locator,
       pageUrl: PAGE_URL,
       references: [
-        { id: first.id, targetLabel: first.targetLabel, source: first.source, component: first.component, locator: first.locator },
-        { id: second.id, targetLabel: second.targetLabel, source: second.source, component: second.component, locator: second.locator },
+        { id: first.id, targetLabel: first.targetLabel, source: first.source, usageSource: first.usageSource, component: first.component, locator: first.locator },
+        { id: second.id, targetLabel: second.targetLabel, source: second.source, usageSource: second.usageSource, component: second.component, locator: second.locator },
       ],
     });
     document.querySelector<HTMLButtonElement>(".vpg-annotator-marker")!.click();
@@ -208,6 +212,7 @@ describe("annotation references", () => {
     for (const reference of [first, second]) {
       expect(formatted).toContain(`#### [${reference.id}: ${reference.targetLabel}]`);
       expect(formatted).toContain(`- **Source:** ${reference.source}`);
+      expect(formatted).toContain(`- **Used at:** ${reference.usageSource}`);
       expect(formatted).toContain(`- **Component:** ${reference.component}`);
       expect(formatted).toContain(`- **Target:** \`${reference.targetLabel}\``);
       expect(formatted).toContain(`- **Locator:** ${reference.locator}`);
@@ -218,6 +223,8 @@ describe("annotation references", () => {
     const writeText = vi.fn(async (_text: string) => {});
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
     mount();
+    button("Preview annotations").click();
+    expect(document.querySelector<HTMLTextAreaElement>(".vpg-annotator-panel--preview textarea")!.value).toBe(formatted);
     button("Copy annotations").click();
     expect(writeText).toHaveBeenCalledWith(formatted);
   });
@@ -232,15 +239,15 @@ describe("annotation references", () => {
     await vi.waitFor(() => expect(stored()).toHaveLength(0));
   });
 
-  it("keeps a note when a handler mutates nested reference metadata", async () => {
+  it.each(["locator", "usageSource"] as const)("keeps a note when a handler mutates nested %s", async (field) => {
     seed(multi);
     window.__VUE_POM_GENERATOR_ANNOTATOR_SUBMIT__ = (annotations) => {
-      annotations[0]!.references![1]!.locator = "updated locator";
+      annotations[0]!.references![1]![field] = "updated metadata";
       return true;
     };
     mount();
     button("Submit annotations").click();
-    await vi.waitFor(() => expect(stored()[0]!.references![1]!.locator).toBe("updated locator"));
+    await vi.waitFor(() => expect(stored()[0]!.references![1]![field]).toBe("updated metadata"));
     expect(stored()).toHaveLength(1);
   });
 

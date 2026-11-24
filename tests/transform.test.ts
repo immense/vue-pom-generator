@@ -263,6 +263,7 @@ function compileWithRuntimeTemplateOptions(
     wrapperSearchRoots?: string[]
     annotatorMetadata?: {
       sourceAttribute: string
+      getSourceRoot: () => string
       metadataAttributePrefix: string
     } | null
   } = {},
@@ -771,12 +772,13 @@ describe('createTestIdTransform', () => {
         },
         annotatorMetadata: {
           sourceAttribute: 'data-v-inspector',
+          getSourceRoot: () => '/',
           metadataAttributePrefix: 'data-v-pom',
         },
       },
     )
 
-    expect(code).toContain('"data-v-inspector": "/src/views/MyComp.vue:1:1"')
+    expect(code).toContain('"data-v-inspector": "src/views/MyComp.vue:1:1"')
     expect(code).toContain('"data-v-pom-component": "MyComp"')
     expect(code).toContain('"data-v-pom-tag": "button"')
     expect(code).toContain('"data-v-pom-testid": "MyComp-Save-button"')
@@ -785,7 +787,7 @@ describe('createTestIdTransform', () => {
     expect(code).toContain('"data-v-pom-role": "button"')
   })
 
-  const annotatorMetadata = { sourceAttribute: 'data-v-inspector', metadataAttributePrefix: 'data-v-pom' }
+  const annotatorMetadata = { getSourceRoot: () => '/', sourceAttribute: 'data-v-inspector', metadataAttributePrefix: 'data-v-pom' }
   const unannotatedTemplate = [
     '<section>',
     '  <h1>Title</h1>',
@@ -800,10 +802,10 @@ describe('createTestIdTransform', () => {
 
     // Only the four native elements: <template>, <slot> and the <MyCard> usage are skipped.
     expect(code.match(/"data-v-inspector"/g)).toHaveLength(4)
-    expect(code).toContain('"data-v-inspector": "/src/views/MyComp.vue:1:1"')
-    expect(code).toContain('"data-v-inspector": "/src/views/MyComp.vue:2:3"')
-    expect(code).toContain('"data-v-inspector": "/src/views/MyComp.vue:3:25"')
-    expect(code).toContain('"data-v-inspector": "/src/views/MyComp.vue:5:11"')
+    expect(code).toContain('"data-v-inspector": "src/views/MyComp.vue:1:1"')
+    expect(code).toContain('"data-v-inspector": "src/views/MyComp.vue:2:3"')
+    expect(code).toContain('"data-v-inspector": "src/views/MyComp.vue:3:25"')
+    expect(code).toContain('"data-v-inspector": "src/views/MyComp.vue:5:11"')
     // Test-id generation is unchanged: none of these elements is interactive.
     expect(code).not.toContain('data-testid')
   })
@@ -815,7 +817,7 @@ describe('createTestIdTransform', () => {
     expect(code).not.toContain('data-v-pom')
   })
 
-  it('does not stamp a component usage, so its fallthrough cannot overwrite the child root location', () => {
+  it('stamps a component usage separately from the child root location', () => {
     const code = compileWithRuntimeTemplateOptions(
       '<MyButton @click="save">Save</MyButton>',
       {
@@ -827,6 +829,7 @@ describe('createTestIdTransform', () => {
 
     expect(code).toContain('"data-v-pom-component": "MyComp"')
     expect(code).toContain('"data-v-pom-tag": "MyButton"')
+    expect(code).toContain('"data-v-pom-usage": "src/views/MyComp.vue:1:1"')
     expect(code).not.toContain('data-v-inspector')
   })
 
@@ -863,7 +866,7 @@ defineProps<{ to: string }>()
     expect(findStaticAttr(li, 'data-testid')).toBeUndefined()
     expect(findBindDirective(li, 'data-testid')).toBeUndefined()
     // ...but still carries its own location, and the <RouterLink> usage carries none.
-    expect(findStaticAttr(li, 'data-v-inspector')?.value?.content).toBe(`${componentPath}:3:5`)
+    expect(findStaticAttr(li, 'data-v-inspector')?.value?.content).toBe(`${path.relative('/', componentPath)}:3:5`)
     expect(findStaticAttr(routerLink, 'data-v-inspector')).toBeUndefined()
     // mergeProps applies later props last, so the own stamp wins over a forwarded one.
     const attrsIndex = li.props.findIndex(prop => prop.type === NodeTypes.DIRECTIVE && prop.name === 'bind' && !prop.arg)

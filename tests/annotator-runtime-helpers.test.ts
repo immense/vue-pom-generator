@@ -77,9 +77,11 @@ describe("vue-detector string helpers", () => {
     expect(vueDetectorInternal.isComponentLikeSourceTag(null)).toBe(false);
   });
 
-  it("formatSourceLabel trims to the frontend/src portion and optionally keeps position", () => {
-    expect(formatSourceLabel("/x/frontend/src/Foo.vue:4:2")).toBe("src/Foo.vue:4:2");
-    expect(formatSourceLabel("/x/frontend/src/Foo.vue:4:2", false)).toBe("src/Foo.vue");
+  it("formatSourceLabel preserves folders and optionally keeps position", () => {
+    expect(formatSourceLabel("/x/frontend/src/Foo.vue:4:2")).toBe("/x/frontend/src/Foo.vue:4:2");
+    expect(formatSourceLabel("/x/frontend/src/Foo.vue:4:2", false)).toBe("/x/frontend/src/Foo.vue");
     expect(formatSourceLabel("src/Foo.vue")).toBe("src/Foo.vue");
+    expect(formatSourceLabel("frontend/src/Foo.vue:4:2")).toBe("frontend/src/Foo.vue:4:2");
+    expect(formatSourceLabel("shared/ui/src/Button.vue:2:3")).toBe("shared/ui/src/Button.vue:2:3");
   });
 });

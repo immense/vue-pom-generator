@@ -61,18 +61,18 @@ test("snaps hover and click to the nearest element with a source location", asyn
   // An unstamped <b> (like v-html output) resolves to its stamped <p>.
   const paragraph = page.getByText("Name: Ada");
   await hover(page, page.getByTestId("name"));
-  await expect(label).toHaveText("ProfileCard (/app/src/components/ProfileCard.vue:5:5)");
+  await expect(label).toHaveText("ProfileCard · Source: /app/src/components/ProfileCard.vue:5:5");
   await expectSameBox(highlight, paragraph);
 
   // A component's root shows that component and its own location.
   const card = page.getByTestId("card");
   await hover(page, card, { x: 8, y: 8 });
-  await expect(label).toHaveText("ProfileCard (/app/src/components/ProfileCard.vue:4:3)");
+  await expect(label).toHaveText("ProfileCard · Source: /app/src/components/ProfileCard.vue:4:3");
   await expectSameBox(highlight, card);
 
   // Third-party DOM resolves to its nearest stamped ancestor.
   await hover(page, page.getByText("Library widget"));
-  await expect(label).toHaveText("Profile (/app/src/views/Profile.vue:1:1)");
+  await expect(label).toHaveText("Profile · Source: /app/src/views/Profile.vue:1:1");
   await expectSameBox(highlight, page.getByRole("main"));
 
   const name = (await page.getByTestId("name").boundingBox())!;

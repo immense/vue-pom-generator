@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import { camelize } from "@vue/shared";
+import { annotatorSourcePath } from "../../annotator-source";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -136,7 +138,7 @@ export function createAnnotatorUiPlugin(options: ResolvedAnnotatorUiOptions): Pl
  * `export default _export_sfc(_sfc_main, [...])`, which sets its options on `_sfc_main` and returns it. Undefined when the
  * module exports something else.
  */
-function findExportedComponent(code: string): string | undefined {
+function findExportedComponent(code: string): { name: string; fileRange?: [number, number] } | undefined {
   const program = parse(code, { sourceType: "module", plugins: ["typescript", "jsx"] }).program;
   const exported = program.body.find(node => node.type === "ExportDefaultDeclaration");
   if (!exported) {
@@ -145,53 +147,61 @@ function findExportedComponent(code: string): string | undefined {
 
   const declaration = exported.declaration;
   if (declaration.type === "Identifier") {
-    return declaration.name;
+    return { name: declaration.name };
   }
 
   if (declaration.type === "CallExpression" && declaration.arguments[0]?.type === "Identifier") {
-    return declaration.arguments[0].name;
+    const attachedProps = declaration.arguments[1];
+    const fileProp = attachedProps?.type === "ArrayExpression"
+      ? attachedProps.elements.find(prop => prop?.type === "ArrayExpression" && prop.elements[0]?.type === "StringLiteral" && prop.elements[0].value === "__file")
+      : undefined;
+    const fileValue = fileProp?.type === "ArrayExpression" ? fileProp.elements[1] : undefined;
+    return {
+      name: declaration.arguments[0].name,
+      fileRange: fileValue?.type === "StringLiteral" && fileValue.start != null && fileValue.end != null
+        ? [fileValue.start, fileValue.end] : undefined,
+    };
   }
 
   return undefined;
 }
 
-/**
- * `code`, a compiled single-file component, with its source path set as `__file`, or undefined when it exports no
- * component. The assignment is appended, so no existing code moves and its source map still applies.
- */
-function addComponentSourcePath(code: string, file: string): string | undefined {
-  const component = findExportedComponent(code);
-  return component ? `${code}\n${component}.__file = ${JSON.stringify(file)};\n` : undefined;
+/** Consume usage metadata as a prop so outer fallthrough cannot replace a nested usage. */
+function addComponentMetadata(code: string, file: string, usageAttribute?: string): string | undefined {
+  const exported = findExportedComponent(code);
+  if (!exported) {
+    return undefined;
+  }
+  const component = exported.name;
+  if (exported.fileRange) {
+    const [start, end] = exported.fileRange;
+    code = code.slice(0, start) + JSON.stringify(file) + code.slice(end);
+  }
+  const prop = usageAttribute && JSON.stringify(camelize(usageAttribute));
+  return `${code}\n${component}.__file = ${JSON.stringify(file)};\n`
+    + (prop ? `${component}.props = Array.isArray(${component}.props) ? ${component}.props.concat(${prop}) : { ...${component}.props, [${prop}]: String };\n` : "");
 }
 
-/**
- * In a build, lets the annotator name the component behind any element, as it does on the dev server: Vue links each
- * element to its component (`__VUE_PROD_DEVTOOLS__`, which a production build leaves off), and every compiled
- * single-file component gets its source path (`__file`, relative to the Vite root). So a built app, such as a preview
- * deployment, shows the source of static text, slot content and teleported content too.
- */
-export function createAnnotatorSourcePlugin(options: { enabled: boolean }): Plugin {
-  let root = process.cwd();
+/** Keep component paths and usage props consistent in dev, client builds, and SSR. */
+export function createAnnotatorSourcePlugin(options: {
+  enabled: boolean;
+  componentLinks: boolean;
+  isFileInScope: (filename: string) => boolean;
+  getSourceRoot: () => string;
+  metadataAttributePrefix: string;
+}): Plugin {
   return {
     name: "vue-pom-generator:annotator-sources",
     enforce: "post",
-    // Client builds only: a server render has no annotator to read the links or paths.
-    apply(config, { command }) {
-      return command === "build" && !config.build?.ssr;
-    },
     config() {
-      return options.enabled ? { define: { __VUE_PROD_DEVTOOLS__: true } } : undefined;
+      return options.enabled && options.componentLinks ? { define: { __VUE_PROD_DEVTOOLS__: true } } : undefined;
     },
-    configResolved(config) {
-      root = config.root;
-    },
-    transform(code, id, transformOptions) {
-      // A component's own module, `Foo.vue`, not one of its `Foo.vue?vue&type=...` blocks.
-      if (!options.enabled || transformOptions?.ssr || !id.endsWith(".vue")) {
+    transform(code, id) {
+      // A component's own module, not one of its ?vue&type=... blocks.
+      if (!options.enabled || !id.endsWith(".vue")) {
         return null;
       }
-
-      const updated = addComponentSourcePath(code, normalizePathSeparators(path.relative(root, id)));
+      const updated = addComponentMetadata(code, annotatorSourcePath(id, options.getSourceRoot()), options.isFileInScope(id) ? `${options.metadataAttributePrefix}-usage` : undefined);
       return updated === undefined ? null : { code: updated, map: null };
     },
   };
@@ -200,5 +210,5 @@ export function createAnnotatorSourcePlugin(options: { enabled: boolean }): Plug
 // Exposed for unit tests. Pure helpers (no I/O).
 export const __internal = {
   normalizePathSeparators,
-  addComponentSourcePath,
+  addComponentMetadata,
 };
