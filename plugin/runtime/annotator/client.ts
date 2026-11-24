@@ -689,10 +689,11 @@ class AnnotatorRuntime {
     const rect = element.getBoundingClientRect();
     const target = this.buildTarget(element);
     const reference = { ...target, id: "element1" };
+    const separator = comment.slice(-1).trim() ? " " : "";
     return {
       ...target,
       id: `draft-${Date.now()}`,
-      comment: `${comment}${referenceText(reference)}`,
+      comment: `${comment}${separator}${referenceText(reference)}`,
       references: [reference],
       pageX: rect.left + rect.width / 2,
       pageY: rect.top + window.scrollY,

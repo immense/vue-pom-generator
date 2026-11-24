@@ -76,10 +76,19 @@ export function formatAnnotations(
     const annotation = annotations[i]!;
     const title = normalizeInlineText(annotation.comment) || annotation.targetLabel;
     lines.push(`### ${i + 1}. ${title}`);
-    lines.push(...formatTarget(annotation, detail));
+    const targetHasReference = annotation.references?.some(reference =>
+      reference.targetLabel === annotation.targetLabel
+      && reference.source === annotation.source
+      && reference.usageSource === annotation.usageSource
+      && reference.locator === annotation.locator
+      && reference.domHint === annotation.domHint,
+    );
+    if (!targetHasReference) {
+      lines.push(...formatTarget(annotation, detail));
+    }
     for (const reference of annotation.references ?? []) {
       lines.push("", `#### ${referenceText(reference)}`, ...formatTarget(reference, detail));
-      if (reference.pageUrl) {
+      if (reference.pageUrl && reference.pageUrl !== annotation.pageUrl && reference.pageUrl !== pageUrl) {
         lines.push(`- **URL:** ${reference.pageUrl}`);
       }
     }
