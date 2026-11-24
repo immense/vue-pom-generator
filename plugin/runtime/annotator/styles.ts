@@ -1,5 +1,21 @@
 export const ANNOTATOR_ROOT_ATTR = "data-vpg-annotator-root";
 
+/** Set on `<html>` while selecting with source outlines enabled. */
+export const SOURCE_OUTLINES_CLASS = "vpg-annotator-source-outlines";
+
+/**
+ * A subtle outline on every element that carries a source location, scoped to
+ * `SOURCE_OUTLINES_CLASS`. Outline, not border, so the page layout never shifts.
+ */
+export function sourceOutlineStyles(sourceAttribute: string): string {
+  return `
+html.${SOURCE_OUTLINES_CLASS} [${sourceAttribute}]:not([${ANNOTATOR_ROOT_ATTR}]) {
+  outline: 1px dashed rgba(79, 70, 229, 0.45) !important;
+  outline-offset: -1px !important;
+}
+`;
+}
+
 export const ANNOTATOR_STYLES = `
 [${ANNOTATOR_ROOT_ATTR}] {
   --vpg-annotator-accent: #4f46e5;

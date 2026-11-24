@@ -2,7 +2,7 @@ import { arrow, autoPlacement, autoUpdate, computePosition, offset, shift, type 
 
 import { AnnotationCommentEditor } from "./comment-editor";
 import { formatAnnotations, formatSingleAnnotationPreview, referenceText, type AnnotationReference, type FormattedAnnotation, type OutputDetail } from "./format";
-import { ANNOTATOR_ROOT_ATTR, ANNOTATOR_STYLES } from "./styles";
+import { ANNOTATOR_ROOT_ATTR, ANNOTATOR_STYLES, SOURCE_OUTLINES_CLASS, sourceOutlineStyles } from "./styles";
 import { normalizeInlineText } from "./text-utils";
 import { resolveVueComponentInfo, type VueDetectorOptions } from "./vue-detector";
 
@@ -16,6 +16,8 @@ interface AnnotatorSettings {
   outputDetail: OutputDetail;
   copyToClipboard: boolean;
   showComponentTree: boolean;
+  /** Outline every element with a source location while selecting. */
+  showSourceOutlines: boolean;
 }
 
 interface AnnotationRecord extends FormattedAnnotation {
@@ -320,7 +322,7 @@ class AnnotatorRuntime {
     }
     const style = document.createElement("style");
     style.id = "vpg-annotator-styles";
-    style.textContent = ANNOTATOR_STYLES;
+    style.textContent = ANNOTATOR_STYLES + sourceOutlineStyles(this.options.sourceAttribute);
     document.head.appendChild(style);
   }
 
@@ -356,7 +358,14 @@ class AnnotatorRuntime {
     document.body.append(this.markerLayerEl, this.panelLayerEl, this.shieldEl, this.toolbarEl);
   }
 
+  /** Outlines elements with a source location while selecting, unless turned off in settings. */
+  private syncSourceOutlines() {
+    document.documentElement.classList.toggle(SOURCE_OUTLINES_CLASS, this.inspectMode && this.settings.showSourceOutlines);
+  }
+
   private renderToolbar() {
+    // Every inspect-mode change re-renders the toolbar.
+    this.syncSourceOutlines();
     this.toolbarEl.replaceChildren();
 
     const handle = createToolbarHandle();
@@ -435,6 +444,7 @@ class AnnotatorRuntime {
         outputDetail: parsed.outputDetail ?? this.options.outputDetail,
         copyToClipboard: parsed.copyToClipboard ?? this.options.copyToClipboard,
         showComponentTree: parsed.showComponentTree ?? this.options.showComponentTree,
+        showSourceOutlines: parsed.showSourceOutlines ?? true,
       };
     }
     catch {
@@ -442,13 +452,15 @@ class AnnotatorRuntime {
         outputDetail: this.options.outputDetail,
         copyToClipboard: this.options.copyToClipboard,
         showComponentTree: this.options.showComponentTree,
+        showSourceOutlines: true,
       };
     }
   }
 
   private saveSettings() {
     localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(this.settings));
-    this.renderToolbar();
+    // Not renderToolbar(): it would replace the Settings button the open panel is anchored to.
+    this.syncSourceOutlines();
   }
 
   private loadAnnotations(): AnnotationRecord[] {
@@ -602,7 +614,10 @@ class AnnotatorRuntime {
     this.shieldEl.style.pointerEvents = "none";
     const elements = document.elementsFromPoint(clientX, clientY);
     this.shieldEl.style.pointerEvents = previousPointerEvents;
-    return elements.find(element => !isInsideAnnotatorTree(element)) ?? null;
+    const hit = elements.find(element => !isInsideAnnotatorTree(element));
+    // Snap to the nearest element with a source location. DOM with none above it (for example
+    // content a third-party library appends to <body>) is selected as is, for the Vue instance walk.
+    return hit ? hit.closest(`[${this.options.sourceAttribute}]`) ?? hit : null;
   }
 
   private onShieldMouseMove(event: MouseEvent) {
@@ -892,22 +907,30 @@ class AnnotatorRuntime {
     });
     detailField.append(detailLabel, detailSelect);
 
-    const showComponentField = document.createElement("label");
-    showComponentField.className = "vpg-annotator-row";
-    const showComponentCopy = document.createElement("span");
-    showComponentCopy.className = "vpg-annotator-label";
-    showComponentCopy.textContent = "Show component labels";
-    const showComponentCheckbox = document.createElement("input");
-    showComponentCheckbox.type = "checkbox";
-    showComponentCheckbox.className = "vpg-annotator-checkbox";
-    showComponentCheckbox.checked = this.settings.showComponentTree;
-    showComponentCheckbox.addEventListener("change", () => {
-      this.settings.showComponentTree = showComponentCheckbox.checked;
-      this.saveSettings();
-    });
-    showComponentField.append(showComponentCopy, showComponentCheckbox);
+    const checkboxField = (label: string, setting: "showComponentTree" | "showSourceOutlines") => {
+      const field = document.createElement("label");
+      field.className = "vpg-annotator-row";
+      const copy = document.createElement("span");
+      copy.className = "vpg-annotator-label";
+      copy.textContent = label;
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.className = "vpg-annotator-checkbox";
+      checkbox.checked = this.settings[setting];
+      checkbox.addEventListener("change", () => {
+        this.settings[setting] = checkbox.checked;
+        this.saveSettings();
+      });
+      field.append(copy, checkbox);
+      return field;
+    };
 
-    body.append(title, detailField, showComponentField);
+    body.append(
+      title,
+      detailField,
+      checkboxField("Show component labels", "showComponentTree"),
+      checkboxField("Outline source elements", "showSourceOutlines"),
+    );
     this.showPanel(panel, () => this.attachFloating(this.settingsButton!, panel, arrowEl, "top-start", ["top-start", "left-start", "top-end", "left-end"]));
   }
 

@@ -47,11 +47,13 @@ export interface VuePomGeneratorRuntimeAnnotatorUiOptions {
 
 export interface VuePomGeneratorRuntimeAnnotatorOptions {
   /**
-   * Enables annotator-oriented runtime metadata attributes on generated interactive elements.
+   * Enables annotator-oriented runtime metadata attributes.
    *
    * When enabled, the template transform injects:
-   * - source location metadata via `sourceAttribute`
-   * - generated POM metadata via `${metadataAttributePrefix}-*` attributes
+   * - source location metadata via `sourceAttribute` on every native template element
+   *   (component usages are not stamped, so a child's root keeps its own location)
+   * - generated POM metadata via `${metadataAttributePrefix}-*` attributes on generated
+   *   interactive elements
    */
   enabled?: boolean;
 

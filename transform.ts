@@ -12,7 +12,7 @@ import type {
   ForNode,
 } from "@vue/compiler-core";
 import type { AttributeValue, DataTestIdEntryOverrides, HierarchyMap, ResolvedKeyInfo } from "./utils";
-import { createSimpleExpression, NodeTypes, processExpression } from "@vue/compiler-core";
+import { createSimpleExpression, ElementTypes, NodeTypes, processExpression } from "@vue/compiler-core";
 import { parseExpression } from "@babel/parser"
 import { isIdentifierNode, isStringLiteralNode } from "./compiler/babel-guards";
 import path from "node:path";
@@ -815,6 +815,23 @@ export function createTestIdTransform(
   };
 
   return (node: RootNode | TemplateChildNode, context) => {
+    // Every native element carries its own source location, independent of test-id
+    // generation, so the annotator can resolve any element to its file:line. Component
+    // usages are never stamped: their attributes fall through to the child's root, which
+    // must keep its own location. The stamp is appended after authored props, so it also
+    // wins over an explicit `v-bind="$attrs"`.
+    if (annotatorMetadata && node.type === NodeTypes.ELEMENT && node.tagType === ElementTypes.ELEMENT && node.tag !== "template") {
+      const filename = context.filename?.trim();
+      if (!filename) {
+        throw new Error(`[vue-pom-generator] runtime.annotator.enabled requires contextFilename for ${componentName}.`);
+      }
+      const sourceLocation = node.loc?.start;
+      if (!sourceLocation) {
+        throw new Error(`[vue-pom-generator] runtime.annotator.enabled requires element source locations for ${componentName}.`);
+      }
+      upsertAttribute(node, annotatorMetadata.sourceAttribute, staticAttributeValue(`${filename}:${sourceLocation.line}:${sourceLocation.column}`), context);
+    }
+
     if (skipTestIdGenerationInsideComponents.includes(componentName)) {
       return;
     }

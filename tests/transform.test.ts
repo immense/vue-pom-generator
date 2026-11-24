@@ -785,6 +785,93 @@ describe('createTestIdTransform', () => {
     expect(code).toContain('"data-v-pom-role": "button"')
   })
 
+  const annotatorMetadata = { sourceAttribute: 'data-v-inspector', metadataAttributePrefix: 'data-v-pom' }
+  const unannotatedTemplate = [
+    '<section>',
+    '  <h1>Title</h1>',
+    '  <template v-if="show"><span>Shown</span></template>',
+    '  <slot name="footer" />',
+    '  <MyCard><p>Slotted</p></MyCard>',
+    '</section>',
+  ].join('\n')
+
+  it('stamps every native element with its own source location when annotator mode is enabled', () => {
+    const code = compileWithRuntimeTemplateOptions(unannotatedTemplate, { annotatorMetadata })
+
+    // Only the four native elements: <template>, <slot> and the <MyCard> usage are skipped.
+    expect(code.match(/"data-v-inspector"/g)).toHaveLength(4)
+    expect(code).toContain('"data-v-inspector": "/src/views/MyComp.vue:1:1"')
+    expect(code).toContain('"data-v-inspector": "/src/views/MyComp.vue:2:3"')
+    expect(code).toContain('"data-v-inspector": "/src/views/MyComp.vue:3:25"')
+    expect(code).toContain('"data-v-inspector": "/src/views/MyComp.vue:5:11"')
+    // Test-id generation is unchanged: none of these elements is interactive.
+    expect(code).not.toContain('data-testid')
+  })
+
+  it('stamps no source locations when annotator mode is disabled', () => {
+    const code = compileWithRuntimeTemplateOptions(unannotatedTemplate)
+
+    expect(code).not.toContain('data-v-inspector')
+    expect(code).not.toContain('data-v-pom')
+  })
+
+  it('does not stamp a component usage, so its fallthrough cannot overwrite the child root location', () => {
+    const code = compileWithRuntimeTemplateOptions(
+      '<MyButton @click="save">Save</MyButton>',
+      {
+        nativeWrappers: { MyButton: { role: 'button' } },
+        bindingMetadata: { save: BindingTypes.SETUP_CONST },
+        annotatorMetadata,
+      },
+    )
+
+    expect(code).toContain('"data-v-pom-component": "MyComp"')
+    expect(code).toContain('"data-v-pom-tag": "MyButton"')
+    expect(code).not.toContain('data-v-inspector')
+  })
+
+  it('stamps an explicit fallthrough target inside a custom RouterLink slot after its $attrs binding', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vue-pom-generator-annotator-fallthrough-'))
+    const source = `<template>
+  <RouterLink v-slot="{ navigate }" :to="to" custom>
+    <li v-bind="$attrs" class="nav-item" @click="navigate"><slot /></li>
+  </RouterLink>
+</template>
+<script setup lang="ts">
+defineOptions({ inheritAttrs: false })
+defineProps<{ to: string }>()
+</script>`
+    const componentPath = writeComponentSfc(tempRoot, 'NavItem', source)
+    const { descriptor } = parseSfc(source, { filename: componentPath })
+
+    const ast = compileAndCaptureAst(descriptor.template?.content ?? '', {
+      filename: componentPath,
+      nodeTransforms: [createTestIdTransform(
+        'NavItem',
+        new Map(),
+        {},
+        [],
+        path.join(tempRoot, 'src', 'views'),
+        { vueFilesPathMap: new Map([['NavItem', componentPath]]), annotatorMetadata },
+      )],
+    })
+
+    const routerLink = firstElement(ast)
+    const li = (routerLink.children as TemplateChildNode[])
+      .find((node): node is ElementNode => node.type === NodeTypes.ELEMENT && node.tag === 'li')!
+    // The <li> receives the caller's test id through $attrs, so it gets no competing one...
+    expect(findStaticAttr(li, 'data-testid')).toBeUndefined()
+    expect(findBindDirective(li, 'data-testid')).toBeUndefined()
+    // ...but still carries its own location, and the <RouterLink> usage carries none.
+    expect(findStaticAttr(li, 'data-v-inspector')?.value?.content).toBe(`${componentPath}:3:5`)
+    expect(findStaticAttr(routerLink, 'data-v-inspector')).toBeUndefined()
+    // mergeProps applies later props last, so the own stamp wins over a forwarded one.
+    const attrsIndex = li.props.findIndex(prop => prop.type === NodeTypes.DIRECTIVE && prop.name === 'bind' && !prop.arg)
+    const stampIndex = li.props.findIndex(prop => prop.type === NodeTypes.ATTRIBUTE && prop.name === 'data-v-inspector')
+    expect(attrsIndex).toBeGreaterThanOrEqual(0)
+    expect(stampIndex).toBeGreaterThan(attrsIndex)
+  })
+
   it('prefixes component-scope identifiers inside keyed router-link test ids', () => {
     const componentHierarchyMap = new Map()
 
