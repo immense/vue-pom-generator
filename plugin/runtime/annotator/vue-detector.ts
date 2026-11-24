@@ -14,6 +14,7 @@ interface VueInstance {
 export interface ResolvedVueComponentInfo {
   component?: string;
   source?: string;
+  usageSource?: string;
   formatted?: string;
 }
 
@@ -102,36 +103,9 @@ function isComponentLikeSourceTag(tag: string | null | undefined): tag is string
   /* eslint-enable no-restricted-syntax */
 }
 
-/**
- * Format a component source path for display, optionally keeping its
- * `:line:column` position and trimming it to the `frontend/src/...` portion
- * when present. Operates on a runtime file-path string for display, not source
- * code.
- *
- * @example
- * formatSourceLabel("/x/frontend/src/Foo.vue:4:2") // "src/Foo.vue:4:2"
- * formatSourceLabel("/x/frontend/src/Foo.vue:4:2", false) // "src/Foo.vue"
- * formatSourceLabel("src/Foo.vue") // "src/Foo.vue"
- */
+/** Preserve the stamped path, optionally removing only its trailing line and column. */
 export function formatSourceLabel(sourcePath: string, includePosition = true): string {
-  /* eslint-disable no-restricted-syntax -- parsing a file-path-with-optional-position string for display, not parsing source code */
-  const match = sourcePath.match(/^(.*?)(?::(\d+):(\d+))?$/);
-  /* eslint-enable no-restricted-syntax */
-  if (!match) {
-    return sourcePath;
-  }
-
-  const [, rawPath, line, column] = match;
-  /* eslint-disable no-restricted-syntax -- extracting the frontend/src portion of a file path for display, not parsing source code */
-  const frontendPathMatch = rawPath.match(/(?:^|\/)frontend\/(src\/.*)$/);
-  /* eslint-enable no-restricted-syntax */
-  const normalizedPath = frontendPathMatch?.[1] ?? rawPath;
-
-  if (includePosition && line && column) {
-    return `${normalizedPath}:${line}:${column}`;
-  }
-
-  return normalizedPath;
+  return includePosition ? sourcePath : stripSourcePosition(sourcePath);
 }
 
 function getStringPropValue(props: Record<string, unknown> | undefined, key: string): string | undefined {
@@ -160,27 +134,27 @@ function resolveAnnotatedInfo(
   componentName: string | null | undefined,
   sourcePath: string | undefined,
   sourceTag: string | null | undefined,
+  usageSource?: string,
 ): ResolvedVueComponentInfo | undefined {
   const component = getDisplayComponentName(componentName, sourcePath, sourceTag);
   const source = sourcePath ? formatSourceLabel(sourcePath, true) : undefined;
 
-  if (!component && !source) {
+  if (!component && !source && !usageSource) {
     return undefined;
   }
 
   return {
     component,
     source,
-    formatted: component
-      ? source ? `${component} (${source})` : component
-      : source,
+    usageSource,
+    formatted: [component, source && `Source: ${source}`, usageSource && `Used at: ${usageSource}`].filter(Boolean).join(" · "),
   };
 }
 
 function getAnnotatedInfoFromElement(element: Element, options: VueDetectorOptions): ResolvedVueComponentInfo | undefined {
   const pomComponentAttribute = `${options.metadataAttributePrefix}-component`;
   const pomTagAttribute = `${options.metadataAttributePrefix}-tag`;
-  const annotatedElement = element.closest<HTMLElement>(`[${pomComponentAttribute}], [${options.sourceAttribute}]`);
+  const annotatedElement = element.closest<HTMLElement>(`[${pomComponentAttribute}], [${options.sourceAttribute}], [${options.metadataAttributePrefix}-usage]`);
   if (!annotatedElement) {
     return undefined;
   }
@@ -189,6 +163,7 @@ function getAnnotatedInfoFromElement(element: Element, options: VueDetectorOptio
     annotatedElement.getAttribute(pomComponentAttribute),
     annotatedElement.getAttribute(options.sourceAttribute) ?? undefined,
     annotatedElement.getAttribute(pomTagAttribute),
+    annotatedElement.getAttribute(`${options.metadataAttributePrefix}-usage`) ?? undefined,
   );
 }
 
@@ -199,6 +174,7 @@ function getAnnotatedInfoFromInstance(instance: VueInstance, options: VueDetecto
     getStringPropValue(instance.vnode?.props, pomComponentAttribute),
     getStringPropValue(instance.vnode?.props, options.sourceAttribute),
     getStringPropValue(instance.vnode?.props, pomTagAttribute),
+    getStringPropValue(instance.vnode?.props, `${options.metadataAttributePrefix}-usage`),
   );
 }
 

@@ -122,11 +122,11 @@ describe("createVuePomGeneratorPlugins options", () => {
     }
   }
 
-  it("returns only vue + virtual modules when generation is disabled", () => {
+  it("keeps runtime plugins when generation is disabled", () => {
     const plugins = createVuePomGeneratorPlugins({ generation: false });
 
-    // Config plugin + Metadata collector + Vue SFC plugin + virtual:testids module.
-    expect(plugins.length).toBe(4);
+    // Config, metadata collector, Vue, virtual modules, and annotator runtime plugins.
+    expect(plugins.length).toBe(6);
 
     const names = plugins
       .map(p => (typeof p === "object" && p && "name" in p ? (p as { name?: string }).name : undefined))
@@ -135,6 +135,8 @@ describe("createVuePomGeneratorPlugins options", () => {
     expect(names.some(n => n.includes("vue"))).toBe(true);
     expect(names.some(n => n.includes("virtual"))).toBe(true);
     expect(names).toContain("vue-pom-generator-config");
+    expect(names).toContain("vue-pom-generator:annotator-sources");
+    expect(names).toContain("vue-pom-generator:annotator-ui");
   });
 
   it("patches the resolved vite:vue plugin when vuePluginOwnership is external", async () => {
@@ -143,7 +145,7 @@ describe("createVuePomGeneratorPlugins options", () => {
       generation: false,
     });
 
-    expect(plugins).toHaveLength(3);
+    expect(plugins).toHaveLength(5);
 
     const names = plugins
       .map(p => (typeof p === "object" && p && "name" in p ? (p as { name?: string }).name : undefined))

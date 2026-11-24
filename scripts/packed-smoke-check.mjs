@@ -183,7 +183,7 @@ try {
       "  plugins: createVuePomGeneratorPlugins({",
       '    injection: { viewsDir: "src", componentDirs: ["src"], layoutDirs: ["src"] },',
       '    generation: { outDir: "tests/playwright/__generated__", vueTestUtils: {} },',
-      "    runtime: { annotator: { enabled: true, ui: { enabled: true } } },",
+      "    runtime: { annotator: { enabled: true, sourceRoot: '.', ui: { enabled: true } } },",
       "  }),",
       "});",
     ].join("\n"),

@@ -1,3 +1,4 @@
+import { resolveAnnotatorSourceRoot } from "./annotator-source";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -10,7 +11,6 @@ import { loadNuxtProjectDiscovery } from "./nuxt-discovery";
 import { resolveGenerationSupportOptions } from "./resolved-generation-options";
 import { applyNuxtDiscoveryToInjectionOptions, resolveInjectionSupportOptions } from "./resolved-injection-options";
 import { createInternalPlugins } from "./internal-plugins";
-import { createTestIdsVirtualModulesPlugin } from "./internal/virtual-modules";
 import type { PomGeneratorPluginOptions, RouterModuleShimDefinition, VuePluginOwnership, VuePomGeneratorPluginOptions } from "./types";
 import { createVuePluginWithTestIds } from "./vue-plugin";
 
@@ -209,6 +209,7 @@ interface ResolvedAnnotatorUiRuntimeOptions {
 interface ResolvedAnnotatorRuntimeOptions {
   enabled: boolean;
   sourceAttribute: string;
+  getSourceRoot: () => string;
   metadataAttributePrefix: string;
   ui: ResolvedAnnotatorUiRuntimeOptions;
 }
@@ -339,11 +340,13 @@ export function createGeneratorPlugins(options: PomGeneratorPluginOptions, gener
 
   const verbosity: VuePomGeneratorVerbosity = options.logging?.verbosity ?? "warn";
 
+  let annotatorSourceRoot: string;
   const annotatorRuntimeOptions = options.runtime?.annotator;
   const annotatorUiRuntimeOptions = annotatorRuntimeOptions?.ui;
   const resolvedAnnotatorRuntimeOptions: ResolvedAnnotatorRuntimeOptions = {
     enabled: annotatorRuntimeOptions?.enabled === true,
     sourceAttribute: annotatorRuntimeOptions?.sourceAttribute ?? "data-v-inspector",
+    getSourceRoot: () => annotatorSourceRoot,
     metadataAttributePrefix: annotatorRuntimeOptions?.metadataAttributePrefix ?? "data-v-pom",
     ui: {
       enabled: annotatorUiRuntimeOptions?.enabled === true,
@@ -483,6 +486,10 @@ export function createGeneratorPlugins(options: PomGeneratorPluginOptions, gener
       if (resolvedAnnotatorRuntimeOptions.enabled) {
         assertDataAttributeName(resolvedAnnotatorRuntimeOptions.sourceAttribute, "[vue-pom-generator] runtime.annotator.sourceAttribute");
         assertDataAttributeName(resolvedAnnotatorRuntimeOptions.metadataAttributePrefix, "[vue-pom-generator] runtime.annotator.metadataAttributePrefix");
+        if (resolvedAnnotatorRuntimeOptions.sourceAttribute === `${resolvedAnnotatorRuntimeOptions.metadataAttributePrefix}-usage`) {
+          throw new Error("[vue-pom-generator] runtime.annotator.sourceAttribute must differ from the usage attribute.");
+        }
+        annotatorSourceRoot = resolveAnnotatorSourceRoot(config.root, annotatorRuntimeOptions?.sourceRoot);
       }
       if (generationEnabled) {
         assertNonEmptyString(resolvedGenerationOptions.outDir, "[vue-pom-generator] generation.outDir");
@@ -526,7 +533,7 @@ export function createGeneratorPlugins(options: PomGeneratorPluginOptions, gener
 
   const { elementMetadata, semanticNameMap, componentHierarchyMap, crossFileKeyRegistry, vueFilesPathMap } = sharedState;
 
-  const { metadataCollectorPlugin, internalVuePlugin, templateCompilerOptions, collectSource } = createVuePluginWithTestIds({
+  const { isFileInScope, metadataCollectorPlugin, internalVuePlugin, templateCompilerOptions, collectSource } = createVuePluginWithTestIds({
     vueOptions,
     existingIdBehavior: resolvedGenerationOptions.existingIdBehavior,
     nameCollisionBehavior: resolvedGenerationOptions.nameCollisionBehavior,
@@ -548,6 +555,7 @@ export function createGeneratorPlugins(options: PomGeneratorPluginOptions, gener
     getProjectRoot: () => projectRootRef.current,
     annotatorMetadata: resolvedAnnotatorRuntimeOptions.enabled ? {
       sourceAttribute: resolvedAnnotatorRuntimeOptions.sourceAttribute,
+      getSourceRoot: resolvedAnnotatorRuntimeOptions.getSourceRoot,
       metadataAttributePrefix: resolvedAnnotatorRuntimeOptions.metadataAttributePrefix,
     } : null,
   });
@@ -568,6 +576,7 @@ export function createGeneratorPlugins(options: PomGeneratorPluginOptions, gener
     getWrapperSearchRoots: getWrapperSearchRootsAbs,
     generation: resolvedGenerationOptions,
     collectSource,
+    isFileInScope,
     generationOnly,
     projectRootRef,
     basePageClassPath: basePageClassPathOverride,
@@ -586,18 +595,9 @@ export function createGeneratorPlugins(options: PomGeneratorPluginOptions, gener
     configPlugin,
     metadataCollectorPlugin,
     ...(usesExternalVuePlugin ? [] : [internalVuePlugin]),
-    ...internalPlugins,
+    ...(generationEnabled ? internalPlugins.generationPlugins : []),
+    ...internalPlugins.runtimePlugins,
   ];
-
-  if (!generationEnabled) {
-    const virtualModules = createTestIdsVirtualModulesPlugin(componentHierarchyMap, elementMetadata);
-    return [
-      configPlugin,
-      metadataCollectorPlugin,
-      ...(usesExternalVuePlugin ? [] : [internalVuePlugin]),
-      virtualModules,
-    ];
-  }
 
   return resultPlugins;
 }

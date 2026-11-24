@@ -256,6 +256,7 @@ async function copyTextToClipboard(text: string) {
 function targetMatches(submitted: Omit<AnnotationReference, "id">, current: Omit<AnnotationReference, "id">): boolean {
   return submitted.targetLabel === current.targetLabel
     && submitted.source === current.source
+    && submitted.usageSource === current.usageSource
     && submitted.component === current.component
     && submitted.uiText === current.uiText
     && submitted.locator === current.locator
@@ -675,6 +676,7 @@ class AnnotatorRuntime {
     return {
       component: this.settings.showComponentTree ? componentInfo?.component : undefined,
       source: componentInfo?.source,
+      usageSource: componentInfo?.usageSource,
       targetLabel: componentInfo?.component || getElementSummary(element),
       uiText: getNearbyText(element),
       locator: getNearbyLocator(element),
@@ -781,7 +783,10 @@ class AnnotatorRuntime {
 
     const subtitle = document.createElement("p");
     subtitle.className = "vpg-annotator-subtle";
-    subtitle.textContent = this.pendingAnnotation.source || "Unable to find component file path.";
+    subtitle.textContent = [
+      `Source: ${this.pendingAnnotation.source || "Unable to find component file path."}`,
+      this.pendingAnnotation.usageSource && `Used at: ${this.pendingAnnotation.usageSource}`,
+    ].filter(Boolean).join(" · ");
 
     const metadata = document.createElement("textarea");
     metadata.className = "vpg-annotator-textarea vpg-annotator-input-meta";

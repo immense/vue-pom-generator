@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **Consumer-visible change:** annotator source paths change from absolute checkout
+  paths to repository-root-relative paths, preserving folders such as `frontend/`
+  and `shared/ui/`. Hover labels, Preview, Copy, and annotation payloads no longer
+  trim a hard-coded folder prefix. Consumers parsing or resolving `source` must use
+  the repository root instead of a machine's checkout path.
+- Add `runtime.annotator.sourceRoot` for an explicit root, resolved relative to the
+  Vite root when not absolute. Without it, use the nearest ancestor containing a
+  `.git` directory or worktree file; builds without `.git` must set the option.
+- Stamp component usage locations separately as `<metadataAttributePrefix>-usage`
+  (default `data-v-pom-usage`). Add optional `usageSource` to `FormattedAnnotation`
+  and every `AnnotationReference`, including submit-hook payloads. Hover, Preview,
+  and Copy show **Source** and **Used at**. Compiled components consume the usage
+  prop so the nearest usage wins in nested component roots, while the element's
+  own source remains intact. Descendants and fragment roots share their owning
+  component's usage; slot content retains its authoring template's ownership.
+
+## 1.0.125
+
 - With `runtime.annotator.enabled`, stamp the source attribute on every native template
   element from its own location, not only on elements that get a test id. The value
   format is unchanged (`<file>:<line>:<column>`). Component usages are no longer

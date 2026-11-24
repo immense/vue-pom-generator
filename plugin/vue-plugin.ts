@@ -43,6 +43,7 @@ interface InternalFactoryOptions {
   getProjectRoot: () => string;
   annotatorMetadata?: {
     sourceAttribute: string;
+    getSourceRoot: () => string;
     metadataAttributePrefix: string;
   } | null;
 }
@@ -129,6 +130,7 @@ function extractMetadataAfterTransform(
 }
 
 export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
+  isFileInScope: (filename: string) => boolean;
   metadataCollectorPlugin: PluginOption;
   internalVuePlugin: PluginOption;
   nuxtVueBridgePlugin: PluginOption;
@@ -479,5 +481,5 @@ export function createVuePluginWithTestIds(options: InternalFactoryOptions): {
     },
   };
 
-  return { metadataCollectorPlugin, internalVuePlugin, nuxtVueBridgePlugin, templateCompilerOptions, collectSource };
+  return { isFileInScope, metadataCollectorPlugin, internalVuePlugin, nuxtVueBridgePlugin, templateCompilerOptions, collectSource };
 }

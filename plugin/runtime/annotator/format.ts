@@ -8,6 +8,8 @@ export interface FormattedAnnotation {
   comment: string;
   targetLabel: string;
   source?: string;
+  /** Template location that instantiates the component owning the element. */
+  usageSource?: string;
   component?: string;
   uiText?: string;
   locator?: string;
@@ -18,7 +20,7 @@ export interface FormattedAnnotation {
   references?: AnnotationReference[];
 }
 
-export interface AnnotationReference extends Pick<FormattedAnnotation, "targetLabel" | "source" | "component" | "uiText" | "locator" | "domHint" | "pageUrl"> {
+export interface AnnotationReference extends Pick<FormattedAnnotation, "targetLabel" | "source" | "usageSource" | "component" | "uiText" | "locator" | "domHint" | "pageUrl"> {
   /** Stable within this note, e.g. "element1". Removing a pill does not renumber the others. */
   id: string;
 }
@@ -27,8 +29,11 @@ export function referenceText(reference: AnnotationReference): string {
   return `[${reference.id}: ${normalizeInlineText(reference.targetLabel)}]`;
 }
 
-function formatTarget(target: Pick<FormattedAnnotation, "targetLabel" | "source" | "component" | "uiText" | "locator" | "domHint">, detail: OutputDetail): string[] {
+function formatTarget(target: Pick<FormattedAnnotation, "targetLabel" | "source" | "usageSource" | "component" | "uiText" | "locator" | "domHint">, detail: OutputDetail): string[] {
   const lines = [`- **Source:** ${target.source || "Unable to find component file path."}`];
+  if (target.usageSource) {
+    lines.push(`- **Used at:** ${target.usageSource}`);
+  }
   if (target.component) {
     lines.push(`- **Component:** ${target.component}`);
   }
