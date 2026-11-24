@@ -89,6 +89,9 @@ export function formatAnnotations(
     if (!targetHasReference) {
       lines.push(...formatTarget(annotation, detail));
     }
+    if (annotation.pageUrl && annotation.pageUrl !== pageUrl) {
+      lines.push(`- **URL:** ${annotation.pageUrl}`);
+    }
     for (const reference of annotation.references ?? []) {
       lines.push("", `#### ${referenceText(reference)}`, ...formatTarget(reference, detail));
       if (reference.pageUrl && reference.pageUrl !== annotation.pageUrl && reference.pageUrl !== pageUrl) {

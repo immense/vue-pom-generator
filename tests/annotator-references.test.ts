@@ -300,6 +300,7 @@ describe("annotation references", () => {
     const urls = formatted.split("\n").filter(line => line.startsWith("- **URL:**"));
     expect(urls).toEqual([
       `- **URL:** ${PAGE_URL}`,
+      "- **URL:** https://example.com/note",
       ...(pageUrl === "https://example.com/other" ? [`- **URL:** ${pageUrl}`] : []),
     ]);
   });

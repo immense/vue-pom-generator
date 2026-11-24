@@ -5,7 +5,8 @@
 - Show each element's details once in multi-element annotation output and previews
   when a reference matches the note's original target. Keep the original target's
   details when its pill is removed or there are no references. Omit reference URLs
-  that match the note URL or the batch header URL.
+  that match the note URL or the batch header URL. Print the note's capture URL
+  once when it differs from the batch URL.
 - Insert a space between element pills and adjacent non-whitespace text when
   serializing comments or creating drafts. Preserve existing whitespace and keep
   spacing stable when notes are reopened and saved.
