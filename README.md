@@ -391,6 +391,7 @@ const submit: AnnotatorSubmitHandler = async (annotations, { pageUrl }) => {
   // Each annotation carries `source` (`<file>:<line>:<column>`), its capture-time
   // `pageUrl`, `comment`, `targetLabel`, ...
   await postFeedback(annotations, pageUrl);
+  showSuccessToast("Feedback sent");
   return true; // only an explicit true is a success; anything else retains the queue
 };
 
@@ -401,7 +402,9 @@ window.__VUE_POM_GENERATOR_ANNOTATOR_RUNTIME__?.refresh(); // if the overlay is 
 The package types declare both window properties, so no local `declare global` is
 needed. The handler is invoked synchronously from the button click, before the overlay
 awaits anything — open popups (`window.open`) before your handler's first `await`.
-Only an explicit `true` counts as a successful submit; any other return (`false`,
+Only an explicit `true` counts as a successful submit. The app owns success UI:
+returning or resolving `true` suppresses the annotator's **Submitted** toast so it
+does not cover the app's success message. Any other return (`false`,
 `undefined`) or a throw retains the queue and shows a **Submit failed** toast.
 Thrown errors are also logged to the console with a `[vue-pom-generator]` prefix
 for diagnostics. On success, exactly the submitted records that are still unchanged
@@ -409,6 +412,7 @@ are cleared — new
 drafts and drafts edited while the submit was pending are kept (records are matched
 by id and submitted content), so a retry hands over the same records with the same
 ids. The Submit button is disabled while a submit is in flight.
+Without a handler, there is no Submit button and the queue is kept.
 Remove the handler and call `refresh()` again to hide the button.
 
 The handler owns authentication, transport, and retry policy. Return `true` only
