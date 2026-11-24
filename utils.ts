@@ -3341,7 +3341,6 @@ export function applyResolvedDataTestId(args: {
 
   /** Optional runtime annotator metadata attribute configuration. */
   annotatorMetadata?: {
-    sourceAttribute: string;
     metadataAttributePrefix: string;
   } | null;
 }): ResolvedDataTestIdValues {
@@ -3950,19 +3949,10 @@ export function applyResolvedDataTestId(args: {
     dataTestIdEntry.pom.emitPrimary = false;
   }
 
+  // The source location is stamped by the transform on every native element, not here:
+  // on a component usage it would fall through and overwrite the child root's own location.
   if (addHtmlAttribute && args.annotatorMetadata && dataTestIdEntry.pom) {
-    const filename = args.contextFilename?.trim();
-    if (!filename) {
-      throw new Error(`[vue-pom-generator] runtime.annotator.enabled requires contextFilename for ${args.componentName}.`);
-    }
-
-    const sourceLocation = args.element.loc?.start;
-    if (!sourceLocation) {
-      throw new Error(`[vue-pom-generator] runtime.annotator.enabled requires element source locations for ${args.componentName}.`);
-    }
-
     const metadataAttributePrefix = args.annotatorMetadata.metadataAttributePrefix;
-    upsertAttribute(args.element, args.annotatorMetadata.sourceAttribute, staticAttributeValue(`${filename}:${sourceLocation.line}:${sourceLocation.column}`), args.context);
     upsertAttribute(args.element, `${metadataAttributePrefix}-component`, staticAttributeValue(args.componentName), args.context);
     upsertAttribute(args.element, `${metadataAttributePrefix}-tag`, staticAttributeValue(args.element.tag), args.context);
     upsertAttribute(

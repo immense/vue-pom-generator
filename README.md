@@ -378,6 +378,25 @@ When `runtime.annotator.ui.enabled` is true, the same browser-only client is inj
 for both `vite serve` and `vite build`. Disable it for production in your conditional
 Vite config when the overlay is intended only for development or preview artifacts.
 
+With `runtime.annotator.enabled`, every native element in a compiled template carries
+its own source location in `runtime.annotator.sourceAttribute` (default
+`data-v-inspector`), as `<file>:<line>:<column>`. This does not depend on test ids.
+`<template>`, `<slot>` and component usages are not stamped. A component's root
+element keeps its own location: a parent's attributes, whether they fall through
+implicitly or through `v-bind="$attrs"`, never overwrite it. DOM that no compiled
+template renders (third-party components, `v-html` content) has no source location.
+
+While **Select element** is on, including while picking with **Add element**, every
+element with a source location gets a subtle dashed outline. Outlines don't shift the
+layout and are never drawn on the annotator itself. Unoutlined areas show where there
+is no source location. Turn outlines off with **Annotator settings → Outline source
+elements** (on by default, remembered in `localStorage`).
+
+Hover and click snap to the nearest element, itself or an ancestor, that has a source
+location. The highlight and its label show that element's component and
+`file:line:column`, and a click annotates it. DOM with no source location on itself or
+any ancestor, such as a popup a library appends to `<body>`, is selected as is.
+
 To send annotations somewhere other than the clipboard, register a submit handler at
 runtime. Annotator options are serialized into the injected client, so a function can't
 go through the Vite config. While a handler is registered, the toolbar shows **Submit**,

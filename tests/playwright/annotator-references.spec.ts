@@ -1,25 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
-import { build } from "esbuild";
 
 import type { FormattedAnnotation } from "../../plugin/runtime/annotator/format";
+import { useAnnotatorFixture } from "./annotator-fixture";
 
-let client: string;
-
-test.beforeAll(async () => {
-  const result = await build({
-    entryPoints: ["plugin/runtime/annotator/client.ts"],
-    bundle: true,
-    write: false,
-    format: "esm",
-    platform: "browser",
-  });
-  client = result.outputFiles[0]!.text;
-});
-
-test.beforeEach(async ({ page }) => {
-  await page.route("**/plugin/runtime/annotator/client.ts", route => route.fulfill({ contentType: "text/javascript", body: client }));
-  await page.goto("/tests/playwright/fixtures/annotator/index.html");
-});
+useAnnotatorFixture("/tests/playwright/fixtures/annotator/index.html");
 
 async function pick(page: Page, id: string) {
   const bounds = await page.getByTestId(id).boundingBox();

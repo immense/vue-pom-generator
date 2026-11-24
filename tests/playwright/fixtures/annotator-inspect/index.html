@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Inspect mode</title>
+    <style>
+      body { font: 16px system-ui; margin: 64px; background: #f8fafc; color: #0f172a; }
+      main { padding: 32px; background: white; border: 1px solid #cbd5e1; border-radius: 12px; }
+      section { padding: 24px; margin-bottom: 24px; outline: none; }
+      .third-party { padding: 24px; background: #fef3c7; }
+    </style>
+  </head>
+  <body>
+    <!-- Source locations as the annotator-enabled template transform stamps them. -->
+    <main data-source="/app/src/views/Profile.vue:1:1">
+      <h1 data-source="/app/src/views/Profile.vue:2:3">Profile</h1>
+      <section data-testid="card" data-source="/app/src/components/ProfileCard.vue:4:3" data-v-pom-component="Profile" data-v-pom-tag="ProfileCard">
+        <p data-source="/app/src/components/ProfileCard.vue:5:5">Name: <b data-testid="name">Ada</b></p>
+      </section>
+      <!-- Rendered by third-party code: no source locations. -->
+      <div class="third-party" data-testid="third-party"><span>Library widget</span></div>
+    </main>
+    <script type="module">
+      import { mountAnnotatorClient } from "/plugin/runtime/annotator/client.ts";
+      mountAnnotatorClient({
+        sourceAttribute: "data-source",
+        metadataAttributePrefix: "data-v-pom",
+        outputDetail: "standard",
+        copyToClipboard: true,
+        showComponentTree: true,
+      });
+    </script>
+  </body>
+</html>
